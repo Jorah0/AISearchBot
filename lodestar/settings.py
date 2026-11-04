@@ -1,0 +1,91 @@
+"""User-controllable tool switches and preferences, stored in ~/.lodestar/settings.json.
+
+Every automated AI flow is a *tool* with two switches:
+    enabled = False             never runs
+    enabled = True, auto=False  proposes an action into the approvals inbox and waits for you
+    enabled = True, auto=True   executes immediately and logs an event
+Commands you type yourself are confirmed by typing them; only automatic flows go through the inbox.
+"""
+import json
+
+from .config import HOME
+
+PATH = HOME / "settings.json"
+
+# name: (what it does, enabled by default, auto by default)
+TOOLS = {
+    "email_classify": ("Classify inbox mail and move matching jobs forward in the tracker", True, True),
+    "email_reply": ("Draft replies to application confirmations, assessments, interview invites and offers", True, False),
+    "interview_scheduling": ("Accept a proposed interview slot or propose times from your availability", True, False),
+    "followup": ("Draft follow-up emails for applications that went quiet", True, False),
+    "auto_track": ("Judge new listings from watches and searches; add strong fits to the tracker", True, False),
+    "answers": ("Save newly generated application-form answers to the answer bank", True, False),
+    "calendar": ("Write .ics calendar files for interviews found in mail", True, True),
+    "obsidian_sync": ("Mirror the tracker into Obsidian after each monitor cycle", False, True),
+    "digest": ("Email the weekly digest at the end of the week", False, True),
+    "backup": ("Nightly zip of your data folder into ~/.lodestar/backups (keeps 7)", True, True),
+}
+PREFS = {
+    "name": "",
+    "availability": "weekdays 10:00-16:00 local time",
+    "auto_track_min_score": 75,
+    "followup_days": 7,
+    "reply_to_confirmations": False,
+    "weekly_target": 10,
+    "provider": "",
+    "council_providers": "",
+    "signature": "",
+}
+
+
+def load() -> dict:
+    data = json.loads(PATH.read_text(encoding="utf-8")) if PATH.is_file() else {}
+    tools = {n: {"enabled": e, "auto": a} | data.get("tools", {}).get(n, {}) for n, (_, e, a) in TOOLS.items()}
+    return {"tools": tools, "prefs": PREFS | data.get("prefs", {})}
+
+
+def save(data: dict) -> None:
+    PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def enabled(tool: str) -> bool:
+    return bool(load()["tools"][tool]["enabled"])
+
+
+def auto(tool: str) -> bool:
+    t = load()["tools"][tool]
+    return bool(t["enabled"] and t["auto"])
+
+
+def pref(key: str):
+    return load()["prefs"].get(key, PREFS.get(key))
+
+
+def set_tool(tool: str, enabled: bool | None = None, auto: bool | None = None) -> dict:
+    if tool not in TOOLS:
+        raise SystemExit(f"unknown tool '{tool}'. Tools: {', '.join(TOOLS)}")
+    data = load()
+    if enabled is not None:
+        data["tools"][tool]["enabled"] = enabled
+    if auto is not None:
+        data["tools"][tool]["auto"] = auto
+    save(data)
+    return data["tools"][tool]
+
+
+def set_pref(key: str, value) -> None:
+    if key not in PREFS:
+        raise SystemExit(f"unknown preference '{key}'. Keys: {', '.join(PREFS)}")
+    data = load()
+    cur = PREFS[key]
+    if isinstance(cur, bool):
+        value = str(value).lower() in ("1", "true", "yes", "on")
+    elif isinstance(cur, int):
+        value = int(value)
+    data["prefs"][key] = value
+    save(data)
+
+
+def table() -> list[dict]:
+    d = load()
+    return [{"tool": n, "description": TOOLS[n][0], **d["tools"][n]} for n in TOOLS]

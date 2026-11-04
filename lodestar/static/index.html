@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lodestar</title>
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="/static/app.css">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+<div class="brand"><img src="/logo.svg" width="30" height="30" alt=""><div>Lodestar<small>the star you steer by</small></div></div>
+<div class="top"><div class="stats" id="stats"></div><div class="spacer"></div>
+  <button class="b ghost sm" onclick="run('email_check',{days:3},r=>toast((r.found||[]).length+' relevant email(s)','ok'),this)">Check email</button>
+  <button class="b ghost sm" onclick="run('watch_run',{},r=>toast((r.alerts||[]).length+' alert(s)','ok'),this)">Run watches</button>
+</div>
+<nav aria-label="Sections">
+  <button data-tab="board" class="on"><span class="ico" aria-hidden="true">▦</span>Board</button>
+  <button data-tab="inbox"><span class="ico" aria-hidden="true">✓</span>Inbox<span class="badge zero" id="inboxN" aria-label="pending approvals">0</span></button>
+  <button data-tab="search"><span class="ico" aria-hidden="true">⌕</span>Search</button>
+  <button data-tab="monitor"><span class="ico" aria-hidden="true">◉</span>Monitor</button>
+  <button data-tab="ideas"><span class="ico" aria-hidden="true">✦</span>Ideas</button>
+  <button data-tab="answers"><span class="ico" aria-hidden="true">≡</span>Answers</button>
+  <button data-tab="coach"><span class="ico" aria-hidden="true">☺</span>Coach</button>
+  <button data-tab="profile"><span class="ico" aria-hidden="true">☰</span>Profile</button>
+  <span class="sep"></span>
+  <button data-tab="tools"><span class="ico" aria-hidden="true">⚙</span>Tools</button>
+  <button data-tab="setup"><span class="ico" aria-hidden="true">⚑</span>Setup</button>
+  <div class="foot">localhost only · Esc closes a job</div>
+</nav>
+
+<main>
+<section id="board" class="on">
+  <div class="row" style="margin-top:0">
+    <input id="nCo" placeholder="Company" style="width:160px"><input id="nTi" placeholder="Title" style="width:220px">
+    <input id="nJd" class="grow" placeholder="Job description: URL or pasted text"><button class="b" onclick="addJob()">Add job</button>
+  </div>
+  <div class="muted" id="variants"></div>
+  <div class="board" id="cols"></div>
+</section>
+
+<section id="inbox" class="inbox">
+  <h2>Inbox</h2>
+  <p class="sub">Actions Lodestar wants to take. Nothing is sent, moved, or added until you approve it. Set a tool to <b>auto</b> under Tools to skip this step for that tool.</p>
+  <div id="inboxList"></div>
+  <h3>Recently decided</h3>
+  <div class="list muted" id="decidedList"></div>
+</section>
+
+<section id="search">
+  <h2>Search</h2>
+  <div class="row"><input id="sQ" placeholder='query, e.g. "python backend"' style="width:260px"><input id="sK" placeholder="must-have keywords (comma)" style="width:220px">
+    <label class="muted"><input type="checkbox" id="sRank"> AI rank vs my profile</label><button class="b" onclick="doSearch(this)">Search free job APIs</button>
+    <span class="muted">Remotive, Arbeitnow, RemoteOK. No keys needed. The capture bookmarklet (Setup) covers LinkedIn and Indeed.</span></div>
+  <div class="panel" id="sRes"><div class="empty">No results yet.</div></div>
+</section>
+
+<section id="monitor">
+  <h2>Monitor</h2>
+  <div class="grid2">
+    <div class="panel"><h3>Watches</h3>
+      <div class="row"><input id="wUrl" class="grow" placeholder="career page URL, or a search query"><input id="wKw" placeholder="keywords" style="width:130px"><label class="muted"><input type="checkbox" id="wSearch"> is a search</label><button class="b" onclick="addWatch()">Add</button></div>
+      <div id="wList"></div>
+      <div class="row"><button class="b ghost" onclick="run('email_check',{days:7,dry:true},r=>show('aOut',r.found),this)">Email dry-run (7 days)</button>
+        <button class="b ghost" onclick="run('digest',{days:7},r=>show('aOut',r.text),this)">Weekly digest</button>
+        <button class="b ghost" onclick="run('obsidian',{},r=>toast('vault notes written to '+r.path,'ok'),this)">Export tracker to Obsidian</button></div>
+      <pre id="aOut" style="display:none"></pre></div>
+    <div class="panel"><h3>Alerts</h3><pre id="alerts"></pre></div>
+  </div>
+</section>
+
+<section id="ideas">
+  <h2>Ideas</h2>
+  <p class="sub">Diverge across every configured provider (or one provider plus a critic pass), merge, score impact × fit ÷ effort, save. Grounded in your profile, tracker stats, variant outcomes and gap checks.</p>
+  <div class="panel"><div class="row" style="margin:0">
+    <select id="iTopic"></select><select id="iJob"></select><input id="iRole" placeholder="target role (optional)" style="width:180px">
+    <input id="iExtra" class="grow" placeholder="extra instructions, or the custom topic"><label class="muted"><input type="checkbox" id="iSingle"> single provider</label>
+    <button class="b" onclick="craft(this)">Craft</button></div></div>
+  <div id="ideaList"></div>
+</section>
+
+<section id="answers">
+  <h2>Answers</h2>
+  <div class="panel"><h3>Draft an answer for an application-form question</h3>
+    <div class="row"><select id="aJob"></select><input id="aQ" class="grow" placeholder='e.g. "Why do you want to work at Acme?" or "Salary expectations?"'><button class="b" onclick="askAnswer(this)">Draft</button></div>
+    <pre id="aOut2" style="display:none"></pre></div>
+  <div class="panel"><h3>Answer bank</h3>
+    <div class="row"><input id="bQ" class="grow" placeholder="question"><input id="bA" class="grow" placeholder="answer"><button class="b ghost" onclick="api('/api/answers',{question:$('#bQ').value,answer:$('#bA').value}).then(load)">Save</button></div>
+    <div id="bank"></div></div>
+</section>
+
+<section id="coach">
+  <h2>Coach</h2>
+  <div class="panel">
+    <div class="row" style="margin-top:0"><select id="cMode" onchange="resetChat()"><option value="coach">Career coach</option><option value="mock">Mock interview for…</option></select><select id="cJob" onchange="resetChat()" style="display:none"></select><span class="muted" id="cHint">Coach sees your profile and tracker. Mock interview asks one question at a time; type "done" for a scored debrief.</span></div>
+    <div class="chat" id="chat"><div class="msg ai">Ask me anything about your search. I can see your profile and tracker.</div></div>
+    <div class="row"><input id="cIn" class="grow" placeholder="e.g. Which of my applications should I follow up on first?" onkeydown="if(event.key==='Enter')sendChat()"><button class="b ghost" id="cMic" onclick="dictate()" aria-label="Dictate" title="Dictate (browser speech recognition)">🎤</button><button class="b" id="cGo" onclick="sendChat()">Send</button><label class="muted"><input type="checkbox" id="cCouncil"> council (all providers)</label></div></div>
+</section>
+
+<section id="profile">
+  <h2>Profile</h2>
+  <div class="row"><span class="muted" id="pPath"></span><button class="b" onclick="saveProfile()">Save</button><button class="b ghost" onclick="run('review',{},r=>show('pOut',r.text),this)">AI review my resume</button></div>
+  <textarea id="pText"></textarea>
+  <pre id="pOut" style="display:none"></pre>
+</section>
+
+<section id="tools">
+  <h2>Tools</h2>
+  <p class="sub"><b>enabled</b> off = never runs. <b>auto</b> off = proposes into the Inbox and waits. <b>auto</b> on = runs immediately and logs an event. Commands you run yourself are confirmed by running them.</p>
+  <div class="panel" id="toolTable"></div>
+  <div class="panel"><h3>Preferences</h3><div id="prefs"></div></div>
+</section>
+
+<section id="setup">
+  <h2>Setup</h2>
+  <div class="grid2">
+    <div class="panel"><h3>AI providers</h3><div id="prov"></div>
+      <div class="row"><button class="b ghost" onclick="run('providers_test',{},r=>show('provOut',r),this)">Test providers</button></div><pre id="provOut" style="display:none"></pre></div>
+    <div class="panel"><h3>Vault (OS keyring)</h3>
+      <div class="row"><input id="vName" placeholder="ANTHROPIC_API_KEY / IMAP_PASS / linkedin.com" style="width:240px"><input id="vUser" placeholder="username (optional)" style="width:150px"><input id="vVal" type="password" class="grow" placeholder="secret"><button class="b" onclick="setVault()">Store</button></div>
+      <div class="muted" id="vList"></div>
+      <p class="muted">Keys: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, MISTRAL_API_KEY. Email: IMAP_USER, IMAP_PASS (Gmail app password).</p></div>
+    <div class="panel"><h3>Browser bookmarklets</h3>
+      <p class="muted">Drag these to your bookmarks bar. The UI must be running.</p>
+      <div class="row"><a id="bm" class="b" href="#">+ Lodestar capture</a><a id="af" class="b ghost" href="#">+ Lodestar autofill</a></div>
+      <p class="muted"><b>Capture</b> sends the job posting you are looking at (LinkedIn, Indeed, any careers page) to the Board. <b>Autofill</b> types your name, email, phone, links and location into empty application-form fields matched by label, and never clicks Submit.</p></div>
+    <div class="panel"><h3>About</h3><p class="muted">Lodestar is local-first: the UI binds to 127.0.0.1, secrets live in the OS keyring, data is in your home folder. Docs: README.md, docs/SETUP.md, docs/AUTOMATION.md, docs/COMMANDS.md.</p></div>
+  </div>
+</section>
+</main>
+
+<div id="drawer" role="dialog" aria-modal="true" aria-label="Job details"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script>window.LODESTAR_TOKEN = "__TOKEN__";</script>
+<script src="/static/app.js"></script>
+</body>
+</html>
