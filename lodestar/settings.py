@@ -35,6 +35,7 @@ PREFS = {
     "provider": "",
     "council_providers": "",
     "council_judge": False,
+    "models": {},
     "signature": "",
 }
 
@@ -79,11 +80,22 @@ def set_pref(key: str, value) -> None:
         raise SystemExit(f"unknown preference '{key}'. Keys: {', '.join(PREFS)}")
     data = load()
     cur = PREFS[key]
+    if isinstance(cur, dict):
+        data["prefs"][key] = dict(value) if isinstance(value, dict) else dict(cur, **{str(value).split("=")[0]: str(value).split("=", 1)[1]})
+        save(data)
+        return
     if isinstance(cur, bool):
         value = str(value).lower() in ("1", "true", "yes", "on")
     elif isinstance(cur, int):
         value = int(value)
     data["prefs"][key] = value
+    save(data)
+
+
+def set_model(provider: str, model: str) -> None:
+    """Remember a model id that was verified to work for a provider (prefs.models)."""
+    data = load()
+    data["prefs"].setdefault("models", {})[provider] = model
     save(data)
 
 

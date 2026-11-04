@@ -195,3 +195,12 @@ The Board shows a "Getting started" banner until the master resume is filled in 
 the inbox is connected); on a fresh install the window opens on Setup once. The top bar reports the monitor loop running
 inside the desktop process (interval, last cycle, cycle count) or says when no loop is running. `GET /api/state` now
 carries `version`, `setup` {profile_ready, provider_ready, email_ready} and `loop` {running, every, last_cycle, cycles}.
+
+## Self-healing models and the Data panel (pass 10)
+
+If a provider rejects the configured model id, Lodestar fetches the provider's model list, picks the best match from a
+preference order (for example `claude-sonnet-5*`, `gpt-5*`, `gemini-2.5-flash*`), saves it under the `models`
+preference, and retries once. `lodestar providers --test` prints the model each provider ends up using. An explicit
+`<PROVIDER>_MODEL` env setting is never overridden.
+
+Setup now has a Data panel: Backup now, Export JSON, and buttons that open the data, documents and backups folders.

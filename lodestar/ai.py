@@ -22,8 +22,36 @@ PROVIDERS = {
 }
 
 
+PREFERRED = {  # first match (substring, case-insensitive) in the provider's model list wins
+    "anthropic": ["claude-sonnet-5", "claude-sonnet-4", "claude-3-7-sonnet", "claude-3-5-sonnet", "claude"],
+    "openai": ["gpt-5", "gpt-4.1", "gpt-4o", "gpt-4"],
+    "gemini": ["gemini-2.5-flash", "gemini-2.5", "gemini-2.0-flash", "gemini"],
+    "groq": ["llama-3.3-70b", "llama-3.1-70b", "llama-3", "mixtral"],
+    "mistral": ["mistral-large", "mistral-medium", "mistral"],
+    "openrouter": ["anthropic/claude-sonnet", "anthropic/claude", "openai/gpt-4", "google/gemini"],
+    "ollama": ["llama", "qwen", "mistral", "gemma"],
+}
+
+
 def model_for(name: str) -> str:
-    return setting(f"{name.upper()}_MODEL", PROVIDERS[name]["model"])
+    """Env override, then a model verified earlier (prefs.models), then the built-in default."""
+    from . import settings
+
+    return setting(f"{name.upper()}_MODEL") or settings.pref("models").get(name) or PROVIDERS[name]["model"]
+
+
+def pick_model(name: str) -> str | None:
+    """Choose a working model from what the provider advertises, by preference order; None if nothing matches."""
+    try:
+        models = list_models(name)
+    except Exception:
+        return None
+    low = [(m.lower(), m) for m in models]
+    for pat in PREFERRED.get(name, []):
+        hit = next((m for lm, m in low if pat in lm), None)
+        if hit:
+            return hit
+    return models[0] if models else None
 
 
 def api_key(name: str) -> str | None:
@@ -129,16 +157,29 @@ def chat(messages: list[dict], system: str | None = None, provider: str | None =
     key = api_key(name)
     if not key:
         raise SystemExit(f"{name}: missing {p['key']} (lodestar vault set {p['key']})")
-    if p["kind"] == "anthropic":
-        body = {"model": model_for(name), "max_tokens": max_tokens, "messages": messages}
-        if system:
-            body["system"] = system
-        r = _post(p["url"], {"x-api-key": key, "anthropic-version": "2023-06-01"}, body)
-        return "".join(b.get("text", "") for b in r["content"])
-    msgs = ([{"role": "system", "content": system}] if system else []) + messages
-    # ponytail: no temperature/max_tokens - newest OpenAI models reject them; defaults are fine for prose
-    r = _post(p["url"], {"Authorization": f"Bearer {key}"}, {"model": model_for(name), "messages": msgs})
-    return r["choices"][0]["message"]["content"]
+    for attempt in (1, 2):
+        try:
+            if p["kind"] == "anthropic":
+                body = {"model": model_for(name), "max_tokens": max_tokens, "messages": messages}
+                if system:
+                    body["system"] = system
+                r = _post(p["url"], {"x-api-key": key, "anthropic-version": "2023-06-01"}, body)
+                return "".join(b.get("text", "") for b in r["content"])
+            msgs = ([{"role": "system", "content": system}] if system else []) + messages
+            # ponytail: no temperature/max_tokens - newest OpenAI models reject them; defaults are fine for prose
+            r = _post(p["url"], {"Authorization": f"Bearer {key}"}, {"model": model_for(name), "messages": msgs})
+            return r["choices"][0]["message"]["content"]
+        except SystemExit as e:  # "model rejected": pick one the provider actually offers, remember it, retry once
+            if attempt == 2 or "was rejected" not in str(e) or setting(f"{name.upper()}_MODEL"):
+                raise
+            from . import settings
+
+            new = pick_model(name)
+            if not new or new == model_for(name):
+                raise
+            print(f"  {name}: model '{model_for(name)}' not offered; switched to '{new}' (saved in prefs.models)")
+            settings.set_model(name, new)
+    raise RuntimeError("unreachable")
 
 
 def ask(prompt: str, system: str | None = None, provider: str | None = None, **kw) -> str:

@@ -72,8 +72,8 @@ def cmd_providers(a):
     if a.test:
         for n in avail:
             try:
-                print(f"{n}: {ai.ask('Reply with the single word OK.', provider=n).strip()[:40]}")
-            except Exception as e:
+                print(f"{n} ({ai.model_for(n)}): {ai.ask('Reply with the single word OK.', provider=n).strip()[:40]}")
+            except (Exception, SystemExit) as e:
                 print(f"{n}: FAIL {e}")
 
 

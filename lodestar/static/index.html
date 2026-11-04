@@ -131,6 +131,13 @@
       <p class="muted">Drag these to your bookmarks bar. The UI must be running.</p>
       <div class="row"><a id="bm" class="b" href="#">+ Lodestar capture</a><a id="af" class="b ghost" href="#">+ Lodestar autofill</a></div>
       <p class="muted"><b>Capture</b> sends the job posting you are looking at (LinkedIn, Indeed, any careers page) to the Board. <b>Autofill</b> types your name, email, phone, links and location into empty application-form fields matched by label, and never clicks Submit.</p></div>
+    <div class="panel"><h3>Data</h3>
+      <div class="row"><button class="b ghost" onclick="run('backup',{},r=>toast('backup written: '+r.path,'ok'),this)">Backup now</button>
+        <button class="b ghost" onclick="run('export_json',{},r=>toast('exported: '+r.path,'ok'),this)">Export JSON</button>
+        <button class="b ghost" onclick="api('/api/open_folder',{which:'data'})">Open data folder</button>
+        <button class="b ghost" onclick="api('/api/open_folder',{which:'applications'})">Open documents</button>
+        <button class="b ghost" onclick="api('/api/open_folder',{which:'backups'})">Open backups</button></div>
+      <p class="muted">Nightly backups keep the last 7 zips (tool <b>backup</b>). Exports are JSON dumps of every table.</p></div>
     <div class="panel"><h3>About</h3><p class="muted"><span id="ver"></span> · Lodestar is local-first: the UI binds to 127.0.0.1, secrets live in the OS keyring, data is in your home folder. Docs: README.md, docs/SETUP.md, docs/AUTOMATION.md, docs/COMMANDS.md.</p></div>
   </div>
 </section>

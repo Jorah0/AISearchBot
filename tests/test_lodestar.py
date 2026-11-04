@@ -696,3 +696,31 @@ class Onboarding(unittest.TestCase):
         loop.run(A())
         self.assertTrue(loop.STATUS["running"] and loop.STATUS["cycles"] == 1 and loop.STATUS["every"] == 5)
         self.assertRegex(loop.STATUS["last_cycle"], r"^\d\d:\d\d$")
+
+
+
+class ModelHealing(unittest.TestCase):
+    def setUp(self):
+        from lodestar import settings
+        settings.PATH.unlink(missing_ok=True)
+
+    def test_rejected_model_is_replaced_and_remembered(self):
+        from lodestar import ai, settings
+        ai.list_models = lambda name: ["claude-haiku-4", "claude-sonnet-5-5-20261001", "other"]
+        seen = []
+        def fake_post(url, headers, body, retries=2):
+            seen.append(body["model"])
+            if len(seen) == 1:
+                raise SystemExit("anthropic: the model 'claude-sonnet-5-5' was rejected (not found)")
+            return {"content": [{"text": "ok"}]}
+        ai._post = fake_post
+        self.assertEqual(ai.ask("hi", provider="anthropic"), "ok")
+        self.assertEqual(seen, ["claude-sonnet-5-5", "claude-sonnet-5-5-20261001"])     # retried with a real id
+        self.assertEqual(settings.pref("models")["anthropic"], "claude-sonnet-5-5-20261001")
+        self.assertEqual(ai.model_for("anthropic"), "claude-sonnet-5-5-20261001")         # remembered for next time
+        ai.list_models = lambda name: []
+        seen.clear()
+        settings.set_pref("models", {})
+        with self.assertRaises(SystemExit):                                               # nothing offered: give up loudly
+            ai.ask("hi", provider="anthropic")
+        self.assertEqual(ai.pick_model("openai"), None)

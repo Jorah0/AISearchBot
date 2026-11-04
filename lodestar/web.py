@@ -124,6 +124,10 @@ def _act(action: str, p: dict):
         case "research":
             out = extras.research(job, prov)
             return {"path": str(out), "text": out.read_text(encoding="utf-8"), "docs": _docs(job)}
+        case "backup":
+            return {"path": str(extras.backup())}
+        case "export_json":
+            return {"path": str(extras.export_data("json"))}
         case "providers_test":
             res: dict[str, str] = {}
             for n in ai.available():
@@ -350,6 +354,22 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/profile":
                 PROFILE.write_text(p["text"], encoding="utf-8")
                 self._json({"ok": True})
+            elif path == "/api/open_folder":  # desktop convenience: reveal a Lodestar folder in the file manager
+                import subprocess
+                import sys as _sys
+
+                from .config import HOME
+
+                target = {"data": HOME, "exports": HOME / "exports", "backups": HOME / "backups",
+                          "applications": HOME / "applications"}[p.get("which", "data")]
+                target.mkdir(parents=True, exist_ok=True)
+                if _sys.platform.startswith("win"):
+                    import os as _os
+
+                    _os.startfile(str(target))  # type: ignore[attr-defined]
+                else:
+                    subprocess.Popen(["open" if _sys.platform == "darwin" else "xdg-open", str(target)])
+                self._json({"ok": True, "path": str(target)})
             elif path == "/api/upload":  # {"name": "resume.docx", "data": "<base64>"} -> {"text": ...}
                 import base64
 
