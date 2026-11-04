@@ -478,20 +478,28 @@ class Development7(unittest.TestCase):
                 {"objectID": "1", "parent_id": "50", "author": "a", "created_at": "2026-11-02T10:00:00Z",
                  "comment_text": "<p>Acme | Senior Python Engineer | Remote (US)</p><p>We build widgets.</p>"},
                 {"objectID": "2", "parent_id": "1", "author": "b", "comment_text": "<p>Python reply, not a posting</p>"},
-                {"objectID": "3", "parent_id": "50", "author": "c", "comment_text": "<p>Globex | Java Dev | NYC</p>"}]},
+                {"objectID": "3", "parent_id": "50", "author": "c", "comment_text": "<p>Globex | Java Dev | NYC</p>"},
+                {"objectID": "4", "parent_id": "50", "author": "d", "created_at": "2026-11-02T11:00:00Z",
+                 "comment_text": "<p>Location: Lisbon</p><p>Initrode | Python Backend | Lisbon / Remote</p>"},
+                {"objectID": "5", "parent_id": "50", "author": "solo_founder", "comment_text": "<p>Hiring a python contractor for 3 months.</p>"}]},
             "jobicy": {"jobs": [{"jobTitle": "Python Dev", "companyName": "Initech", "url": "https://j/1", "jobGeo": "Anywhere",
                                  "jobExcerpt": "python", "pubDate": "2026-11-01 10:00:00", "jobDescription": "<b>x</b>"}]},
             "themuse": {"results": [{"name": "Python Engineer", "company": {"name": "Umbrella"}, "refs": {"landing_page": "https://m/1"},
                                      "locations": [{"name": "Austin, TX"}], "categories": [{"name": "Software Engineering"}],
-                                     "publication_date": "2026-11-01T00:00:00Z", "contents": "<p>py</p>"}]},
+                                     "publication_date": "2026-11-01T00:00:00Z", "contents": "<p>py</p>"},
+                                    {"name": "Backend Engineer", "company": {"name": "Hooli"}, "refs": {"landing_page": "https://m/2"},
+                                     "locations": [], "categories": [{"name": "Software Engineering"}], "publication_date": "",
+                                     "contents": "<p>You will write <b>Python</b> services.</p>"}]},
         }
         def fake(url, **k):
             return next(v for key, v in pages.items() if key in url)
         wm.fetch_json = fake
         hn = wm._hn("python")
-        self.assertEqual([(j["company"], j["title"], j["location"], j["source"]) for j in hn], [("Acme", "Senior Python Engineer", "Remote (US)", "hn")])
+        self.assertEqual([(j["company"], j["title"], j["location"]) for j in hn],
+                         [("Acme", "Senior Python Engineer", "Remote (US)"), ("Initrode", "Python Backend", "Lisbon / Remote"),
+                          ("solo_founder", "Hiring a python contractor for 3 months.", "")])
         self.assertEqual(wm._jobicy("python")[0]["company"], "Initech")
-        self.assertEqual(wm._muse("python engineer")[0]["url"], "https://m/1")
+        self.assertEqual([j["url"] for j in wm._muse("python engineer")], ["https://m/1", "https://m/2"])  # description counts
         self.assertEqual(wm._muse("marketing"), [])
 
     def test_add_job_dedupes_by_url(self):

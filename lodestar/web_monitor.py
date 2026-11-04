@@ -98,11 +98,14 @@ def _hn(q):
             text = strip_html(h.get("comment_text") or "")
             if not all(w in text.lower() for w in words):
                 continue
-            first = text.split("\n")[0][:200]
-            parts = [p.strip() for p in first.split("|")]
-            company = parts[0] if parts and parts[0] else h.get("author", "")
-            title = parts[1] if len(parts) > 1 else first
-            location = parts[2] if len(parts) > 2 else ""
+            lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+            header = next((ln for ln in lines[:4] if "|" in ln), lines[0] if lines else "")[:200]
+            parts = [p.strip() for p in header.split("|")]
+            if len(parts) >= 2:
+                company, title = parts[0] or h.get("author", ""), parts[1]
+                location = parts[2] if len(parts) > 2 else ""
+            else:  # no recognisable header: the poster is the company, the first line is the pitch
+                company, title, location = h.get("author", ""), header[:120], ""
             out.append(_listing(title, company, f"https://news.ycombinator.com/item?id={h['objectID']}", location, "",
                                 h.get("created_at", ""), text, "hn"))
         if len(c.get("hits", [])) < 200:
@@ -136,7 +139,8 @@ def _muse(q):
     for page in (1, 2):
         d = fetch_json(f"https://www.themuse.com/api/public/jobs?page={page}" + (f"&category={urllib.parse.quote(cat)}" if cat else ""))
         for r in d.get("results", []):
-            blob = f"{r.get('name', '')} {' '.join(c.get('name', '') for c in r.get('categories', []))}".lower()
+            desc = strip_html(r.get("contents") or "")
+            blob = f"{r.get('name', '')} {' '.join(c.get('name', '') for c in r.get('categories', []))} {desc[:4000]}".lower()
             if all(w in blob for w in words):
                 out.append(_listing(r.get("name"), (r.get("company") or {}).get("name"), (r.get("refs") or {}).get("landing_page"),
                                     ", ".join(loc.get("name", "") for loc in r.get("locations", [])[:2]), "",
