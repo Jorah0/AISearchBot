@@ -736,3 +736,12 @@ class Doctor(unittest.TestCase):
         self.assertEqual(rows["data folder"], "ok")
         self.assertIn("master profile", rows)
         self.assertTrue(build().parse_args(["doctor", "--live"]).live)
+
+
+
+class DoctorInUI(unittest.TestCase):
+    def test_doctor_action_returns_rows(self):
+        from lodestar import web
+        r = web._act("doctor", {})
+        self.assertTrue(any(row["what"] == "Python" and row["status"] == "ok" for row in r["rows"]))
+        self.assertTrue(all(set(row) == {"status", "what", "detail"} for row in r["rows"]))

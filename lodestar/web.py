@@ -124,6 +124,18 @@ def _act(action: str, p: dict):
         case "research":
             out = extras.research(job, prov)
             return {"path": str(out), "text": out.read_text(encoding="utf-8"), "docs": _docs(job)}
+        case "doctor":
+            from .doctor import checks
+
+            rows = [{"status": s, "what": w, "detail": d} for s, w, d in checks()]
+            if p.get("live"):
+                for n in ai.available():
+                    try:
+                        ai.ask("Reply with the single word OK.", provider=n)
+                        rows.append({"status": "ok", "what": f"live call {n}", "detail": ai.model_for(n)})
+                    except BaseException as e:
+                        rows.append({"status": "fail", "what": f"live call {n}", "detail": str(e)[:160]})
+            return {"rows": rows}
         case "backup":
             return {"path": str(extras.backup())}
         case "export_json":
@@ -361,8 +373,11 @@ class Handler(BaseHTTPRequestHandler):
                 from .config import HOME
 
                 target = {"data": HOME, "exports": HOME / "exports", "backups": HOME / "backups",
-                          "applications": HOME / "applications"}[p.get("which", "data")]
-                target.mkdir(parents=True, exist_ok=True)
+                          "applications": HOME / "applications", "log": HOME / "lodestar.log"}[p.get("which", "data")]
+                if target.suffix != ".log":
+                    target.mkdir(parents=True, exist_ok=True)
+                elif not target.exists():
+                    target.touch()
                 if _sys.platform.startswith("win"):
                     import os as _os
 

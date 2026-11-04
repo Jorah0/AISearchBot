@@ -210,3 +210,6 @@ Setup now has a Data panel: Backup now, Export JSON, and buttons that open the d
 | Command | What it does |
 |---|---|
 | `lodestar doctor [--live]` | PASS / WARN / FAIL lines for Python version, required and optional modules, WebView2 runtime, keyring backend, data folder, master profile, configured providers (with the model each will use), mail settings, leftover legacy folder; `--live` makes one real call per provider. Exit code 1 when something is broken. |
+
+Setup also has a Diagnostics panel (same checks as `lodestar doctor`, with an optional live AI call) and an
+"Open log" button next to the data folders.
