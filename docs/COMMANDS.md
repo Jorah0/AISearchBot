@@ -204,3 +204,9 @@ preference, and retries once. `lodestar providers --test` prints the model each 
 `<PROVIDER>_MODEL` env setting is never overridden.
 
 Setup now has a Data panel: Backup now, Export JSON, and buttons that open the data, documents and backups folders.
+
+## Diagnostics (pass 11)
+
+| Command | What it does |
+|---|---|
+| `lodestar doctor [--live]` | PASS / WARN / FAIL lines for Python version, required and optional modules, WebView2 runtime, keyring backend, data folder, master profile, configured providers (with the model each will use), mail settings, leftover legacy folder; `--live` makes one real call per provider. Exit code 1 when something is broken. |

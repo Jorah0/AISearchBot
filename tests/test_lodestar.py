@@ -724,3 +724,15 @@ class ModelHealing(unittest.TestCase):
         with self.assertRaises(SystemExit):                                               # nothing offered: give up loudly
             ai.ask("hi", provider="anthropic")
         self.assertEqual(ai.pick_model("openai"), None)
+
+
+
+class Doctor(unittest.TestCase):
+    def test_checks_cover_the_basics(self):
+        from lodestar import doctor
+        rows = {what: status for status, what, _ in doctor.checks()}
+        self.assertEqual(rows["Python"], "ok")
+        self.assertEqual(rows["AI providers"], "ok")          # ANTHROPIC_API_KEY is set for the suite
+        self.assertEqual(rows["data folder"], "ok")
+        self.assertIn("master profile", rows)
+        self.assertTrue(build().parse_args(["doctor", "--live"]).live)

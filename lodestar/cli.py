@@ -336,6 +336,12 @@ def cmd_app(a):
     serve(a.port, open_browser=not a.no_open)
 
 
+def cmd_doctor(a):
+    from .doctor import report
+
+    raise SystemExit(0 if report(a.live) < 2 else 1)
+
+
 def cmd_desktop(a):
     """The desktop app: server + monitor loop in this process, the UI in a native window. What the shortcut runs."""
     import threading
@@ -656,6 +662,10 @@ def build() -> argparse.ArgumentParser:
     loop_args(s)
     s.add_argument("--once", action="store_true")
     s.set_defaults(f=cmd_run)
+
+    s = sub.add_parser("doctor", help="check the install: Python, modules, WebView2, keyring, data folder, profile, providers, mail")
+    s.add_argument("--live", action="store_true", help="also make one real call per configured provider")
+    s.set_defaults(f=cmd_doctor)
 
     s = sub.add_parser("desktop", help="the desktop app: native window + monitor loop in one process (the shortcut)")
     loop_args(s)
