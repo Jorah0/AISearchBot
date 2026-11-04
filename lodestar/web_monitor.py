@@ -135,14 +135,16 @@ MUSE_CATEGORIES = {"engineer": "Software Engineering", "developer": "Software En
 def _muse(q):
     words = q.lower().split()
     cat = next((c for w in words for k, c in MUSE_CATEGORIES.items() if k in w), None)
-    out = []
+    out, seen_urls = [], set()
     for page in (1, 2):
         d = fetch_json(f"https://www.themuse.com/api/public/jobs?page={page}" + (f"&category={urllib.parse.quote(cat)}" if cat else ""))
         for r in d.get("results", []):
             desc = strip_html(r.get("contents") or "")
             blob = f"{r.get('name', '')} {' '.join(c.get('name', '') for c in r.get('categories', []))} {desc[:4000]}".lower()
-            if all(w in blob for w in words):
-                out.append(_listing(r.get("name"), (r.get("company") or {}).get("name"), (r.get("refs") or {}).get("landing_page"),
+            url = (r.get("refs") or {}).get("landing_page") or ""
+            if all(w in blob for w in words) and url not in seen_urls:  # the API can repeat a job across pages
+                seen_urls.add(url)
+                out.append(_listing(r.get("name"), (r.get("company") or {}).get("name"), url,
                                     ", ".join(loc.get("name", "") for loc in r.get("locations", [])[:2]), "",
                                     r.get("publication_date"), r.get("contents"), "themuse"))
     return out
