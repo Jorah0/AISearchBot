@@ -84,3 +84,18 @@ a job as its contact. Set one yourself with `lodestar jobs contact ID email --na
 - Company matching uses whole-word tokens of the classifier's company or the sender's domain, never substrings of
   the free-text From line.
 - `council_providers` limits which providers ever receive your profile. `backup` keeps the last 7 nightly zips.
+
+### After the ECC and security reviews (2026-11-04)
+
+- Two tokens: the page token (header only) drives the full API; the bookmarklets carry a separate capture token that
+  works only on `/api/capture` and `/api/autofill`. A job board that reads the bookmarklet URL learns nothing useful.
+- The server refuses any request whose `Host` header is not this loopback address (DNS-rebinding defence) and any
+  POST that is not `application/json`.
+- Actions triggered by inbound mail (status moves, replies) run automatically only when the message carries
+  `Authentication-Results: dkim=pass`; otherwise they wait in the inbox even if the tool is set to auto.
+- Approving an item claims it atomically: a double-click or a CLI/UI race cannot send twice. Rejecting a decided item
+  is a no-op, so the record of a sent mail is never overwritten.
+- `council_providers` is a hard boundary: synthesis and the default provider come from the list, and a list that
+  matches no configured provider stops with an error instead of widening to everyone.
+- Page fetches (watches, job descriptions, research) refuse loopback, link-local and private addresses and re-check
+  every redirect; `LODESTAR_ALLOW_PRIVATE_URLS=1` opts an intranet careers page back in.
