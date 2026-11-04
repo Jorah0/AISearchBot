@@ -20,6 +20,7 @@ TOKEN = secrets.token_urlsafe(24)          # per launch: the page embeds it, eve
 CAPTURE_TOKEN = secrets.token_urlsafe(18)  # low-power token the bookmarklets carry as ?t=; valid only on PUBLIC routes
 PUBLIC = {"/api/capture", "/api/autofill"}  # the only routes other origins may call
 TASK_LOCK = threading.Lock()
+DOC_NAMES = {"resume.md", "cover_letter.md", "interview_prep.md", "research.md", "offer.md"}  # editable per-job files
 TASKS: dict[str, dict] = {}
 COACH = ("You are a sharp, practical career coach and job-search strategist. Use the candidate's profile and tracker "
          "below to give specific, actionable advice. Be brief and direct.")
@@ -53,7 +54,14 @@ def _act(action: str, p: dict):
                 resume.export_docx(out)
             return {"path": str(out), "docs": _docs(job)}
         case "cover":
-            return {"path": str(resume.cover_letter(job, council, prov, p.get("tone") or "confident, warm, specific")), "docs": _docs(job)}
+            out = resume.cover_letter(job, council, prov, p.get("tone") or "confident, warm, specific", int(p.get("words") or 300))
+            if p.get("docx"):
+                resume.export_docx(out)
+            return {"path": str(out), "text": out.read_text(encoding="utf-8"), "docs": _docs(job)}
+        case "adjust":  # returns the revised text; nothing is saved until the user clicks Save
+            return {"text": resume.adjust_text(p["text"], p["instruction"], p.get("kind") or "document", prov)}
+        case "merge_profile":
+            return {"text": resume.merge_into_profile(p["text"], prov)}
         case "gap":
             return {"gap": resume.gap(job, prov), "docs": _docs(job)}
         case "prep":
@@ -327,6 +335,27 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/profile":
                 PROFILE.write_text(p["text"], encoding="utf-8")
                 self._json({"ok": True})
+            elif path == "/api/upload":  # {"name": "resume.docx", "data": "<base64>"} -> {"text": ...}
+                import base64
+
+                raw = base64.b64decode(p.get("data") or "")
+                if len(raw) > 15_000_000:
+                    raise ValueError("file too large (15 MB max)")
+                self._json({"text": extras.import_document(raw, p.get("name") or "resume.txt")})
+            elif path.startswith("/api/docs/") and len(parts) == 4:  # save an edited per-job document
+                from .resume import app_dir
+
+                job = db.get_job(int(parts[3]))
+                name = p.get("name") or ""
+                if name not in DOC_NAMES:
+                    raise ValueError(f"not an editable document: {name}")
+                (app_dir(job) / name).write_text(p.get("text") or "", encoding="utf-8")
+                if name == "resume.md":
+                    from .extras import resume_hash
+
+                    db.update_job(job["id"], resume_hash=resume_hash(p.get("text") or ""))
+                db.add_event(job["id"], "edited", name)
+                self._json({"ok": True, "docs": _docs(job)})
             elif path.startswith("/api/approvals/") and len(parts) == 5:
                 pid, op = int(parts[3]), parts[4]
                 self._json(approvals.approve(pid, p.get("edits")) if op == "approve" else (approvals.reject(pid, p.get("reason", "")) or {"ok": True}))

@@ -224,6 +224,35 @@ def cmd_resume(a):
     if op == "export":
         print(resume.export_docx(a.file))
         return
+    if op == "import":
+        from .extras import import_document
+
+        text = import_document(Path(a.file).read_bytes(), a.file)
+        if a.merge:
+            text = resume.merge_into_profile(text, a.provider)
+        if a.save:
+            PROFILE.write_text(text, encoding="utf-8")
+            print(f"profile {'merged and ' if a.merge else ''}saved: {PROFILE}")
+        else:
+            print(text)
+            print("\n(nothing saved; add --save, or --merge --save to fold it into your master profile)")
+        return
+    if op == "adjust":
+        if a.job:
+            from .resume import app_dir
+
+            target = app_dir(db.get_job(a.job)) / (a.doc or "resume.md")
+            kind = "cover letter" if "cover" in target.name else "resume"
+        else:
+            target, kind = PROFILE, "master profile"
+        new = resume.adjust_text(target.read_text(encoding="utf-8"), a.instruction, kind, a.provider)
+        if a.save:
+            target.write_text(new, encoding="utf-8")
+            print(f"saved {target}")
+        else:
+            print(new)
+            print(f"\n(nothing saved; add --save to write {target})")
+        return
     job = db.get_job(a.id)
     if op == "tailor":
         out = resume.tailor(job, a.council, a.provider)
@@ -231,8 +260,10 @@ def cmd_resume(a):
         if a.docx:
             print(f"wrote {resume.export_docx(out)}")
     elif op == "cover":
-        out = resume.cover_letter(job, a.council, a.provider, a.tone)
+        out = resume.cover_letter(job, a.council, a.provider, a.tone, a.words)
         print(f"wrote {out}")
+        if a.docx:
+            print(f"wrote {resume.export_docx(out)}")
     elif op == "gap":
         _p(resume.gap(job, a.provider))
 
@@ -649,6 +680,12 @@ def build() -> argparse.ArgumentParser:
             x.add_argument("--docx", action="store_true")
         if name == "cover":
             x.add_argument("--tone", default="confident, warm, specific")
+            x.add_argument("--words", type=int, default=300)
+            x.add_argument("--docx", action="store_true")
+    x = v.add_parser("import", help="bring in an existing resume (.docx/.pdf/.md/.txt); --merge folds it into the profile")
+    x.add_argument("file"); x.add_argument("--merge", action="store_true"); x.add_argument("--save", action="store_true")
+    x = v.add_parser("adjust", help="AI-revise the master profile or a job document with an instruction")
+    x.add_argument("instruction"); x.add_argument("--job", type=int); x.add_argument("--doc", help="resume.md (default) or cover_letter.md"); x.add_argument("--save", action="store_true")
     x = v.add_parser("review"); x.add_argument("file", nargs="?", help="defaults to master profile")
     x = v.add_parser("export"); x.add_argument("file", help="markdown -> .docx")
     v.add_parser("profile", help="print master profile path")

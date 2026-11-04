@@ -99,8 +99,14 @@
 
 <section id="profile">
   <h2>Profile</h2>
-  <div class="row"><span class="muted" id="pPath"></span><button class="b" onclick="saveProfile()">Save</button><button class="b ghost" onclick="run('review',{},r=>show('pOut',r.text),this)">AI review my resume</button></div>
+  <p class="sub">Your master resume. Everything Lodestar writes is derived from this file and never invents facts.</p>
+  <div class="row"><span class="muted" id="pPath"></span><button class="b" onclick="saveProfile()">Save</button><button class="b ghost" onclick="run('review',{},r=>show('pOut',r.text),this)">AI review</button></div>
+  <div class="row"><input id="pAdj" class="grow" placeholder="adjust with AI, e.g. tighten to one page / emphasise leadership / rewrite summary for data roles"><button class="b ghost" onclick="adjustProfile(this)">Adjust</button><span class="muted">result replaces the editor; nothing is saved until you click Save</span></div>
   <textarea id="pText"></textarea>
+  <div class="panel"><h3>Import an existing resume</h3>
+    <div class="row"><input type="file" id="pFile" accept=".docx,.pdf,.md,.txt"><button class="b ghost" onclick="importResume(this)">Import</button><span class="muted">.docx, .pdf, .md, .txt</span></div>
+    <textarea id="pImport" style="display:none; min-height:160px" placeholder="imported text appears here"></textarea>
+    <div class="row" id="pImportActions" style="display:none"><button class="b" onclick="run('merge_profile',{text:$('#pImport').value},r=>{$('#pText').value=r.text;toast('merged into the editor; review, then Save','ok')},this)">Merge into my profile (AI)</button><button class="b ghost" onclick="$('#pText').value=$('#pImport').value;toast('replaced the editor; review, then Save','ok')">Replace profile with this text</button></div></div>
   <pre id="pOut" style="display:none"></pre>
 </section>
 

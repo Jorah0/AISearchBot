@@ -553,3 +553,58 @@ class Desktop(unittest.TestCase):
                 self.assertIn(b"<title>Lodestar</title>", r.read())
         finally:
             srv.shutdown()
+
+
+
+class ResumeUploadAndLetters(unittest.TestCase):
+    def setUp(self):
+        from lodestar import settings
+        from lodestar.config import PROFILE
+        db._local.con = db.connect(":memory:")
+        settings.PATH.unlink(missing_ok=True)
+        PROFILE.write_text("# Master Resume\n## Contact\nJane Doe | Austin, TX | jane@example.com | +1 555 000 0000\n## Summary\nx", encoding="utf-8")
+
+    def test_import_docx_md_and_cover_letter_assembly(self):
+        import io
+        from docx import Document
+        from lodestar import extras, resume
+        d = Document(); d.add_paragraph("Jane Doe"); d.add_paragraph("Senior Engineer at Acme"); t = d.add_table(rows=1, cols=2)
+        t.rows[0].cells[0].text = "Python"; t.rows[0].cells[1].text = "SQL"
+        buf = io.BytesIO(); d.save(buf)
+        text = extras.import_document(buf.getvalue(), "cv.docx")
+        self.assertIn("Senior Engineer at Acme", text); self.assertIn("Python | SQL", text)
+        self.assertEqual(extras.import_document(b"# hi", "cv.md"), "# hi")
+        with self.assertRaises(SystemExit):
+            extras.import_document(b"x", "cv.xyz")
+        jid = db.add_job("Acme", "Engineer", jd="Build things"); db.update_job(jid, contact_name="Sam Lee")
+        resume.ai.ask = lambda prompt, system=None, provider=None, **k: "I build things well.\n\nSecond paragraph."
+        out = resume.cover_letter(db.get_job(jid))
+        letter = out.read_text(encoding="utf-8").splitlines()
+        self.assertTrue(letter[0].startswith("Jane Doe | Austin, TX | jane@example.com"))
+        self.assertIn("Sam Lee", letter[3]); self.assertEqual(letter[4], "Acme"); self.assertEqual(letter[6], "Dear Sam Lee,")
+        self.assertEqual(letter[-2:], ["Sincerely,", "Jane Doe"])
+        self.assertEqual(resume.adjust_text("old", "shorter", "resume"), "I build things well.\n\nSecond paragraph.")
+        self.assertEqual(build().parse_args(["resume", "import", "cv.pdf", "--merge", "--save"]).merge, True)
+        self.assertEqual(build().parse_args(["resume", "adjust", "shorter", "--job", "3", "--doc", "cover_letter.md"]).doc, "cover_letter.md")
+        self.assertTrue(build().parse_args(["resume", "cover", "3", "--docx", "--words", "250"]).docx)
+
+    def test_doc_save_route_is_whitelisted(self):
+        import http.client, json as _json
+        from lodestar import desktop, web
+        from lodestar.resume import app_dir
+        port = desktop.free_port(8830); srv = web.start_server(port)
+        try:
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            h = {"Content-Type": "application/json", "X-Lodestar-Token": web.TOKEN, "Host": f"127.0.0.1:{port}"}
+            # the server thread has its own connection (the temp-home file database), so create the job through the API
+            c.request("POST", "/api/jobs", _json.dumps({"company": "Acme", "title": "Engineer"}), h); jid = _json.loads(c.getresponse().read())["id"]
+            c.request("POST", f"/api/docs/{jid}", _json.dumps({"name": "resume.md", "text": "# edited"}), h); r = c.getresponse(); body = _json.loads(r.read())
+            self.assertEqual(r.status, 200, body); self.assertEqual(body["docs"]["resume.md"], "# edited")
+            c.request("GET", f"/api/jobs/{jid}", None, h); self.assertEqual(_json.loads(c.getresponse().read())["docs"]["resume.md"], "# edited")
+            c.request("POST", f"/api/jobs/{jid}/delete", "{}", h); c.getresponse().read()
+            c.request("POST", f"/api/docs/{jid}", _json.dumps({"name": "../evil.md", "text": "x"}), h); r = c.getresponse(); r.read()
+            self.assertEqual(r.status, 400)
+            c.request("POST", "/api/upload", _json.dumps({"name": "cv.md", "data": "IyBoaQ=="}), h); r = c.getresponse()
+            self.assertEqual(_json.loads(r.read())["text"], "# hi")
+        finally:
+            srv.shutdown()

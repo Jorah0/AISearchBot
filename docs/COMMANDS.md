@@ -163,3 +163,16 @@ tries Greenhouse, Lever, Workday, Ashby and SmartRecruiters field selectors befo
 | `lodestar desktop [--port N] [--no-loop] [--every 30] [--no-email]` | native window (Edge WebView2 via pywebview) with the server and monitor loop in the same process; the Desktop shortcut runs this. Falls back to the browser if the window cannot open. |
 
 Install the window dependency with `pip install -e ".[desktop]"` (the installer does this); `.[pdf]` adds PDF resume import.
+
+## Resume import, adjustment, and cover letters (pass 8)
+
+| Command | What it does |
+|---|---|
+| `lodestar resume import FILE [--merge] [--save]` | bring in an existing .docx / .pdf / .md / .txt resume; `--merge` folds it into the master profile structure with AI; `--save` writes the profile |
+| `lodestar resume adjust "instruction" [--job ID] [--doc resume.md\|cover_letter.md] [--save]` | AI-revise the master profile (default) or a job document, keeping every fact; prints unless `--save` |
+| `lodestar resume cover ID [--tone ...] [--words 300] [--docx]` | a complete letter: contact block, date, addressee (the job's contact or Hiring Manager), greeting, 3-4 paragraphs built from the tailored resume, gap check and research pack, sign-off; `--docx` exports |
+
+UI: the Profile tab imports a file (preview, then "Merge into my profile" or "Replace"), and has an Adjust box; every
+per-job document tab has "Edit document" and an Adjust box; nothing is saved until you click Save.
+Web API: `POST /api/upload {name, data(base64)}` -> `{text}`; `POST /api/docs/ID {name, text}` saves one of
+resume.md, cover_letter.md, interview_prep.md, research.md, offer.md; actions `adjust`, `merge_profile`.

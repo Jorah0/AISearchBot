@@ -307,3 +307,29 @@ def packet(job) -> Path:
                                          "", "JOB DESCRIPTION", job["jd"] or ""]))
     db.add_event(job["id"], "packet", str(target))
     return target
+
+
+# ----------------------------------------------------------------------------- resume import
+def import_document(data: bytes, filename: str) -> str:
+    """Bytes of a .docx / .pdf / .md / .txt resume -> plain text. PDF needs the `pdf` extra (pypdf)."""
+    import io
+
+    ext = Path(filename).suffix.lower()
+    if ext == ".docx":
+        from docx import Document
+
+        doc = Document(io.BytesIO(data))
+        lines = [p.text for p in doc.paragraphs]
+        for t in doc.tables:
+            for row in t.rows:
+                lines.append(" | ".join(c.text.strip() for c in row.cells if c.text.strip()))
+        return "\n".join(ln for ln in lines if ln is not None).strip()
+    if ext == ".pdf":
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            raise SystemExit("PDF import needs pypdf: pip install pypdf  (or pip install -e .[pdf])") from None
+        return "\n".join((pg.extract_text() or "") for pg in PdfReader(io.BytesIO(data)).pages).strip()
+    if ext in (".md", ".txt", ".markdown", ""):
+        return data.decode("utf-8", errors="replace").strip()
+    raise SystemExit(f"unsupported resume format '{ext}' (use .docx, .pdf, .md or .txt)")

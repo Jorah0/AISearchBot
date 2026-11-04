@@ -77,7 +77,7 @@ async function openJob(id) {
     <div class="group"><h4>Documents</h4><div class="row">
       <button class="b" onclick="jobRun('gap',{},this)">Gap / ATS score</button>
       <button class="b" onclick="jobRun('tailor',{docx:true},this)">Tailor resume (+docx)</button>
-      <button class="b" onclick="jobRun('cover',{},this)">Cover letter</button>
+      <button class="b" onclick="jobRun('cover',{docx:true},this)">Cover letter (+docx)</button>
       <button class="b ghost" onclick="jobRun('prep',{},this)">Interview prep</button>
       <button class="b ghost" onclick="jobRun('research',{},this)">Company research</button>
       <button class="b ghost" onclick="run('checklist',{id:${j.id}},r=>show('jOut',r.checklist.map(c=>(c.done?'[x] ':'[ ] ')+c.item+(c.done?'':'   -> '+c.next)).join('\\n')),this)">Checklist</button>
@@ -99,6 +99,8 @@ async function openJob(id) {
 
     <div class="tabs" id="docTabs">${['timeline', 'description', ...docs].map((n, i) => `<button class="${i === 0 ? 'on' : ''}" onclick="showDoc('${n}',this)">${n}</button>`).join('')}</div>
     <pre id="docView"></pre>
+    <div class="row"><button class="b ghost sm" onclick="editDoc()">Edit document</button><input id="dAdj" class="grow" placeholder="adjust this document with AI: shorter / warmer / lead with X"><button class="b ghost sm" onclick="adjustDoc(this)">Adjust</button></div>
+    <textarea id="docEdit" style="display:none; min-height:260px"></textarea><button class="b sm" id="docSave" style="display:none" onclick="saveDoc()">Save document</button>
     <div class="out"><h4 class="muted">AI output</h4><pre id="jOut">(run an action above)</pre></div>`;
   $('#drawer').classList.add('open');
   showDoc('timeline', $('#docTabs button'));
@@ -197,6 +199,39 @@ async function setVault() { const r = await api('/api/vault', { name: $('#vName'
 
 /* ---- profile and coach ---- */
 async function loadProfile() { $('#pText').value = (await api('/api/profile')).text; }
+function adjustProfile(btn) {
+  const ins = $('#pAdj').value.trim(); if (!ins) return toast('type an instruction first', 'err');
+  run('adjust', { text: $('#pText').value, instruction: ins, kind: 'master profile' }, r => { $('#pText').value = r.text; toast('adjusted; review, then Save', 'ok'); }, btn);
+}
+function importResume(btn) {
+  const f = $('#pFile').files[0]; if (!f) return toast('choose a file first', 'err');
+  const rd = new FileReader();
+  rd.onload = async () => {
+    btn.disabled = true;
+    const r = await api('/api/upload', { name: f.name, data: rd.result.split(',')[1] });
+    btn.disabled = false;
+    if (r.error) return toast('import failed: ' + r.error, 'err');
+    $('#pImport').value = r.text; $('#pImport').style.display = ''; $('#pImportActions').style.display = '';
+    toast('imported ' + f.name + ' (' + r.text.length + ' chars)', 'ok');
+  };
+  rd.readAsDataURL(f);
+}
+function editDoc() {
+  const n = $('#docTabs button.on')?.textContent; if (!n || n === 'timeline' || n === 'description') return toast('pick a document tab first', 'err');
+  $('#docEdit').value = cur.docs[n] || ''; $('#docEdit').style.display = ''; $('#docSave').style.display = ''; $('#docEdit').dataset.name = n;
+}
+async function saveDoc() {
+  const n = $('#docEdit').dataset.name; const r = await api('/api/docs/' + cur.job.id, { name: n, text: $('#docEdit').value });
+  if (r.error) return toast(r.error, 'err');
+  cur.docs = r.docs; $('#docEdit').style.display = 'none'; $('#docSave').style.display = 'none'; showDoc(n, $('#docTabs button.on')); toast('saved ' + n, 'ok');
+}
+function adjustDoc(btn) {
+  const n = $('#docTabs button.on')?.textContent, ins = $('#dAdj').value.trim();
+  if (!n || n === 'timeline' || n === 'description') return toast('pick a document tab first', 'err');
+  if (!ins) return toast('type an instruction first', 'err');
+  const kind = n.includes('cover') ? 'cover letter' : n.includes('resume') ? 'resume' : 'document';
+  run('adjust', { text: cur.docs[n], instruction: ins, kind }, r => { $('#docEdit').value = r.text; $('#docEdit').style.display = ''; $('#docSave').style.display = ''; $('#docEdit').dataset.name = n; toast('adjusted; review, then Save document', 'ok'); }, btn);
+}
 async function saveProfile() { await api('/api/profile', { text: $('#pText').value }); toast('profile saved', 'ok'); }
 function resetChat() {
   const mock = $('#cMode').value === 'mock';

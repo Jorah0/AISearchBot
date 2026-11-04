@@ -96,21 +96,87 @@ MASTER RESUME:
     return out
 
 
-def cover_letter(job, use_council: bool = False, provider: str | None = None, tone: str = "confident, warm, specific") -> Path:
-    prompt = f"""Write a cover letter (max 300 words, 3-4 short paragraphs, tone: {tone}) for {job['title']} at {job['company']}.
-Open with a specific hook about the company or role, connect 2-3 concrete achievements to their stated needs,
-close with a clear ask. No cliches ("I am writing to apply", "team player", "passionate"). Plain text, ready to paste.
+def contact_line() -> str:
+    """The profile's contact line (name | city | email | phone | links), normalised."""
+    for ln in profile_text().splitlines():
+        if "@" in ln and "|" in ln:
+            return " | ".join(p.strip() for p in ln.split("|") if p.strip())
+    return ""
+
+
+def candidate_name() -> str:
+    c = contact_line()
+    return c.split("|")[0].strip() if c else ""
+
+
+def cover_letter(job, use_council: bool = False, provider: str | None = None, tone: str = "confident, warm, specific",
+                 words: int = 300) -> Path:
+    """A complete, send-ready letter: contact block, date, addressee, greeting, 3-4 paragraphs, sign-off.
+    Uses the tailored resume, the gap check and the research pack when they exist."""
+    from datetime import datetime
+
+    d = app_dir(job)
+    research = (d / "research.md").read_text(encoding="utf-8")[:2500] if (d / "research.md").is_file() else ""
+    gapj = json.loads((d / "gap.json").read_text(encoding="utf-8")) if (d / "gap.json").is_file() else {}
+    addressee = job["contact_name"] or "Hiring Manager"
+    prompt = f"""Write the BODY of a cover letter (no header, no greeting line, no sign-off; those are added by the program)
+for {job['title']} at {job['company']}, addressed to {addressee}. {words} words maximum, 3-4 paragraphs, tone: {tone}.
+Paragraph 1: a specific hook about this company or role (use the research notes if given), and the one-line reason the
+candidate fits. Paragraphs 2-3: two or three concrete achievements that map to the posting's stated needs, with numbers
+from the resume only. Final paragraph: what the candidate wants next and a clear, low-friction ask.
+Never invent facts. No cliches ("I am writing to apply", "team player", "passionate", "fast-paced"). Plain text.
 
 JOB DESCRIPTION:
 {_jd(job)}
 
-CANDIDATE:
+GAP CHECK (address the weak spots gracefully, do not list them): {json.dumps({k: gapj.get(k) for k in ('missing_keywords', 'weak_areas')})}
+
+RESEARCH NOTES:
+{research or '(none)'}
+
+CANDIDATE (tailored resume if available, else master profile):
 {_current_resume(job)}"""
-    text = ai.council(prompt, SYSTEM)["synthesis"] if use_council else ai.ask(prompt, SYSTEM, provider)
-    out = app_dir(job) / "cover_letter.md"
-    out.write_text(text, encoding="utf-8")
+    body = (ai.council(prompt, SYSTEM)["synthesis"] if use_council else ai.ask(prompt, SYSTEM, provider)).strip()
+    letter = "\n".join([contact_line(), datetime.now().strftime("%B %d, %Y"), "", addressee, job["company"], "",
+                        f"Dear {addressee},", "", body, "", "Sincerely,", candidate_name()])
+    out = d / "cover_letter.md"
+    out.write_text(letter, encoding="utf-8")
     db.add_event(job["id"], "cover_letter", str(out))
     return out
+
+
+def adjust_text(text: str, instruction: str, kind: str = "document", provider: str | None = None) -> str:
+    """Rewrite a resume / profile / letter per an instruction, keeping every fact. Nothing is saved here."""
+    return ai.ask(
+        f"""Revise this {kind} according to the instruction. Keep every factual claim (employers, dates, numbers, skills);
+you may cut, reorder, reword, and change emphasis, length and tone. Return the complete revised {kind} only, same format.
+
+INSTRUCTION: {instruction}
+
+{kind.upper()}:
+{text}""",
+        SYSTEM,
+        provider,
+    )
+
+
+def merge_into_profile(uploaded: str, provider: str | None = None) -> str:
+    """Fold an uploaded resume into the master profile structure without losing anything from either."""
+    current = PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else PROFILE_TEMPLATE
+    return ai.ask(
+        f"""Merge the UPLOADED RESUME into the MASTER PROFILE below and return the complete merged profile in Markdown using
+exactly the master profile's section structure (Contact, Summary, Skills, Experience, Projects, Education,
+Certifications, Preferences). Keep every fact from both; where both describe the same job, keep the richer bullets.
+Keep the template's placeholder lines only where no real content exists. Never invent facts.
+
+MASTER PROFILE:
+{current}
+
+UPLOADED RESUME:
+{uploaded[:12000]}""",
+        SYSTEM,
+        provider,
+    )
 
 
 SALARY_RE = re.compile(r"[$€£]\s?\d{2,3}(?:,\d{3})?\s?[kK]?(?:\s?(?:-|–|to)\s?[$€£]?\s?\d{2,3}(?:,\d{3})?\s?[kK]?)?")
