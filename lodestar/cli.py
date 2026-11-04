@@ -3,7 +3,6 @@ import argparse
 import getpass
 import json
 import sys
-import time
 from pathlib import Path
 
 from . import ai, db, vault

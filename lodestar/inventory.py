@@ -15,8 +15,9 @@ def markdown(parser: argparse.ArgumentParser) -> str:
         child = sub.choices[action.dest]
         lines.append(f"| `lodestar {action.dest}` | {action.help} |")
         nested = next((x for x in child._actions if isinstance(x, argparse._SubParsersAction)), None)
-        if nested:
-            lines += [f"| `lodestar {action.dest} {ch.dest}` | {ch.help or ''} |" for ch in nested._choices_actions]
+        if nested:  # iterate the real choices: argparse only lists the ones given help= in _choices_actions
+            helps = {ch.dest: ch.help or "" for ch in nested._choices_actions}
+            lines += [f"| `lodestar {action.dest} {name}` | {helps.get(name, '')} |" for name in nested.choices]
     lines += ["", "## Automated tools (switchable: enabled / auto)", "", "| Tool | Description | enabled | auto |", "|---|---|---|---|"]
     lines += [f"| `{t['tool']}` | {t['description']} | {t['enabled']} | {t['auto']} |" for t in settings.table()]
     lines += ["", "## Preferences", "", "| Key | Current |", "|---|---|"]

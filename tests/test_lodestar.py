@@ -497,7 +497,7 @@ class Development7(unittest.TestCase):
         hn = wm._hn("python")
         self.assertEqual([(j["company"], j["title"], j["location"]) for j in hn],
                          [("Acme", "Senior Python Engineer", "Remote (US)"), ("Initrode", "Python Backend", "Lisbon / Remote"),
-                          ("solo_founder", "Hiring a python contractor for 3 months.", "")])
+                          ("HN: solo_founder", "Hiring a python contractor for 3 months.", "")])
         self.assertEqual(wm._jobicy("python")[0]["company"], "Initech")
         self.assertEqual([j["url"] for j in wm._muse("python engineer")], ["https://m/1", "https://m/2"])  # description counts
         self.assertEqual(wm._muse("marketing"), [])
@@ -591,7 +591,6 @@ class ResumeUploadAndLetters(unittest.TestCase):
     def test_doc_save_route_is_whitelisted(self):
         import http.client, json as _json
         from lodestar import desktop, web
-        from lodestar.resume import app_dir
         port = desktop.free_port(8830); srv = web.start_server(port)
         try:
             c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
