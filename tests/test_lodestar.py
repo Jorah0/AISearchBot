@@ -58,7 +58,8 @@ class Email(unittest.TestCase):
         self.assertFalse(email_monitor.looks_relevant("Your weekly digest", "news@foo.com", "deals deals"))
         jid = db.add_job("Globex", "Data Engineer")
         db.set_status(jid, "applied")
-        info = {"category": "interview", "company": "Globex", "summary": "invite", "action": "reply", "subject": "Interview", "from": "x@globex.com"}
+        info = {"category": "interview", "company": "Globex", "summary": "invite", "action": "reply", "subject": "Interview",
+                "from": "x@globex.com", "dkim_pass": True}  # authenticated mail may move a job under the auto default
         email_monitor._apply(info, dry=False)
         self.assertEqual(db.get_job(jid)["status"], "interview")
         # a later "application received" must not downgrade
@@ -308,7 +309,7 @@ class Hardening(unittest.TestCase):
         r = approvals.propose("email_reply", "note", {"job_id": jid, "text": "hi"}, "hi", jid)
         a, b = approvals.approve(r["id"]), approvals.approve(r["id"])
         self.assertEqual((a["status"], b["status"]), ("done", "done"))
-        self.assertEqual(sum(1 for e in db.events(jid) if e["kind"] == "note"), 1)
+        self.assertEqual(sum(1 for e in db.events(jid) if e["detail"] == "hi"), 1)  # the executor ran exactly once
         approvals.reject(r["id"])
         self.assertEqual(db.get_pending(r["id"])["status"], "done")
 
