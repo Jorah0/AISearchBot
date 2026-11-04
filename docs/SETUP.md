@@ -2,8 +2,9 @@
 
 ## 0. One-click (Windows)
 
-Double-click `start.bat` in the project folder. It creates `.venv`, installs lodestar, initializes `~/.lodestar`,
-starts the monitor loop minimized, and opens the web UI. Flags via PowerShell:
+Double-click `start.bat` (quick run) or `install.bat` (shortcuts too). Both create `.venv`, install Lodestar with the
+desktop extras, initialize `~/.lodestar`, and open the desktop window with the monitor loop inside it.
+`start.ps1 -Browser` gives the old behaviour (minimized loop + browser tab). Flags via PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File start.ps1 -NoLoop        # UI only

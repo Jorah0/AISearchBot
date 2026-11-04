@@ -155,3 +155,11 @@ Jobicy, The Muse. Adding a job with a URL that is already tracked returns the ex
 The gap check records pay figures stated in the posting (`salary_in_posting`) and weighs them against your floor.
 The monitor loop reminds you of interviews within 48 hours (from the .ics files it wrote). The autofill bookmarklet
 tries Greenhouse, Lever, Workday, Ashby and SmartRecruiters field selectors before falling back to label matching.
+
+## Desktop window
+
+| Command | What it does |
+|---|---|
+| `lodestar desktop [--port N] [--no-loop] [--every 30] [--no-email]` | native window (Edge WebView2 via pywebview) with the server and monitor loop in the same process; the Desktop shortcut runs this. Falls back to the browser if the window cannot open. |
+
+Install the window dependency with `pip install -e ".[desktop]"` (the installer does this); `.[pdf]` adds PDF resume import.

@@ -9,6 +9,11 @@ description = "Lodestar: AI job-search workbot. Resume tailoring, cover letters,
 requires-python = ">=3.11"
 dependencies = ["keyring>=24", "python-docx>=1.1"]
 
+[project.optional-dependencies]
+desktop = ["pywebview>=5"]
+pdf = ["pypdf>=4"]
+all = ["pywebview>=5", "pypdf>=4"]
+
 [project.scripts]
 lodestar = "lodestar.cli:main"
 jobbot = "lodestar.cli:main"  # legacy alias

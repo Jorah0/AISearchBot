@@ -367,6 +367,25 @@ def cmd_app(a):
     serve(a.port, open_browser=not a.no_open)
 
 
+def cmd_desktop(a):
+    """The desktop app: server + monitor loop in this process, the UI in a native window. What the shortcut runs."""
+    import threading
+
+    from . import desktop
+    from .web import start_server
+
+    port = a.port or desktop.free_port()
+    srv = start_server(port)
+    if not a.no_loop:
+        a.once = False
+        threading.Thread(target=cmd_run, args=(a,), daemon=True, name="lodestar-loop").start()
+    print(f"Lodestar desktop on http://127.0.0.1:{port}  (close the window to stop)")
+    try:
+        desktop.open_window(port)
+    finally:
+        srv.shutdown()
+
+
 def cmd_outreach(a):
     from . import extras
 
@@ -666,6 +685,12 @@ def build() -> argparse.ArgumentParser:
     loop_args(s)
     s.add_argument("--once", action="store_true")
     s.set_defaults(f=cmd_run)
+
+    s = sub.add_parser("desktop", help="the desktop app: native window + monitor loop in one process (the shortcut)")
+    loop_args(s)
+    s.add_argument("--port", type=int, default=None, help="default: first free port from 8765")
+    s.add_argument("--no-loop", action="store_true", help="window only")
+    s.set_defaults(f=cmd_desktop)
 
     s = sub.add_parser("app", help="the workbot: monitor loop + web UI in one process")
     loop_args(s)

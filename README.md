@@ -9,9 +9,10 @@ interviews, mirrors everything into Obsidian, and can pool several AI providers 
 
 ## Install (the app)
 
-Double-click **`install.bat`**. It creates `.venv`, installs lodestar, creates your data files in `~/.lodestar`, copies
-`.env.example` to `.env`, and puts two shortcuts on the Desktop and Start Menu: **lodestar** (monitor loop + web UI)
-and **lodestar monitor** (loop only). Options: `-Schedule` registers a background task that keeps monitoring even when
+Double-click **`install.bat`**. It creates `.venv`, installs Lodestar with the desktop extras, creates your data files
+in `~/.lodestar`, copies `.env.example` to `.env`, and puts two shortcuts on the Desktop and Start Menu: **Lodestar**
+(a native desktop window with the monitor loop running inside it) and **Lodestar monitor** (loop only). The window is
+Edge WebView2 via pywebview; if it cannot open, the same UI opens in your browser. Options: `-Schedule` registers a background task that keeps monitoring even when
 the app is closed; `-Exe` builds a standalone `dist\lodestar.exe`. `uninstall.ps1 [-Purge]` reverses it.
 
 Quick run without installing shortcuts: `start.bat` (or `./start.sh`). Developer install: `pip install -e .`.

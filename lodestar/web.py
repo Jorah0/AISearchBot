@@ -359,6 +359,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": str(e)}, 400)
 
 
+def start_server(port: int = 8765) -> ThreadingHTTPServer:
+    """Serve on a daemon thread and return the server (the desktop window and tests use this)."""
+    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True, name="lodestar-http").start()
+    return srv
+
+
 def serve(port: int = 8765, open_browser: bool = True) -> None:
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     url = f"http://127.0.0.1:{port}"

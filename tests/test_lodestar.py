@@ -532,3 +532,24 @@ class Development7(unittest.TestCase):
         up = extras.upcoming_interviews(2)
         self.assertEqual([u["job_id"] for u in up], [j1])
         self.assertTrue(build().parse_args(["jobs", "funnel"]).op == "funnel")
+
+
+
+class Desktop(unittest.TestCase):
+    def test_free_port_and_parser(self):
+        from lodestar import desktop
+        p = desktop.free_port(8765)
+        self.assertTrue(8765 <= p < 8815)
+        a = build().parse_args(["desktop", "--no-loop", "--port", "8799"])
+        self.assertTrue(a.no_loop and a.port == 8799 and a.email)
+
+    def test_start_server_runs_on_a_thread(self):
+        import urllib.request
+        from lodestar import desktop, web
+        port = desktop.free_port(8800)
+        srv = web.start_server(port)
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as r:
+                self.assertIn(b"<title>Lodestar</title>", r.read())
+        finally:
+            srv.shutdown()

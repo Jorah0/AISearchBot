@@ -25,7 +25,7 @@ foreach ($launcher in @("jobbot.exe", "lodestar.exe")) {  # not $exe: that name 
   if (Test-Path $path) { try { [IO.File]::Open($path, "Open", "ReadWrite", "None").Close() } catch { throw "$launcher is running (a Lodestar/jobbot window or monitor loop is open). Close it and run the installer again." } }
 }
 & $py -m pip install --quiet --disable-pip-version-check --upgrade pip
-& $py -m pip install --quiet --disable-pip-version-check -e .
+& $py -m pip install --quiet --disable-pip-version-check -e ".[all]"
 
 # 2. data files
 Write-Host "[2/6] initializing ~/.lodestar"
@@ -43,7 +43,7 @@ if (-not $NoShortcuts) {
   $ws = New-Object -ComObject WScript.Shell
   $icon = Join-Path $root "assets\lodestar.ico"
   $targets = @(
-    @{ Name = "Lodestar";         Args = "app";                Desc = "Lodestar: job-search workbot (monitor loop + web UI)" },
+    @{ Name = "Lodestar";         Args = "desktop";            Desc = "Lodestar: job-search workbot (desktop window + monitor loop)" },
     @{ Name = "Lodestar monitor"; Args = "run --every $Every"; Desc = "Lodestar monitor loop only" }
   )
   foreach ($dir in @([Environment]::GetFolderPath("Desktop"), (Join-Path ([Environment]::GetFolderPath("Programs")) "Lodestar"))) {
@@ -69,13 +69,13 @@ if ($Schedule) {
 if ($Exe) {
   Write-Host "[6/6] building dist\lodestar.exe with PyInstaller (a few minutes)"
   & $py -m pip install --quiet --disable-pip-version-check pyinstaller
-  & $py -m PyInstaller --noconfirm --onefile --name lodestar --add-data "lodestar/static;lodestar/static" --collect-all keyring --collect-all docx (Join-Path $root "lodestar\__main__.py") | Out-Null
-  Write-Host "   dist\lodestar.exe ready (run: dist\lodestar.exe app)"
+  & $py -m PyInstaller --noconfirm --onefile --name lodestar --add-data "lodestar/static;lodestar/static" --add-data "assets;assets" --collect-all keyring --collect-all docx --collect-all webview --icon (Join-Path $root "assets\lodestar.ico") (Join-Path $root "lodestar\__main__.py") | Out-Null
+  Write-Host "   dist\lodestar.exe ready (run: dist\lodestar.exe desktop)"
 } else { Write-Host "[6/6] standalone exe skipped (re-run with -Exe)" }
 
 Write-Host ""
 Write-Host "Installed." -ForegroundColor Green
 Write-Host "Next:  1) edit your master resume:  $dataDir\profile.md"
 Write-Host "       2) add an AI key:            $jb vault set ANTHROPIC_API_KEY   (or in the app's Setup tab)"
-Write-Host "       3) launch the 'lodestar' shortcut, or:  $jb app"
+Write-Host "       3) launch the 'Lodestar' shortcut, or:  $jb desktop"
 Write-Host "Uninstall: powershell -ExecutionPolicy Bypass -File uninstall.ps1 [-Purge]"
