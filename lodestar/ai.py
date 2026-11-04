@@ -44,7 +44,12 @@ def council_providers() -> list[str]:
 
     allow = [x.strip() for x in str(settings.pref("council_providers") or "").split(",") if x.strip()]
     avail = available()
-    return [n for n in allow if n in avail] or avail
+    if not allow:
+        return avail
+    names = [n for n in allow if n in avail]
+    if not names:  # an allowlist that matches nothing must never widen to everyone
+        raise SystemExit(f"council_providers={','.join(allow)} but none of them is configured; run `lodestar providers`")
+    return names
 
 
 def default_provider() -> str:
@@ -53,6 +58,8 @@ def default_provider() -> str:
     p = setting("LODESTAR_PROVIDER") or settings.pref("provider")
     if p:
         return p
+    if settings.pref("council_providers"):  # with an allowlist, the default must come from it too
+        return council_providers()[0]
     avail = available()
     if not avail:
         raise SystemExit("No AI provider configured. Run: lodestar vault set ANTHROPIC_API_KEY  (or OPENAI_API_KEY, GEMINI_API_KEY, ...)")
@@ -161,7 +168,7 @@ def council(prompt: str, system: str | None = None, providers: list[str] | None 
     """Pool ideas: ask every configured provider, then have the default provider merge the best parts."""
     names = providers or council_providers()
     if len(names) < 2:
-        answer = ask(prompt, system)
+        answer = ask(prompt, system, provider=names[0] if names else None)
         return {"answers": {names[0] if names else "default": answer}, "synthesis": answer}
     answers = {}
     for n in names:
@@ -175,5 +182,6 @@ def council(prompt: str, system: str | None = None, providers: list[str] | None 
         "Produce one final answer that combines the strongest elements, drops weak or contradictory points, "
         "and is better than any single answer. Output only the final answer.",
         system,
+        provider=names[0],  # synthesis sees every answer, so it must stay inside the allowlist
     )
     return {"answers": answers, "synthesis": synthesis}

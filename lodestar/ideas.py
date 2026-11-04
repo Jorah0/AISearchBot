@@ -92,7 +92,7 @@ Merge duplicates, drop weak or generic ones, keep the best {n}. For each return 
 Order by (impact * fit) / effort, best first. Fit = how well it matches THIS candidate's data below.
 
 {ctx[:5000]}""",
-        provider=provider,
+        provider=provider or providers[0],
     )
     out = []
     for i in (final if isinstance(final, list) else [final])[:n]:

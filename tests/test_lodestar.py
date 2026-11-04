@@ -299,6 +299,47 @@ class Hardening(unittest.TestCase):
         self.assertIsNone(db.find_job_by_company("metadata"))      # substring must not match
         self.assertEqual(db.find_job_by_company("meta")["id"], jid)
         self.assertEqual(db.find_job_by_company("Meta Platforms recruiting")["id"], jid)
+        db.add_job("First National Bank", "Analyst")
+        self.assertIsNone(db.find_job_by_company("National Grid"))  # one shared word is not a match
+
+    def test_double_approve_sends_once_and_reject_keeps_done(self):
+        from lodestar import approvals
+        jid = db.add_job("Acme", "Eng")
+        r = approvals.propose("email_reply", "note", {"job_id": jid, "text": "hi"}, "hi", jid)
+        a, b = approvals.approve(r["id"]), approvals.approve(r["id"])
+        self.assertEqual((a["status"], b["status"]), ("done", "done"))
+        self.assertEqual(sum(1 for e in db.events(jid) if e["kind"] == "note"), 1)
+        approvals.reject(r["id"])
+        self.assertEqual(db.get_pending(r["id"])["status"], "done")
+
+    def test_allowlist_never_widens(self):
+        from lodestar import ai, settings
+        settings.set_pref("council_providers", "ollama")
+        with self.assertRaises(SystemExit):
+            ai.council_providers()
+        with self.assertRaises(SystemExit):
+            ai.default_provider()
+
+    def test_unauthenticated_mail_never_auto_executes(self):
+        from lodestar import email_monitor, settings
+        settings.set_tool("email_classify", auto=True)
+        jid = db.add_job("Globex", "Data Engineer")
+        db.set_status(jid, "applied")
+        email_monitor.ai.ask_json = lambda *a, **k: {"subject": "Re", "body": "ok", "chosen_time": None}
+        base = {"category": "interview", "company": "Globex", "summary": "s", "action": "", "subject": "Interview",
+                "from": "j@globex.com", "sender_email": "j@globex.com", "sender_name": "J", "message_id": "<m>", "body": "b"}
+        email_monitor._apply(base | {"dkim_pass": False}, dry=False)
+        self.assertEqual(db.get_job(jid)["status"], "applied")           # auto tool, but mail unauthenticated -> pending
+        self.assertTrue(any(r["kind"] == "set_status" for r in db.list_pending()))
+        email_monitor._apply(base | {"dkim_pass": True, "subject": "Interview 2"}, dry=False)
+        self.assertEqual(db.get_job(jid)["status"], "interview")         # authenticated -> auto applies
+
+    def test_fetch_refuses_private_hosts_and_bad_urls(self):
+        from lodestar import util
+        for bad in ("http://127.0.0.1:8765/api/state", "http://localhost/x", "http://169.254.169.254/latest", "file:///etc/passwd", "javascript:alert(1)"):
+            with self.assertRaises(ValueError, msg=bad):
+                util._check_url(bad)
+        self.assertEqual(util.read_source(__file__, allow_files=False), __file__)   # paths are literal text over the API
 
     def test_email_failed_classification_is_retried(self):
         from lodestar import email_monitor

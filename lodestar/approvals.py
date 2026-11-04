@@ -8,12 +8,14 @@ from . import db, settings
 from .util import send_email
 
 
-def propose(tool: str, kind: str, payload: dict, summary: str, job_id: int | None = None) -> dict:
-    """Returns {"status": "disabled" | "pending" | "done" | "error", ...}."""
+def propose(tool: str, kind: str, payload: dict, summary: str, job_id: int | None = None,
+            force_pending: bool = False) -> dict:
+    """Returns {"status": "disabled" | "pending" | "done" | "error", ...}.
+    force_pending: ignore the tool's auto flag (used for actions triggered by unauthenticated mail)."""
     if not settings.enabled(tool):
         return {"status": "disabled", "tool": tool}
     pid = db.add_pending(tool, kind, job_id, summary, json.dumps(payload))
-    if settings.auto(tool):
+    if settings.auto(tool) and not force_pending:
         return approve(pid)
     if job_id:
         db.add_event(job_id, "proposed", f"inbox #{pid}: {summary[:90]}")
@@ -22,7 +24,8 @@ def propose(tool: str, kind: str, payload: dict, summary: str, job_id: int | Non
 
 def approve(pid: int, edits: dict | None = None) -> dict:
     row = db.get_pending(pid)
-    if row["status"] != "pending":
+    if row["status"] != "pending" or not db.claim_pending(pid):
+        row = db.get_pending(pid)
         return {"id": pid, "status": row["status"], "result": row["result"]}
     payload = json.loads(row["payload"]) | (edits or {})
     try:
@@ -38,6 +41,8 @@ def approve(pid: int, edits: dict | None = None) -> dict:
 
 def reject(pid: int, reason: str = "") -> None:
     row = db.get_pending(pid)
+    if row["status"] != "pending":  # never overwrite the record of something that already ran
+        return
     db.decide_pending(pid, "rejected", reason)
     if row["job_id"]:
         db.add_event(row["job_id"], "rejected_proposal", f"inbox #{pid} {reason}".strip())
@@ -46,15 +51,19 @@ def reject(pid: int, reason: str = "") -> None:
 # ----------------------------------------------------------------------------- executors
 def _send(p: dict) -> str:
     send_email(p["to"], p["subject"], p["body"], in_reply_to=p.get("in_reply_to"))
-    if p.get("chosen_time") and p.get("job_id") and settings.enabled("calendar"):
-        from .extras import ics, parse_when
+    note = ""
+    try:  # the mail is out; bookkeeping failures must not turn a sent item into an "error"
+        if p.get("chosen_time") and p.get("job_id") and settings.enabled("calendar"):
+            from .extras import ics, parse_when
 
-        ics(db.get_job(p["job_id"]), parse_when(p["chosen_time"]))
-    if p.get("job_id") and p.get("new_status"):
-        job = db.get_job(p["job_id"])
-        if db.STATUSES.index(p["new_status"]) > db.STATUSES.index(job["status"]):
-            db.set_status(p["job_id"], p["new_status"], "(after reply)")
-    return f"sent to {p['to']}: {p['subject']}"
+            ics(db.get_job(p["job_id"]), parse_when(p["chosen_time"]))
+        if p.get("job_id") and p.get("new_status"):
+            job = db.get_job(p["job_id"])
+            if db.STATUSES.index(p["new_status"]) > db.STATUSES.index(job["status"]):
+                db.set_status(p["job_id"], p["new_status"], "(after reply)")
+    except BaseException as e:
+        note = f" (sent; follow-up step failed: {e})"
+    return f"sent to {p['to']}: {p['subject']}{note}"
 
 
 def _status(p: dict) -> str:

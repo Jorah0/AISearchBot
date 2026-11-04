@@ -731,7 +731,10 @@ def main(argv=None):
     from . import log
 
     a = build().parse_args(argv)
-    log.get("cli").info("%s", " ".join(argv or sys.argv[1:]))
+    args = list(argv or sys.argv[1:])
+    if "vault" in args[:2] and "set" in args[:3]:  # never log a secret given on the command line
+        args = args[:args.index("set") + 2] + ["***"] * max(0, len(args) - args.index("set") - 2)
+    log.get("cli").info("%s", " ".join(args))
     try:
         a.f(a)
     except SystemExit as e:  # user-facing errors are SystemExit(message); log them too

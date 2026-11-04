@@ -16,8 +16,10 @@ from . import ai, apply, approvals, db, extras, log, settings, vault
 from .config import ALERTS, PROFILE
 
 STATIC = Path(__file__).parent / "static"
-TOKEN = secrets.token_urlsafe(24)          # per launch: the page embeds it, every API call must present it
-PUBLIC = {"/api/capture", "/api/autofill"}  # the only routes other origins (bookmarklets) may call; they carry ?t=TOKEN
+TOKEN = secrets.token_urlsafe(24)          # per launch: the page embeds it, every API call must present it in a header
+CAPTURE_TOKEN = secrets.token_urlsafe(18)  # low-power token the bookmarklets carry as ?t=; valid only on PUBLIC routes
+PUBLIC = {"/api/capture", "/api/autofill"}  # the only routes other origins may call
+TASK_LOCK = threading.Lock()
 TASKS: dict[str, dict] = {}
 COACH = ("You are a sharp, practical career coach and job-search strategist. Use the candidate's profile and tracker "
          "below to give specific, actionable advice. Be brief and direct.")
@@ -125,9 +127,10 @@ def _act(action: str, p: dict):
 
 def start_task(action: str, params: dict) -> str:
     tid = uuid.uuid4().hex[:8]
-    while len(TASKS) > 200:  # ponytail: keep the last 200 results; job actions are also logged as events
-        TASKS.pop(next(iter(TASKS)))
-    TASKS[tid] = {"status": "running", "action": action}
+    with TASK_LOCK:
+        while len(TASKS) > 200:  # ponytail: keep the last 200 results; job actions are also logged as events
+            TASKS.pop(next(iter(TASKS)))
+        TASKS[tid] = {"status": "running", "action": action}
 
     def run():
         try:
@@ -138,6 +141,12 @@ def start_task(action: str, params: dict) -> str:
 
     threading.Thread(target=run, daemon=True).start()
     return tid
+
+
+def http_only(url) -> str | None:
+    """Only http(s) URLs are stored; anything else (javascript:, file:, data:) is dropped."""
+    u = str(url or "").strip()
+    return u if u.lower().startswith(("http://", "https://")) and len(u) < 2048 else None
 
 
 def split_title(page_title: str) -> tuple[str, str]:
@@ -176,8 +185,8 @@ def state() -> dict:
 
 # ----------------------------------------------------------------------------- http
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self, fmt, *a):  # terminal stays quiet; the rotating log keeps the access line
-        log.get("web").info(fmt, *a)
+    def log_message(self, fmt, *a):  # terminal stays quiet; the rotating log keeps the access line, minus any token
+        log.get("web").info(fmt, *[str(x).split("?t=")[0] for x in a])
 
     def _public(self) -> bool:
         return urlparse(self.path).path in PUBLIC
@@ -188,16 +197,27 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 
+    def _host_ok(self) -> bool:
+        """DNS rebinding defence: the Host header must name this loopback server, nothing else."""
+        port = self.server.server_address[1]
+        host = (self.headers.get("Host") or "").lower()
+        return host in {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+
     def _authed(self) -> bool:
-        """Same-origin page sends X-Lodestar-Token; bookmarklets send ?t=. Static files and / need nothing."""
+        """Page requests carry the header token; bookmarklets carry the capture token as ?t= on PUBLIC routes only."""
         u = urlparse(self.path)
         if not u.path.startswith("/api/"):
             return True
+        if secrets.compare_digest(self.headers.get("X-Lodestar-Token") or "", TOKEN):
+            return True
         from urllib.parse import parse_qs
 
-        return self.headers.get("X-Lodestar-Token") == TOKEN or parse_qs(u.query).get("t", [None])[0] == TOKEN
+        t = parse_qs(u.query).get("t", [""])[0]
+        return u.path in PUBLIC and bool(t) and secrets.compare_digest(t, CAPTURE_TOKEN)
 
     def do_OPTIONS(self):
+        if not self._host_ok():
+            return self._json({"error": "bad host"}, 421)
         self.send_response(204 if self._public() else 404)
         self._cors()
         self.end_headers()
@@ -213,15 +233,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length") or 0)
+        if n and "application/json" not in (self.headers.get("Content-Type") or ""):
+            raise ValueError("POST bodies must be application/json")  # no-preflight text/plain posts carry no weight
         return json.loads(self.rfile.read(n) or b"{}") if n else {}
 
     def do_GET(self):
         path = urlparse(self.path).path
+        if not self._host_ok():
+            return self._json({"error": "bad host"}, 421)
         if not self._authed():
             return self._json({"error": "missing or wrong token; reload the Lodestar page"}, 403)
         try:
             if path == "/":
-                html = (STATIC / "index.html").read_bytes().replace(b"__TOKEN__", TOKEN.encode())
+                html = (STATIC / "index.html").read_bytes().replace(b"__TOKEN__", TOKEN.encode()).replace(b"__CAPTURE__", CAPTURE_TOKEN.encode())
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
@@ -230,8 +254,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(html)
             elif path == "/logo.svg" or path.startswith("/static/"):
                 name = "logo.svg" if path == "/logo.svg" else path[8:]
-                f = STATIC / name
-                if "/" in name or not f.is_file():
+                f = (STATIC / name)
+                if not f.is_file() or f.resolve().parent != STATIC.resolve():  # resolved path must sit directly in static/
                     return self._json({"error": "not found"}, 404)
                 body = f.read_bytes()
                 self.send_response(200)
@@ -258,6 +282,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path, p = urlparse(self.path).path, {}
+        if not self._host_ok():
+            return self._json({"error": "bad host"}, 421)
         if not self._authed():
             return self._json({"error": "missing or wrong token; reload the Lodestar page"}, 403)
         try:
@@ -266,12 +292,12 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/jobs":
                 from .util import read_source
 
-                jd = read_source(p["jd"]) if p.get("jd") else None
-                url = p.get("url") or (p["jd"] if p.get("jd", "").startswith("http") else None)
+                jd = read_source(p["jd"], allow_files=False) if p.get("jd") else None
+                url = http_only(p.get("url") or (p["jd"] if str(p.get("jd", "")).startswith("http") else None))
                 self._json({"id": db.add_job(p["company"], p["title"], url, jd, p.get("notes"))})
             elif path == "/api/capture":  # bookmarklet: {title, url, desc} from the open tab
                 title, company = split_title(p.get("title", ""))
-                jid = db.add_job(company or "Unknown company", title or "Unknown role", p.get("url"),
+                jid = db.add_job(company or "Unknown company", title or "Unknown role", http_only(p.get("url")),
                                  (p.get("desc") or "")[:12000], f"captured from {p.get('url', '')}")
                 self._json({"id": jid, "company": company, "title": title})
             elif path.startswith("/api/jobs/") and len(parts) == 5:
@@ -285,7 +311,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif op == "jd":
                     from .util import read_source
 
-                    db.update_job(jid, jd=read_source(p["source"]))
+                    db.update_job(jid, jd=read_source(p["source"], allow_files=False))
                 elif op == "delete":
                     db.delete_job(jid)
                 self._json({"ok": True})

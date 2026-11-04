@@ -12,9 +12,42 @@ from .config import ALERTS, setting
 UA = "Mozilla/5.0 (compatible; lodestar/0.1; +https://github.com/)"
 
 
+def _check_url(url: str) -> None:
+    """SSRF guard: http(s) only, and the host must not resolve to loopback, link-local, or private ranges.
+    Set LODESTAR_ALLOW_PRIVATE_URLS=1 to watch an intranet careers page on purpose."""
+    import ipaddress
+    import os
+    import socket
+    from urllib.parse import urlparse
+
+    u = urlparse(url)
+    if u.scheme not in ("http", "https") or not u.hostname:
+        raise ValueError(f"only http(s) URLs can be fetched: {url[:80]}")
+    if os.environ.get("LODESTAR_ALLOW_PRIVATE_URLS") == "1":
+        return
+    try:
+        infos = socket.getaddrinfo(u.hostname, u.port or (443 if u.scheme == "https" else 80), proto=socket.IPPROTO_TCP)
+    except socket.gaierror as e:
+        raise ValueError(f"cannot resolve {u.hostname}: {e}") from None
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+            raise ValueError(f"refusing to fetch a non-public address for {u.hostname} ({ip})")
+
+
+class _SafeRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _check_url(newurl)  # every hop is re-validated, so a public host cannot bounce us to 127.0.0.1
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_opener = urllib.request.build_opener(_SafeRedirect)
+
+
 def fetch(url: str, timeout: int = 25, headers: dict | None = None) -> str:
+    _check_url(url)
     req = urllib.request.Request(url, headers={"User-Agent": UA, **(headers or {})})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with _opener.open(req, timeout=timeout) as r:
         return r.read().decode(r.headers.get_content_charset() or "utf-8", errors="replace")
 
 
@@ -55,14 +88,14 @@ def strip_html(html: str) -> str:
     return re.sub(r"\n\s*\n+", "\n\n", text).strip()
 
 
-def read_source(src: str) -> str:
-    """URL -> page text; existing file -> contents; otherwise the literal string."""
+def read_source(src: str, allow_files: bool = True) -> str:
+    """URL -> page text; existing file -> contents (CLI only); otherwise the literal string."""
     from pathlib import Path
 
     if src.startswith(("http://", "https://")):
         return strip_html(fetch(src))
     p = Path(src)
-    if p.is_file():
+    if allow_files and len(src) < 400 and p.is_file():
         return p.read_text(encoding="utf-8", errors="replace")
     return src
 

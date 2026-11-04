@@ -3,7 +3,8 @@ const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAl
 let S = null, cur = null, chatHist = [];
 const TOPICS = ['strategy', 'resume', 'gap', 'outreach', 'stories', 'pivot', 'questions', 'negotiation', 'tools', 'custom'];
 
-const TOKEN = window.LODESTAR_TOKEN || '';
+const TOKEN = window.LODESTAR_TOKEN || '', CAPTURE = window.LODESTAR_CAPTURE || '';
+const safeUrl = u => /^https?:\/\//i.test(u || '') ? u : '';
 const api = (p, body) => fetch(p, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', 'X-Lodestar-Token': TOKEN }, body: body ? JSON.stringify(body) : undefined }).then(r => r.json());
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const opt = (list, sel) => list.map(s => `<option ${s === sel ? 'selected' : ''}>${s}</option>`).join('');
@@ -66,7 +67,7 @@ async function openJob(id) {
   $$('.card').forEach(c => c.classList.toggle('sel', c.getAttribute('onclick') === `openJob(${id})`));
   $('#drawer').innerHTML = `
     <div class="head"><b>${esc(j.company)}</b><span class="muted">${esc(j.title)} · #${j.id}</span>
-      ${j.url ? `<a href="${esc(j.url)}" target="_blank">posting ↗</a>` : ''}
+      ${safeUrl(j.url) ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">posting ↗</a>` : ''}
       <select onchange="api('/api/jobs/${j.id}/status',{status:this.value}).then(()=>{load();openJob(${j.id})})">${opt(S.statuses, j.status)}</select>
       <button class="b ghost sm close" onclick="closeDrawer()" aria-label="Close job details">✕</button></div>
     <div class="muted">contact: ${esc(j.contact_name || '')} ${esc(j.contact_email || '(none; replies and follow-ups need one)')}</div>
@@ -141,7 +142,7 @@ function doSearch(btn) {
   $('#sRes').innerHTML = '<div class="muted">searching…</div>';
   run('search', { query: $('#sQ').value, keywords: $('#sK').value, rank: $('#sRank').checked }, r => {
     $('#sRes').innerHTML = `<div class="list">` + ((r.results || []).map(j => `<div>${j.score != null ? `<span class="score">${j.score}</span>` : ''}<b>${esc(j.title)}</b> @ ${esc(j.company)} <span class="muted">${esc(j.location)} ${esc(j.salary)} &lt;${j.source}&gt;</span>
-      <a href="${esc(j.url)}" target="_blank">open ↗</a> <button class="b ghost sm" onclick='saveListing(${JSON.stringify(j).replace(/'/g, "&#39;")})'>track</button>${j.why ? `<div class="muted">${esc(j.why)}</div>` : ''}</div>`).join('') || '<div class="empty">nothing found</div>') + '</div>';
+      ${safeUrl(j.url) ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">open ↗</a>` : ''} <button class="b ghost sm" onclick='saveListing(${JSON.stringify(j).replace(/'/g, "&#39;")})'>track</button>${j.why ? `<div class="muted">${esc(j.why)}</div>` : ''}</div>`).join('') || '<div class="empty">nothing found</div>') + '</div>';
   }, btn);
 }
 async function saveListing(j) { const r = await api('/api/jobs', { company: j.company, title: j.title, url: j.url, jd: j.desc, notes: 'found via ' + j.source }); toast('tracked as #' + r.id, 'ok'); load(); }
@@ -187,8 +188,8 @@ function renderSetup() {
   $('#vList').textContent = S.vault.map(v => v.name + (v.user ? ' (' + v.user + ')' : '')).join(' · ') || 'empty';
   $('#pPath').textContent = S.profile_path;
   const o = location.origin;
-  $('#bm').href = `javascript:(()=>{const t=document.title,u=location.href,d=(document.querySelector('main')||document.body).innerText.slice(0,12000);fetch('${o}/api/capture?t=${TOKEN}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t,url:u,desc:d})}).then(r=>r.json()).then(r=>alert(r.error?('Lodestar: '+r.error):('Lodestar tracked #'+r.id+': '+r.company+' - '+r.title))).catch(e=>alert('Lodestar UI not running? '+e))})();`;
-  $('#af').href = `javascript:(()=>{fetch('${o}/api/autofill?t=${TOKEN}').then(r=>r.json()).then(d=>{const map={first_name:/first.?name|given|fname|legalname.*first/i,last_name:/last.?name|surname|family|lname|legalname.*last/i,name:/^(full.?)?name$|your.?name|^name$|cards\\[.*\\]\\[name\\]/i,email:/e-?mail/i,phone:/phone|mobile|tel/i,linkedin:/linkedin/i,github:/github/i,website:/website|portfolio|^url|personal.?site/i,location:/city|location|address|where.*located/i};let n=0;document.querySelectorAll('input,textarea').forEach(el=>{if(el.type==='hidden'||el.type==='password'||el.value)return;const lab=(el.labels&&el.labels[0]?el.labels[0].innerText:'')+' '+(el.name||'')+' '+(el.id||'')+' '+(el.placeholder||'')+' '+(el.getAttribute('aria-label')||'')+' '+(el.getAttribute('data-automation-id')||'')+' '+(el.getAttribute('autocomplete')||'')+' '+(el.getAttribute('data-qa')||'');for(const k in map){if(map[k].test(lab)&&d[k]){el.value=d[k];el.dispatchEvent(new Event('input',{bubbles:true}));n++;break}}});alert('Lodestar filled '+n+' field(s). Review everything, then submit yourself.')}).catch(e=>alert('Lodestar UI not running? '+e))})();`;
+  $('#bm').href = `javascript:(()=>{const t=document.title,u=location.href,d=(document.querySelector('main')||document.body).innerText.slice(0,12000);fetch('${o}/api/capture?t=${CAPTURE}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t,url:u,desc:d})}).then(r=>r.json()).then(r=>alert(r.error?('Lodestar: '+r.error):('Lodestar tracked #'+r.id+': '+r.company+' - '+r.title))).catch(e=>alert('Lodestar UI not running? '+e))})();`;
+  $('#af').href = `javascript:(()=>{fetch('${o}/api/autofill?t=${CAPTURE}').then(r=>r.json()).then(d=>{const map={first_name:/first.?name|given|fname|legalname.*first/i,last_name:/last.?name|surname|family|lname|legalname.*last/i,name:/^(full.?)?name$|your.?name|^name$|cards\\[.*\\]\\[name\\]/i,email:/e-?mail/i,phone:/phone|mobile|tel/i,linkedin:/linkedin/i,github:/github/i,website:/website|portfolio|^url|personal.?site/i,location:/city|location|address|where.*located/i};let n=0;document.querySelectorAll('input,textarea').forEach(el=>{if(el.type==='hidden'||el.type==='password'||el.value)return;const lab=(el.labels&&el.labels[0]?el.labels[0].innerText:'')+' '+(el.name||'')+' '+(el.id||'')+' '+(el.placeholder||'')+' '+(el.getAttribute('aria-label')||'')+' '+(el.getAttribute('data-automation-id')||'')+' '+(el.getAttribute('autocomplete')||'')+' '+(el.getAttribute('data-qa')||'');for(const k in map){if(map[k].test(lab)&&d[k]){el.value=d[k];el.dispatchEvent(new Event('input',{bubbles:true}));n++;break}}});alert('Lodestar filled '+n+' field(s). Review everything, then submit yourself.')}).catch(e=>alert('Lodestar UI not running? '+e))})();`;
 }
 async function setVault() { const r = await api('/api/vault', { name: $('#vName').value, user: $('#vUser').value, value: $('#vVal').value }); toast(r.error || 'stored', r.error ? 'err' : 'ok'); $('#vVal').value = ''; load(); }
 

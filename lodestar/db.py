@@ -89,6 +89,7 @@ def set_status(job_id: int, status: str, detail: str = "") -> None:
 
 
 def delete_job(job_id: int) -> None:
+    con().execute("DELETE FROM pending WHERE job_id=? AND status='pending'", (job_id,))  # nothing may act for a gone job
     con().execute("DELETE FROM events WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM jobs WHERE id=?", (job_id,))
     con().commit()
@@ -121,7 +122,13 @@ def find_job_by_company(name: str):
         if row["status"] in ("rejected", "withdrawn"):
             continue
         c = row["company"].lower()
-        if c == name or (_tokens(c) & toks):  # whole-token match only: 'meta' must not match 'metadata@'
+        ct = _tokens(c)
+        if not ct:
+            continue
+        # every distinctive word of the shorter name must appear in the longer one: 'Meta' in 'Meta Platforms', but
+        # 'National Grid' is not 'First National Bank'
+        short, long_ = (ct, toks) if len(ct) <= len(toks) else (toks, ct)
+        if c == name or (short and short <= long_):
             return row
     return None
 
@@ -210,6 +217,13 @@ def list_pending(status: str | None = "pending", limit: int = 100):
     if status:
         q, args = q + " WHERE status=?", (status,)
     return con().execute(q + " ORDER BY id DESC LIMIT ?", (*args, limit)).fetchall()
+
+
+def claim_pending(pid: int) -> bool:
+    """Atomically move pending -> running. False when another thread (or a double-click) got there first."""
+    cur = con().execute("UPDATE pending SET status='running' WHERE id=? AND status='pending'", (pid,))
+    con().commit()
+    return cur.rowcount == 1
 
 
 def decide_pending(pid: int, status: str, result: str = "") -> None:

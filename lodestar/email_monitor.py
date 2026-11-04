@@ -86,30 +86,43 @@ def check(days: int = 3, limit: int = 100, dry: bool = False, provider: str | No
     _, data = box.uid("search", None, f"(SINCE {since})")  # type: ignore[arg-type]
     uids = data[0].split()[-limit:]
     found = []
-    for uid in reversed(uids):
-        key = f"email:{user}:{uid.decode()}"
-        if db.seen(key):
-            continue
-        _, raw = box.uid("fetch", uid, "(RFC822)")
-        msg = email.message_from_bytes(raw[0][1])
-        subject, sender, body = _hdr(msg, "Subject"), _hdr(msg, "From"), _body(msg)
-        ok = True
-        if looks_relevant(subject, sender, body):
-            try:
-                info = classify(subject, sender, body, provider)
-            except Exception as e:  # provider outage: leave the message unseen so the next run retries it
+    try:
+        for uid in reversed(uids):
+            key = f"email:{user}:{uid.decode()}"
+            if db.seen(key):
+                continue
+            ok = True
+            try:  # one bad message (odd MIME, malformed model reply, vanished job) must not stop the scan
+                _, raw = box.uid("fetch", uid, "(RFC822)")
+                msg = email.message_from_bytes(raw[0][1])
+                subject, sender, body = _hdr(msg, "Subject"), _hdr(msg, "From"), _body(msg)
+                if looks_relevant(subject, sender, body):
+                    try:
+                        info = classify(subject, sender, body, provider)
+                        if not isinstance(info, dict) or not isinstance(info.get("category"), str):
+                            raise ValueError(f"unexpected classifier reply: {str(info)[:120]}")
+                    except Exception as e:  # provider outage: leave the message unseen so the next run retries it
+                        ok = False
+                        info = {"category": "other", "summary": f"classify failed: {e}", "company": "", "title": ""}
+                        print(f"  classify failed for '{subject[:50]}': {e} (will retry)")
+                    name, addr = parseaddr(sender)
+                    auth = _hdr(msg, "Authentication-Results").lower()
+                    info |= {"subject": subject, "from": sender, "date": _hdr(msg, "Date"),
+                             "message_id": _hdr(msg, "Message-ID"), "sender_email": addr, "sender_name": name,
+                             "body": body[:3500], "dkim_pass": "dkim=pass" in auth}
+                    if info.get("category") != "other":
+                        _apply(info, dry)
+                        found.append(info)
+            except Exception as e:
                 ok = False
-                info = {"category": "other", "summary": f"classify failed: {e}", "company": "", "title": ""}
-                print(f"  classify failed for '{subject[:50]}': {e} (will retry)")
-            name, addr = parseaddr(sender)
-            info |= {"subject": subject, "from": sender, "date": _hdr(msg, "Date"), "message_id": _hdr(msg, "Message-ID"),
-                     "sender_email": addr, "sender_name": name, "body": body[:3500]}
-            if info.get("category") != "other":
-                _apply(info, dry)
-                found.append(info)
-        if not dry and ok:
-            db.mark_seen(key)
-    box.logout()
+                print(f"  message {uid.decode()} skipped: {e} (will retry)")
+            if not dry and ok:
+                db.mark_seen(key)
+    finally:
+        try:
+            box.logout()
+        except Exception:
+            pass
     return found
 
 
@@ -134,7 +147,8 @@ def _apply(info: dict, dry: bool) -> None:
         if new and db.STATUSES.index(new) > db.STATUSES.index(job["status"]):
             approvals.propose("email_classify", "set_status",
                               {"job_id": job["id"], "status": new, "note": f"(email: {info['subject'][:60]})"},
-                              f"move #{job['id']} {job['company']} to {new} ({info['category']} email)", job["id"])
+                              f"move #{job['id']} {job['company']} to {new} ({info['category']} email)", job["id"],
+                              force_pending=not info.get("dkim_pass", False))  # unauthenticated mail never moves a job unreviewed
         else:
             db.add_event(job["id"], "email", f"{info['category']}: {info['subject'][:80]}")
         if info["category"] == "interview" and info.get("deadline") and settings.enabled("calendar"):
@@ -209,7 +223,8 @@ CANDIDATE (for name and signature only):
         payload["new_status"] = "offer"
     who = info.get("sender_name") or info["sender_email"]
     r = approvals.propose(tool, "send_email", payload,
-                          f"reply ({cat}) to {who} at {job['company']}" + (f", accepting {ct}" if ct else ""), job["id"])
+                          f"reply ({cat}) to {who} at {job['company']}" + (f", accepting {ct}" if ct else ""), job["id"],
+                          force_pending=not info.get("dkim_pass", False))  # a reply to unauthenticated mail always waits for you
     notify(f"REPLY {r.get('status', '?').upper()}: {payload['subject']}" + (f"  (inbox #{r['id']})" if r.get("status") == "pending" else ""))
 
 
