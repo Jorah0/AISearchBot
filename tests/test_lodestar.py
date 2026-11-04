@@ -608,3 +608,73 @@ class ResumeUploadAndLetters(unittest.TestCase):
             self.assertEqual(_json.loads(r.read())["text"], "# hi")
         finally:
             srv.shutdown()
+
+
+
+class Improvements8(unittest.TestCase):
+    def setUp(self):
+        from lodestar import comp, settings
+        from lodestar.config import PROFILE
+        db._local.con = db.connect(":memory:")
+        settings.PATH.unlink(missing_ok=True)
+        comp.PATH.unlink(missing_ok=True)
+        PROFILE.write_text("Jane Doe | Austin, TX | jane@example.com", encoding="utf-8")
+
+    def test_comp_lookup(self):
+        from lodestar import comp
+        comp.set_range("software engineer", "austin", 130000, 170000)
+        comp.set_range("software engineer", "*", 120000, 160000)
+        comp.set_range("senior software engineer", "*", 160000, 210000)
+        self.assertEqual(comp.lookup("Senior Software Engineer", "")["low"], 160000)      # longest keyword wins
+        self.assertEqual(comp.lookup("Software Engineer II", "office in Austin, TX")["city"], "austin")
+        self.assertEqual(comp.lookup("Software Engineer", "remote")["city"], "*")
+        self.assertIsNone(comp.lookup("Nurse", ""))
+
+    def test_followup_cadence_and_conflicts(self):
+        from datetime import datetime, timedelta
+        from lodestar import extras, loop
+        jid = db.add_job("Acme", "Eng")
+        self.assertEqual(loop.followup_step(db.get_job(jid)), "nudge")
+        for _ in range(3):
+            db.add_event(jid, "followup_nudge", "")
+        self.assertEqual(loop.followup_step(db.get_job(jid)), "close")
+        when = datetime.now().replace(second=0, microsecond=0) + timedelta(days=3)
+        extras.ics(db.get_job(jid), when)
+        self.assertEqual([c["job_id"] for c in extras.conflicts(when + timedelta(minutes=30))], [jid])
+        self.assertEqual(extras.conflicts(when + timedelta(hours=4)), [])
+
+    def test_council_judge_and_inventory(self):
+        from lodestar import ai, settings
+        from lodestar.cli import build
+        from lodestar.inventory import markdown
+        os.environ["OPENAI_API_KEY"] = "k"
+        try:
+            calls = []
+            ai._post = lambda url, headers, body, retries=2: (calls.append(url), {"content": [{"text": "A"}]} if "anthropic" in url else {"choices": [{"message": {"content": "O"}}]})[1]
+            settings.set_pref("council_judge", "true")
+            r = ai.council("q", providers=["anthropic", "openai"])
+            self.assertEqual(r["synthesis"], "O")          # the judge (second provider) produced the final answer
+            self.assertEqual(len(calls), 4)                 # 2 answers + synthesis + judge
+        finally:
+            del os.environ["OPENAI_API_KEY"]
+        md = markdown(build())
+        self.assertIn("| `lodestar comp set` |", md); self.assertIn("## Automated tools", md)
+
+    def test_route_security_harness(self):
+        import http.client
+        from lodestar import desktop, web
+        port = desktop.free_port(8840); srv = web.start_server(port)
+        try:
+            def req(method, path, headers=None, body=None):
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                c.request(method, path, body, {"Host": f"127.0.0.1:{port}", **(headers or {})})
+                r = c.getresponse(); r.read(); return r.status
+            self.assertEqual(req("GET", "/api/state"), 403)
+            self.assertEqual(req("GET", "/api/state", {"X-Lodestar-Token": web.TOKEN}), 200)
+            self.assertEqual(req("GET", "/api/state", {"X-Lodestar-Token": web.TOKEN, "Host": "evil.com"}), 421)
+            self.assertEqual(req("GET", f"/api/state?t={web.CAPTURE_TOKEN}"), 403)
+            self.assertEqual(req("GET", f"/api/autofill?t={web.CAPTURE_TOKEN}"), 200)
+            self.assertEqual(req("GET", "/static/../pyproject.toml"), 404)
+            self.assertEqual(req("POST", "/api/tools", {"X-Lodestar-Token": web.TOKEN, "Content-Type": "text/plain"}, "{}"), 400)
+        finally:
+            srv.shutdown()

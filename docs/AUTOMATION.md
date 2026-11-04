@@ -99,3 +99,11 @@ a job as its contact. Set one yourself with `lodestar jobs contact ID email --na
   matches no configured provider stops with an error instead of widening to everyone.
 - Page fetches (watches, job descriptions, research) refuse loopback, link-local and private addresses and re-check
   every redirect; `LODESTAR_ALLOW_PRIVATE_URLS=1` opts an intranet careers page back in.
+
+### Cadence, conflicts, judge (pass 8)
+
+- `followup`: nudge at every `followup_days`; after three nudges the loop proposes `withdrawn` ("ghosted") instead of
+  nudging forever. A proposal, so it waits in the inbox unless the tool is auto.
+- Interview replies see your booked interviews (from the .ics files) and are told never to accept or propose a time
+  within 90 minutes of one; approving a reply that still clashes sends the mail but skips the calendar file and says so.
+- `council_judge`: when on and two or more providers are allowed, the second provider audits the synthesis.

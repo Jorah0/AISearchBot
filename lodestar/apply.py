@@ -19,7 +19,9 @@ def _sig() -> str:
 # ----------------------------------------------------------------------------- answer bank
 def answer(job, question: str, provider: str | None = None) -> dict:
     """Draft a form answer from the profile + prior answers; propose saving it (tool: answers)."""
-    prior = db.find_answers(question)
+    prior = db.find_answers(question, limit=6)
+    seen_q = {a["question"] for a in prior}
+    prior = prior + [a for a in db.list_answers() if a["question"] not in seen_q][:10]  # the model picks what fits
     bank = "\n".join(f"Q: {a['question']}\nA: {a['answer']}" for a in prior) or "(none)"
     text = ai.ask(
         f"""Answer this job-application form question for the candidate: first person, concise, honest, ready to paste.
@@ -125,6 +127,7 @@ OFFER: {job['title']} at {job['company']}
 base: {salary or '?'} | bonus: {bonus or '?'} | equity: {equity or '?'} | benefits: {benefits or '?'} | deadline: {deadline or '?'}
 notes: {notes}
 OTHER LIVE OFFERS: {', '.join(others) or 'none'}
+RECORDED MARKET RANGE: {__import__('lodestar.comp', fromlist=['lookup']).lookup(job['title'], job['jd'] or '') or 'none recorded'}
 
 CANDIDATE PROFILE (see Preferences):
 {profile_text()[:6000]}""",

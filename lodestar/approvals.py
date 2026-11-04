@@ -54,15 +54,20 @@ def _send(p: dict) -> str:
     note = ""
     try:  # the mail is out; bookkeeping failures must not turn a sent item into an "error"
         if p.get("chosen_time") and p.get("job_id") and settings.enabled("calendar"):
-            from .extras import ics, parse_when
+            from .extras import conflicts, ics, parse_when
 
-            ics(db.get_job(p["job_id"]), parse_when(p["chosen_time"]))
+            when = parse_when(p["chosen_time"])
+            clash = conflicts(when)
+            if clash:
+                note = f" (WARNING: {when:%Y-%m-%d %H:%M} clashes with {clash[0]['company']} at {clash[0]['when']:%H:%M}; no .ics written)"
+            else:
+                ics(db.get_job(p["job_id"]), when)
         if p.get("job_id") and p.get("new_status"):
             job = db.get_job(p["job_id"])
             if db.STATUSES.index(p["new_status"]) > db.STATUSES.index(job["status"]):
                 db.set_status(p["job_id"], p["new_status"], "(after reply)")
     except BaseException as e:
-        note = f" (sent; follow-up step failed: {e})"
+        note += f" (sent; follow-up step failed: {e})"
     return f"sent to {p['to']}: {p['subject']}{note}"
 
 

@@ -34,6 +34,7 @@ PREFS = {
     "weekly_target": 10,
     "provider": "",
     "council_providers": "",
+    "council_judge": False,
     "signature": "",
 }
 

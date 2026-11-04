@@ -214,7 +214,10 @@ def _maybe_reply(info: dict, job) -> None:
     if not settings.enabled(tool):
         return
     from .apply import _sig, next_slots, parse_times
+    from .extras import upcoming_interviews
     from .resume import profile_text
+
+    busy = ", ".join(f"{it['when']:%Y-%m-%d %H:%M} ({it['company']})" for it in upcoming_interviews(45)) or "none"
 
     guide = REPLY_GUIDE.get(cat) or (
         f"Candidate availability: {settings.pref('availability')}. If the email proposes specific times, accept the first "
@@ -225,6 +228,7 @@ def _maybe_reply(info: dict, job) -> None:
         draft = ai.ask_json(
             f"""Draft a reply from the candidate to this email. {guide}
 Tone: professional, warm, concise (under 130 words). Subject: 'Re: <original subject>'.{_sig()}
+Already-booked interviews (never accept or propose a time within 90 minutes of these): {busy}
 Return JSON only: {{"subject": "...", "body": "...", "chosen_time": "YYYY-MM-DD HH:MM or null"}}
 Times mentioned in the email (pre-extracted): {parse_times(info.get('body', ''))}
 

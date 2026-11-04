@@ -105,7 +105,7 @@ def _hn(q):
                 company, title = parts[0] or h.get("author", ""), parts[1]
                 location = parts[2] if len(parts) > 2 else ""
             else:  # no recognisable header: the poster is the company, the first line is the pitch
-                company, title, location = h.get("author", ""), header[:120], ""
+                company, title, location = f"HN: {h.get('author', '')}", header[:120], ""
             out.append(_listing(title, company, f"https://news.ycombinator.com/item?id={h['objectID']}", location, "",
                                 h.get("created_at", ""), text, "hn"))
         if len(c.get("hits", [])) < 200:

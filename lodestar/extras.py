@@ -174,6 +174,14 @@ def research(job, provider: str | None = None):
                 sources.append((u, strip_html(fetch(u))[:5000]))
             except Exception:
                 pass
+    try:  # Wikipedia summary: keyless, stable, and a good antidote to the search page being blocked
+        import json as _json
+
+        wiki = _json.loads(fetch(f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(job['company'])}"))
+        if wiki.get("extract"):
+            sources.append((wiki.get("content_urls", {}).get("desktop", {}).get("page", "wikipedia"), wiki["extract"][:3000]))
+    except Exception:
+        pass
     q = quote(f"{job['company']} company news engineering culture")
     try:  # ponytail: html.duckduckgo.com needs no key; if it blocks us the pack is built from the other sources
         sources.append((f"https://html.duckduckgo.com/html/?q={q}", strip_html(fetch(f"https://html.duckduckgo.com/html/?q={q}"))[:6000]))
@@ -333,3 +341,8 @@ def import_document(data: bytes, filename: str) -> str:
     if ext in (".md", ".txt", ".markdown", ""):
         return data.decode("utf-8", errors="replace").strip()
     raise SystemExit(f"unsupported resume format '{ext}' (use .docx, .pdf, .md or .txt)")
+
+
+def conflicts(when: datetime, window_minutes: int = 90) -> list[dict]:
+    """Existing interviews within the window of a proposed time."""
+    return [it for it in upcoming_interviews(60) if abs((it["when"] - when).total_seconds()) <= window_minutes * 60]

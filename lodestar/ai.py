@@ -184,4 +184,12 @@ def council(prompt: str, system: str | None = None, providers: list[str] | None 
         system,
         provider=names[0],  # synthesis sees every answer, so it must stay inside the allowlist
     )
+    from . import settings
+
+    if settings.pref("council_judge") and len(names) >= 2:  # a second provider checks the first one's synthesis
+        synthesis = ask(
+            f"Original task:\n{prompt}\n\nProposed final answer:\n{synthesis}\n\nAct as an independent judge: find factual "
+            "errors, omissions, or generic filler, then output the improved final answer only (no commentary).",
+            system, provider=names[1],
+        )
     return {"answers": answers, "synthesis": synthesis}

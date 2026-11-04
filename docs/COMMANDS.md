@@ -176,3 +176,15 @@ UI: the Profile tab imports a file (preview, then "Merge into my profile" or "Re
 per-job document tab has "Edit document" and an Adjust box; nothing is saved until you click Save.
 Web API: `POST /api/upload {name, data(base64)}` -> `{text}`; `POST /api/docs/ID {name, text}` saves one of
 resume.md, cover_letter.md, interview_prep.md, research.md, offer.md; actions `adjust`, `merge_profile`.
+
+## Market rates and cadence (pass 8)
+
+| Command | What it does |
+|---|---|
+| `lodestar comp set "software engineer" austin 130000 170000` | record a market range (city optional; `*` = anywhere); gap checks and offer evaluations quote it |
+| `lodestar comp list` / `comp lookup "title" [city]` | inspect the table |
+
+Follow-up cadence: a quiet application is nudged (and drafted, if a contact is known) every `followup_days`; after the
+third nudge the loop proposes closing it as ghosted (tool `followup`). Accepted interview slots are checked against
+booked interviews; a clash is reported and no calendar file is written. `council_judge` (preference) makes a second
+provider audit the council's synthesis.
