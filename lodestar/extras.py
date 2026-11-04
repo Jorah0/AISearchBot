@@ -265,3 +265,45 @@ def export_data(fmt: str = "json", out_dir: Path | None = None) -> Path:
                 w.writerow(rows[0].keys())
                 w.writerows([list(r) for r in rows])
     return out_dir
+
+
+# ----------------------------------------------------------------------------- interview reminders + packet
+def upcoming_interviews(days: int = 2) -> list[dict]:
+    """Interviews whose .ics (written by `ics`) falls within the next N days, from the calendar events."""
+    now = datetime.now()
+    out = []
+    for e in db.con().execute("SELECT job_id, detail FROM events WHERE kind='calendar' ORDER BY ts").fetchall():
+        m = re.search(r"interview-(\d{8}-\d{4})[.]ics$", e["detail"] or "")
+        if not m:
+            continue
+        when = datetime.strptime(m.group(1), "%Y%m%d-%H%M")
+        if now <= when <= now + timedelta(days=days):
+            try:
+                j = db.get_job(e["job_id"])
+            except SystemExit:
+                continue
+            out.append({"job_id": j["id"], "company": j["company"], "title": j["title"], "when": when, "path": e["detail"]})
+    return out
+
+
+def packet(job) -> Path:
+    """One zip with everything about an application: generated documents, the posting, notes, timeline."""
+    import zipfile
+
+    from .config import HOME
+
+    out_dir = HOME / "exports"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target = out_dir / f"packet-{job['id']}-{slug(job['company'])}-{slug(job['title'])}.zip"
+    d = _job_dir(job)
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z:
+        if d.exists():
+            for p in d.iterdir():
+                if p.is_file():
+                    z.write(p, p.name)
+        z.writestr("job.txt", "\n".join([f"{job['company']} - {job['title']}", f"status: {job['status']}", f"url: {job['url'] or ''}",
+                                         f"contact: {job['contact_name'] or ''} {job['contact_email'] or ''}", "", "NOTES", job["notes"] or "",
+                                         "", "TIMELINE", *[f"{e['ts']} {e['kind']} {e['detail'] or ''}" for e in db.events(job["id"])],
+                                         "", "JOB DESCRIPTION", job["jd"] or ""]))
+    db.add_event(job["id"], "packet", str(target))
+    return target

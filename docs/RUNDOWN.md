@@ -85,7 +85,14 @@ document is produced (`--council`) and as a standalone `council "<question>"` co
 - `.gitignore` excludes every personal artifact (profile, database, applications, alerts, snapshots, vault index,
   `.env`) and every development artifact (graph outputs, caches, build dirs), so the repo can be shared safely.
 
-## 6. Verified state (2026-11-04, sixth pass: hardening)
+## 6. Verified state (2026-11-04, seventh pass: coverage and analytics)
+
+- Three more keyless job sources (Hacker News Who is hiring via Algolia, Jobicy, The Muse), URL de-duplication on
+  add/capture, a conversion funnel with median days per stage and outcomes by source (`jobs funnel`, Board header),
+  interview reminders 48 hours ahead from the calendar files, application packet zips, pay figures extracted from
+  postings into the gap check, per-ATS autofill selectors. 34 tests.
+
+## 6a. Verified state (2026-11-04, sixth pass: hardening)
 
 - 26 offline tests pass. Fixed: cross-origin access to the local API (per-launch token, CORS only on the two
   bookmarklet routes), lost mail on classification failure, substring company matches, scheduler command that

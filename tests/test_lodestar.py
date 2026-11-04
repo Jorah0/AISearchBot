@@ -459,3 +459,68 @@ class Hardening(unittest.TestCase):
         self.assertEqual(build().parse_args(["export", "csv", "--out", "x"]).out, "x")
         self.assertEqual(build().parse_args(["backup", "--keep", "3"]).keep, 3)
         self.assertEqual(build().parse_args(["usage", "--days", "7"]).days, 7)
+
+
+
+class Development7(unittest.TestCase):
+    def setUp(self):
+        from lodestar import settings
+        from lodestar.config import PROFILE
+        db._local.con = db.connect(":memory:")
+        settings.PATH.unlink(missing_ok=True)
+        PROFILE.write_text("Jane Doe | Austin, TX | jane@example.com", encoding="utf-8")
+
+    def test_new_sources_parse_and_filter(self):
+        from lodestar import web_monitor as wm
+        pages = {
+            "author_whoishiring": {"hits": [{"objectID": "50", "title": "Ask HN: Who is hiring? (November 2026)"}]},
+            "story_50": {"hits": [
+                {"objectID": "1", "parent_id": "50", "author": "a", "created_at": "2026-11-02T10:00:00Z",
+                 "comment_text": "<p>Acme | Senior Python Engineer | Remote (US)</p><p>We build widgets.</p>"},
+                {"objectID": "2", "parent_id": "1", "author": "b", "comment_text": "<p>Python reply, not a posting</p>"},
+                {"objectID": "3", "parent_id": "50", "author": "c", "comment_text": "<p>Globex | Java Dev | NYC</p>"}]},
+            "jobicy": {"jobs": [{"jobTitle": "Python Dev", "companyName": "Initech", "url": "https://j/1", "jobGeo": "Anywhere",
+                                 "jobExcerpt": "python", "pubDate": "2026-11-01 10:00:00", "jobDescription": "<b>x</b>"}]},
+            "themuse": {"results": [{"name": "Python Engineer", "company": {"name": "Umbrella"}, "refs": {"landing_page": "https://m/1"},
+                                     "locations": [{"name": "Austin, TX"}], "categories": [{"name": "Software Engineering"}],
+                                     "publication_date": "2026-11-01T00:00:00Z", "contents": "<p>py</p>"}]},
+        }
+        def fake(url, **k):
+            return next(v for key, v in pages.items() if key in url)
+        wm.fetch_json = fake
+        hn = wm._hn("python")
+        self.assertEqual([(j["company"], j["title"], j["location"], j["source"]) for j in hn], [("Acme", "Senior Python Engineer", "Remote (US)", "hn")])
+        self.assertEqual(wm._jobicy("python")[0]["company"], "Initech")
+        self.assertEqual(wm._muse("python engineer")[0]["url"], "https://m/1")
+        self.assertEqual(wm._muse("marketing"), [])
+
+    def test_add_job_dedupes_by_url(self):
+        a = db.add_job("Acme", "Eng", "https://x/1")
+        b = db.add_job("Acme Corp", "Engineer", "https://x/1")
+        self.assertEqual(a, b)
+        self.assertEqual(len(db.list_jobs()), 1)
+        self.assertEqual(db.events(a)[-1]["kind"], "duplicate")
+        self.assertNotEqual(db.add_job("Acme", "Eng"), a)   # no url: never deduped
+
+    def test_funnel_and_salary_and_packet(self):
+        from lodestar import extras, resume
+        j1 = db.add_job("Acme", "Eng", notes="found via remotive"); j2 = db.add_job("Globex", "Ops", notes="captured from https://l")
+        for jid, path in ((j1, ["applied", "screening", "interview"]), (j2, ["applied", "rejected"])):
+            for s in path:
+                db.set_status(jid, s)
+        f = db.funnel()
+        self.assertEqual((f["stages"]["applied"]["reached"], f["stages"]["applied"]["advanced"], f["stages"]["applied"]["conversion"]), (2, 1, 0.5))
+        self.assertEqual(f["rejected_from"], {"applied": 1})
+        self.assertEqual(f["by_source"]["search:remotive"], {"tracked": 1, "positive": 1})
+        self.assertEqual(resume.salary_mentions("Pay: $140,000 - $170,000 plus equity; EU: €80k. Call 555-1234."), ["$140,000 - $170,000", "€80k"])
+        self.assertEqual(resume.salary_mentions("no pay info"), [])
+        p = extras.packet(db.get_job(j1))
+        import zipfile
+        with zipfile.ZipFile(p) as z:
+            self.assertIn("job.txt", z.namelist())
+            self.assertIn("Acme - Eng", z.read("job.txt").decode())
+        from datetime import datetime, timedelta
+        extras.ics(db.get_job(j1), datetime.now() + timedelta(days=1))
+        up = extras.upcoming_interviews(2)
+        self.assertEqual([u["job_id"] for u in up], [j1])
+        self.assertTrue(build().parse_args(["jobs", "funnel"]).op == "funnel")

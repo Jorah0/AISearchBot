@@ -142,3 +142,16 @@ Web: Ideas tab (craft, status, refine), `GET /api/autofill` (data for the autofi
 | `lodestar tools set provider NAME` / `council_providers a,b` | default provider and which providers the council / idea crafting may send data to |
 
 Log file: `~/.lodestar/lodestar.log` (rotating, 2 MB x 3) records every command, UI request, alert, and task failure.
+
+## Pipeline analytics and packets (pass 7)
+
+| Command | What it does |
+|---|---|
+| `lodestar jobs funnel` | stage conversion (applied -> screening -> interview -> offer), median days per stage, where rejections happen, outcomes by source |
+| `lodestar jobs packet ID` | one zip with every document, the posting, notes and timeline for an application (`~/.lodestar/exports/`) |
+
+Search now covers six free sources: Remotive, Arbeitnow, RemoteOK, Hacker News "Who is hiring?" (current month),
+Jobicy, The Muse. Adding a job with a URL that is already tracked returns the existing card instead of a duplicate.
+The gap check records pay figures stated in the posting (`salary_in_posting`) and weighs them against your floor.
+The monitor loop reminds you of interviews within 48 hours (from the .ics files it wrote). The autofill bookmarklet
+tries Greenhouse, Lever, Workday, Ashby and SmartRecruiters field selectors before falling back to label matching.

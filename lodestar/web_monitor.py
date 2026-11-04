@@ -79,7 +79,72 @@ def _remoteok(q):
     return out
 
 
-SOURCES = {"remotive": _remotive, "arbeitnow": _arbeitnow, "remoteok": _remoteok}
+def _hn(q):
+    """Hacker News 'Who is hiring?' (monthly thread) via the Algolia API. Top-level comments are the postings and
+    conventionally start with 'Company | Role | Location'."""
+    s = fetch_json("https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&query="
+                   + urllib.parse.quote('"Ask HN: Who is hiring"') + "&hitsPerPage=1")
+    hits = s.get("hits") or []
+    if not hits:
+        return []
+    sid = str(hits[0]["objectID"])
+    words = q.lower().split()
+    out = []
+    for page in range(3):  # ponytail: 600 newest postings is plenty for a keyword search
+        c = fetch_json(f"https://hn.algolia.com/api/v1/search_by_date?tags=comment,story_{sid}&hitsPerPage=200&page={page}")
+        for h in c.get("hits", []):
+            if str(h.get("parent_id")) != sid:
+                continue  # a reply, not a posting
+            text = strip_html(h.get("comment_text") or "")
+            if not all(w in text.lower() for w in words):
+                continue
+            first = text.split("\n")[0][:200]
+            parts = [p.strip() for p in first.split("|")]
+            company = parts[0] if parts and parts[0] else h.get("author", "")
+            title = parts[1] if len(parts) > 1 else first
+            location = parts[2] if len(parts) > 2 else ""
+            out.append(_listing(title, company, f"https://news.ycombinator.com/item?id={h['objectID']}", location, "",
+                                h.get("created_at", ""), text, "hn"))
+        if len(c.get("hits", [])) < 200:
+            break
+    return out
+
+
+def _jobicy(q):
+    words = q.lower().split()
+    d = fetch_json(f"https://jobicy.com/api/v2/remote-jobs?count=50&tag={urllib.parse.quote(words[0] if words else 'remote')}")
+    out = []
+    for j in d.get("jobs", []):
+        blob = f"{j.get('jobTitle', '')} {j.get('jobExcerpt', '')} {j.get('jobIndustry', '')}".lower()
+        if all(w in blob for w in words):
+            sal = f"{j.get('annualSalaryMin', '')}-{j.get('annualSalaryMax', '')}".strip("-")
+            out.append(_listing(j.get("jobTitle"), j.get("companyName"), j.get("url"), j.get("jobGeo"), sal,
+                                j.get("pubDate"), j.get("jobDescription"), "jobicy"))
+    return out
+
+
+MUSE_CATEGORIES = {"engineer": "Software Engineering", "developer": "Software Engineering", "software": "Software Engineering",
+                   "data": "Data and Analytics", "design": "Design and UX", "product": "Product Management",
+                   "marketing": "Marketing", "sales": "Sales", "finance": "Accounting and Finance", "hr": "HR",
+                   "support": "Customer Service", "project": "Project Management", "security": "IT"}
+
+
+def _muse(q):
+    words = q.lower().split()
+    cat = next((c for w in words for k, c in MUSE_CATEGORIES.items() if k in w), None)
+    out = []
+    for page in (1, 2):
+        d = fetch_json(f"https://www.themuse.com/api/public/jobs?page={page}" + (f"&category={urllib.parse.quote(cat)}" if cat else ""))
+        for r in d.get("results", []):
+            blob = f"{r.get('name', '')} {' '.join(c.get('name', '') for c in r.get('categories', []))}".lower()
+            if all(w in blob for w in words):
+                out.append(_listing(r.get("name"), (r.get("company") or {}).get("name"), (r.get("refs") or {}).get("landing_page"),
+                                    ", ".join(loc.get("name", "") for loc in r.get("locations", [])[:2]), "",
+                                    r.get("publication_date"), r.get("contents"), "themuse"))
+    return out
+
+
+SOURCES = {"remotive": _remotive, "arbeitnow": _arbeitnow, "remoteok": _remoteok, "hn": _hn, "jobicy": _jobicy, "themuse": _muse}
 
 
 def search(query: str, keywords: str = "", only_new: bool = False, sources=None) -> list[dict]:

@@ -53,6 +53,11 @@ def _now() -> str:
 
 
 def add_job(company, title, url=None, jd=None, notes=None) -> int:
+    if url:  # the same posting captured or searched twice is one card, not two
+        dup = con().execute("SELECT id FROM jobs WHERE url=? AND status NOT IN ('rejected','withdrawn')", (url,)).fetchone()
+        if dup:
+            add_event(dup["id"], "duplicate", f"add ignored: {company} - {title}")
+            return dup["id"]
     cur = con().execute("INSERT INTO jobs(company,title,url,jd,notes) VALUES(?,?,?,?,?)", (company, title, url, jd, notes))
     con().commit()
     add_event(cur.lastrowid, "created", f"{company} - {title}")
@@ -293,3 +298,43 @@ def update_idea(iid: int, **fields) -> None:
 def delete_idea(iid: int) -> None:
     con().execute("DELETE FROM ideas WHERE id=?", (iid,))
     con().commit()
+
+
+# --- funnel -------------------------------------------------------------------
+STAGE_ORDER = ["applied", "screening", "interview", "offer"]
+
+
+def funnel() -> dict:
+    """Stage conversion, median days to the next stage, where rejections happen, and outcomes by source."""
+    first: dict[int, dict[str, str]] = {}
+    for e in con().execute("SELECT job_id, ts, detail FROM events WHERE kind='status' ORDER BY ts").fetchall():
+        st = (e["detail"] or "").split(" ")[0]
+        first.setdefault(e["job_id"], {}).setdefault(st, e["ts"])
+
+    def days(a: str, b: str) -> float:
+        return (datetime.fromisoformat(b) - datetime.fromisoformat(a)).total_seconds() / 86400
+
+    stages = {}
+    for i, st in enumerate(STAGE_ORDER):
+        nxt = STAGE_ORDER[i + 1] if i + 1 < len(STAGE_ORDER) else None
+        reached = [j for j in first.values() if st in j]
+        advanced = [j for j in reached if nxt and nxt in j]
+        durs = sorted(days(j[st], j[nxt]) for j in advanced)
+        stages[st] = {"reached": len(reached), "advanced": len(advanced),
+                      "conversion": round(len(advanced) / len(reached), 2) if reached and nxt else None,
+                      "median_days_to_next": round(durs[len(durs) // 2], 1) if durs else None}
+    rejected_from: dict[str, int] = {}
+    for j in first.values():
+        if "rejected" in j:
+            before = [s for s in STAGE_ORDER if s in j and j[s] <= j["rejected"]]
+            last = max(before, key=lambda s: j[s]) if before else "saved"
+            rejected_from[last] = rejected_from.get(last, 0) + 1
+    by_source: dict[str, dict] = {}
+    for j in list_jobs():
+        n = j["notes"] or ""
+        src = ("captured" if "captured from" in n else "search:" + n.split("via ")[-1].split()[0].strip("()") if "via " in n
+               else "email" if "from email" in n else "manual")
+        d = by_source.setdefault(src, {"tracked": 0, "positive": 0})
+        d["tracked"] += 1
+        d["positive"] += j["status"] in ("screening", "interview", "offer")
+    return {"stages": stages, "rejected_from": rejected_from, "by_source": by_source}

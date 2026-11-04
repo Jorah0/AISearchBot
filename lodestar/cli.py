@@ -172,6 +172,19 @@ def cmd_jobs(a):
             print(f"[{'x' if c['done'] else ' '}] {c['item']}" + ("" if c["done"] else f"   -> {c['next']}"))
     elif op == "stats":
         _p(db.stats())
+    elif op == "funnel":
+        f = db.funnel()
+        print(f"{'stage':<11} {'reached':>8} {'advanced':>9} {'conversion':>11} {'median days':>12}")
+        for st, d in f["stages"].items():
+            conv = f"{d['conversion']:.0%}" if d["conversion"] is not None else "-"
+            med = d["median_days_to_next"] if d["median_days_to_next"] is not None else "-"
+            print(f"{st:<11} {d['reached']:>8} {d['advanced']:>9} {conv:>11} {med!s:>12}")
+        print("rejected after:", f["rejected_from"] or "none")
+        print("by source:", {k: f"{v['positive']}/{v['tracked']} positive" for k, v in f["by_source"].items()})
+    elif op == "packet":
+        from .extras import packet
+
+        print(f"wrote {packet(db.get_job(a.id))}")
     elif op == "followups":
         rows = db.needs_followup(a.days)
         print(f"{len(rows)} application(s) quiet for {a.days}+ days:")
@@ -296,6 +309,14 @@ def cmd_run(a):
                     print(f"  follow-up draft -> {r.get('status')}")
                 except Exception as e:
                     print(f"  follow-up draft failed: {e}")
+        from .extras import upcoming_interviews
+
+        for it in upcoming_interviews(2):
+            key = f"remind:{it['path']}"
+            if not db.seen(key):
+                notify(f"INTERVIEW {it['when']:%a %Y-%m-%d %H:%M}: #{it['job_id']} {it['company']} - {it['title']}. "
+                       f"Prep: lodestar interview prep {it['job_id']}")
+                db.mark_seen(key)
         if settings.auto("obsidian_sync"):
             try:
                 from .extras import export_obsidian
@@ -591,6 +612,8 @@ def build() -> argparse.ArgumentParser:
     x = v.add_parser("contact", help="recruiter / hiring manager email for replies and follow-ups"); x.add_argument("id", type=int); x.add_argument("email"); x.add_argument("--name")
     x = v.add_parser("checklist", help="what is done and what is next for this application"); x.add_argument("id", type=int)
     v.add_parser("stats")
+    v.add_parser("funnel", help="stage conversion, median days per stage, rejections by stage, outcomes by source")
+    x = v.add_parser("packet", help="zip everything about one application (documents, JD, notes)"); x.add_argument("id", type=int)
     x = v.add_parser("followups"); x.add_argument("--days", type=int, default=7)
     x = v.add_parser("search", help="free job APIs: remotive, arbeitnow, remoteok")
     x.add_argument("query"); x.add_argument("--keywords", help="comma list, must appear in title/desc")

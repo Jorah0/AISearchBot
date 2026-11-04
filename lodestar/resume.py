@@ -113,8 +113,23 @@ CANDIDATE:
     return out
 
 
+SALARY_RE = re.compile(r"[$€£]\s?\d{2,3}(?:,\d{3})?\s?[kK]?(?:\s?(?:-|–|to)\s?[$€£]?\s?\d{2,3}(?:,\d{3})?\s?[kK]?)?")
+
+
+def salary_mentions(text: str) -> list[str]:
+    """Pay figures stated in a posting, e.g. '$140,000 - $170,000' or '€80k'. Real data beats an AI guess."""
+    seen: list[str] = []
+    for m in SALARY_RE.findall(text or ""):
+        m = " ".join(m.split())
+        if m not in seen and any(ch.isdigit() for ch in m):
+            seen.append(m)
+    return seen[:4]
+
+
 def gap(job, provider: str | None = None) -> dict:
+    sal = salary_mentions(_jd(job))
     prompt = f"""Compare the candidate against the job description the way an ATS and then a hiring manager would.
+Pay stated in the posting: {', '.join(sal) or 'none stated'}. Weigh it against the candidate's salary floor in Preferences.
 Return JSON: {{"match_score": 0-100, "missing_keywords": [...], "present_keywords": [...], "weak_areas": [...],
 "suggestions": ["concrete resume edits"], "red_flags": [...], "verdict": "apply|stretch|skip", "why": "one line"}}
 
@@ -124,6 +139,7 @@ JOB DESCRIPTION:
 CANDIDATE RESUME:
 {_current_resume(job)}"""
     data = ai.ask_json(prompt, SYSTEM, provider)
+    data["salary_in_posting"] = sal
     (app_dir(job) / "gap.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
     db.add_event(job["id"], "gap", f"score={data.get('match_score')} verdict={data.get('verdict')}")
     return data

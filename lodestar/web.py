@@ -111,6 +111,8 @@ def _act(action: str, p: dict):
             from . import ideas
 
             return {"idea": ideas.refine(int(p["idea_id"]), p.get("feedback", ""), prov)}
+        case "packet":
+            return {"path": str(extras.packet(job))}
         case "research":
             out = extras.research(job, prov)
             return {"path": str(out), "text": out.read_text(encoding="utf-8"), "docs": _docs(job)}
@@ -167,6 +169,7 @@ def state() -> dict:
         "stats": db.stats(),
         "followups": [j["id"] for j in db.needs_followup(7)],
         "variants": db.variant_stats(),
+        "funnel": db.funnel(),
         "pending": [dict(r) | {"payload": json.loads(r["payload"])} for r in db.list_pending("pending")],
         "decided": [dict(r) for r in db.list_pending(None, 15) if r["status"] != "pending"],
         "tools": settings.table(),
