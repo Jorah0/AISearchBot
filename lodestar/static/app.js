@@ -46,6 +46,7 @@ async function load() {
   const st = S.stats, pct = x => Math.round(x * 100) + '%';
   $('#stats').innerHTML = `<span>tracked <b>${S.jobs.length}</b></span><span>applied <b>${st.applied_total}</b></span><span>response <b>${pct(st.response_rate)}</b></span><span>interview <b>${pct(st.interview_rate)}</b></span><span>providers <b>${Object.values(S.providers).filter(Boolean).length}</b></span><span>tokens today <b>${(S.usage_today.input + S.usage_today.output).toLocaleString()}</b></span>`;
   const badge = $('#inboxN'); badge.textContent = S.pending.length; badge.classList.toggle('zero', !S.pending.length);
+  renderOnboard(); renderLoop(); $('#ver').textContent = 'Lodestar ' + S.version;
   renderBoard(); renderInbox(); renderSearchless(); renderMonitor(); renderAnswers(); renderIdeas(); renderTools(); renderSetup();
 }
 
@@ -59,6 +60,23 @@ function renderBoard() {
   $('#funnel').innerHTML = f.applied.reached ? 'funnel: ' + Object.entries(f).map(([s, d]) => `<span class="pill">${s} ${d.reached}${d.conversion != null ? ' → ' + Math.round(d.conversion * 100) + '%' : ''}${d.median_days_to_next != null ? ' · ' + d.median_days_to_next + 'd' : ''}</span>`).join('') : '';
   $('#variants').innerHTML = S.variants.length ? 'resume variants: ' + S.variants.map(v => `<span class="pill">${v.variant}: ${v.applied} sent, ${Math.round(v.interview_rate * 100)}% interview</span>`).join(' ') : '';
   if (!S.jobs.length) $('#cols').insertAdjacentHTML('afterend', '');
+}
+
+/* ---- onboarding + health ---- */
+function renderOnboard() {
+  const s = S.setup, todo = [];
+  if (!s.profile_ready) todo.push(`<b>1.</b> Fill in your master resume <button class="b sm" onclick="go('profile')">Profile</button> or import one there`);
+  if (!s.provider_ready) todo.push(`<b>2.</b> Store an AI key <button class="b sm" onclick="go('setup')">Setup</button> (the vault keeps it in the OS keyring)`);
+  if (!s.email_ready) todo.push(`<b>3.</b> Optional: connect your inbox (IMAP_USER / IMAP_PASS in Setup) so replies are classified and drafted`);
+  const el = $('#onboard');
+  el.style.display = todo.length ? '' : 'none';
+  el.innerHTML = todo.length ? `<h3>Getting started</h3><div class="row" style="gap:18px">${todo.map(t => `<span>${t}</span>`).join('')}</div>` : '';
+  if (!s.provider_ready && !sessionStorage.getItem('ls_setup_shown') && !S.jobs.length) { sessionStorage.setItem('ls_setup_shown', '1'); go('setup'); }
+}
+function renderLoop() {
+  const l = S.loop, el = $('#loopStat');
+  if (!l.running) { el.textContent = 'monitor loop: not running in this process'; el.title = 'start with the Lodestar shortcut, lodestar desktop, or lodestar run'; return; }
+  el.textContent = `monitor loop: every ${l.every} min · last cycle ${l.last_cycle || 'starting'} · ${l.cycles} run${l.cycles === 1 ? '' : 's'}`;
 }
 
 /* ---- job drawer ---- */

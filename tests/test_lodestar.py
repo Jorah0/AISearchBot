@@ -677,3 +677,22 @@ class Improvements8(unittest.TestCase):
             self.assertEqual(req("POST", "/api/tools", {"X-Lodestar-Token": web.TOKEN, "Content-Type": "text/plain"}, "{}"), 400)
         finally:
             srv.shutdown()
+
+
+
+class Onboarding(unittest.TestCase):
+    def test_setup_status_and_loop_status(self):
+        from lodestar import loop, web
+        from lodestar.config import PROFILE
+        PROFILE.write_text("# Master Resume\nFull Name | City | email@example.com\nTwo or three sentences", encoding="utf-8")
+        s = web.setup_status()
+        self.assertFalse(s["profile_ready"]); self.assertTrue(s["provider_ready"])  # ANTHROPIC_API_KEY is set for the suite
+        PROFILE.write_text("# Jane Doe\n" + "real experience line\n" * 40, encoding="utf-8")
+        self.assertTrue(web.setup_status()["profile_ready"])
+        self.assertEqual(loop.STATUS["running"], False)
+        class A: email = False; days = 1; provider = None; followup = 7; every = 5; once = True
+        loop.STATUS.update(running=False, cycles=0)
+        db._local.con = db.connect(":memory:")
+        loop.run(A())
+        self.assertTrue(loop.STATUS["running"] and loop.STATUS["cycles"] == 1 and loop.STATUS["every"] == 5)
+        self.assertRegex(loop.STATUS["last_cycle"], r"^\d\d:\d\d$")

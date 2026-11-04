@@ -188,3 +188,10 @@ Follow-up cadence: a quiet application is nudged (and drafted, if a contact is k
 third nudge the loop proposes closing it as ghosted (tool `followup`). Accepted interview slots are checked against
 booked interviews; a clash is reported and no calendar file is written. `council_judge` (preference) makes a second
 provider audit the council's synthesis.
+
+## Onboarding and health (pass 9)
+
+The Board shows a "Getting started" banner until the master resume is filled in and an AI key is stored (and, optionally,
+the inbox is connected); on a fresh install the window opens on Setup once. The top bar reports the monitor loop running
+inside the desktop process (interval, last cycle, cycle count) or says when no loop is running. `GET /api/state` now
+carries `version`, `setup` {profile_ready, provider_ready, email_ready} and `loop` {running, every, last_cycle, cycles}.

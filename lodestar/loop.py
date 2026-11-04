@@ -5,6 +5,8 @@ import time
 from . import ai, approvals, db, settings
 from .util import notify
 
+STATUS = {"running": False, "every": None, "last_cycle": None, "cycles": 0}  # read by the UI top bar
+
 
 def followup_step(job) -> str:
     """Cadence for a quiet application: nudge at each followup_days interval, close as ghosted after the third."""
@@ -13,7 +15,8 @@ def followup_step(job) -> str:
 
 
 def cycle(a) -> None:
-    print(f"\n--- lodestar cycle {time.strftime('%H:%M')} ---")
+    STATUS["last_cycle"], STATUS["cycles"] = time.strftime("%H:%M"), STATUS["cycles"] + 1
+    print(f"\n--- lodestar cycle {STATUS['last_cycle']} ---")
     if getattr(a, "email", True):
         try:
             from . import email_monitor
@@ -83,6 +86,7 @@ def cycle(a) -> None:
 
 
 def run(a) -> None:
+    STATUS["running"], STATUS["every"] = True, a.every
     while True:
         cycle(a)
         if getattr(a, "once", False):

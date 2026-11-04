@@ -9,7 +9,7 @@
 </head>
 <body>
 <div class="brand"><img src="/logo.svg" width="30" height="30" alt=""><div>Lodestar<small>the star you steer by</small></div></div>
-<div class="top"><div class="stats" id="stats"></div><div class="spacer"></div>
+<div class="top"><div class="stats" id="stats"></div><span class="muted" id="loopStat" style="margin-left:14px"></span><div class="spacer"></div>
   <button class="b ghost sm" onclick="run('email_check',{days:3},r=>toast((r.found||[]).length+' relevant email(s)','ok'),this)">Check email</button>
   <button class="b ghost sm" onclick="run('watch_run',{},r=>toast((r.alerts||[]).length+' alert(s)','ok'),this)">Run watches</button>
 </div>
@@ -30,6 +30,7 @@
 
 <main>
 <section id="board" class="on">
+  <div class="panel" id="onboard" style="display:none"></div>
   <div class="row" style="margin-top:0">
     <input id="nCo" placeholder="Company" style="width:160px"><input id="nTi" placeholder="Title" style="width:220px">
     <input id="nJd" class="grow" placeholder="Job description: URL or pasted text"><button class="b" onclick="addJob()">Add job</button>
@@ -130,7 +131,7 @@
       <p class="muted">Drag these to your bookmarks bar. The UI must be running.</p>
       <div class="row"><a id="bm" class="b" href="#">+ Lodestar capture</a><a id="af" class="b ghost" href="#">+ Lodestar autofill</a></div>
       <p class="muted"><b>Capture</b> sends the job posting you are looking at (LinkedIn, Indeed, any careers page) to the Board. <b>Autofill</b> types your name, email, phone, links and location into empty application-form fields matched by label, and never clicks Submit.</p></div>
-    <div class="panel"><h3>About</h3><p class="muted">Lodestar is local-first: the UI binds to 127.0.0.1, secrets live in the OS keyring, data is in your home folder. Docs: README.md, docs/SETUP.md, docs/AUTOMATION.md, docs/COMMANDS.md.</p></div>
+    <div class="panel"><h3>About</h3><p class="muted"><span id="ver"></span> · Lodestar is local-first: the UI binds to 127.0.0.1, secrets live in the OS keyring, data is in your home folder. Docs: README.md, docs/SETUP.md, docs/AUTOMATION.md, docs/COMMANDS.md.</p></div>
   </div>
 </section>
 </main>

@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import ai, apply, approvals, db, extras, log, settings, vault
+from . import __version__, ai, apply, approvals, db, extras, log, loop, settings, vault
 from .config import ALERTS, PROFILE
 
 STATIC = Path(__file__).parent / "static"
@@ -170,8 +170,23 @@ def split_title(page_title: str) -> tuple[str, str]:
 
 
 # ----------------------------------------------------------------------------- state
+def setup_status() -> dict:
+    """What a new user still has to do before the AI features work."""
+    from .config import setting
+
+    text = PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else ""
+    return {
+        "profile_ready": len(text) > 400 and "Full Name" not in text and "Two or three sentences" not in text,
+        "provider_ready": bool(ai.available()),
+        "email_ready": bool(setting("IMAP_USER") and setting("IMAP_PASS")),
+    }
+
+
 def state() -> dict:
     return {
+        "version": __version__,
+        "setup": setup_status(),
+        "loop": dict(loop.STATUS),
         "jobs": [dict(j) for j in db.list_jobs()],
         "statuses": db.STATUSES,
         "stats": db.stats(),
