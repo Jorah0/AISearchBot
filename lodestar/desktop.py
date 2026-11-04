@@ -7,7 +7,14 @@ import socket
 import webbrowser
 from pathlib import Path
 
-ICON = Path(__file__).resolve().parent.parent / "assets" / "lodestar.png"
+ASSETS = Path(__file__).resolve().parent.parent / "assets"
+APP_ID = "Lodestar.Desktop"      # explicit AppUserModelID so the taskbar shows our emblem, not python.exe's
+
+
+def window_icon() -> str | None:
+    """The emblem in the format each backend accepts: WinForms wants an .ico, GTK / Qt take the PNG."""
+    p = ASSETS / ("lodestar.ico" if os.name == "nt" else "lodestar.png")
+    return str(p) if p.is_file() else None
 
 
 def free_port(start: int = 8765, tries: int = 50) -> int:
@@ -32,10 +39,16 @@ def open_window(port: int, title: str = "Lodestar") -> None:
         _browser(url)
         return
     try:
-        webview.create_window(title, url, width=1320, height=860, min_size=(960, 640), text_select=True)
-        # the icon argument is GTK/Qt only; on Windows the .NET backend rejects a PNG, and the shortcut already carries
-        # the .ico, so pass it only where it is honoured
-        webview.start(icon=str(ICON) if ICON.is_file() and os.name != "nt" else None, private_mode=False)
+        if os.name == "nt":
+            try:  # own taskbar identity: our emblem, our grouping, not python.exe's
+                import ctypes
+
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+            except Exception:
+                pass
+        webview.create_window(title, url, width=1320, height=860, min_size=(960, 640), text_select=True,
+                              background_color="#0f1115")  # the UI's own dark tile, so no white flash on launch
+        webview.start(icon=window_icon(), private_mode=False)  # the emblem: .ico on Windows, PNG on GTK / Qt
     except Exception as e:  # missing WebView2 runtime, headless session, etc.
         print(f"desktop window failed ({e}); opening the browser instead")
         _browser(url)
