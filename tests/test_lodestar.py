@@ -335,6 +335,25 @@ class Hardening(unittest.TestCase):
         email_monitor._apply(base | {"dkim_pass": True, "subject": "Interview 2"}, dry=False)
         self.assertEqual(db.get_job(jid)["status"], "interview")         # authenticated -> auto applies
 
+    def test_mail_authentication_is_structural_and_aligned(self):
+        from lodestar import email_monitor as em
+        good = ["mx.google.com; dkim=pass header.i=@globex.com header.s=sel header.d=globex.com; dmarc=pass header.from=globex.com"]
+        self.assertTrue(em.mail_authenticated(good, "jane@globex.com"))
+        self.assertTrue(em.mail_authenticated(good, "jane@mail.globex.com"))          # subdomain aligns
+        self.assertFalse(em.mail_authenticated(good, "jane@evil.com"))               # passing result for another domain
+        forged = ["mx.google.com; dkim=none; dmarc=fail header.from=globex.com", "attacker; dkim=pass header.d=globex.com"]
+        self.assertFalse(em.mail_authenticated(forged, "jane@globex.com"))           # only the top-most header counts
+        self.assertFalse(em.mail_authenticated(["mx; dkim=pass"], "jane@globex.com"))  # no domain, no trust
+        # a stored contact from another domain blocks auto-execution even with a passing result
+        jid = db.add_job("Globex", "Eng"); db.update_job(jid, contact_email="recruiter@globex.com")
+        from lodestar import settings
+        settings.set_tool("email_classify", auto=True); db.set_status(jid, "applied")
+        em.ai.ask_json = lambda *a, **k: {"subject": "Re", "body": "ok", "chosen_time": None}
+        info = {"category": "interview", "company": "Globex", "summary": "s", "action": "", "subject": "Hi", "from": "x@other.com",
+                "sender_email": "x@other.com", "sender_name": "X", "message_id": "<m>", "body": "b", "dkim_pass": True}
+        em._apply(info, dry=False)
+        self.assertEqual(db.get_job(jid)["status"], "applied")
+
     def test_fetch_refuses_private_hosts_and_bad_urls(self):
         from lodestar import util
         for bad in ("http://127.0.0.1:8765/api/state", "http://localhost/x", "http://169.254.169.254/latest", "file:///etc/passwd", "javascript:alert(1)"):

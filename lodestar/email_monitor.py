@@ -27,6 +27,28 @@ CATEGORIES = ("interview", "rejection", "offer", "recruiter_outreach", "applicat
 STATUS_FOR = {"interview": "interview", "rejection": "rejected", "offer": "offer", "assessment": "screening", "application_received": "applied"}
 
 
+def _domain(addr: str) -> str:
+    return addr.rsplit("@", 1)[1].lower() if "@" in addr else ""
+
+
+def _aligned(d: str, dom: str) -> bool:
+    return bool(d) and (d == dom or dom.endswith("." + d))
+
+
+def mail_authenticated(auth_headers: list[str], sender_email: str) -> bool:
+    """True only when the receiving MTA's own (top-most) Authentication-Results header carries a passing DMARC or DKIM
+    result whose domain aligns with the From address. Headers further down can be forged by the sender."""
+    if not auth_headers or "@" not in sender_email:
+        return False
+    top = " ".join(str(auth_headers[0]).split()).lower()
+    dom = _domain(sender_email)
+    m = re.search(r"dmarc=pass[^;]*header[.]from=([a-z0-9.-]+)", top)
+    if m and _aligned(m.group(1), dom):
+        return True
+    m = re.search(r"dkim=pass[^;]*header[.]d=([a-z0-9.-]+)", top)
+    return bool(m and _aligned(m.group(1), dom))
+
+
 def _hdr(msg, name: str) -> str:
     try:
         return str(make_header(decode_header(msg.get(name, "") or "")))
@@ -106,10 +128,10 @@ def check(days: int = 3, limit: int = 100, dry: bool = False, provider: str | No
                         info = {"category": "other", "summary": f"classify failed: {e}", "company": "", "title": ""}
                         print(f"  classify failed for '{subject[:50]}': {e} (will retry)")
                     name, addr = parseaddr(sender)
-                    auth = _hdr(msg, "Authentication-Results").lower()
                     info |= {"subject": subject, "from": sender, "date": _hdr(msg, "Date"),
                              "message_id": _hdr(msg, "Message-ID"), "sender_email": addr, "sender_name": name,
-                             "body": body[:3500], "dkim_pass": "dkim=pass" in auth}
+                             "body": body[:3500],
+                             "dkim_pass": mail_authenticated(msg.get_all("Authentication-Results") or [], addr)}
                     if info.get("category") != "other":
                         _apply(info, dry)
                         found.append(info)
@@ -140,6 +162,9 @@ def _apply(info: dict, dry: bool) -> None:
     new = STATUS_FOR.get(info["category"])
     sender_email = info.get("sender_email") or ""
     human = bool(sender_email) and not NOREPLY.search(sender_email)
+    known = (job["contact_email"] if job else "") or ""
+    # trusted = passes DMARC/DKIM alignment AND (no stored contact yet, or same domain as the stored contact)
+    info["trusted"] = bool(info.get("dkim_pass")) and (not known or _domain(known) == _domain(sender_email))
     if job:
         if human and not job["contact_email"]:
             db.update_job(job["id"], contact_email=sender_email, contact_name=info.get("sender_name") or "")
@@ -148,7 +173,7 @@ def _apply(info: dict, dry: bool) -> None:
             approvals.propose("email_classify", "set_status",
                               {"job_id": job["id"], "status": new, "note": f"(email: {info['subject'][:60]})"},
                               f"move #{job['id']} {job['company']} to {new} ({info['category']} email)", job["id"],
-                              force_pending=not info.get("dkim_pass", False))  # unauthenticated mail never moves a job unreviewed
+                              force_pending=not info.get("trusted", False))  # unauthenticated mail never moves a job unreviewed
         else:
             db.add_event(job["id"], "email", f"{info['category']}: {info['subject'][:80]}")
         if info["category"] == "interview" and info.get("deadline") and settings.enabled("calendar"):
@@ -224,7 +249,7 @@ CANDIDATE (for name and signature only):
     who = info.get("sender_name") or info["sender_email"]
     r = approvals.propose(tool, "send_email", payload,
                           f"reply ({cat}) to {who} at {job['company']}" + (f", accepting {ct}" if ct else ""), job["id"],
-                          force_pending=not info.get("dkim_pass", False))  # a reply to unauthenticated mail always waits for you
+                          force_pending=not info.get("trusted", False))  # a reply to unauthenticated mail always waits for you
     notify(f"REPLY {r.get('status', '?').upper()}: {payload['subject']}" + (f"  (inbox #{r['id']})" if r.get("status") == "pending" else ""))
 
 
