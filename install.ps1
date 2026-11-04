@@ -20,9 +20,9 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) { throw "Python 3.1
 if (-not (Test-Path .venv)) { Write-Host "[1/6] creating .venv"; python -m venv .venv } else { Write-Host "[1/6] .venv exists" }
 $py = Join-Path $root ".venv\Scripts\python.exe"
 $jb = Join-Path $root ".venv\Scripts\lodestar.exe"
-foreach ($exe in @("jobbot.exe", "lodestar.exe")) {
-  $path = Join-Path $root ".venv\Scripts\$exe"
-  if (Test-Path $path) { try { [IO.File]::Open($path, "Open", "ReadWrite", "None").Close() } catch { throw "$exe is running (a Lodestar/jobbot window or monitor loop is open). Close it and run the installer again." } }
+foreach ($launcher in @("jobbot.exe", "lodestar.exe")) {  # not $exe: that name is the -Exe switch parameter
+  $path = Join-Path $root ".venv\Scripts\$launcher"
+  if (Test-Path $path) { try { [IO.File]::Open($path, "Open", "ReadWrite", "None").Close() } catch { throw "$launcher is running (a Lodestar/jobbot window or monitor loop is open). Close it and run the installer again." } }
 }
 & $py -m pip install --quiet --disable-pip-version-check --upgrade pip
 & $py -m pip install --quiet --disable-pip-version-check -e .
