@@ -444,10 +444,13 @@ class Hardening(unittest.TestCase):
         self.assertEqual(sorted(data), ["answers", "events", "ideas", "jobs", "pending"])
         self.assertEqual(data["jobs"][0]["company"], "Acme")
         web.TASKS.clear()
-        web._act = lambda action, p: {"ok": True}
-        for _ in range(205):
-            web.start_task("noop", {})
-        self.assertLessEqual(len(web.TASKS), 201)
+        real_act, web._act = web._act, lambda action, p: {"ok": True}
+        try:
+            for _ in range(205):
+                web.start_task("noop", {})
+            self.assertLessEqual(len(web.TASKS), 201)
+        finally:
+            web._act = real_act  # later route tests run real actions
 
     def test_mock_system_and_cli_parse(self):
         from lodestar import interview
@@ -745,3 +748,200 @@ class DoctorInUI(unittest.TestCase):
         r = web._act("doctor", {})
         self.assertTrue(any(row["what"] == "Python" and row["status"] == "ok" for row in r["rows"]))
         self.assertTrue(all(set(row) == {"status", "what", "detail"} for row in r["rows"]))
+
+
+
+class ProfileBank(unittest.TestCase):
+    """Profile bank: saved originals, pooled facts with sources, LinkedIn import, section-aware prompt text."""
+    MASTER = """# Master Resume
+## Contact
+Jane Doe | Austin, TX | jane@example.com | +1 512 555 0199 | linkedin.com/in/janedoe
+
+## Summary
+Backend engineer who ships data platforms.
+
+## Skills
+- Programming languages: Python, Go, SQL
+- Tools: Docker, Terraform
+
+## Languages
+- Spanish (Native), French - B2
+
+## Experience
+### Senior Engineer - Acme Corp (2021-03 - Present)
+- Cut deploy time 40%
+- Led a team of 4
+
+### Engineer - Globex (2018-06 - 2021-02)
+- Built the billing pipeline
+
+## Education
+BSc Computer Science, UT Austin, 2018
+
+## Certifications
+- AWS Solutions Architect
+
+## Preferences (used for job search ranking)
+Target roles: backend | Salary floor: 150k
+"""
+
+    def setUp(self):
+        import shutil
+        from lodestar import profile
+        from lodestar.config import PROFILE
+        for d in (profile.RESUMES, profile.HISTORY):
+            shutil.rmtree(d, ignore_errors=True)
+        profile.BANK.unlink(missing_ok=True)
+        PROFILE.write_text(resume.PROFILE_TEMPLATE, encoding="utf-8")
+
+    def test_offline_extraction_reads_the_master_format(self):
+        from lodestar import profile
+        f = profile.extract_heuristic(self.MASTER)
+        self.assertEqual(f["contact"]["name"], "Jane Doe"); self.assertEqual(f["contact"]["location"], "Austin, TX")
+        self.assertEqual(f["contact"]["email"], "jane@example.com"); self.assertEqual(f["contact"]["phone"], "+1 512 555 0199")
+        self.assertIn({"name": "Go", "category": "Programming languages"}, f["skills"])
+        self.assertIn({"name": "Docker", "category": "Tools"}, f["skills"])
+        self.assertEqual(f["languages"], [{"name": "Spanish", "proficiency": "Native"}, {"name": "French", "proficiency": "B2"}])
+        acme = f["experience"][0]
+        self.assertEqual((acme["title"], acme["company"], acme["start"], acme["end"]), ("Senior Engineer", "Acme Corp", "2021-03", "Present"))
+        self.assertEqual(acme["bullets"], ["Cut deploy time 40%", "Led a team of 4"])
+        self.assertEqual(f["certifications"], [{"name": "AWS Solutions Architect"}])
+        # the starter template yields nothing but placeholders, which merge() drops
+        bank = profile.empty(); added = profile.merge(bank, profile.extract_heuristic(resume.PROFILE_TEMPLATE), "t")
+        self.assertEqual(sum(added.values()), 0, bank)
+
+    def test_merge_dedupes_unions_bullets_and_keeps_sources(self):
+        from lodestar import profile
+        bank = profile.empty()
+        profile.merge(bank, {"contact": {"email": "a@x.com"}, "skills": ["Python", {"name": "SQL"}],
+                             "experience": [{"title": "Engineer", "company": "Acme", "bullets": ["one"]}]}, "resume:1")
+        added = profile.merge(bank, {"contact": {"email": "b@x.com", "phone": "+1 555 123 4567"}, "skills": ["python", "Go"],
+                                     "experience": [{"title": "engineer", "company": "ACME", "start": "2020", "bullets": ["One", "two"]}]}, "linkedin:2")
+        self.assertEqual(added["skills"], 1); self.assertEqual([s["name"] for s in bank["skills"]], ["Python", "SQL", "Go"])
+        self.assertEqual(bank["skills"][0]["sources"], ["resume:1", "linkedin:2"])
+        self.assertEqual(bank["contact"]["email"], "a@x.com")          # never overwritten
+        self.assertEqual(bank["contact"]["phone"], "+1 555 123 4567")  # blanks are filled
+        exp = bank["experience"]; self.assertEqual(len(exp), 1)
+        self.assertEqual(exp[0]["bullets"], ["one", "two"]); self.assertEqual(exp[0]["start"], "2020")
+
+    def test_import_keeps_one_original_and_seeds_only_a_template_master(self):
+        from lodestar import profile
+        from lodestar.config import PROFILE
+        r = profile.import_file(self.MASTER.encode(), "jane.md", use_ai=False)
+        self.assertTrue(r["new_file"] and r["seeded_master"]); self.assertFalse(r["used_ai"])
+        self.assertTrue((profile.RESUMES / r["resume"]["file"]).is_file())
+        master = PROFILE.read_text(encoding="utf-8")
+        self.assertIn("Spanish (Native)", master); self.assertIn("### Senior Engineer - Acme Corp (2021-03 - Present)", master)
+        self.assertIn("Salary floor:", master)  # the Preferences section survives
+        self.assertFalse(profile.is_template(master))
+        self.assertEqual(len(list(profile.HISTORY.glob("profile-*.md"))), 1)  # the template was snapshotted
+        again = profile.import_file(self.MASTER.encode(), "copy.md", use_ai=False)
+        self.assertFalse(again["new_file"]); self.assertEqual(len(profile.load()["resumes"]), 1)
+        self.assertEqual(sum(again["added"].values()), 0)
+        PROFILE.write_text(master + "\nmy own edit\n", encoding="utf-8")
+        r3 = profile.import_file(b"# Jane\n## Skills\n- Kubernetes, Rust\n", "extra.md", use_ai=False)
+        self.assertFalse(r3["seeded_master"]); self.assertIn("my own edit", PROFILE.read_text(encoding="utf-8"))
+        self.assertEqual(r3["added"]["skills"], 2)
+
+    def test_linkedin_export_zip(self):
+        import io, zipfile
+        from lodestar import profile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("Basic_LinkedInDataExport/Profile.csv", "First Name,Last Name,Maiden Name,Address,Birth Date,Headline,Summary,Industry,Zip Code,Geo Location,Twitter Handles,Websites,Instant Messengers\n"
+                       'Jane,Doe,,,,Backend Engineer,"Builds data platforms, reliably",Software,,"Austin, Texas",,"[PORTFOLIO:https://jane.dev,OTHER:https://github.com/janedoe]",\n')
+            z.writestr("Basic_LinkedInDataExport/Positions.csv", 'Company Name,Title,Description,Location,Started On,Finished On\nAcme Corp,Senior Engineer,"Cut deploy time 40%\nLed a team of 4","Austin, TX",Mar 2021,\n')
+            z.writestr("Basic_LinkedInDataExport/Skills.csv", "Name\nPython\nKubernetes\n")
+            z.writestr("Basic_LinkedInDataExport/Languages.csv", "Name,Proficiency\nSpanish,Native or bilingual proficiency\n")
+            z.writestr("Basic_LinkedInDataExport/Email Addresses.csv", 'Notes:\n"Your email addresses"\n\nEmail Address,Confirmed,Primary,Updated On\nold@x.com,Yes,No,\njane@example.com,Yes,Yes,\n')
+            z.writestr("Basic_LinkedInDataExport/messages.csv", "FROM,TO,CONTENT\nsomeone,me,private\n")
+        r = profile.import_file(buf.getvalue(), "Basic_LinkedInDataExport.zip")
+        b = profile.load()
+        self.assertEqual(r["resume"]["source"], "linkedin"); self.assertTrue(r["resume"]["file"].endswith(".linkedin.json"))
+        self.assertNotIn("private", (profile.RESUMES / r["resume"]["file"]).read_text(encoding="utf-8"))  # messages are never kept
+        self.assertEqual(b["contact"]["name"], "Jane Doe"); self.assertEqual(b["contact"]["email"], "jane@example.com")
+        self.assertEqual(b["contact"]["github"], "https://github.com/janedoe"); self.assertEqual(b["contact"]["website"], "https://jane.dev")
+        self.assertEqual(b["experience"][0]["bullets"], ["Cut deploy time 40%", "Led a team of 4"])
+        self.assertEqual(b["experience"][0]["end"], "Present")
+        self.assertEqual([s["name"] for s in b["skills"]], ["Python", "Kubernetes"])
+        self.assertEqual(b["languages"][0]["proficiency"], "Native or bilingual proficiency")
+        z2 = io.BytesIO()
+        with zipfile.ZipFile(z2, "w") as z:
+            z.writestr("notes.txt", "x")
+        with self.assertRaises(SystemExit):
+            profile.import_file(z2.getvalue(), "other.zip")
+        self.assertEqual(profile.link_linkedin("linkedin.com/in/jane-doe-1/?trk=x"), "https://www.linkedin.com/in/jane-doe-1")
+        with self.assertRaises(ValueError):
+            profile.link_linkedin("https://example.com/jane")
+
+    def test_candidate_text_adds_bank_facts_and_brief_keeps_preferences(self):
+        from lodestar import profile
+        from lodestar.config import PROFILE
+        PROFILE.write_text(self.MASTER, encoding="utf-8")
+        profile.add("skills", "Kubernetes"); profile.add("skills", "python"); profile.add("languages", "German", "A2")
+        text = profile.candidate_text()
+        self.assertIn("## On file", text); self.assertIn("Kubernetes", text); self.assertIn("German (A2)", text)
+        self.assertNotIn("Kubernetes; python", text)  # Python is already in the master
+        short = profile.candidate_text(700)
+        self.assertLessEqual(len(short), 700)
+        self.assertIn("Salary floor: 150k", short); self.assertIn("Kubernetes", short); self.assertIn("jane@example.com", short)
+        self.assertEqual(resume.candidate_text(700), short)
+
+    def test_ai_extraction_used_when_it_works_and_offline_parse_when_it_fails(self):
+        from lodestar import ai, profile
+        orig = ai.ask_json
+        try:
+            ai.ask_json = lambda prompt, system=None, provider=None: {"contact": {"name": "Jane Doe"}, "skills": [{"name": "Rust"}],
+                                                                    "experience": [{"title": "CTO", "company": "Initech", "bullets": ["Grew team"]}]}
+            facts, used = profile.extract("Jane Doe\njane@example.com\nSkills\nPython", use_ai=True)
+            self.assertTrue(used); self.assertEqual(facts["contact"]["email"], "jane@example.com")  # regex fills the AI's blank
+            self.assertEqual({s["name"] for s in facts["skills"] if isinstance(s, dict)}, {"Rust", "Python"})
+
+            def boom(*a, **k):
+                raise SystemExit("No AI provider configured")
+            ai.ask_json = boom
+            facts, used = profile.extract("Jane Doe\njane@example.com", use_ai=True)
+            self.assertFalse(used); self.assertEqual(facts["contact"]["email"], "jane@example.com")
+        finally:
+            ai.ask_json = orig
+
+    def test_master_writes_are_snapshotted_and_autofill_uses_the_bank(self):
+        from lodestar import extras, profile
+        from lodestar.config import PROFILE
+        PROFILE.write_text("# Me\n## Summary\nno contact line here\n", encoding="utf-8")
+        profile.write_master("v2"); profile.write_master("v2"); profile.write_master("v3")
+        self.assertEqual(len(list(profile.HISTORY.glob("profile-*.md"))), 2)  # identical content is not re-snapshotted
+        self.assertEqual(PROFILE.read_text(encoding="utf-8"), "v3")
+        profile.set_contact("email", "jane@example.com"); profile.set_contact("linkedin", "https://linkedin.com/in/jane")
+        a = extras.autofill_data()
+        self.assertEqual(a["email"], "jane@example.com"); self.assertEqual(a["linkedin"], "https://www.linkedin.com/in/jane")
+
+    def test_cli_and_routes(self):
+        import base64, http.client, json as _json, time
+        from lodestar import desktop, profile, web
+        self.assertTrue(build().parse_args(["profile", "import", "cv.pdf", "--no-ai"]).no_ai)
+        self.assertEqual(build().parse_args(["profile", "add", "languages", "Spanish", "--detail", "Native"]).detail, "Native")
+        port = desktop.free_port(8850); srv = web.start_server(port)
+        try:
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            h = {"Content-Type": "application/json", "X-Lodestar-Token": web.TOKEN, "Host": f"127.0.0.1:{port}"}
+
+            def call(method, path, body=None):
+                c.request(method, path, _json.dumps(body) if body is not None else None, h); r = c.getresponse(); return r.status, _json.loads(r.read())
+            st, v = call("POST", "/api/profile/bank", {"op": "add", "kind": "skills", "name": "Terraform", "detail": "Tools"})
+            self.assertEqual(st, 200, v); self.assertEqual(v["bank"]["skills"][0]["category"], "Tools")
+            self.assertEqual(call("POST", "/api/profile/bank", {"op": "nope"})[0], 400)
+            st, v = call("POST", "/api/run/profile_import", {"name": "jane.md", "data": base64.b64encode(self.MASTER.encode()).decode(), "ai": False})
+            for _ in range(50):
+                st, t = call("GET", f"/api/tasks/{v['task']}")
+                if t["status"] != "running":
+                    break
+                time.sleep(0.1)
+            self.assertEqual(t["status"], "done", t); self.assertIn("seeded_master", t["result"], t); self.assertTrue(t["result"]["seeded_master"])
+            self.assertFalse(t["result"]["template"])
+            st, v = call("GET", "/api/profile/bank"); self.assertIn("Spanish", [x["name"] for x in v["bank"]["languages"]])
+            before = len(list(profile.HISTORY.glob("profile-*.md")))
+            self.assertEqual(call("POST", "/api/profile", {"text": self.MASTER + "\nedited"})[0], 200)
+            self.assertEqual(len(list(profile.HISTORY.glob("profile-*.md"))), before + 1)
+        finally:
+            srv.shutdown()

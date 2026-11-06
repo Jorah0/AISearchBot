@@ -28,10 +28,18 @@ COACH = ("You are a sharp, practical career coach and job-search strategist. Use
 
 # ----------------------------------------------------------------------------- actions (run in threads)
 def _coach_system() -> str:
-    from .resume import profile_text
+    from .resume import candidate_text
 
     tracker = "\n".join(f"#{j['id']} {j['status']} {j['company']} - {j['title']}" for j in db.list_jobs()[:40])
-    return f"{COACH}\n\nPROFILE:\n{profile_text()}\n\nTRACKER:\n{tracker or '(empty)'}\n\nSTATS: {db.stats()}"
+    return f"{COACH}\n\nPROFILE:\n{candidate_text()}\n\nTRACKER:\n{tracker or '(empty)'}\n\nSTATS: {db.stats()}"
+
+
+def _bank_view() -> dict:
+    from . import profile
+
+    master = profile.master_text()
+    return {"bank": profile.load(), "template": profile.is_template(master), "on_file": profile.extras_text(master),
+            "linkedin_export_url": profile.LINKEDIN_EXPORT_URL}
 
 
 def _docs(job) -> dict:
@@ -62,6 +70,22 @@ def _act(action: str, p: dict):
             return {"text": resume.adjust_text(p["text"], p["instruction"], p.get("kind") or "document", prov)}
         case "merge_profile":
             return {"text": resume.merge_into_profile(p["text"], prov)}
+        case "profile_import":  # {name, data: base64, ai?: bool}: resume file, LinkedIn zip or LinkedIn profile PDF
+            import base64
+
+            from . import profile
+
+            raw = base64.b64decode(p.get("data") or "")
+            if not raw or len(raw) > 15_000_000:
+                raise ValueError("empty file or larger than 15 MB")
+            source = "linkedin" if p.get("linkedin") or str(p.get("name", "")).lower().endswith(".zip") else "resume"
+            res = profile.import_file(raw, p.get("name") or "resume.txt", source, prov, p.get("ai"))
+            return res | _bank_view()
+        case "profile_rebuild":
+            from . import profile
+
+            out = profile.rebuild_master()
+            return {"path": str(out), "text": out.read_text(encoding="utf-8")} | _bank_view()
         case "gap":
             return {"gap": resume.gap(job, prov), "docs": _docs(job)}
         case "prep":
@@ -190,9 +214,11 @@ def setup_status() -> dict:
     """What a new user still has to do before the AI features work."""
     from .config import setting
 
-    text = PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else ""
+    from .profile import is_template, master_text
+
+    text = master_text()
     return {
-        "profile_ready": len(text) > 400 and "Full Name" not in text and "Two or three sentences" not in text,
+        "profile_ready": len(text) > 200 and not is_template(text),
         "provider_ready": bool(ai.available()),
         "email_ready": bool(setting("IMAP_USER") and setting("IMAP_PASS")),
     }
@@ -315,6 +341,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(TASKS.get(path.split("/")[3], {"status": "unknown"}))
             elif path == "/api/profile":
                 self._json({"text": PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else ""})
+            elif path == "/api/profile/bank":
+                self._json(_bank_view())
             elif path == "/api/autofill":  # the autofill bookmarklet reads this; it never submits a form
                 self._json(extras.autofill_data())
             else:
@@ -363,9 +391,24 @@ class Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/watches/"):
                 db.remove_watch(int(parts[3]))
                 self._json({"ok": True})
-            elif path == "/api/profile":
-                PROFILE.write_text(p["text"], encoding="utf-8")
+            elif path == "/api/profile":  # the old file is snapshotted to profile-history/ first
+                from .profile import write_master
+
+                write_master(p["text"])
                 self._json({"ok": True})
+            elif path == "/api/profile/bank":  # {op: add|remove|contact, kind, name, detail} / {op: contact, field, value}
+                from . import profile
+
+                op = p.get("op")
+                if op == "add":
+                    profile.add(p["kind"], p["name"], p.get("detail", ""))
+                elif op == "remove":
+                    profile.remove(p["kind"], p["name"])
+                elif op == "contact":
+                    profile.set_contact(p["field"], p.get("value", ""))
+                else:
+                    raise ValueError(f"unknown op {op}")
+                self._json({"ok": True} | _bank_view())
             elif path == "/api/open_folder":  # desktop convenience: reveal a Lodestar folder in the file manager
                 import subprocess
                 import sys as _sys

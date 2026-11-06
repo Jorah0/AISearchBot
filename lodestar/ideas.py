@@ -8,7 +8,7 @@ from datetime import datetime
 
 from . import ai, db, settings
 from .config import APPS_DIR
-from .resume import profile_text
+from .resume import candidate_text
 from .util import slug
 
 TOPICS = {
@@ -52,7 +52,7 @@ def context(job=None, role: str = "") -> str:
         parts.append(f"TARGET ROLE: {role}")
     if job:
         parts.append(f"JOB IN FOCUS: {job['title']} at {job['company']}\n{(job['jd'] or '')[:2500]}")
-    parts.append("CANDIDATE PROFILE:\n" + profile_text()[:6000])
+    parts.append("CANDIDATE PROFILE:\n" + candidate_text(6000))
     return "\n\n".join(parts)
 
 

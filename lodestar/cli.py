@@ -98,9 +98,9 @@ def cmd_council(a):
 
 
 def cmd_chat(a):
-    from .resume import profile_text
+    from .resume import candidate_text
 
-    system = f"{COACH}\n\nPROFILE:\n{profile_text()}\n\nTRACKER:\n{_tracker_summary()}\n\nSTATS: {db.stats()}"
+    system = f"{COACH}\n\nPROFILE:\n{candidate_text()}\n\nTRACKER:\n{_tracker_summary()}\n\nSTATS: {db.stats()}"
     history = []
     print("Career coach ready. Ctrl-C or 'quit' to exit.")
     while True:
@@ -210,6 +210,34 @@ def cmd_jobs(a):
                 print(f"fit {j['score']}: {j['title']} @ {j['company']} -> {j['proposal'].get('status')}")
 
 
+def cmd_profile(a):
+    from . import profile
+
+    if a.op == "show":
+        print(profile.summary_text())
+    elif a.op in ("import", "linkedin"):
+        src = Path(a.file)
+        r = profile.import_file(src.read_bytes(), src.name, "linkedin" if a.op == "linkedin" else "resume", a.provider,
+                                False if a.no_ai else None)
+        got = ", ".join(f"{n} {k}" for k, n in r["added"].items() if n) or "nothing new"
+        print(f"{'saved' if r['new_file'] else 'already saved'}: resumes/{r['resume']['file']}")
+        print(f"added to the bank: {got}  ({'AI' if r['used_ai'] else 'offline'} extraction)")
+        if r["seeded_master"]:
+            print(f"profile.md was still the template, so it was built from the bank: {profile.PROFILE}")
+        else:
+            print("profile.md left as is; `lodestar profile rebuild` regenerates it from the bank (old copy kept)")
+    elif a.op == "link":
+        print(f"LinkedIn linked: {profile.link_linkedin(a.url)}")
+        print(f"to import your LinkedIn profile, request 'Download your data' at {profile.LINKEDIN_EXPORT_URL}\n"
+              "then run: lodestar profile linkedin <the .zip>   (or use the profile's 'Save to PDF')")
+    elif a.op == "add":
+        print(f"added {profile.add(a.kind, a.name, a.detail or '')['added']} {a.kind}")
+    elif a.op == "remove":
+        print(f"removed {profile.remove(a.kind, a.name)['removed']} {a.kind}")
+    elif a.op == "rebuild":
+        print(f"rebuilt {profile.rebuild_master()} from the bank (previous version in profile-history/)")
+
+
 def cmd_resume(a):
     from . import resume
 
@@ -230,8 +258,10 @@ def cmd_resume(a):
         if a.merge:
             text = resume.merge_into_profile(text, a.provider)
         if a.save:
-            PROFILE.write_text(text, encoding="utf-8")
-            print(f"profile {'merged and ' if a.merge else ''}saved: {PROFILE}")
+            from .profile import write_master
+
+            write_master(text)
+            print(f"profile {'merged and ' if a.merge else ''}saved: {PROFILE} (previous version in profile-history/)")
         else:
             print(text)
             print("\n(nothing saved; add --save, or --merge --save to fold it into your master profile)")
@@ -246,7 +276,12 @@ def cmd_resume(a):
             target, kind = PROFILE, "master profile"
         new = resume.adjust_text(target.read_text(encoding="utf-8"), a.instruction, kind, a.provider)
         if a.save:
-            target.write_text(new, encoding="utf-8")
+            if target == PROFILE:
+                from .profile import write_master
+
+                write_master(new)
+            else:
+                target.write_text(new, encoding="utf-8")
             print(f"saved {target}")
         else:
             print(new)
@@ -630,6 +665,22 @@ def build() -> argparse.ArgumentParser:
     x = v.add_parser("export"); x.add_argument("file", help="markdown -> .docx")
     v.add_parser("profile", help="print master profile path")
     s.set_defaults(f=cmd_resume)
+
+    s = sub.add_parser("profile", help="profile bank: saved resumes, skills, languages, LinkedIn import")
+    v = s.add_subparsers(dest="op", required=True)
+    v.add_parser("show", help="what the bank holds: contact, skills, languages, roles, saved resumes")
+    for name, what in (("import", "a resume (.docx/.pdf/.md/.txt): saves the original, extracts facts into the bank"),
+                       ("linkedin", "LinkedIn 'Download your data' .zip, or the profile 'Save to PDF' file")):
+        x = v.add_parser(name, help=what); x.add_argument("file")
+        x.add_argument("--no-ai", action="store_true", help="offline extraction only (contact, skills, languages)")
+    x = v.add_parser("link", help="store your LinkedIn profile URL"); x.add_argument("url")
+    for name in ("add", "remove"):
+        x = v.add_parser(name, help=f"{name} a skill / language / certification by hand")
+        x.add_argument("kind", choices=["skills", "languages", "certifications"]); x.add_argument("name")
+        if name == "add":
+            x.add_argument("--detail", help="category (skills), proficiency (languages) or issuer (certifications)")
+    v.add_parser("rebuild", help="regenerate profile.md from the bank (snapshots the old one)")
+    s.set_defaults(f=cmd_profile)
 
     s = sub.add_parser("email", help="IMAP monitor: classify replies, update tracker")
     v = s.add_subparsers(dest="op", required=True)

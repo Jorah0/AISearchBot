@@ -2,14 +2,14 @@
 from pathlib import Path
 
 from . import ai, db
-from .resume import app_dir, profile_text
+from .resume import app_dir, candidate_text
 
 SYSTEM = "You are a veteran hiring manager and interview coach. Be concrete, honest, and grounded in the candidate's real history."
 
 
 def _resume(job) -> str:
     p = app_dir(job) / "resume.md"
-    return p.read_text(encoding="utf-8") if p.is_file() else profile_text()
+    return p.read_text(encoding="utf-8") if p.is_file() else candidate_text()
 
 
 def prep(job, use_council: bool = False, provider: str | None = None) -> Path:

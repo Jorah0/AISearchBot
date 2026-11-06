@@ -1,0 +1,602 @@
+"""Profile bank: structured facts (contact, skills, languages, experience, education, certifications, projects)
+gathered from every resume you import and from your LinkedIn data export, plus the original resume files.
+
+    ~/.lodestar/profile.json      the bank; every entry lists the sources it came from
+    ~/.lodestar/resumes/          originals (deduplicated by content hash) + extracted text
+    ~/.lodestar/profile-history/  a snapshot of profile.md before every overwrite
+
+profile.md stays the editable master that prompts read. The bank seeds it while it is still the template, rebuilds it
+on request, and tops up prompts with facts the master leaves out (candidate_text). Nothing here invents data.
+
+LinkedIn: its API gives third-party apps only name/email/photo and scraping profiles breaks its terms, so "linking"
+means storing your profile URL plus importing what LinkedIn hands you: the "Download your data" zip (CSV files) or
+the profile "Save to PDF" file. From the zip only the parsed profile facts are kept, never the archive itself
+(it can also hold messages and connections).
+"""
+import csv
+import hashlib
+import io
+import json
+import os
+import re
+import threading
+import zipfile
+from datetime import datetime
+from pathlib import Path
+
+from .config import HOME, PROFILE
+from .util import slug
+
+BANK = HOME / "profile.json"
+RESUMES = HOME / "resumes"
+HISTORY = HOME / "profile-history"
+LINKEDIN_EXPORT_URL = "https://www.linkedin.com/mypreferences/d/download-my-data"
+_LOCK = threading.Lock()  # bank read-modify-write: the web server threads and the monitor loop share this file
+
+CONTACT = ("name", "headline", "email", "phone", "location", "linkedin", "github", "website")
+FIELDS = {  # list kinds -> allowed fields; the first field(s) of KEYS identify an entry
+    "skills": ("name", "category"),
+    "languages": ("name", "proficiency"),
+    "experience": ("title", "company", "location", "start", "end", "bullets"),
+    "education": ("school", "degree", "field", "start", "end"),
+    "certifications": ("name", "issuer", "date", "url"),
+    "projects": ("name", "description", "url"),
+}
+KEYS = {"skills": ("name",), "languages": ("name",), "experience": ("company", "title"), "education": ("school", "degree"),
+        "certifications": ("name",), "projects": ("name",)}
+PLACEHOLDERS = {"full name", "city, st", "email@example.com", "+1 555 000 0000", "linkedin.com/in/you", "github.com/you",
+                "job title", "previous title", "company", "project name", "degree, school, year", "bullet",
+                "achievement bullet with a number (e.g. cut deploy time 40%)", "another bullet"}
+TEMPLATE_MARKERS = ("Full Name", "Two or three sentences", "Achievement bullet with a number")
+
+
+def empty() -> dict:
+    return {"contact": {k: "" for k in CONTACT}, "summary": "", **{k: [] for k in FIELDS}, "resumes": [], "updated": ""}
+
+
+def load() -> dict:
+    bank = empty()
+    if BANK.is_file():
+        try:
+            data = json.loads(BANK.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        for k, v in data.items():
+            if k == "contact" and isinstance(v, dict):
+                bank["contact"].update({c: str(v.get(c) or "") for c in CONTACT})
+            elif k in bank:
+                bank[k] = v
+    return bank
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def save(bank: dict) -> None:
+    bank["updated"] = datetime.now().isoformat(timespec="seconds")
+    _atomic_write(BANK, json.dumps(bank, indent=2, ensure_ascii=False))
+
+
+# ----------------------------------------------------------------------------- master profile.md
+def is_template(text: str) -> bool:
+    """True while profile.md is missing, empty, or still holds the starter placeholders."""
+    return not text.strip() or any(m in text for m in TEMPLATE_MARKERS)
+
+
+def master_text() -> str:
+    return PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else ""
+
+
+def snapshot_master(keep: int = 30) -> Path | None:
+    """Copy profile.md into profile-history/ (skipped when identical to the newest snapshot); keeps the last N."""
+    if not PROFILE.is_file():
+        return None
+    text = master_text()
+    HISTORY.mkdir(parents=True, exist_ok=True)
+    snaps = sorted(HISTORY.glob("profile-*.md"))
+    if snaps and snaps[-1].read_text(encoding="utf-8") == text:
+        return snaps[-1]
+    out = HISTORY / f"profile-{datetime.now():%Y%m%d-%H%M%S-%f}.md"
+    out.write_text(text, encoding="utf-8")
+    for old in sorted(HISTORY.glob("profile-*.md"))[:-keep]:
+        old.unlink()
+    return out
+
+
+def write_master(text: str) -> Path:
+    """Every overwrite of profile.md goes through here: snapshot the old one, then replace atomically."""
+    snapshot_master()
+    _atomic_write(PROFILE, text)
+    return PROFILE
+
+
+# ----------------------------------------------------------------------------- merging
+def _norm(s) -> str:
+    return re.sub(r"\s+", " ", str(s or "")).strip()
+
+
+def _key(item: dict, kind: str) -> tuple:
+    return tuple(_norm(item.get(f)).casefold() for f in KEYS[kind])
+
+
+def _placeholder(v: str) -> bool:
+    return _norm(v).casefold().strip("-* ") in PLACEHOLDERS
+
+
+def _clean_item(kind: str, item) -> dict | None:
+    if isinstance(item, str):
+        item = {FIELDS[kind][0]: item}
+    if not isinstance(item, dict):
+        return None
+    out = {}
+    for f in FIELDS[kind]:
+        v = item.get(f)
+        if f == "bullets":
+            vals = v if isinstance(v, list) else re.split(r"\n|•", str(v or ""))
+            out[f] = [b for b in (_norm(str(x)).lstrip("-*• ").strip() for x in vals) if b and not _placeholder(b)]
+        else:
+            out[f] = "" if _placeholder(_norm(v)) else _norm(v)[:500]
+    if not any(out.get(f) for f in KEYS[kind]):
+        return None
+    if kind in ("skills", "languages") and not 1 <= len(out["name"]) <= 60:
+        return None
+    return out
+
+
+def merge(bank: dict, facts: dict, source: str) -> dict:
+    """Fold extracted facts into the bank without deleting or overwriting anything. Returns {kind: entries added}."""
+    added = {k: 0 for k in FIELDS} | {"contact": 0}
+    for k, v in (facts.get("contact") or {}).items():
+        v = _norm(v)
+        if k in CONTACT and v and not _placeholder(v) and not bank["contact"].get(k):
+            bank["contact"][k] = v
+            added["contact"] += 1
+    if not bank.get("summary") and _norm(facts.get("summary")):
+        bank["summary"] = str(facts["summary"]).strip()[:3000]
+    for kind in FIELDS:
+        index = {_key(x, kind): x for x in bank[kind]}
+        for raw in facts.get(kind) or []:
+            item = _clean_item(kind, raw)
+            if not item:
+                continue
+            k = _key(item, kind)
+            have = index.get(k)
+            if have is None:  # same entity, looser match: a role with the same company and no title yet, etc.
+                have = next((x for kk, x in index.items() if kind == "experience" and kk[0] == k[0] and not (kk[1] and k[1])), None)
+            if have is None:
+                item["sources"] = [source]
+                bank[kind].append(item)
+                index[k] = item
+                added[kind] += 1
+                continue
+            for f, v in item.items():
+                if f == "bullets":
+                    have.setdefault("bullets", [])
+                    have["bullets"] += [b for b in v if b.casefold() not in {x.casefold() for x in have["bullets"]}]
+                elif v and not have.get(f):
+                    have[f] = v
+            if source not in have.setdefault("sources", []):
+                have["sources"].append(source)
+    return added
+
+
+# ----------------------------------------------------------------------------- extraction
+SECTIONS = {
+    "summary": ("summary", "about", "profile", "professional summary", "objective"),
+    "skills": ("skills", "top skills", "technical skills", "core competencies", "competencies", "technologies", "tools"),
+    "languages": ("languages", "spoken languages", "language skills"),
+    "experience": ("experience", "work experience", "professional experience", "employment", "employment history", "work history"),
+    "education": ("education",),
+    "certifications": ("certifications", "certificates", "licenses & certifications", "licenses and certifications", "licenses"),
+    "projects": ("projects", "selected projects", "personal projects"),
+    "contact": ("contact", "contact information"),
+}
+EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+PHONE_RE = re.compile(r"\+?\d[\d\s().-]{7,}\d")
+LINKEDIN_RE = re.compile(r"(?:https?://)?(?:[a-z]{2,3}\.)?linkedin\.com/in/[\w\-%]+/?", re.I)
+GITHUB_RE = re.compile(r"(?:https?://)?(?:www\.)?github\.com/[\w-]+", re.I)
+DATES_RE = re.compile(r"\s+(?:-|–|—|to)\s+")
+
+
+def _section_of(line: str) -> str | None:
+    s = line.strip()
+    m = re.match(r"^#{1,2}\s+(.+)$", s)
+    if not m and (len(s) > 40 or s.endswith(".")):
+        return None
+    name = re.sub(r"\(.*?\)", "", m.group(1) if m else s).strip(" :").casefold()
+    for sec, aliases in SECTIONS.items():
+        if name in aliases:
+            return sec
+    return "other" if m else None
+
+
+def _split_list(line: str) -> list[str]:
+    return [p.strip() for p in re.split(r"[,;|•·](?![^(]*\))", line) if p.strip()]
+
+
+def extract_heuristic(text: str) -> dict:
+    """Offline parse of a markdown or plain-text resume. Reliable for contact details, skills and languages; experience
+    only in the master-profile format (### Title - Company (start - end)). The AI extractor does the rest."""
+    facts = {"contact": {}, "summary": "", **{k: [] for k in FIELDS}}
+    c = facts["contact"]
+    if m := EMAIL_RE.search(text):
+        c["email"] = m.group(0)
+    if m := LINKEDIN_RE.search(text):
+        c["linkedin"] = m.group(0)
+    if m := GITHUB_RE.search(text):
+        c["github"] = m.group(0)
+    for ln in text.splitlines():  # the master profile's contact line: Name | City | email | phone | links
+        if "@" in ln and "|" in ln:
+            parts = [p.strip() for p in ln.split("|")]
+            if parts and not re.search(r"[@\d/]", parts[0]):
+                c["name"] = parts[0].lstrip("# ")
+            if len(parts) > 1 and not re.search(r"[@/]", parts[1]) and not PHONE_RE.fullmatch(parts[1]):
+                c["location"] = parts[1]
+            c["phone"] = next((p for p in parts if PHONE_RE.fullmatch(p)), "")
+            break
+    else:
+        first = next((ln.strip().lstrip("# ") for ln in text.splitlines() if ln.strip()), "")
+        if first and len(first) < 60 and not re.search(r"[@\d|]", first) and _section_of(first) is None and "resume" not in first.lower():
+            c["name"] = first
+        if m := PHONE_RE.search(text):
+            c["phone"] = m.group(0).strip()
+
+    sec, summary, cur = None, [], None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        found = _section_of(line)
+        if found:
+            sec, cur = found, None
+            continue
+        item = line.lstrip("-*•· ").strip()
+        if sec == "summary":
+            summary.append(item)
+        elif sec == "skills":
+            cat = ""
+            if ":" in item and len(item.split(":", 1)[0]) < 30:
+                cat, item = (x.strip() for x in item.split(":", 1))
+            facts["skills"] += [{"name": s, "category": cat} for s in _split_list(item) if len(s) <= 40]
+        elif sec == "languages":
+            for piece in _split_list(item):
+                m = re.match(r"([^()\-–:]+?)\s*(?:\((.+)\)|[-–:]\s*(.+))?$", piece)
+                if m:
+                    facts["languages"].append({"name": m.group(1).strip(), "proficiency": (m.group(2) or m.group(3) or "").strip()})
+        elif sec == "experience":
+            m = re.match(r"^#{3,}\s*(.+?)\s+(?:-|–|—|at|@)\s+(.+?)(?:\s*\((.+?)\))?\s*$", line)
+            if m:
+                start, end = (DATES_RE.split(m.group(3), 1) + [""])[:2] if m.group(3) else ("", "")
+                cur = {"title": m.group(1), "company": m.group(2), "start": start, "end": end, "bullets": []}
+                facts["experience"].append(cur)
+            elif cur is not None and raw.lstrip().startswith(("-", "*", "•")):
+                cur["bullets"].append(item)
+        elif sec == "education" and not line.startswith("#"):
+            facts["education"].append({"school": item})
+        elif sec == "certifications":
+            facts["certifications"].append({"name": item})
+        elif sec == "projects":
+            if line.startswith("#"):
+                name, _, rest = line.lstrip("# ").partition(" - ")
+                cur = {"name": name.strip(), "description": rest.strip()}
+                facts["projects"].append(cur)
+            elif cur is not None:
+                cur["description"] = (cur["description"] + " " + item).strip()
+    facts["summary"] = " ".join(s for s in summary if not s.startswith("Two or three sentences"))
+    return facts
+
+
+EXTRACT_PROMPT = """Extract the candidate's facts from this resume / profile text into JSON with exactly these keys:
+{"contact": {"name": "", "headline": "", "email": "", "phone": "", "location": "", "linkedin": "", "github": "", "website": ""},
+ "summary": "",
+ "skills": [{"name": "", "category": ""}],
+ "languages": [{"name": "", "proficiency": ""}],
+ "experience": [{"title": "", "company": "", "location": "", "start": "", "end": "", "bullets": [""]}],
+ "education": [{"school": "", "degree": "", "field": "", "start": "", "end": ""}],
+ "certifications": [{"name": "", "issuer": "", "date": "", "url": ""}],
+ "projects": [{"name": "", "description": "", "url": ""}]}
+Rules: only facts stated in the text, copied faithfully (keep every bullet and number); empty string or [] when absent.
+"languages" means spoken/human languages; programming languages go in skills with category "Programming languages".
+Dates as written (YYYY-MM or YYYY when possible; "Present" for current roles).
+
+TEXT:
+"""
+
+
+def extract(text: str, provider: str | None = None, use_ai: bool | None = None) -> tuple[dict, bool]:
+    """(facts, used_ai). AI extraction when a provider is configured (or use_ai=True); falls back to the offline parser.
+    Contact fields the regexes find reliably fill any blanks the AI left."""
+    heur = extract_heuristic(text)
+    if use_ai is None:
+        from . import ai
+
+        use_ai = bool(ai.available())
+    if not use_ai:
+        return heur, False
+    from . import ai
+    from .resume import SYSTEM
+
+    try:
+        facts = ai.ask_json(EXTRACT_PROMPT + text[:20000], SYSTEM, provider)
+        if not isinstance(facts, dict):
+            raise ValueError("extractor did not return an object")
+    except (Exception, SystemExit) as e:  # no key / provider down (ai raises SystemExit), bad reply: parse offline
+        from . import log
+
+        log.get("profile").warning("AI extraction failed, using the offline parser: %s", e)
+        return heur, False
+    contact = facts.get("contact") if isinstance(facts.get("contact"), dict) else {}
+    facts["contact"] = {k: contact.get(k) or heur["contact"].get(k, "") for k in CONTACT}
+    for kind in ("skills", "languages"):  # the parser's section reads are cheap insurance against an AI omission
+        facts[kind] = list(facts.get(kind) or []) + heur[kind]
+    return facts, True
+
+
+# ----------------------------------------------------------------------------- LinkedIn
+def _li_rows(z: zipfile.ZipFile, files: dict, name: str, first_col: str) -> list[dict]:
+    """Rows of one export CSV. Some files open with a 'Notes:' preamble, so parsing starts at the header line."""
+    if name not in files:
+        return []
+    text = z.read(files[name]).decode("utf-8-sig", errors="replace")
+    m = re.search(rf'(?m)^"?{re.escape(first_col)}', text)
+    if not m:
+        return []
+    return [{k.strip(): (v or "").strip() for k, v in r.items() if k} for r in csv.DictReader(io.StringIO(text[m.start():], newline=""))]
+
+
+def linkedin_facts(data: bytes) -> dict:
+    """Facts from LinkedIn's "Download your data" zip (basic or full archive). Other CSVs in the archive are ignored."""
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        raise SystemExit("not a zip file: use LinkedIn's 'Download your data' archive, or its profile 'Save to PDF'") from None
+    files = {Path(n).name.lower(): n for n in z.namelist() if n.lower().endswith(".csv")}
+    known = {"profile.csv", "positions.csv", "skills.csv", "languages.csv", "education.csv", "certifications.csv"}
+    if not files.keys() & known:
+        raise SystemExit("this zip has no LinkedIn profile files (Profile.csv, Positions.csv, Skills.csv, ...). Request "
+                         f"'Download your data' at {LINKEDIN_EXPORT_URL}")
+    facts = {"contact": {}, "summary": "", **{k: [] for k in FIELDS}}
+    c = facts["contact"]
+    for p in _li_rows(z, files, "profile.csv", "First Name")[:1]:
+        c["name"] = f"{p.get('First Name', '')} {p.get('Last Name', '')}".strip()
+        c["headline"], c["location"] = p.get("Headline", ""), p.get("Geo Location", "")
+        facts["summary"] = p.get("Summary", "")
+        for url in re.findall(r"https?://[^\s,\]\[]+", p.get("Websites", "")):
+            key = "github" if "github.com" in url else "linkedin" if "linkedin.com/in/" in url else "website"
+            c.setdefault(key, url)
+    emails = _li_rows(z, files, "email addresses.csv", "Email Address")
+    if emails:
+        c["email"] = next((e["Email Address"] for e in emails if e.get("Primary", "").lower() == "yes"), emails[0]["Email Address"])
+    phones = _li_rows(z, files, "phonenumbers.csv", "Extension") or _li_rows(z, files, "phonenumbers.csv", "Number")
+    if phones:
+        c["phone"] = phones[0].get("Number", "")
+    for r in _li_rows(z, files, "positions.csv", "Company Name"):
+        facts["experience"].append({"title": r.get("Title"), "company": r.get("Company Name"), "location": r.get("Location"),
+                                    "start": r.get("Started On"), "end": r.get("Finished On") or "Present",
+                                    "bullets": re.split(r"\n|•", r.get("Description", ""))})
+    for r in _li_rows(z, files, "education.csv", "School Name"):
+        facts["education"].append({"school": r.get("School Name"), "degree": r.get("Degree Name"), "start": r.get("Start Date"),
+                                   "end": r.get("End Date")})
+    facts["skills"] = [{"name": r.get("Name")} for r in _li_rows(z, files, "skills.csv", "Name")]
+    facts["languages"] = [{"name": r.get("Name"), "proficiency": r.get("Proficiency")} for r in _li_rows(z, files, "languages.csv", "Name")]
+    for r in _li_rows(z, files, "certifications.csv", "Name"):
+        facts["certifications"].append({"name": r.get("Name"), "issuer": r.get("Authority"), "date": r.get("Started On"), "url": r.get("Url")})
+    for r in _li_rows(z, files, "projects.csv", "Title"):
+        facts["projects"].append({"name": r.get("Title"), "description": r.get("Description"), "url": r.get("Url")})
+    return facts
+
+
+def link_linkedin(url: str) -> str:
+    """Store your public LinkedIn profile URL (used in rendered resumes and by the autofill bookmarklet)."""
+    m = re.search(r"linkedin\.com/in/([\w\-%]+)", url or "", re.I)
+    if not m:
+        raise ValueError("expected a profile URL like https://www.linkedin.com/in/your-name")
+    clean = f"https://www.linkedin.com/in/{m.group(1)}"
+    with _LOCK:
+        bank = load()
+        bank["contact"]["linkedin"] = clean
+        save(bank)
+    return clean
+
+
+# ----------------------------------------------------------------------------- importing files
+def import_file(data: bytes, filename: str, source: str = "resume", provider: str | None = None,
+                use_ai: bool | None = None) -> dict:
+    """Save an original (resume .docx/.pdf/.md/.txt, LinkedIn .zip or profile PDF), extract its facts, merge them into
+    the bank, and seed profile.md if it is still the template. Re-importing the same file adds no duplicate copy."""
+    from .extras import import_document
+
+    name = Path(filename).name or "resume.txt"
+    is_zip = name.lower().endswith(".zip")
+    if is_zip:
+        facts, used_ai, text = linkedin_facts(data), False, ""
+        source = "linkedin"
+    else:
+        text = import_document(data, name)  # raises SystemExit with a clear message on an unsupported format
+        if not text.strip():
+            raise SystemExit(f"no text found in {name} (a scanned PDF needs OCR first)")
+        facts, used_ai = extract(text, provider, use_ai)
+    sha = hashlib.sha256(data).hexdigest()
+    with _LOCK:
+        bank = load()
+        entry = next((r for r in bank["resumes"] if r.get("sha") == sha), None)
+        new_file = entry is None
+        if new_file:
+            RESUMES.mkdir(parents=True, exist_ok=True)
+            stem = f"{datetime.now():%Y%m%d}-{sha[:8]}-{slug(Path(name).stem)}"
+            if is_zip:  # keep only the parsed facts, not the archive
+                stored = stem + ".linkedin.json"
+                (RESUMES / stored).write_text(json.dumps(facts, indent=2, ensure_ascii=False), encoding="utf-8")
+            else:
+                stored = stem + (Path(name).suffix.lower() or ".txt")
+                (RESUMES / stored).write_bytes(data)
+                if not stored.endswith((".txt", ".md")):
+                    (RESUMES / (stem + ".txt")).write_text(text, encoding="utf-8")
+            entry = {"id": sha[:8], "name": name, "source": source, "added": datetime.now().isoformat(timespec="seconds"),
+                     "sha": sha, "chars": len(text), "file": stored}
+            bank["resumes"].append(entry)
+        added = merge(bank, facts, f"{source}:{entry['id']}")
+        save(bank)
+        seeded = False
+        if is_template(master_text()):
+            write_master(render_markdown(bank))
+            seeded = True
+    return {"resume": entry, "new_file": new_file, "added": added, "used_ai": used_ai, "seeded_master": seeded,
+            "text": text or render_markdown({**empty(), **facts, "resumes": []})}
+
+
+# ----------------------------------------------------------------------------- manual edits
+def add(kind: str, name: str, detail: str = "") -> dict:
+    """Add one skill / language / certification by hand ('detail' = category, proficiency or issuer)."""
+    second = {"skills": "category", "languages": "proficiency", "certifications": "issuer"}
+    if kind not in second:
+        raise ValueError(f"can add skills, languages or certifications, not {kind}")
+    with _LOCK:
+        bank = load()
+        n = merge(bank, {kind: [{"name": name, second[kind]: detail}]}, "manual")[kind]
+        save(bank)
+    return {"added": n, "bank": bank}
+
+
+def remove(kind: str, name: str) -> dict:
+    if kind not in FIELDS:
+        raise ValueError(f"unknown kind {kind}")
+    with _LOCK:
+        bank = load()
+        before = len(bank[kind])
+        bank[kind] = [x for x in bank[kind] if _norm(x.get(KEYS[kind][0])).casefold() != _norm(name).casefold()]
+        save(bank)
+    return {"removed": before - len(bank[kind]), "bank": bank}
+
+
+def set_contact(field: str, value: str) -> dict:
+    if field not in CONTACT:
+        raise ValueError(f"unknown contact field {field}")
+    if field == "linkedin" and value:
+        link_linkedin(value)
+        return load()
+    with _LOCK:
+        bank = load()
+        bank["contact"][field] = _norm(value)
+        save(bank)
+    return bank
+
+
+# ----------------------------------------------------------------------------- rendering + prompts
+def _preferences(master: str) -> str:
+    m = re.search(r"(?ms)^## Preferences.*?(?=^## |\Z)", master)
+    return m.group(0).strip() if m else "## Preferences (used for job search ranking)\nTarget roles: | Locations / remote: | Salary floor: | Deal-breakers: | Industries to avoid:"
+
+
+def render_markdown(bank: dict, master: str | None = None) -> str:
+    """The bank as a master profile in the template's section layout. Preferences are kept from the current master."""
+    c = bank.get("contact") or {}
+    out = ["# Master Resume", "", "## Contact",
+           " | ".join(v for v in (c.get(k) for k in ("name", "location", "email", "phone", "linkedin", "github", "website")) if v)]
+    if c.get("headline") or bank.get("summary"):
+        out += ["", "## Summary"] + [x for x in (c.get("headline"), bank.get("summary")) if x]
+    if bank.get("skills"):
+        groups: dict[str, list[str]] = {}
+        for s in bank["skills"]:
+            groups.setdefault(s.get("category") or "", []).append(s["name"])
+        out += ["", "## Skills"] + [f"- {cat + ': ' if cat else ''}{', '.join(names)}" for cat, names in groups.items()]
+    if bank.get("languages"):
+        out += ["", "## Languages"] + [f"- {x['name']}{' (' + x['proficiency'] + ')' if x.get('proficiency') else ''}" for x in bank["languages"]]
+    if bank.get("experience"):
+        out += ["", "## Experience"]
+        for e in bank["experience"]:
+            dates = " - ".join(x for x in (e.get("start"), e.get("end")) if x)
+            out += ["", f"### {e.get('title') or 'Role'} - {e.get('company') or ''}{f' ({dates})' if dates else ''}".rstrip(" -")]
+            out += [f"- {b}" for b in e.get("bullets") or []]
+    if bank.get("projects"):
+        out += ["", "## Projects"]
+        for p in bank["projects"]:
+            out += ["", f"### {p['name']}{' - ' + p['url'] if p.get('url') else ''}"] + ([f"- {p['description']}"] if p.get("description") else [])
+    if bank.get("education"):
+        out += ["", "## Education"]
+        for e in bank["education"]:
+            dates = " - ".join(x for x in (e.get("start"), e.get("end")) if x)
+            out.append(", ".join(x for x in (e.get("degree"), e.get("field"), e.get("school")) if x) + (f" ({dates})" if dates else ""))
+    if bank.get("certifications"):
+        out += ["", "## Certifications"] + [f"- {x['name']}{' - ' + x['issuer'] if x.get('issuer') else ''}{' (' + x['date'] + ')' if x.get('date') else ''}" for x in bank["certifications"]]
+    out += ["", _preferences(master if master is not None else master_text()), ""]
+    return "\n".join(out)
+
+
+def rebuild_master() -> Path:
+    """Regenerate profile.md from the bank (the old file is snapshotted to profile-history/ first)."""
+    with _LOCK:
+        return write_master(render_markdown(load()))
+
+
+def _mentioned(name: str, text: str) -> bool:
+    return bool(re.search(rf"(?<!\w){re.escape(name)}(?!\w)", text, re.I))
+
+
+def extras_text(master: str, bank: dict | None = None) -> str:
+    """Bank facts the master profile does not mention, as a short section prompts can draw on."""
+    bank = bank or load()
+    skills = [s["name"] for s in bank["skills"] if not _mentioned(s["name"], master)]
+    langs = [f"{x['name']}{' (' + x['proficiency'] + ')' if x.get('proficiency') else ''}" for x in bank["languages"] if not _mentioned(x["name"], master)]
+    certs = [x["name"] for x in bank["certifications"] if not _mentioned(x["name"], master)]
+    roles = [f"{e.get('title')} at {e.get('company')} ({e.get('start') or '?'} - {e.get('end') or '?'})" for e in bank["experience"]
+             if e.get("company") and not _mentioned(e["company"], master)]
+    lines = [f"- {label}: {'; '.join(v[:60])}" for label, v in (("Skills", skills), ("Languages", langs),
+                                                                  ("Certifications", certs), ("Other roles", roles)) if v]
+    return ("## On file (from imported resumes / LinkedIn; not yet in the master above)\n" + "\n".join(lines)) if lines else ""
+
+
+PRIORITY = ("contact", "summary", "skills", "languages", "preferences", "on file", "certifications", "education",
+            "experience", "projects")
+
+
+def brief(text: str, limit: int) -> str:
+    """Fit a markdown profile into `limit` characters by whole sections in priority order (contact, summary, skills,
+    languages, preferences first; experience trimmed last), instead of cutting off whatever comes at the end."""
+    if len(text) <= limit:
+        return text
+    secs = re.split(r"(?m)^(?=## )", text)
+
+    def rank(i: int) -> int:
+        if i == 0:
+            return -1  # title / preamble
+        head = secs[i].split("\n", 1)[0].casefold()
+        return next((n for n, k in enumerate(PRIORITY) if k in head), len(PRIORITY))
+
+    keep: dict[int, str] = {}
+    used = 0
+    for i in sorted(range(len(secs)), key=rank):
+        room = limit - used
+        if room < 80:
+            break
+        s = secs[i]
+        keep[i] = s if len(s) <= room else s[:room].rsplit("\n", 1)[0] + "\n…\n"
+        used += len(keep[i])
+    return "".join(keep[i] for i in sorted(keep)).strip()
+
+
+def candidate_text(limit: int | None = None) -> str:
+    """What prompts should read: the master profile plus bank facts it leaves out, fitted to `limit` by section."""
+    from .resume import profile_text
+
+    master = profile_text()
+    extra = extras_text(master)
+    text = master.rstrip() + ("\n\n" + extra if extra else "")
+    return brief(text, limit) if limit else text
+
+
+def summary_text() -> str:
+    bank = load()
+    c = bank["contact"]
+    lines = [f"bank: {BANK}", f"contact: {' | '.join(v for v in c.values() if v) or '(empty)'}",
+             f"skills ({len(bank['skills'])}): {', '.join(s['name'] for s in bank['skills']) or '-'}",
+             f"languages ({len(bank['languages'])}): " + (", ".join(f"{x['name']} {('(' + x['proficiency'] + ')') if x.get('proficiency') else ''}".strip() for x in bank["languages"]) or "-"),
+             f"experience: {len(bank['experience'])} | education: {len(bank['education'])} | certifications: "
+             f"{len(bank['certifications'])} | projects: {len(bank['projects'])}",
+             f"saved resumes ({len(bank['resumes'])}):"]
+    lines += [f"  {r['added'][:10]}  {r['source']:<9} {r['name']}  -> resumes/{r['file']}" for r in bank["resumes"]] or ["  (none)"]
+    return "\n".join(lines)

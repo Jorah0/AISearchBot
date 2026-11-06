@@ -69,9 +69,16 @@ def _jd(job) -> str:
     return job["jd"]
 
 
+def candidate_text(limit: int | None = None) -> str:
+    """Master profile + profile-bank facts it leaves out, fitted to `limit` by whole sections. Prompts read this."""
+    from .profile import candidate_text as _ct
+
+    return _ct(limit)
+
+
 def _current_resume(job) -> str:
     p = app_dir(job) / "resume.md"
-    return p.read_text(encoding="utf-8") if p.is_file() else profile_text()
+    return p.read_text(encoding="utf-8") if p.is_file() else candidate_text()
 
 
 def tailor(job, use_council: bool = False, provider: str | None = None) -> Path:
@@ -83,8 +90,8 @@ JOB: {job['title']} at {job['company']}
 JOB DESCRIPTION:
 {_jd(job)}
 
-MASTER RESUME:
-{profile_text()}"""
+MASTER RESUME (an "On file" section, if present, lists further true facts from the candidate's other resumes):
+{candidate_text()}"""
     text = ai.council(prompt, SYSTEM)["synthesis"] if use_council else ai.ask(prompt, SYSTEM, provider)
     out = app_dir(job) / "resume.md"
     out.write_text(text, encoding="utf-8")

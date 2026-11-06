@@ -215,7 +215,7 @@ def _maybe_reply(info: dict, job) -> None:
         return
     from .apply import _sig, next_slots, parse_times
     from .extras import upcoming_interviews
-    from .resume import profile_text
+    from .resume import candidate_text
 
     busy = ", ".join(f"{it['when']:%Y-%m-%d %H:%M} ({it['company']})" for it in upcoming_interviews(45)) or "none"
 
@@ -238,7 +238,7 @@ Subject: {info['subject']}
 {info.get('body', '')[:3000]}
 
 CANDIDATE (for name and signature only):
-{profile_text()[:800]}""")
+{candidate_text(800)}""")
     except (Exception, SystemExit) as e:  # missing profile / provider / bad JSON: log on the job, keep scanning
         db.add_event(job["id"], "reply", f"draft failed: {e}")
         notify(f"REPLY SKIPPED for {job['company']}: {e}")
@@ -258,12 +258,12 @@ CANDIDATE (for name and signature only):
 
 
 def draft_reply(job, intent: str, provider: str | None = None) -> str:
-    from .resume import profile_text
+    from .resume import candidate_text
 
     return ai.ask(
         f"""Draft a short professional email (under 150 words) from the candidate to {job['company']} regarding the
 {job['title']} application. Intent: {intent}. Match a friendly, direct tone; include a subject line.
 Candidate background (for name/signature only):
-{profile_text()[:1500]}""",
+{candidate_text(1500)}""",
         provider=provider,
     )

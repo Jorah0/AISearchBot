@@ -104,8 +104,21 @@
   <div class="row"><span class="muted" id="pPath"></span><button class="b" onclick="saveProfile()">Save</button><button class="b ghost" onclick="run('review',{},r=>show('pOut',r.text),this)">AI review</button></div>
   <div class="row"><input id="pAdj" class="grow" placeholder="adjust with AI, e.g. tighten to one page / emphasise leadership / rewrite summary for data roles"><button class="b ghost" onclick="adjustProfile(this)">Adjust</button><span class="muted">result replaces the editor; nothing is saved until you click Save</span></div>
   <textarea id="pText"></textarea>
+  <div class="panel" id="bankPanel"><h3>Profile bank</h3>
+    <p class="muted">Every resume you import is kept, and its skills, languages, roles, education and certifications are pooled here with their source. Prompts read your master profile plus anything here it does not mention yet.</p>
+    <div class="row"><b style="width:90px">LinkedIn</b><input id="liUrl" class="grow" placeholder="https://www.linkedin.com/in/your-name"><button class="b ghost sm" onclick="bankOp({op:'contact',field:'linkedin',value:$('#liUrl').value},'LinkedIn linked')">Link</button>
+      <a id="liExport" class="b ghost sm" target="_blank" rel="noopener" href="#">Request my LinkedIn data ↗</a></div>
+    <div class="row"><input type="file" id="liFile" accept=".zip,.pdf"><button class="b ghost" onclick="importToBank('liFile',true,this)">Import LinkedIn</button><span class="muted">the "Download your data" .zip, or your profile's "Save to PDF". Only profile facts are kept from the zip.</span></div>
+    <div class="row"><b style="width:90px">Skills</b><div id="bSkills" class="grow"></div></div>
+    <div class="row"><span style="width:90px"></span><input id="bSkill" placeholder="add a skill" style="width:200px"><input id="bSkillCat" placeholder="category (optional)" style="width:180px"><button class="b ghost sm" onclick="bankOp({op:'add',kind:'skills',name:$('#bSkill').value,detail:$('#bSkillCat').value},'skill added')">Add</button></div>
+    <div class="row"><b style="width:90px">Languages</b><div id="bLangs" class="grow"></div></div>
+    <div class="row"><span style="width:90px"></span><input id="bLang" placeholder="add a language" style="width:200px"><input id="bLangLvl" placeholder="proficiency, e.g. Native / B2" style="width:180px"><button class="b ghost sm" onclick="bankOp({op:'add',kind:'languages',name:$('#bLang').value,detail:$('#bLangLvl').value},'language added')">Add</button></div>
+    <div class="muted" id="bCounts"></div>
+    <div class="row"><button class="b ghost" onclick="rebuildMaster(this)">Rebuild master profile from bank</button><span class="muted">the current profile.md is snapshotted to profile-history/ first</span></div>
+    <pre id="bOnFile" style="display:none"></pre>
+    <details><summary class="muted">Saved resumes</summary><div id="bResumes" class="list"></div></details></div>
   <div class="panel"><h3>Import an existing resume</h3>
-    <div class="row"><input type="file" id="pFile" accept=".docx,.pdf,.md,.txt"><button class="b ghost" onclick="importResume(this)">Import</button><span class="muted">.docx, .pdf, .md, .txt</span></div>
+    <div class="row"><input type="file" id="pFile" accept=".docx,.pdf,.md,.txt"><button class="b ghost" onclick="importToBank('pFile',false,this)">Import</button><span class="muted">.docx, .pdf, .md, .txt · saved to the bank, facts extracted; a template profile is filled in automatically</span></div>
     <textarea id="pImport" style="display:none; min-height:160px" placeholder="imported text appears here"></textarea>
     <div class="row" id="pImportActions" style="display:none"><button class="b" onclick="run('merge_profile',{text:$('#pImport').value},r=>{$('#pText').value=r.text;toast('merged into the editor; review, then Save','ok')},this)">Merge into my profile (AI)</button><button class="b ghost" onclick="$('#pText').value=$('#pImport').value;toast('replaced the editor; review, then Save','ok')">Replace profile with this text</button></div></div>
   <pre id="pOut" style="display:none"></pre>

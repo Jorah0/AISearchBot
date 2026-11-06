@@ -38,9 +38,16 @@ def checks() -> list[tuple[str, str, str]]:
         out.append(("ok", "data folder", f"{HOME} (writable)"))
     except OSError as e:
         out.append(("fail", "data folder", f"{HOME} not writable: {e}"))
-    text = PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else ""
-    filled = len(text) > 400 and "Full Name" not in text
+    from . import profile
+
+    text = profile.master_text()
+    filled = len(text) > 200 and not profile.is_template(text)
     out.append(("ok" if filled else "warn", "master profile", str(PROFILE) + ("" if filled else " still the template: fill it in or import a resume")))
+    bank = profile.load()
+    n = {k: len(bank[k]) for k in ("skills", "languages", "experience", "resumes")}
+    out.append(("ok" if n["resumes"] or n["skills"] else "warn", "profile bank",
+                f"{n['skills']} skills, {n['languages']} languages, {n['experience']} roles, {n['resumes']} saved resume(s)"
+                if any(n.values()) else "empty: lodestar profile import <resume> or lodestar profile linkedin <export.zip>"))
     avail = ai.available()
     out.append(("ok" if avail else "fail", "AI providers", ", ".join(f"{n} ({ai.model_for(n)})" for n in avail) or
                 "none configured: lodestar vault set ANTHROPIC_API_KEY (or another provider key)"))

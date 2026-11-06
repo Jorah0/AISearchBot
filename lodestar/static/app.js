@@ -225,18 +225,39 @@ function adjustProfile(btn) {
   const ins = $('#pAdj').value.trim(); if (!ins) return toast('type an instruction first', 'err');
   run('adjust', { text: $('#pText').value, instruction: ins, kind: 'master profile' }, r => { $('#pText').value = r.text; toast('adjusted; review, then Save', 'ok'); }, btn);
 }
-function importResume(btn) {
-  const f = $('#pFile').files[0]; if (!f) return toast('choose a file first', 'err');
+/* ---- profile bank: saved resumes + pooled facts (lodestar/profile.py) ---- */
+let BANK = null;
+async function loadBank() { const r = await api('/api/profile/bank'); if (!r.error) renderBank(r); }
+function renderBank(v) {
+  BANK = v; const b = v.bank, chip = (kind, i, label) => `<span class="pill">${esc(label)} <button class="b ghost sm" aria-label="remove" onclick="bankRemove('${kind}',${i})">×</button></span>`;
+  $('#liUrl').value = b.contact.linkedin || ''; $('#liExport').href = v.linkedin_export_url;
+  $('#bSkills').innerHTML = b.skills.map((s, i) => chip('skills', i, s.name + (s.category ? ' · ' + s.category : ''))).join(' ') || '<span class="muted">none yet: import a resume or LinkedIn, or add one</span>';
+  $('#bLangs').innerHTML = b.languages.map((l, i) => chip('languages', i, l.name + (l.proficiency ? ' · ' + l.proficiency : ''))).join(' ') || '<span class="muted">none yet</span>';
+  $('#bCounts').textContent = `${b.experience.length} roles · ${b.education.length} education · ${b.certifications.length} certifications · ${b.projects.length} projects · ${b.resumes.length} saved resume(s)`;
+  $('#bResumes').innerHTML = b.resumes.map(r => `<div>${esc(r.added.slice(0, 10))} <span class="pill">${esc(r.source)}</span>${esc(r.name)} <span class="muted">resumes/${esc(r.file)}</span></div>`).join('') || '<div class="muted">none yet</div>';
+  $('#bOnFile').style.display = v.on_file ? '' : 'none'; $('#bOnFile').textContent = v.on_file;
+}
+async function bankOp(body, okMsg) {
+  const r = await api('/api/profile/bank', body);
+  if (r.error) return toast('error: ' + r.error, 'err');
+  renderBank(r); toast(okMsg, 'ok'); $('#bSkill').value = $('#bSkillCat').value = $('#bLang').value = $('#bLangLvl').value = '';
+}
+function bankRemove(kind, i) { const it = BANK.bank[kind][i]; if (it) bankOp({ op: 'remove', kind, name: it.name }, 'removed ' + it.name); }
+function importToBank(inputId, linkedin, btn) {
+  const f = $('#' + inputId).files[0]; if (!f) return toast('choose a file first', 'err');
   const rd = new FileReader();
-  rd.onload = async () => {
-    btn.disabled = true;
-    const r = await api('/api/upload', { name: f.name, data: rd.result.split(',')[1] });
-    btn.disabled = false;
-    if (r.error) return toast('import failed: ' + r.error, 'err');
-    $('#pImport').value = r.text; $('#pImport').style.display = ''; $('#pImportActions').style.display = '';
-    toast('imported ' + f.name + ' (' + r.text.length + ' chars)', 'ok');
-  };
+  rd.onload = () => run('profile_import', { name: f.name, data: rd.result.split(',')[1], linkedin }, r => {
+    renderBank(r);
+    const got = Object.entries(r.added).filter(([, n]) => n).map(([k, n]) => n + ' ' + k).join(', ') || 'nothing new';
+    toast(`${r.new_file ? 'saved' : 'already saved'} ${f.name}: ${got} (${r.used_ai ? 'AI' : 'offline'} extraction)${r.seeded_master ? '; master profile filled in' : ''}`, 'ok');
+    if (r.seeded_master) loadProfile();
+    if (!linkedin) { $('#pImport').value = r.text; $('#pImport').style.display = ''; $('#pImportActions').style.display = ''; }
+  }, btn);
   rd.readAsDataURL(f);
+}
+function rebuildMaster(btn) {
+  if (!confirm('Replace profile.md with a version built from the bank? The current file is snapshotted to profile-history/ first.')) return;
+  run('profile_rebuild', {}, r => { $('#pText').value = r.text; renderBank(r); toast('master rebuilt from the bank', 'ok'); }, btn);
 }
 function editDoc() {
   const n = $('#docTabs button.on')?.textContent; if (!n || n === 'timeline' || n === 'description') return toast('pick a document tab first', 'err');
@@ -254,7 +275,11 @@ function adjustDoc(btn) {
   const kind = n.includes('cover') ? 'cover letter' : n.includes('resume') ? 'resume' : 'document';
   run('adjust', { text: cur.docs[n], instruction: ins, kind }, r => { $('#docEdit').value = r.text; $('#docEdit').style.display = ''; $('#docSave').style.display = ''; $('#docEdit').dataset.name = n; toast('adjusted; review, then Save document', 'ok'); }, btn);
 }
-async function saveProfile() { await api('/api/profile', { text: $('#pText').value }); toast('profile saved', 'ok'); }
+async function saveProfile() {
+  const r = await api('/api/profile', { text: $('#pText').value });
+  if (r.error) return toast('save failed: ' + r.error, 'err');
+  toast('profile saved (previous version kept in profile-history/)', 'ok'); loadBank();
+}
 function resetChat() {
   const mock = $('#cMode').value === 'mock';
   $('#cJob').style.display = mock ? '' : 'none';
@@ -285,4 +310,4 @@ function dictate() {  // browser speech recognition; audio goes only where the b
 }
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
-load(); loadProfile(); setInterval(load, 60000);
+load(); loadProfile(); loadBank(); setInterval(load, 60000);

@@ -21,7 +21,7 @@ def _job_dir(j) -> Path:
 
 # ----------------------------------------------------------------------------- outreach
 def outreach(job, person: str = "", channel: str = "linkedin", provider: str | None = None) -> str:
-    from .resume import profile_text
+    from .resume import candidate_text
 
     limit = "under 300 characters, no greeting fluff" if channel == "linkedin" else "under 120 words, include a subject line"
     return ai.ask(
@@ -33,7 +33,7 @@ JOB DESCRIPTION:
 {(job['jd'] or '')[:3000]}
 
 CANDIDATE:
-{profile_text()[:5000]}""",
+{candidate_text(5000)}""",
         provider=provider,
     )
 
@@ -163,7 +163,7 @@ def research(job, provider: str | None = None):
     """Pull what is publicly reachable (job page, company site, a web search page) and summarize for the interview."""
     from urllib.parse import quote, urlparse
 
-    from .resume import profile_text
+    from .resume import candidate_text
     from .util import fetch, strip_html
 
     sources = []
@@ -199,7 +199,7 @@ SOURCES:
 {corpus[:16000]}
 
 CANDIDATE SUMMARY:
-{profile_text()[:1500]}""",
+{candidate_text(1500)}""",
         provider=provider,
     )
     out = _job_dir(job)
@@ -222,10 +222,15 @@ def autofill_data() -> dict:
     github = next((p for p in parts if "github" in p.lower()), "")
     website = next((p for p in parts if p.lower().startswith(("http", "www")) and "linkedin" not in p and "github" not in p), "")
     name = parts[0] if parts and "@" not in parts[0] and not phone == parts[0] else ""
+    from .profile import load as load_bank
+
+    bank = load_bank()["contact"]  # imported resumes / LinkedIn fill whatever the master's contact line leaves out
+    name, email, phone = name or bank["name"], email or bank["email"], phone or bank["phone"]
+    linkedin, github, website = linkedin or bank["linkedin"], github or bank["github"], website or bank["website"]
     first, _, last = name.partition(" ")
     answers = {a["question"]: a["answer"] for a in db.list_answers()}
     return {"name": name, "first_name": first, "last_name": last, "email": email, "phone": phone, "linkedin": linkedin,
-            "github": github, "website": website, "location": parts[1] if len(parts) > 1 and "@" not in parts[1] else "",
+            "github": github, "website": website, "location": parts[1] if len(parts) > 1 and "@" not in parts[1] else bank["location"],
             "answers": answers}
 
 

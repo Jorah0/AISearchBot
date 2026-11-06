@@ -178,11 +178,11 @@ def search(query: str, keywords: str = "", only_new: bool = False, sources=None)
 
 def rank(listings: list[dict], provider: str | None = None, chunk: int = 15) -> list[dict]:
     """AI fit score (0-100) against the master profile, in chunks so one bad batch cannot sink the rest; best first."""
-    from .resume import profile_text
+    from .resume import candidate_text
 
     if not listings:
         return listings
-    prof = profile_text()[:6000]
+    prof = candidate_text(6000)
     for start in range(0, len(listings), chunk):
         part = listings[start:start + chunk]
         brief = "\n".join(f"[{i}] {j['title']} @ {j['company']} ({j['location']}) :: {j['desc'][:600]}" for i, j in enumerate(part))

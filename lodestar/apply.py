@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timedelta
 
 from . import ai, approvals, db, settings
-from .resume import app_dir, profile_text
+from .resume import app_dir, candidate_text
 
 JSON_MAIL = 'Return JSON only: {"subject": "...", "body": "..."}'
 
@@ -37,7 +37,7 @@ PRIOR ANSWERS:
 {bank}
 
 CANDIDATE:
-{profile_text()[:5000]}""",
+{candidate_text(5000)}""",
         provider=provider,
     )
     prop = approvals.propose("answers", "save_answer", {"question": question, "answer": text, "tags": job["company"]},
@@ -78,7 +78,7 @@ with one concrete reason, ask for a status update or next step, no pressure, no 
 {JSON_MAIL}
 
 CANDIDATE SUMMARY:
-{profile_text()[:1500]}""",
+{candidate_text(1500)}""",
         provider=provider,
     )
     db.add_event(job["id"], "followup", "drafted")
@@ -98,7 +98,7 @@ interview for {job['title']} at {job['company']}. Reference something specific f
 {JSON_MAIL}
 
 CANDIDATE SUMMARY:
-{profile_text()[:1500]}""",
+{candidate_text(1500)}""",
         provider=provider,
     )
     db.add_event(job["id"], "thanks", "drafted")
@@ -130,7 +130,7 @@ OTHER LIVE OFFERS: {', '.join(others) or 'none'}
 RECORDED MARKET RANGE: {__import__('lodestar.comp', fromlist=['lookup']).lookup(job['title'], job['jd'] or '') or 'none recorded'}
 
 CANDIDATE PROFILE (see Preferences):
-{profile_text()[:6000]}""",
+{candidate_text(6000)}""",
         provider=provider,
     )
     out = app_dir(job) / "offer.md"
