@@ -7,10 +7,13 @@ Every automated AI flow is a *tool* with two switches:
 Commands you type yourself are confirmed by typing them; only automatic flows go through the inbox.
 """
 import json
+import os
+import threading
 
 from .config import HOME
 
 PATH = HOME / "settings.json"
+_LOCK = threading.RLock()  # web threads and the monitor loop both write settings: no lost updates
 
 # name: (what it does, enabled by default, auto by default)
 TOOLS = {
@@ -41,13 +44,18 @@ PREFS = {
 
 
 def load() -> dict:
-    data = json.loads(PATH.read_text(encoding="utf-8")) if PATH.is_file() else {}
+    try:
+        data = json.loads(PATH.read_text(encoding="utf-8")) if PATH.is_file() else {}
+    except ValueError:  # a corrupt file must not break every setting check; defaults apply until the next save
+        data = {}
     tools = {n: {"enabled": e, "auto": a} | data.get("tools", {}).get(n, {}) for n, (_, e, a) in TOOLS.items()}
     return {"tools": tools, "prefs": PREFS | data.get("prefs", {})}
 
 
 def save(data: dict) -> None:
-    PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp = PATH.with_name(PATH.name + ".tmp")  # write-then-rename: a crash mid-write never leaves a torn file
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.replace(tmp, PATH)
 
 
 def enabled(tool: str) -> bool:
@@ -64,39 +72,42 @@ def pref(key: str):
 
 
 def set_tool(tool: str, enabled: bool | None = None, auto: bool | None = None) -> dict:
-    if tool not in TOOLS:
-        raise SystemExit(f"unknown tool '{tool}'. Tools: {', '.join(TOOLS)}")
-    data = load()
-    if enabled is not None:
-        data["tools"][tool]["enabled"] = enabled
-    if auto is not None:
-        data["tools"][tool]["auto"] = auto
-    save(data)
-    return data["tools"][tool]
+    with _LOCK:
+        if tool not in TOOLS:
+            raise SystemExit(f"unknown tool '{tool}'. Tools: {', '.join(TOOLS)}")
+        data = load()
+        if enabled is not None:
+            data["tools"][tool]["enabled"] = enabled
+        if auto is not None:
+            data["tools"][tool]["auto"] = auto
+        save(data)
+        return data["tools"][tool]
 
 
 def set_pref(key: str, value) -> None:
-    if key not in PREFS:
-        raise SystemExit(f"unknown preference '{key}'. Keys: {', '.join(PREFS)}")
-    data = load()
-    cur = PREFS[key]
-    if isinstance(cur, dict):
-        data["prefs"][key] = dict(value) if isinstance(value, dict) else dict(cur, **{str(value).split("=")[0]: str(value).split("=", 1)[1]})
+    with _LOCK:
+        if key not in PREFS:
+            raise SystemExit(f"unknown preference '{key}'. Keys: {', '.join(PREFS)}")
+        data = load()
+        cur = PREFS[key]
+        if isinstance(cur, dict):
+            data["prefs"][key] = dict(value) if isinstance(value, dict) else dict(cur, **{str(value).split("=")[0]: str(value).split("=", 1)[1]})
+            save(data)
+            return
+        if isinstance(cur, bool):
+            value = str(value).lower() in ("1", "true", "yes", "on")
+        elif isinstance(cur, int):
+            value = int(value)
+        data["prefs"][key] = value
         save(data)
-        return
-    if isinstance(cur, bool):
-        value = str(value).lower() in ("1", "true", "yes", "on")
-    elif isinstance(cur, int):
-        value = int(value)
-    data["prefs"][key] = value
-    save(data)
 
 
 def set_model(provider: str, model: str) -> None:
     """Remember a model id that was verified to work for a provider (prefs.models)."""
-    data = load()
-    data["prefs"].setdefault("models", {})[provider] = model
-    save(data)
+    with _LOCK:
+        data = load()
+        data["prefs"].setdefault("models", {})[provider] = model
+        save(data)
 
 
 def table() -> list[dict]:

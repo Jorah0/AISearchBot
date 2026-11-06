@@ -133,8 +133,9 @@ CANDIDATE PROFILE (see Preferences):
 {candidate_text(6000)}""",
         provider=provider,
     )
-    out = app_dir(job) / "offer.md"
-    out.write_text(text, encoding="utf-8")
+    from .resume import write_doc
+
+    out = write_doc(app_dir(job) / "offer.md", text)
     db.add_event(job["id"], "offer_eval", str(out))
     if job["status"] != "offer":
         db.set_status(job["id"], "offer", "offer received")

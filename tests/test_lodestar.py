@@ -81,16 +81,19 @@ class Ai(unittest.TestCase):
                 return {"content": [{"type": "text", "text": "A says: " + body["messages"][-1]["content"][:20]}]}
             return {"choices": [{"message": {"content": "O says: " + body["messages"][-1]["content"][:20]}}]}
 
-        ai._post = fake_post
+        real_post, ai._post = ai._post, fake_post
         os.environ["OPENAI_API_KEY"] = "k"
-        self.assertTrue(ai.ask("hello", system="sys", provider="anthropic").startswith("A says"))
-        self.assertEqual(calls[-1][1]["system"], "sys")
-        self.assertTrue(ai.ask("hello", provider="openai").startswith("O says"))
-        self.assertEqual(calls[-1][1]["messages"][0]["role"], "user")
-        r = ai.council("q", providers=["anthropic", "openai"])
-        self.assertEqual(set(r["answers"]), {"anthropic", "openai"})
-        self.assertIn("Original task", calls[-1][1]["messages"][-1]["content"])
-        del os.environ["OPENAI_API_KEY"]
+        try:
+            self.assertTrue(ai.ask("hello", system="sys", provider="anthropic").startswith("A says"))
+            self.assertEqual(calls[-1][1]["system"], "sys")
+            self.assertTrue(ai.ask("hello", provider="openai").startswith("O says"))
+            self.assertEqual(calls[-1][1]["messages"][0]["role"], "user")
+            r = ai.council("q", providers=["anthropic", "openai"])
+            self.assertEqual(set(r["answers"]), {"anthropic", "openai"})
+            self.assertIn("Original task", calls[-1][1]["messages"][-1]["content"])
+        finally:
+            ai._post = real_post  # later tests exercise the real transport
+            del os.environ["OPENAI_API_KEY"]
 
 
 class Resume(unittest.TestCase):
@@ -116,9 +119,10 @@ class Web(unittest.TestCase):
         }
         got = web_monitor.search("dev", keywords="python")
         self.assertEqual([j["url"] for j in got], ["https://a/1"])
-        # a/1 is now seen; b/2 was keyword-filtered earlier so it is still new
-        self.assertEqual([j["url"] for j in web_monitor.search("dev", only_new=True)], ["https://b/2"])
+        # a manual search marks nothing, so a watch still sees both; the watch-style call marks them
+        self.assertEqual([j["url"] for j in web_monitor.search("dev", only_new=True)], ["https://a/1", "https://b/2"])
         self.assertEqual(web_monitor.search("dev", only_new=True), [])
+        self.assertEqual(web_monitor.search("dev", only_new=False, mark=False)[0]["url"], "https://a/1")
 
 
 class Cli(unittest.TestCase):
@@ -209,7 +213,11 @@ class Automation(unittest.TestCase):
         info = {"category": "interview", "company": "Globex", "summary": "invite", "action": "reply", "subject": "Interview",
                 "from": "Jane Doe <jane@globex.com>", "sender_email": "jane@globex.com", "sender_name": "Jane Doe",
                 "message_id": "<abc@globex>", "body": "Can you do Tue Nov 10 at 10am or Wed at 2pm?"}
-        email_monitor._apply(info, dry=False)
+        other = db.add_job("Initech", "SRE"); db.set_status(other, "applied")
+        email_monitor._apply(info | {"company": "Initech", "category": "other_update", "from": "x <hr@initech.com>",
+                                     "sender_email": "hr@initech.com", "dkim_pass": False}, dry=False)
+        self.assertIsNone(db.get_job(other)["contact_email"])  # an unauthenticated sender never becomes the reply-to contact
+        email_monitor._apply(info | {"dkim_pass": True}, dry=False)
         job = db.get_job(jid)
         self.assertEqual(job["status"], "applied")  # not moved yet: email_classify is manual
         self.assertEqual((job["contact_email"], job["contact_name"]), ("jane@globex.com", "Jane Doe"))
@@ -376,7 +384,7 @@ class Hardening(unittest.TestCase):
                 raw = (b"From: Jane <jane@acme.com>\r\nSubject: Interview invitation\r\nMessage-ID: <x@acme>\r\n"
                        b"Content-Type: text/plain\r\n\r\nWe would like to interview you.")
                 return "OK", [(b"7", raw)]
-        email_monitor.imaplib.IMAP4_SSL = lambda host: Box()
+        email_monitor.imaplib.IMAP4_SSL = lambda host, **kw: Box()
         email_monitor.setting = lambda k, d=None: {"IMAP_USER": "me@x.com", "IMAP_PASS": "p"}.get(k, d)
 
         def boom(*a, **k):
@@ -697,8 +705,25 @@ class Onboarding(unittest.TestCase):
         loop.STATUS.update(running=False, cycles=0)
         db._local.con = db.connect(":memory:")
         loop.run(A())
-        self.assertTrue(loop.STATUS["running"] and loop.STATUS["cycles"] == 1 and loop.STATUS["every"] == 5)
+        # a finished run must not leave the top bar claiming a live loop
+        self.assertTrue(not loop.STATUS["running"] and loop.STATUS["cycles"] == 1 and loop.STATUS["every"] == 5)
         self.assertRegex(loop.STATUS["last_cycle"], r"^\d\d:\d\d$")
+
+    def test_a_failing_step_never_kills_the_loop(self):
+        from lodestar import loop, web_monitor
+        class A: email = False; days = 1; provider = None; followup = 7; every = 5; once = True
+        db._local.con = db.connect(":memory:")
+        real = web_monitor.check_watches
+        def die():
+            raise SystemExit("No AI provider configured")  # what ai.* raises; `except Exception` used to miss it
+        web_monitor.check_watches = die
+        try:
+            loop.STATUS.update(cycles=0, last_error=None)
+            loop.run(A())  # returns normally instead of the SystemExit ending the thread
+            self.assertEqual(loop.STATUS["cycles"], 1)
+            self.assertIn("watches: No AI provider configured", loop.STATUS["last_error"])
+        finally:
+            web_monitor.check_watches = real
 
 
 
@@ -895,7 +920,7 @@ Target roles: backend | Salary floor: 150k
                                                                     "experience": [{"title": "CTO", "company": "Initech", "bullets": ["Grew team"]}]}
             facts, used = profile.extract("Jane Doe\njane@example.com\nSkills\nPython", use_ai=True)
             self.assertTrue(used); self.assertEqual(facts["contact"]["email"], "jane@example.com")  # regex fills the AI's blank
-            self.assertEqual({s["name"] for s in facts["skills"] if isinstance(s, dict)}, {"Rust", "Python"})
+            self.assertEqual({s["name"] for s in facts["skills"] if isinstance(s, dict)}, {"Rust"})  # offline skills only fill an empty AI list
 
             def boom(*a, **k):
                 raise SystemExit("No AI provider configured")
@@ -945,3 +970,256 @@ Target roles: backend | Salary floor: 150k
             self.assertEqual(len(list(profile.HISTORY.glob("profile-*.md"))), before + 1)
         finally:
             srv.shutdown()
+
+
+
+class DesignFaultFixes(unittest.TestCase):
+    """Regression checks for the 2026-11-05 design review findings."""
+
+    def test_truncated_replies_raise_and_healed_model_saved_only_after_success(self):
+        from lodestar import settings
+        settings.PATH.unlink(missing_ok=True)
+        real_post, real_pick = ai._post, ai.pick_model
+        try:
+            ai._post = lambda url, headers, body, retries=2: {"content": [{"type": "text", "text": "half a resu"}], "stop_reason": "max_tokens"}
+            with self.assertRaises(RuntimeError) as cm:
+                ai.chat([{"role": "user", "content": "x"}], provider="anthropic")
+            self.assertIn("cut off", str(cm.exception))
+            calls = []
+
+            def post(url, headers, body, retries=2):
+                calls.append(body["model"])
+                if len(calls) == 1:
+                    raise SystemExit(f"anthropic: the model '{body['model']}' was rejected (not found).")
+                raise RuntimeError("provider down")  # the replacement fails too
+            ai._post, ai.pick_model = post, lambda name: "claude-replacement"
+            with self.assertRaises(RuntimeError):
+                ai.chat([{"role": "user", "content": "x"}], provider="anthropic")
+            self.assertEqual(calls[1], "claude-replacement")
+            self.assertNotIn("anthropic", settings.pref("models"))  # an unproven model is never remembered
+        finally:
+            ai._post, ai.pick_model = real_post, real_pick
+
+    def test_settings_survive_a_corrupt_file_and_write_atomically(self):
+        from lodestar import settings
+        settings.PATH.write_text("{not json", encoding="utf-8")
+        self.assertTrue(settings.enabled("backup"))  # defaults, not a crash
+        settings.set_pref("signature", "Jane")
+        self.assertEqual(settings.pref("signature"), "Jane")
+        self.assertFalse(settings.PATH.with_name("settings.json.tmp").exists())
+        settings.PATH.unlink()
+
+    def test_run_lock_blocks_a_second_scan_and_steals_a_stale_one(self):
+        import os, time
+        from lodestar.util import run_lock
+        with run_lock("unit"):
+            with self.assertRaises(SystemExit):
+                with run_lock("unit"):
+                    pass
+        lk = run_lock("unit", stale=1)
+        lk.path.write_text("999999", encoding="utf-8"); old = time.time() - 60; os.utime(lk.path, (old, old))
+        with run_lock("unit", stale=1):  # a crashed holder's lock is taken over
+            pass
+        self.assertFalse(lk.path.exists())
+
+    def test_regenerated_documents_keep_the_previous_version(self):
+        from lodestar.resume import write_doc
+        d = Path(os.environ["LODESTAR_HOME"]) / "applications" / "1-acme-eng"; d.mkdir(parents=True, exist_ok=True)
+        (d / "resume.md").write_text("my hand edits", encoding="utf-8")
+        write_doc(d / "resume.md", "fresh AI version")
+        write_doc(d / "resume.md", "fresh AI version")  # identical: no extra copy
+        kept = list((d / "history").glob("resume-*.md"))
+        self.assertEqual(len(kept), 1); self.assertEqual(kept[0].read_text(encoding="utf-8"), "my hand edits")
+
+    def test_followup_cadence_counts_loop_nudges_only_and_closes_once(self):
+        from lodestar import loop
+        db._local.con = db.connect(":memory:")
+        jid = db.add_job("Acme", "Eng")
+        for _ in range(2):
+            db.add_event(jid, "followup_nudge", ""); db.add_event(jid, "followup", "drafted")
+        self.assertEqual(loop.followup_step(db.get_job(jid)), "nudge")  # 2 nudges (+2 drafts) is not 3
+        db.add_event(jid, "followup_nudge", "")
+        self.assertEqual(loop.followup_step(db.get_job(jid)), "close")
+        db.add_event(jid, "followup_nudge", "cadence exhausted")
+        self.assertEqual(loop.followup_step(db.get_job(jid)), "done")
+
+    def test_backup_is_a_consistent_sqlite_snapshot(self):
+        import sqlite3, tempfile, zipfile
+        from lodestar import extras
+        from lodestar.config import DB_PATH
+        con = sqlite3.connect(DB_PATH); con.execute("CREATE TABLE IF NOT EXISTS probe(x)"); con.execute("INSERT INTO probe VALUES (42)"); con.commit()
+        out = extras.backup(Path(tempfile.mkdtemp()))
+        with zipfile.ZipFile(out) as z, tempfile.TemporaryDirectory() as t:
+            z.extract(DB_PATH.name, t)
+            c2 = sqlite3.connect(Path(t) / DB_PATH.name)
+            self.assertEqual(c2.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            self.assertIn((42,), c2.execute("SELECT x FROM probe").fetchall())
+            c2.close()
+        con.close()
+
+    def test_watch_listings_are_marked_seen_only_after_judgement(self):
+        from lodestar import apply, settings, web_monitor
+        db._local.con = db.connect(":memory:")
+        settings.PATH.unlink(missing_ok=True)
+        web_monitor.SOURCES = {"fake": lambda q: [web_monitor._listing("Python Dev", "A", "https://j/1", desc="python")]}
+        db.add_watch("search:python", "")
+        real = apply.auto_track
+        def fail(listings, provider=None):
+            raise SystemExit("anthropic: the model 'x' was rejected")
+        apply.auto_track = fail
+        try:
+            web_monitor.check_watches()
+            self.assertFalse(db.seen("listing:https://j/1"))  # ranking failed: retried next cycle
+            def judge(listings, provider=None):
+                for j in listings:
+                    j["score"] = 10
+                return []
+            apply.auto_track = judge
+            web_monitor.check_watches()
+            self.assertTrue(db.seen("listing:https://j/1"))
+        finally:
+            apply.auto_track = real
+
+    def test_public_routes_leak_nothing_extra_and_page_cannot_be_framed(self):
+        import http.client, json as _json
+        from lodestar import desktop, web
+        from lodestar.config import HOME
+        self.assertEqual((HOME / "capture.token").read_text(encoding="utf-8").strip(), web.CAPTURE_TOKEN)  # survives restarts
+        self.assertEqual(web._capture_token(), web.CAPTURE_TOKEN)
+        db.save_answer("Salary expectations?", "private number")
+        port = desktop.free_port(8870); srv = web.start_server(port)
+        try:
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            c.request("GET", f"/api/autofill?t={web.CAPTURE_TOKEN}", headers={"Host": f"127.0.0.1:{port}"}); r = c.getresponse()
+            self.assertNotIn("answers", _json.loads(r.read()))
+            c.request("GET", "/", headers={"Host": f"127.0.0.1:{port}"}); r = c.getresponse(); r.read()
+            self.assertEqual(r.getheader("X-Frame-Options"), "DENY")
+            self.assertIn("frame-ancestors 'none'", r.getheader("Content-Security-Policy"))
+            c.close()
+        finally:
+            srv.shutdown()
+
+    def test_template_profile_never_reaches_prompts(self):
+        import shutil
+        from lodestar import profile
+        from lodestar.config import PROFILE
+        shutil.rmtree(profile.RESUMES, ignore_errors=True); profile.BANK.unlink(missing_ok=True)
+        PROFILE.write_text(resume.PROFILE_TEMPLATE, encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            profile.candidate_text()
+        profile.add("skills", "Python"); profile.set_contact("name", "Jane Doe")
+        text = profile.candidate_text()  # the bank stands in for the template
+        self.assertIn("Jane Doe", text); self.assertIn("Python", text); self.assertNotIn("Full Name", text)
+        profile.BANK.unlink()
+
+    def test_network_errors_are_retried(self):
+        import io, urllib.error
+        real_open, real_sleep = ai.urllib.request.urlopen, ai.time.sleep
+        tries = []
+
+        class Resp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def flaky(req, timeout=None):
+            tries.append(1)
+            if len(tries) < 3:
+                raise urllib.error.URLError("temporary DNS failure")
+            return Resp(b'{"ok": true}')
+        ai.urllib.request.urlopen, ai.time.sleep = flaky, lambda s: None
+        try:
+            self.assertEqual(ai._post("https://example.invalid/v1", {}, {"model": "m"}), {"ok": True})
+            self.assertEqual(len(tries), 3)
+            tries.clear(); ai.urllib.request.urlopen = lambda req, timeout=None: (_ for _ in ()).throw(urllib.error.URLError("down"))
+            with self.assertRaises(RuntimeError):
+                ai._post("https://example.invalid/v1", {}, {"model": "m"})
+        finally:
+            ai.urllib.request.urlopen, ai.time.sleep = real_open, real_sleep
+
+
+
+class ProfileReviewFixes(unittest.TestCase):
+    """Regression checks for the review of the profile-bank change itself."""
+
+    def setUp(self):
+        import shutil
+        from lodestar import profile
+        shutil.rmtree(profile.RESUMES, ignore_errors=True)
+        profile.BANK.unlink(missing_ok=True)
+
+    def test_partly_filled_profile_is_not_the_template(self):
+        from lodestar import profile
+        from lodestar.config import PROFILE
+        self.assertTrue(profile.is_template(resume.PROFILE_TEMPLATE)); self.assertTrue(profile.is_template(""))
+        mine = resume.PROFILE_TEMPLATE.replace("Full Name | City, ST", "Jane Doe | Austin, TX").replace(
+            "- Bullet", "- Cut deploy time 40% at Acme by rebuilding the CI pipeline end to end")
+        self.assertFalse(profile.is_template(mine))  # the leftover "Two or three sentences" line does not matter
+        PROFILE.write_text(mine, encoding="utf-8")
+        r = profile.import_file(b"# X\n## Skills\n- Rust\n", "x.md", use_ai=False)
+        self.assertFalse(r["seeded_master"]); self.assertEqual(PROFILE.read_text(encoding="utf-8"), mine)
+        self.assertIn("Jane Doe", profile.candidate_text())
+
+    def test_parser_real_world_layouts(self):
+        from lodestar import profile
+        li = ("Contact\njane@doe.io\nwww.linkedin.com/in/janedoe\nTop Skills\nPython\nSQL\nLanguages\nEnglish (Native or Bilingual)\n"
+              "Jane Doe\nSenior Data Engineer at Acme\nAustin, Texas, United States\nSummary\nBuilds pipelines.\nEducation\nUT Austin (2010 - 2014)")
+        f = profile.extract_heuristic(li)
+        self.assertEqual(f["languages"], [{"name": "English", "proficiency": "Native or Bilingual"}])
+        self.assertEqual(f["contact"]["phone"], "")  # 2010 - 2014 is not a phone number
+        f = profile.extract_heuristic("JOHN SMITH\nAustin, TX | john@smith.dev | (512) 555-0101\nSKILLS\nPython, Go\nINTERESTS\nHiking, Chess")
+        self.assertEqual((f["contact"]["name"], f["contact"]["location"], f["contact"]["phone"]), ("JOHN SMITH", "Austin, TX", "(512) 555-0101"))
+        self.assertEqual([s["name"] for s in f["skills"]], ["Python", "Go"])  # Interests do not spill into skills
+
+    def test_roles_at_one_company_stay_separate_and_ai_strings_are_ignored(self):
+        from lodestar import ai, profile
+        b = profile.empty()
+        profile.merge(b, {"experience": [{"company": "Acme", "title": "", "bullets": ["led org"]},
+                                         {"company": "Acme", "title": "Senior Engineer", "bullets": ["a"]},
+                                         {"company": "Acme", "title": "Staff Engineer", "bullets": ["b"]}]}, "s")
+        self.assertEqual([e["title"] for e in b["experience"]], ["", "Senior Engineer", "Staff Engineer"])
+        orig = ai.ask_json
+        try:
+            ai.ask_json = lambda *a, **k: {"skills": "Python, SQL", "languages": [], "contact": {}}
+            facts, used = profile.extract("Jane\n## Skills\n- Go\n## Languages\n- German (B2)", use_ai=True)
+            self.assertTrue(used); self.assertEqual([s["name"] for s in facts["skills"]], ["Go"])  # no 'P','y','t'...
+            self.assertEqual(facts["languages"][0]["name"], "German")  # the AI's empty list is filled offline
+        finally:
+            ai.ask_json = orig
+
+    def test_corrupt_bank_is_set_aside_not_wiped(self):
+        from lodestar import profile
+        profile.BANK.write_text('{"skills": [{"name": "Python"},]}', encoding="utf-8")  # trailing comma
+        self.assertEqual(profile.load()["skills"], [])
+        aside = list(profile.BANK.parent.glob("profile.json.corrupt-*"))
+        self.assertEqual(len(aside), 1); self.assertIn("Python", aside[0].read_text(encoding="utf-8"))
+        aside[0].unlink()
+
+    def test_coach_tolerates_an_unfilled_profile(self):
+        from lodestar import profile
+        from lodestar.config import PROFILE
+        PROFILE.write_text(resume.PROFILE_TEMPLATE, encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            profile.candidate_text()
+        self.assertIn("has not filled in a profile", profile.candidate_text(strict=False))
+
+    def test_new_listing_alerts_once_while_judging_keeps_failing(self):
+        from lodestar import apply, settings, util, web_monitor
+        db._local.con = db.connect(":memory:")
+        settings.PATH.unlink(missing_ok=True)
+        web_monitor.SOURCES = {"fake": lambda q: [web_monitor._listing("Dev", "Co", "https://j/9", desc="x")]}
+        db.add_watch("search:dev", "")
+        sent, real_notify, real_track = [], web_monitor.notify, apply.auto_track
+        web_monitor.notify = lambda m: sent.append(m)
+        def fail(listings, provider=None):
+            raise SystemExit("provider down")
+        apply.auto_track = fail
+        try:
+            for _ in range(3):
+                web_monitor.check_watches()
+            self.assertEqual(sum("NEW LISTING" in m for m in sent), 1)
+            self.assertFalse(db.seen("listing:https://j/9"))  # still awaiting judgement
+        finally:
+            web_monitor.notify, apply.auto_track = real_notify, real_track

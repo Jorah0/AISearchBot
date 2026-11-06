@@ -59,7 +59,15 @@ def load() -> dict:
     if BANK.is_file():
         try:
             data = json.loads(BANK.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError) as e:  # set the bad file aside so the next save cannot destroy it
+            aside = BANK.with_name(f"profile.json.corrupt-{datetime.now():%Y%m%d-%H%M%S}")
+            try:
+                os.replace(BANK, aside)
+            except OSError:
+                pass
+            from . import log
+
+            log.get("profile").error("profile.json unreadable (%s); moved to %s, starting an empty bank", e, aside.name)
             data = {}
         for k, v in data.items():
             if k == "contact" and isinstance(v, dict):
@@ -83,8 +91,20 @@ def save(bank: dict) -> None:
 
 # ----------------------------------------------------------------------------- master profile.md
 def is_template(text: str) -> bool:
-    """True while profile.md is missing, empty, or still holds the starter placeholders."""
-    return not text.strip() or any(m in text for m in TEMPLATE_MARKERS)
+    """True while profile.md has no real content: missing, empty, or only the starter template's lines (headings
+    aside). A filled-in profile with one leftover placeholder line is NOT the template."""
+    from .resume import PROFILE_TEMPLATE
+
+    if not text.strip():
+        return True
+    stock = {ln.strip() for ln in PROFILE_TEMPLATE.splitlines() if ln.strip()}
+    if not any(m in text for m in TEMPLATE_MARKERS) and not any(ln.strip() in stock and not ln.strip().startswith("#")
+                                                                and len(ln.strip()) > 30 for ln in text.splitlines()):
+        return False  # no starter text at all: short, but the user's own words
+    real = [ln.strip() for ln in text.splitlines()
+            if ln.strip() and ln.strip() not in stock and not ln.strip().startswith("#")
+            and not any(m in ln for m in TEMPLATE_MARKERS)]
+    return sum(len(x) for x in real) < 80
 
 
 def master_text() -> str:
@@ -132,7 +152,7 @@ def _clean_item(kind: str, item) -> dict | None:
         item = {FIELDS[kind][0]: item}
     if not isinstance(item, dict):
         return None
-    out = {}
+    out: dict = {}
     for f in FIELDS[kind]:
         v = item.get(f)
         if f == "bullets":
@@ -152,7 +172,11 @@ def merge(bank: dict, facts: dict, source: str) -> dict:
     added = {k: 0 for k in FIELDS} | {"contact": 0}
     for k, v in (facts.get("contact") or {}).items():
         v = _norm(v)
-        if k in CONTACT and v and not _placeholder(v) and not bank["contact"].get(k):
+        if _placeholder(v):  # before normalising: the template's linkedin.com/in/you must stay a placeholder
+            continue
+        if k == "linkedin" and v:
+            v = _linkedin_url(v) or v
+        if k in CONTACT and v and not bank["contact"].get(k):
             bank["contact"][k] = v
             added["contact"] += 1
     if not bank.get("summary") and _norm(facts.get("summary")):
@@ -165,8 +189,8 @@ def merge(bank: dict, facts: dict, source: str) -> dict:
                 continue
             k = _key(item, kind)
             have = index.get(k)
-            if have is None:  # same entity, looser match: a role with the same company and no title yet, etc.
-                have = next((x for kk, x in index.items() if kind == "experience" and kk[0] == k[0] and not (kk[1] and k[1])), None)
+            if have is None and kind == "experience" and not k[1]:  # a title-less entry adds to a role at that company
+                have = next((x for kk, x in index.items() if kk[0] == k[0]), None)
             if have is None:
                 item["sources"] = [source]
                 bank[kind].append(item)
@@ -196,10 +220,41 @@ SECTIONS = {
     "contact": ("contact", "contact information"),
 }
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-PHONE_RE = re.compile(r"\+?\d[\d\s().-]{7,}\d")
+PHONE_RE = re.compile(r"\+?\(?\d[\d\s().-]{7,}\d")
 LINKEDIN_RE = re.compile(r"(?:https?://)?(?:[a-z]{2,3}\.)?linkedin\.com/in/[\w\-%]+/?", re.I)
 GITHUB_RE = re.compile(r"(?:https?://)?(?:www\.)?github\.com/[\w-]+", re.I)
 DATES_RE = re.compile(r"\s+(?:-|–|—|to)\s+")
+YEARS_RE = re.compile(r"(?:19|20)\d\d\s*[-–—]\s*(?:(?:19|20)\d\d|present)", re.I)
+LANGUAGE_NAMES = {  # spoken languages; a bare line in a Languages section must be one of these to count
+    "afrikaans", "albanian", "amharic", "arabic", "armenian", "bengali", "bosnian", "bulgarian", "burmese", "cantonese",
+    "catalan", "chinese", "croatian", "czech", "danish", "dutch", "english", "estonian", "farsi", "filipino", "finnish",
+    "french", "georgian", "german", "greek", "gujarati", "hausa", "hebrew", "hindi", "hungarian", "icelandic", "igbo",
+    "indonesian", "irish", "italian", "japanese", "kannada", "kazakh", "khmer", "korean", "kurdish", "lao", "latvian",
+    "lithuanian", "macedonian", "malay", "malayalam", "maltese", "mandarin", "marathi", "mongolian", "nepali",
+    "norwegian", "pashto", "persian", "polish", "portuguese", "punjabi", "romanian", "russian", "serbian", "sinhala",
+    "slovak", "slovenian", "somali", "spanish", "swahili", "swedish", "tagalog", "tamil", "telugu", "thai", "turkish",
+    "ukrainian", "urdu", "uzbek", "vietnamese", "welsh", "yoruba", "zulu", "asl", "american sign language",
+    "sign language", "brazilian portuguese", "haitian creole", "creole", "latin", "esperanto", "basque", "galician",
+}
+OTHER_HEADINGS = {"interests", "hobbies", "awards", "honors", "honors & awards", "honors-awards", "publications",
+                  "volunteer", "volunteering", "volunteer experience", "references", "activities", "achievements",
+                  "courses", "memberships", "affiliations", "additional information", "personal", "patents",
+                  "recommendations", "organizations"}
+
+
+def _phone(text: str) -> str:
+    """A real phone number in `text` (10-15 digits once separators go), never a year range like 2019 - 2021."""
+    for m in PHONE_RE.finditer(text):
+        s = m.group(0).strip()
+        if 10 <= len(re.sub(r"\D", "", s)) <= 15 and not YEARS_RE.search(s):
+            return s
+    return ""
+
+
+def _namelike(line: str) -> bool:
+    low = line.lower()
+    return (bool(line) and len(line) < 60 and not re.search(r"[@\d|:]", line) and _section_of(line) not in SECTIONS
+            and "resume" not in low and "curriculum" not in low)
 
 
 def _section_of(line: str) -> str | None:
@@ -211,7 +266,10 @@ def _section_of(line: str) -> str | None:
     for sec, aliases in SECTIONS.items():
         if name in aliases:
             return sec
-    return "other" if m else None
+    caps_heading = len(s) >= 10 and re.fullmatch(r"[A-Z][A-Z&/-]*(?: [A-Z&/-]+)+", s)  # "VOLUNTEER WORK", not "HTML5"
+    if m or name in OTHER_HEADINGS or caps_heading:
+        return "other"  # a heading we do not read: its content must not spill into the section above
+    return None
 
 
 def _split_list(line: str) -> list[str]:
@@ -221,7 +279,7 @@ def _split_list(line: str) -> list[str]:
 def extract_heuristic(text: str) -> dict:
     """Offline parse of a markdown or plain-text resume. Reliable for contact details, skills and languages; experience
     only in the master-profile format (### Title - Company (start - end)). The AI extractor does the rest."""
-    facts = {"contact": {}, "summary": "", **{k: [] for k in FIELDS}}
+    facts: dict = {"contact": {}, "summary": "", **{k: [] for k in FIELDS}}
     c = facts["contact"]
     if m := EMAIL_RE.search(text):
         c["email"] = m.group(0)
@@ -229,23 +287,24 @@ def extract_heuristic(text: str) -> dict:
         c["linkedin"] = m.group(0)
     if m := GITHUB_RE.search(text):
         c["github"] = m.group(0)
-    for ln in text.splitlines():  # the master profile's contact line: Name | City | email | phone | links
-        if "@" in ln and "|" in ln:
-            parts = [p.strip() for p in ln.split("|")]
-            if parts and not re.search(r"[@\d/]", parts[0]):
-                c["name"] = parts[0].lstrip("# ")
-            if len(parts) > 1 and not re.search(r"[@/]", parts[1]) and not PHONE_RE.fullmatch(parts[1]):
-                c["location"] = parts[1]
-            c["phone"] = next((p for p in parts if PHONE_RE.fullmatch(p)), "")
-            break
-    else:
-        first = next((ln.strip().lstrip("# ") for ln in text.splitlines() if ln.strip()), "")
-        if first and len(first) < 60 and not re.search(r"[@\d|]", first) and _section_of(first) is None and "resume" not in first.lower():
-            c["name"] = first
-        if m := PHONE_RE.search(text):
-            c["phone"] = m.group(0).strip()
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    header = "\n".join(lines[:15])  # contact details live at the top; dates further down are not phone numbers
+    first = lines[0].lstrip("# ").strip() if lines else ""
+    pipe = next((ln for ln in lines[:15] if "@" in ln and "|" in ln), None)
+    if pipe:  # "Name | City | email | phone | links", or under a name line "City | email | phone"
+        words = [w.strip().lstrip("# ") for w in pipe.split("|")]
+        plain = [w for w in words if w and not re.search(r"[@/]", w) and not _phone(w) and "linkedin" not in w.lower()]
+        if pipe != lines[0] and _namelike(first):
+            c["name"], rest = first, plain
+        else:
+            c["name"], rest = (plain[0] if plain and not re.search(r"\d", plain[0]) else ""), plain[1:]
+        c["location"] = rest[0] if rest else ""
+    elif _namelike(first):
+        c["name"] = first
+    c["phone"] = _phone(header)
 
-    sec, summary, cur = None, [], None
+    sec, summary = None, []
+    cur: dict | None = None  # the experience / project entry being filled
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
@@ -266,7 +325,9 @@ def extract_heuristic(text: str) -> dict:
             for piece in _split_list(item):
                 m = re.match(r"([^()\-–:]+?)\s*(?:\((.+)\)|[-–:]\s*(.+))?$", piece)
                 if m:
-                    facts["languages"].append({"name": m.group(1).strip(), "proficiency": (m.group(2) or m.group(3) or "").strip()})
+                    name, prof = m.group(1).strip(), (m.group(2) or m.group(3) or "").strip()
+                    if name.casefold() in LANGUAGE_NAMES or (prof and len(name.split()) <= 2 and not re.search(r"\d", name)):
+                        facts["languages"].append({"name": name, "proficiency": prof})
         elif sec == "experience":
             m = re.match(r"^#{3,}\s*(.+?)\s+(?:-|–|—|at|@)\s+(.+?)(?:\s*\((.+?)\))?\s*$", line)
             if m:
@@ -281,8 +342,8 @@ def extract_heuristic(text: str) -> dict:
             facts["certifications"].append({"name": item})
         elif sec == "projects":
             if line.startswith("#"):
-                name, _, rest = line.lstrip("# ").partition(" - ")
-                cur = {"name": name.strip(), "description": rest.strip()}
+                title, _, rest = line.lstrip("# ").partition(" - ")
+                cur = {"name": title.strip(), "description": rest.strip()}
                 facts["projects"].append(cur)
             elif cur is not None:
                 cur["description"] = (cur["description"] + " " + item).strip()
@@ -329,10 +390,14 @@ def extract(text: str, provider: str | None = None, use_ai: bool | None = None) 
 
         log.get("profile").warning("AI extraction failed, using the offline parser: %s", e)
         return heur, False
-    contact = facts.get("contact") if isinstance(facts.get("contact"), dict) else {}
+    contact: dict = facts["contact"] if isinstance(facts.get("contact"), dict) else {}
     facts["contact"] = {k: contact.get(k) or heur["contact"].get(k, "") for k in CONTACT}
-    for kind in ("skills", "languages"):  # the parser's section reads are cheap insurance against an AI omission
-        facts[kind] = list(facts.get(kind) or []) + heur[kind]
+    for kind in FIELDS:  # a string where a list belongs would otherwise become one skill per character
+        if not isinstance(facts.get(kind), list):
+            facts[kind] = []
+    for kind in ("skills", "languages"):  # the offline read only fills a list the AI left empty
+        if not facts[kind]:
+            facts[kind] = heur[kind]
     return facts, True
 
 
@@ -359,7 +424,7 @@ def linkedin_facts(data: bytes) -> dict:
     if not files.keys() & known:
         raise SystemExit("this zip has no LinkedIn profile files (Profile.csv, Positions.csv, Skills.csv, ...). Request "
                          f"'Download your data' at {LINKEDIN_EXPORT_URL}")
-    facts = {"contact": {}, "summary": "", **{k: [] for k in FIELDS}}
+    facts: dict = {"contact": {}, "summary": "", **{k: [] for k in FIELDS}}
     c = facts["contact"]
     for p in _li_rows(z, files, "profile.csv", "First Name")[:1]:
         c["name"] = f"{p.get('First Name', '')} {p.get('Last Name', '')}".strip()
@@ -390,12 +455,17 @@ def linkedin_facts(data: bytes) -> dict:
     return facts
 
 
+def _linkedin_url(text: str) -> str:
+    """'linkedin.com/in/jane/?trk=x' -> 'https://www.linkedin.com/in/jane'; '' when there is no profile URL in it."""
+    m = re.search(r"linkedin\.com/in/([\w\-%]+)", text or "", re.I)
+    return f"https://www.linkedin.com/in/{m.group(1)}" if m else ""
+
+
 def link_linkedin(url: str) -> str:
     """Store your public LinkedIn profile URL (used in rendered resumes and by the autofill bookmarklet)."""
-    m = re.search(r"linkedin\.com/in/([\w\-%]+)", url or "", re.I)
-    if not m:
+    clean = _linkedin_url(url)
+    if not clean:
         raise ValueError("expected a profile URL like https://www.linkedin.com/in/your-name")
-    clean = f"https://www.linkedin.com/in/{m.group(1)}"
     with _LOCK:
         bank = load()
         bank["contact"]["linkedin"] = clean
@@ -423,7 +493,7 @@ def import_file(data: bytes, filename: str, source: str = "resume", provider: st
     sha = hashlib.sha256(data).hexdigest()
     with _LOCK:
         bank = load()
-        entry = next((r for r in bank["resumes"] if r.get("sha") == sha), None)
+        entry: dict | None = next((r for r in bank["resumes"] if r.get("sha") == sha), None)
         new_file = entry is None
         if new_file:
             RESUMES.mkdir(parents=True, exist_ok=True)
@@ -439,6 +509,7 @@ def import_file(data: bytes, filename: str, source: str = "resume", provider: st
             entry = {"id": sha[:8], "name": name, "source": source, "added": datetime.now().isoformat(timespec="seconds"),
                      "sha": sha, "chars": len(text), "file": stored}
             bank["resumes"].append(entry)
+        assert entry is not None
         added = merge(bank, facts, f"{source}:{entry['id']}")
         save(bank)
         seeded = False
@@ -579,11 +650,20 @@ def brief(text: str, limit: int) -> str:
     return "".join(keep[i] for i in sorted(keep)).strip()
 
 
-def candidate_text(limit: int | None = None) -> str:
-    """What prompts should read: the master profile plus bank facts it leaves out, fitted to `limit` by section."""
+def candidate_text(limit: int | None = None, strict: bool = True) -> str:
+    """What prompts should read: the master profile plus bank facts it leaves out, fitted to `limit` by section.
+    strict=False (coach, ideas) tolerates an unfilled profile: those helpers are how a new user builds one."""
     from .resume import profile_text
 
     master = profile_text()
+    if is_template(master):  # never rank listings or draft letters for "Full Name" with placeholder skills
+        bank = load()
+        if not any(bank[k] for k in FIELDS) and not bank["contact"]["name"]:
+            if not strict:
+                return "(The candidate has not filled in a profile yet. Help them build one; never invent facts.)"
+            raise SystemExit(f"your master profile is still the template: fill in {PROFILE} or import a resume "
+                             "(lodestar profile import <file>, or the Profile tab)")
+        master = render_markdown(bank, master)
     extra = extras_text(master)
     text = master.rstrip() + ("\n\n" + extra if extra else "")
     return brief(text, limit) if limit else text

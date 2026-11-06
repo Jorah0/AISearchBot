@@ -213,3 +213,19 @@ Setup now has a Data panel: Backup now, Export JSON, and buttons that open the d
 
 Setup also has a Diagnostics panel (same checks as `lodestar doctor`, with an optional live AI call) and an
 "Open log" button next to the data folders.
+
+## Profile bank and LinkedIn (pass 12)
+
+| Command | What it does |
+|---|---|
+| `lodestar profile show` | Contact, skills, spoken languages, role/education/certification/project counts, saved resumes |
+| `lodestar profile import <file> [--no-ai]` | Keep the original (.docx/.pdf/.md/.txt) in `resumes/`, extract its facts into the bank; fills profile.md if it is still the template |
+| `lodestar profile linkedin <export.zip or profile.pdf>` | LinkedIn "Download your data" archive or "Save to PDF"; only profile facts are kept |
+| `lodestar profile link <url>` | Store your LinkedIn profile URL (rendered resumes, autofill) |
+| `lodestar profile add skills\|languages\|certifications <name> [--detail X]` | Add by hand (category / proficiency / issuer) |
+| `lodestar profile remove skills\|languages\|certifications <name>` | Remove from the bank |
+| `lodestar profile rebuild` | Regenerate profile.md from the bank; the old file goes to `profile-history/` |
+
+The Profile tab has the same as a "Profile bank" panel: LinkedIn link and import, skill and language chips, saved
+resumes, rebuild. Web API: `GET /api/profile/bank`, `POST /api/profile/bank {op: add|remove|contact, ...}`,
+`POST /api/run/profile_import {name, data: base64, linkedin?, ai?}`, `POST /api/run/profile_rebuild`.

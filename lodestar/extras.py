@@ -204,7 +204,9 @@ CANDIDATE SUMMARY:
     )
     out = _job_dir(job)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "research.md").write_text(text, encoding="utf-8")
+    from .resume import write_doc
+
+    write_doc(out / "research.md", text)
     db.add_event(job["id"], "research", f"{len(sources)} source(s)")
     return out / "research.md"
 
@@ -244,11 +246,25 @@ def backup(out_dir: Path | None = None, keep: int = 7) -> Path:
     out_dir = out_dir or HOME / "backups"
     out_dir.mkdir(parents=True, exist_ok=True)
     target = out_dir / f"lodestar-backup-{datetime.now():%Y%m%d-%H%M}.zip"
+    import sqlite3
+    import tempfile
+
     skip = {"backups", "snapshots", "cache", "__pycache__", "lodestar.log"}
-    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z:
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z, tempfile.TemporaryDirectory() as tmp:
         for p in HOME.rglob("*"):
             rel = p.relative_to(HOME)
-            if p.is_file() and not (set(rel.parts) & skip) and not p.name.startswith("lodestar.log"):
+            if not p.is_file() or set(rel.parts) & skip or p.name.startswith("lodestar.log") or p.suffix in (".lock", ".tmp"):
+                continue
+            if p.suffix == ".db":  # SQLite online backup: a consistent snapshot even while the loop is writing
+                snap = Path(tmp) / p.name
+                src, dst = sqlite3.connect(p), sqlite3.connect(snap)
+                try:
+                    src.backup(dst)
+                finally:
+                    src.close()
+                    dst.close()
+                z.write(snap, str(rel))
+            elif not p.name.endswith(("-wal", "-shm", "-journal")):
                 z.write(p, str(rel))
     for old in sorted(out_dir.glob("lodestar-backup-*.zip"))[:-keep]:
         old.unlink()

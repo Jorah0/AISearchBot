@@ -1,4 +1,29 @@
-# Changelog (development passes, newest first)\n\n## Pass. Verified state (2026-11-04, seventh pass: coverage and analytics)
+# Changelog (development passes, newest first)
+
+## Pass 12 (2026-11-05): profile bank, LinkedIn import, design-review fixes
+
+- Profile bank (`lodestar/profile.py`): every imported resume is kept; contact, skills, spoken languages, roles,
+  education, certifications and projects are pooled in `profile.json` with their sources. AI extraction with an
+  offline parser fallback. LinkedIn: profile URL, "Download your data" zip (profile CSVs only), "Save to PDF".
+  `lodestar profile ...`, Profile bank panel, doctor line, autofill falls back to bank contact details.
+- Prompts read `candidate_text()`: the master plus bank facts it omits, fitted by whole sections. The old
+  `profile_text()[:N]` cut the Preferences section out of ranking and reply prompts. A template master never reaches
+  a prompt (the bank stands in, or the feature stops with a clear message).
+- Design review (6 dimensions, 42 confirmed findings, about 20 distinct) and fixes: the monitor loop no longer dies
+  silently on SystemExit from the AI layer (per-step guards, `last_error` in the top bar, `running` reset); IMAP and
+  SMTP verify TLS certificates; a cross-process lock stops duplicate mail scans; unauthenticated senders no longer
+  become a job's contact; watch listings are marked seen only after judgement and manual searches mark nothing;
+  truncated AI replies raise instead of being saved; a self-healed model is remembered only after it answers;
+  settings.json writes are atomic and locked; profile.md writes are snapshotted; regenerated job documents keep the
+  previous version; backups snapshot SQLite with the online backup API; the capture token persists across restarts;
+  the page cannot be framed; the public autofill route no longer returns the answer bank; search-result XSS fixed;
+  inbox draft edits survive the refresh; drafted answers show on the Answers tab; council chat keeps the coach
+  context; merge uses the editor text; the .docx is regenerated when an edited document is saved; follow-up cadence
+  counts nudges once and proposes the ghosted close-out once; the AI client retries network errors and timeouts.
+- Not fixed yet: email-to-job matching by company name only, DKIM trust for free-mail domains, private preferences
+  living inside the resume file, inbox items stuck in "running" after a crash, schema migration race between threads.
+
+## Pass. Verified state (2026-11-04, seventh pass: coverage and analytics)
 
 - Three more keyless job sources (Hacker News Who is hiring via Algolia, Jobicy, The Muse), URL de-duplication on
   add/capture, a conversion funnel with median days per stage and outcomes by source (`jobs funnel`, Board header),

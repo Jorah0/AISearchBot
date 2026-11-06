@@ -52,7 +52,7 @@ def context(job=None, role: str = "") -> str:
         parts.append(f"TARGET ROLE: {role}")
     if job:
         parts.append(f"JOB IN FOCUS: {job['title']} at {job['company']}\n{(job['jd'] or '')[:2500]}")
-    parts.append("CANDIDATE PROFILE:\n" + candidate_text(6000))
+    parts.append("CANDIDATE PROFILE:\n" + candidate_text(6000, strict=False))
     return "\n\n".join(parts)
 
 

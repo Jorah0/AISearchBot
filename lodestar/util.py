@@ -132,6 +132,47 @@ def notify(msg: str) -> None:
         print(f"  (email notify failed: {e})")
 
 
+def tls_context():
+    """Certificate-verifying TLS for IMAP/SMTP. imaplib and smtplib default to an unverified context, which would hand
+    the mailbox password to anyone able to intercept the connection."""
+    import ssl
+
+    return ssl.create_default_context()
+
+
+class run_lock:
+    """Cross-process lock file (the desktop loop, a UI action and the scheduled task can all run a mail scan).
+    `with run_lock("email"):` raises SystemExit if another holder is live; a lock older than `stale` seconds is stolen."""
+
+    def __init__(self, name: str, stale: int = 1800):
+        from .config import HOME
+
+        self.path, self.stale = HOME / f".{name}.lock", stale
+
+    def __enter__(self):
+        import os
+        import time
+
+        for _ in range(2):
+            try:
+                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(fd, str(os.getpid()).encode())
+                os.close(fd)
+                return self
+            except FileExistsError:
+                try:
+                    if time.time() - self.path.stat().st_mtime > self.stale:
+                        self.path.unlink()  # a crashed holder; take over
+                        continue
+                except FileNotFoundError:
+                    continue
+                raise SystemExit(f"another {self.path.stem.lstrip('.')} run is in progress; skipped") from None
+        raise SystemExit(f"could not take {self.path.name}")
+
+    def __exit__(self, *exc):
+        self.path.unlink(missing_ok=True)
+
+
 def send_email(to: str, subject: str, body: str, in_reply_to: str | None = None) -> None:
     """Send as the IMAP account over SMTP (Gmail app password works). The only outbound-mail path in lodestar."""
     user, pw = setting("IMAP_USER"), setting("IMAP_PASS")
@@ -142,6 +183,6 @@ def send_email(to: str, subject: str, body: str, in_reply_to: str | None = None)
     if in_reply_to:
         m["In-Reply-To"] = m["References"] = in_reply_to
     m.set_content(body)
-    with smtplib.SMTP_SSL(setting("SMTP_HOST", "smtp.gmail.com"), 465) as s:
+    with smtplib.SMTP_SSL(setting("SMTP_HOST", "smtp.gmail.com"), 465, context=tls_context()) as s:
         s.login(user, pw)
         s.send_message(m)

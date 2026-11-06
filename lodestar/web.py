@@ -17,7 +17,30 @@ from .config import ALERTS, PROFILE
 
 STATIC = Path(__file__).parent / "static"
 TOKEN = secrets.token_urlsafe(24)          # per launch: the page embeds it, every API call must present it in a header
-CAPTURE_TOKEN = secrets.token_urlsafe(18)  # low-power token the bookmarklets carry as ?t=; valid only on PUBLIC routes
+
+
+def _capture_token() -> str:
+    """Low-power token the bookmarklets carry as ?t= (valid only on PUBLIC routes). Kept in ~/.lodestar/capture.token so
+    a dragged-out bookmarklet keeps working across restarts; delete the file to revoke it."""
+    from .config import HOME
+
+    f = HOME / "capture.token"
+    try:
+        tok = f.read_text(encoding="utf-8").strip()
+        if len(tok) >= 20:
+            return tok
+    except OSError:
+        pass
+    import os
+
+    tok = secrets.token_urlsafe(18)
+    fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # owner-only on POSIX (Windows ignores the mode)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(tok)
+    return tok
+
+
+CAPTURE_TOKEN = _capture_token()
 PUBLIC = {"/api/capture", "/api/autofill"}  # the only routes other origins may call
 TASK_LOCK = threading.Lock()
 DOC_NAMES = {"resume.md", "cover_letter.md", "interview_prep.md", "research.md", "offer.md"}  # editable per-job files
@@ -31,7 +54,7 @@ def _coach_system() -> str:
     from .resume import candidate_text
 
     tracker = "\n".join(f"#{j['id']} {j['status']} {j['company']} - {j['title']}" for j in db.list_jobs()[:40])
-    return f"{COACH}\n\nPROFILE:\n{candidate_text()}\n\nTRACKER:\n{tracker or '(empty)'}\n\nSTATS: {db.stats()}"
+    return f"{COACH}\n\nPROFILE:\n{candidate_text(strict=False)}\n\nTRACKER:\n{tracker or '(empty)'}\n\nSTATS: {db.stats()}"
 
 
 def _bank_view() -> dict:
@@ -68,8 +91,8 @@ def _act(action: str, p: dict):
             return {"path": str(out), "text": out.read_text(encoding="utf-8"), "docs": _docs(job)}
         case "adjust":  # returns the revised text; nothing is saved until the user clicks Save
             return {"text": resume.adjust_text(p["text"], p["instruction"], p.get("kind") or "document", prov)}
-        case "merge_profile":
-            return {"text": resume.merge_into_profile(p["text"], prov)}
+        case "merge_profile":  # merge into what is in the editor (unsaved edits included), not the file on disk
+            return {"text": resume.merge_into_profile(p["text"], prov, p.get("current"))}
         case "profile_import":  # {name, data: base64, ai?: bool}: resume file, LinkedIn zip or LinkedIn profile PDF
             import base64
 
@@ -79,8 +102,8 @@ def _act(action: str, p: dict):
             if not raw or len(raw) > 15_000_000:
                 raise ValueError("empty file or larger than 15 MB")
             source = "linkedin" if p.get("linkedin") or str(p.get("name", "")).lower().endswith(".zip") else "resume"
-            res = profile.import_file(raw, p.get("name") or "resume.txt", source, prov, p.get("ai"))
-            return res | _bank_view()
+            imported = profile.import_file(raw, p.get("name") or "resume.txt", source, prov, p.get("ai"))
+            return imported | _bank_view()
         case "profile_rebuild":
             from . import profile
 
@@ -110,6 +133,9 @@ def _act(action: str, p: dict):
 
             return {"reply": ai.chat(p["messages"], interview.mock_system(job), prov)}
         case "council":
+            if p.get("messages"):  # coach chat in council mode: same profile, tracker and conversation as plain chat
+                convo = "\n\n".join(f"{m['role'].upper()}: {m['content']}" for m in p["messages"][-12:])
+                return ai.council(f"Conversation so far (answer the last USER message):\n\n{convo}", _coach_system())
             return ai.council(p["prompt"])
         case "outreach":
             return {"text": extras.outreach(job, p.get("person", ""), p.get("channel", "linkedin"), prov)}
@@ -317,6 +343,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Frame-Options", "DENY")  # the page embeds the API token: never framed (clickjacking)
+                self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
                 self.send_header("Content-Length", str(len(html)))
                 self.end_headers()
                 self.wfile.write(html)
@@ -344,7 +372,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/profile/bank":
                 self._json(_bank_view())
             elif path == "/api/autofill":  # the autofill bookmarklet reads this; it never submits a form
-                self._json(extras.autofill_data())
+                # CORS-open to the page you are on: send only the fields it types, not the private answer bank
+                self._json({k: v for k, v in extras.autofill_data().items() if k != "answers"})
             else:
                 self._json({"error": "not found"}, 404)
         except BaseException as e:
@@ -399,16 +428,16 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/profile/bank":  # {op: add|remove|contact, kind, name, detail} / {op: contact, field, value}
                 from . import profile
 
-                op = p.get("op")
+                op, changed = p.get("op"), 1
                 if op == "add":
-                    profile.add(p["kind"], p["name"], p.get("detail", ""))
+                    changed = profile.add(p["kind"], p["name"], p.get("detail", ""))["added"]
                 elif op == "remove":
-                    profile.remove(p["kind"], p["name"])
+                    changed = profile.remove(p["kind"], p["name"])["removed"]
                 elif op == "contact":
                     profile.set_contact(p["field"], p.get("value", ""))
                 else:
                     raise ValueError(f"unknown op {op}")
-                self._json({"ok": True} | _bank_view())
+                self._json({"ok": True, "changed": changed} | _bank_view())
             elif path == "/api/open_folder":  # desktop convenience: reveal a Lodestar folder in the file manager
                 import subprocess
                 import sys as _sys
@@ -447,6 +476,10 @@ class Handler(BaseHTTPRequestHandler):
                     from .extras import resume_hash
 
                     db.update_job(job["id"], resume_hash=resume_hash(p.get("text") or ""))
+                if (app_dir(job) / name).with_suffix(".docx").is_file():  # the .docx is what gets uploaded: keep it current
+                    from .resume import export_docx
+
+                    export_docx(app_dir(job) / name)
                 db.add_event(job["id"], "edited", name)
                 self._json({"ok": True, "docs": _docs(job)})
             elif path.startswith("/api/approvals/") and len(parts) == 5:

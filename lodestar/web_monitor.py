@@ -2,7 +2,7 @@
 import hashlib
 import urllib.parse
 
-from . import ai, db
+from . import ai, db, settings
 from .config import SNAPSHOTS
 from .util import fetch, fetch_json, notify, strip_html
 
@@ -14,18 +14,24 @@ def check_watches() -> list[str]:
     for w in db.watches():
         if w["url"].startswith("search:"):
             q = w["url"][7:]
-            new = search(q, keywords=w["keywords"] or "", only_new=True)
-            for j in new:
-                notify(f"NEW LISTING [{q}]: {j['title']} @ {j['company']} ({j['location']}) {j['url']}")
-                alerts.append(j["url"])
-            if new:
+            new = search(q, keywords=w["keywords"] or "", only_new=True, mark=False)
+            for j in new:  # alert once per listing; only the AI judgement is retried while it keeps failing
+                if not db.seen(f"alerted:{j['url']}"):
+                    notify(f"NEW LISTING [{q}]: {j['title']} @ {j['company']} ({j['location']}) {j['url']}")
+                    db.mark_seen(f"alerted:{j['url']}")
+                    alerts.append(j["url"])
+            judging = bool(new) and settings.enabled("auto_track") and bool(ai.available())
+            if judging:
                 try:  # AI judgement -> approvals inbox (or straight into the tracker when auto_track is auto)
                     from .apply import auto_track
 
                     for j in auto_track(new):
                         notify(f"FIT {j['score']}: {j['title']} @ {j['company']} -> {j['proposal'].get('status')}")
-                except Exception as e:
+                except (Exception, SystemExit) as e:  # ai signals "no key / model rejected" with SystemExit
                     print(f"  auto_track: {e}")
+            for j in new:  # rank() scores in place; an unjudged listing stays new and is retried next cycle
+                if not judging or "score" in j:
+                    db.mark_seen(f"listing:{j['url']}")
             db.update_watch(w["id"], "")
             continue
         try:
@@ -153,7 +159,10 @@ def _muse(q):
 SOURCES = {"remotive": _remotive, "arbeitnow": _arbeitnow, "remoteok": _remoteok, "hn": _hn, "jobicy": _jobicy, "themuse": _muse}
 
 
-def search(query: str, keywords: str = "", only_new: bool = False, sources=None) -> list[dict]:
+def search(query: str, keywords: str = "", only_new: bool = False, sources=None, mark: bool | None = None) -> list[dict]:
+    """Listings from the free job APIs. only_new skips listings seen before; `mark` (default: only_new) records the
+    results as seen. A manual search never marks, so it cannot use up listings a watch has not judged yet."""
+    mark = only_new if mark is None else mark
     out, urls = [], set()
     kws = [k.strip().lower() for k in keywords.split(",") if k.strip()]
     for name in (sources or SOURCES):
@@ -172,7 +181,8 @@ def search(query: str, keywords: str = "", only_new: bool = False, sources=None)
                 continue
             urls.add(j["url"])
             out.append(j)
-            db.mark_seen(key)
+            if mark:
+                db.mark_seen(key)
     return out
 
 
@@ -198,7 +208,7 @@ LISTINGS:
 {brief}""",
                 provider=provider,
             )
-        except Exception as e:
+        except (Exception, SystemExit) as e:
             print(f"  rank chunk {start // chunk + 1}: {e}")
             continue
         for d in data if isinstance(data, list) else []:

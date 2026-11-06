@@ -120,7 +120,7 @@
   <div class="panel"><h3>Import an existing resume</h3>
     <div class="row"><input type="file" id="pFile" accept=".docx,.pdf,.md,.txt"><button class="b ghost" onclick="importToBank('pFile',false,this)">Import</button><span class="muted">.docx, .pdf, .md, .txt · saved to the bank, facts extracted; a template profile is filled in automatically</span></div>
     <textarea id="pImport" style="display:none; min-height:160px" placeholder="imported text appears here"></textarea>
-    <div class="row" id="pImportActions" style="display:none"><button class="b" onclick="run('merge_profile',{text:$('#pImport').value},r=>{$('#pText').value=r.text;toast('merged into the editor; review, then Save','ok')},this)">Merge into my profile (AI)</button><button class="b ghost" onclick="$('#pText').value=$('#pImport').value;toast('replaced the editor; review, then Save','ok')">Replace profile with this text</button></div></div>
+    <div class="row" id="pImportActions" style="display:none"><button class="b" onclick="run('merge_profile',{text:$('#pImport').value,current:$('#pText').value},r=>{$('#pText').value=r.text;toast('merged into the editor; review, then Save','ok')},this)">Merge into my profile (AI)</button><button class="b ghost" onclick="$('#pText').value=$('#pImport').value;toast('replaced the editor; review, then Save','ok')">Replace profile with this text</button></div></div>
   <pre id="pOut" style="display:none"></pre>
 </section>
 

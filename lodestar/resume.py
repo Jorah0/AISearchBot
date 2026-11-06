@@ -63,17 +63,28 @@ def app_dir(job) -> Path:
     return d
 
 
+def write_doc(path: Path, text: str) -> Path:
+    """Write a generated per-job document. A previous version that differs (possibly hand-edited) moves to history/."""
+    from datetime import datetime
+
+    if path.is_file() and path.read_text(encoding="utf-8") != text:
+        (path.parent / "history").mkdir(exist_ok=True)
+        path.replace(path.parent / "history" / f"{path.stem}-{datetime.now():%Y%m%d-%H%M%S}{path.suffix}")
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
 def _jd(job) -> str:
     if not job["jd"]:
         raise SystemExit(f"job #{job['id']} has no job description. Add one: lodestar jobs jd {job['id']} <url|file>")
     return job["jd"]
 
 
-def candidate_text(limit: int | None = None) -> str:
+def candidate_text(limit: int | None = None, strict: bool = True) -> str:
     """Master profile + profile-bank facts it leaves out, fitted to `limit` by whole sections. Prompts read this."""
     from .profile import candidate_text as _ct
 
-    return _ct(limit)
+    return _ct(limit, strict)
 
 
 def _current_resume(job) -> str:
@@ -93,8 +104,7 @@ JOB DESCRIPTION:
 MASTER RESUME (an "On file" section, if present, lists further true facts from the candidate's other resumes):
 {candidate_text()}"""
     text = ai.council(prompt, SYSTEM)["synthesis"] if use_council else ai.ask(prompt, SYSTEM, provider)
-    out = app_dir(job) / "resume.md"
-    out.write_text(text, encoding="utf-8")
+    out = write_doc(app_dir(job) / "resume.md", text)
     from .extras import resume_hash
 
     h = resume_hash(text)
@@ -146,8 +156,7 @@ CANDIDATE (tailored resume if available, else master profile):
     body = (ai.council(prompt, SYSTEM)["synthesis"] if use_council else ai.ask(prompt, SYSTEM, provider)).strip()
     letter = "\n".join([contact_line(), datetime.now().strftime("%B %d, %Y"), "", addressee, job["company"], "",
                         f"Dear {addressee},", "", body, "", "Sincerely,", candidate_name()])
-    out = d / "cover_letter.md"
-    out.write_text(letter, encoding="utf-8")
+    out = write_doc(d / "cover_letter.md", letter)
     db.add_event(job["id"], "cover_letter", str(out))
     return out
 
@@ -167,9 +176,11 @@ INSTRUCTION: {instruction}
     )
 
 
-def merge_into_profile(uploaded: str, provider: str | None = None) -> str:
-    """Fold an uploaded resume into the master profile structure without losing anything from either."""
-    current = PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else PROFILE_TEMPLATE
+def merge_into_profile(uploaded: str, provider: str | None = None, current: str | None = None) -> str:
+    """Fold an uploaded resume into the master profile structure without losing anything from either.
+    `current` is the editor text (unsaved edits included); defaults to the file on disk."""
+    if not current:
+        current = PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else PROFILE_TEMPLATE
     return ai.ask(
         f"""Merge the UPLOADED RESUME into the MASTER PROFILE below and return the complete merged profile in Markdown using
 exactly the master profile's section structure (Contact, Summary, Skills, Experience, Projects, Education,
@@ -180,9 +191,10 @@ MASTER PROFILE:
 {current}
 
 UPLOADED RESUME:
-{uploaded[:12000]}""",
+{uploaded[:20000]}""",
         SYSTEM,
         provider,
+        max_tokens=8000,  # the reply is the whole profile; ai.chat raises rather than return a cut-off one
     )
 
 

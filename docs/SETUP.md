@@ -20,6 +20,29 @@ education, certifications, and the Preferences line (target roles, locations, sa
 lodestar never invents facts, so anything not in this file cannot appear in a tailored resume.
 You can also edit it in the UI (Profile tab) and get an AI review there.
 
+Faster start: import what you already have. Each import keeps the original file and pools its facts (contact,
+skills, spoken languages, roles, education, certifications, projects) in the **profile bank**, tagged with where
+they came from. While profile.md is still the template it is written from the bank automatically.
+
+```bash
+lodestar profile import ~/Documents/resume.docx      # or .pdf / .md / .txt  (--no-ai: offline parse only)
+lodestar profile link https://www.linkedin.com/in/your-name
+lodestar profile linkedin ~/Downloads/Basic_LinkedInDataExport.zip   # or the profile's "Save to PDF"
+lodestar profile show                                 # what the bank holds
+lodestar profile add skills "Terraform" --detail Tools
+lodestar profile rebuild                              # regenerate profile.md from the bank (old copy kept)
+```
+
+LinkedIn: its API does not give third-party apps your positions or skills, and scraping profiles breaks its terms, so
+Lodestar uses what LinkedIn hands you. Request **Settings → Data privacy → Get a copy of your data**
+(<https://www.linkedin.com/mypreferences/d/download-my-data>); the basic archive arrives in minutes. Only profile facts
+are read from it (Profile, Positions, Skills, Languages, Education, Certifications, Projects, email, phone); the
+archive itself, with messages and connections, is never stored.
+
+Prompts read the master profile plus any bank facts it does not mention yet, fitted to each prompt's budget by whole
+sections (contact, summary, skills, languages and preferences first). Every save of profile.md keeps the previous
+version in `profile-history/`.
+
 ## 2. AI providers
 
 Store at least one key in the OS keyring (never on disk):
@@ -83,8 +106,13 @@ idea crafting; `lodestar providers local` makes everything Ollama-only. `lodesta
 
 ```
 ~/.lodestar/profile.md            master resume
+~/.lodestar/profile.json          profile bank: pooled facts with their sources
+~/.lodestar/resumes/              every imported resume (original + extracted text; LinkedIn zips as parsed facts only)
+~/.lodestar/profile-history/      profile.md before each overwrite (last 30)
 ~/.lodestar/lodestar.db             tracker
 ~/.lodestar/applications/<id>-…/  resume.md/.docx, cover_letter.md, gap.json, interview_prep.md, interview-*.ics
+                                  history/ keeps a regenerated document's previous version
+~/.lodestar/capture.token         bookmarklet token (delete to revoke; bookmarklets then need re-dragging)
 ~/.lodestar/alerts.log            monitor output
 <vault>/jobs/                   Obsidian mirror of the tracker
 ```

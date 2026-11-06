@@ -100,7 +100,7 @@ def cmd_council(a):
 def cmd_chat(a):
     from .resume import candidate_text
 
-    system = f"{COACH}\n\nPROFILE:\n{candidate_text()}\n\nTRACKER:\n{_tracker_summary()}\n\nSTATS: {db.stats()}"
+    system = f"{COACH}\n\nPROFILE:\n{candidate_text(strict=False)}\n\nTRACKER:\n{_tracker_summary()}\n\nSTATS: {db.stats()}"
     history = []
     print("Career coach ready. Ctrl-C or 'quit' to exit.")
     while True:

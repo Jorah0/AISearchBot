@@ -76,7 +76,8 @@ function renderOnboard() {
 function renderLoop() {
   const l = S.loop, el = $('#loopStat');
   if (!l.running) { el.textContent = 'monitor loop: not running in this process'; el.title = 'start with the Lodestar shortcut, lodestar desktop, or lodestar run'; return; }
-  el.textContent = `monitor loop: every ${l.every} min · last cycle ${l.last_cycle || 'starting'} · ${l.cycles} run${l.cycles === 1 ? '' : 's'}`;
+  el.textContent = `monitor loop: every ${l.every} min · last cycle ${l.last_cycle || 'starting'} · ${l.cycles} run${l.cycles === 1 ? '' : 's'}${l.last_error ? ' · last problem: ' + l.last_error : ''}`;
+  el.title = l.last_error || '';
 }
 
 /* ---- job drawer ---- */
@@ -143,6 +144,10 @@ async function addJob() {
 
 /* ---- inbox ---- */
 function renderInbox() {
+  // the 60 s refresh re-renders the inbox: carry over draft edits, or Approve would send the original AI text
+  const edited = {}; $$('#inboxList input[id], #inboxList textarea[id]').forEach(e => { if (e.value !== e.defaultValue) edited[e.id] = e.value; });
+  const fe = document.activeElement && document.activeElement.closest('#inboxList') ? document.activeElement : null;
+  const focused = fe && { id: fe.id, s: fe.selectionStart, e: fe.selectionEnd, top: fe.scrollTop };  // keep the caret where it was
   $('#inboxList').innerHTML = S.pending.map(r => {
     const p = r.payload, mail = r.kind === 'send_email';
     return `<div class="item"><div class="hd"><b>#${r.id}</b><span class="pill">${r.tool}</span><span class="pill">${r.kind}</span>${esc(r.summary)}<span class="muted">${r.ts.slice(0, 16)}</span></div>
@@ -150,6 +155,9 @@ function renderInbox() {
         : `<pre>${esc(JSON.stringify(p, null, 2))}</pre>`}
       <div class="row"><button class="b" onclick="decide(${r.id},'approve',${mail})">Approve${mail ? ' and send' : ''}</button><button class="b ghost" onclick="decide(${r.id},'reject',false)">Reject</button></div></div>`;
   }).join('') || '<div class="empty">Inbox empty. Automatic actions appear here when a tool is enabled but not set to auto.</div>';
+  for (const [id, v] of Object.entries(edited)) { const e = document.getElementById(id); if (e) e.value = v; }
+  const back = focused && document.getElementById(focused.id);
+  if (back) { back.focus(); try { back.setSelectionRange(focused.s, focused.e); } catch (_) { /* not a text field */ } back.scrollTop = focused.top; }
   $('#decidedList').innerHTML = S.decided.map(r => `<div>#${r.id} <b>${r.status}</b> ${esc(r.summary)} <span class="muted">${esc((r.result || '').slice(0, 140))}</span></div>`).join('') || '<div class="muted">nothing decided yet</div>';
 }
 async function decide(id, op, mail) {
@@ -160,14 +168,21 @@ async function decide(id, op, mail) {
 
 /* ---- search ---- */
 function renderSearchless() { /* search results are rendered on demand */ }
+let RESULTS = [];  // listings stay in JS; markup carries only an index (listing text inside an onclick attribute is an XSS hole)
 function doSearch(btn) {
   $('#sRes').innerHTML = '<div class="muted">searching…</div>';
   run('search', { query: $('#sQ').value, keywords: $('#sK').value, rank: $('#sRank').checked }, r => {
-    $('#sRes').innerHTML = `<div class="list">` + ((r.results || []).map(j => `<div>${j.score != null ? `<span class="score">${j.score}</span>` : ''}<b>${esc(j.title)}</b> @ ${esc(j.company)} <span class="muted">${esc(j.location)} ${esc(j.salary)} &lt;${j.source}&gt;</span>
-      ${safeUrl(j.url) ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">open ↗</a>` : ''} <button class="b ghost sm" onclick='saveListing(${JSON.stringify(j).replace(/'/g, "&#39;")})'>track</button>${j.why ? `<div class="muted">${esc(j.why)}</div>` : ''}</div>`).join('') || '<div class="empty">nothing found</div>') + '</div>';
+    RESULTS = r.results || [];
+    $('#sRes').innerHTML = `<div class="list">` + (RESULTS.map((j, i) => `<div>${j.score != null ? `<span class="score">${esc(j.score)}</span>` : ''}<b>${esc(j.title)}</b> @ ${esc(j.company)} <span class="muted">${esc(j.location)} ${esc(j.salary)} &lt;${esc(j.source)}&gt;</span>
+      ${safeUrl(j.url) ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">open ↗</a>` : ''} <button class="b ghost sm" onclick="saveListing(${i})">track</button>${j.why ? `<div class="muted">${esc(j.why)}</div>` : ''}</div>`).join('') || '<div class="empty">nothing found</div>') + '</div>';
   }, btn);
 }
-async function saveListing(j) { const r = await api('/api/jobs', { company: j.company, title: j.title, url: j.url, jd: j.desc, notes: 'found via ' + j.source }); toast('tracked as #' + r.id, 'ok'); load(); }
+async function saveListing(i) {
+  const j = RESULTS[i]; if (!j) return;
+  const r = await api('/api/jobs', { company: j.company, title: j.title, url: j.url, jd: j.desc, notes: 'found via ' + j.source });
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast('tracked as #' + r.id, 'ok'); load();
+}
 
 /* ---- monitor ---- */
 function renderMonitor() {
@@ -179,14 +194,18 @@ async function addWatch() { await api('/api/watches', { url: $('#wUrl').value, k
 /* ---- answers ---- */
 function renderAnswers() {
   $('#bank').innerHTML = `<div class="list">` + (S.answers.map(a => `<div><b>${esc(a.question)}</b> <button class="b ghost sm" onclick="api('/api/answers/${a.id}',{}).then(load)">remove</button><div class="muted" style="white-space:pre-wrap">${esc(a.answer)}</div></div>`).join('') || '<div class="empty">No saved answers yet. Draft one above; it is saved through the Inbox unless the answers tool is auto.</div>') + '</div>';
+  const keep = $('#aJob').value;  // the refresh must not switch the job an answer is being drafted for
   $('#aJob').innerHTML = S.jobs.map(j => `<option value="${j.id}">#${j.id} ${esc(j.company)} - ${esc(j.title)}</option>`).join('');
+  if (keep && S.jobs.some(j => String(j.id) === keep)) $('#aJob').value = keep;
 }
-function askAnswer(btn) { run('answer', { id: $('#aJob').value, question: $('#aQ').value }, r => show('aOut', r.answer + '\n\n[reused: ' + (r.reused.join(' | ') || 'none') + ']  [save -> ' + r.proposal.status + ']'), btn); }
+function askAnswer(btn) { run('answer', { id: $('#aJob').value, question: $('#aQ').value }, r => show('aOut2', r.answer + '\n\n[reused: ' + (r.reused.join(' | ') || 'none') + ']  [save -> ' + r.proposal.status + ']'), btn); }
 
 /* ---- ideas ---- */
 function renderIdeas() {
   if (!$('#iTopic').options.length) $('#iTopic').innerHTML = opt(TOPICS);
+  const keep = $('#iJob').value;
   $('#iJob').innerHTML = '<option value="">(no job focus)</option>' + S.jobs.map(j => `<option value="${j.id}">#${j.id} ${esc(j.company)} - ${esc(j.title)}</option>`).join('');
+  if (S.jobs.some(j => String(j.id) === keep)) $('#iJob').value = keep;
   $('#ideaList').innerHTML = S.ideas.map(i => `<div class="panel"><div class="row" style="margin-top:0"><b>${esc(i.title)}</b><span class="pill">${i.topic}</span><span class="pill">score ${i.score}</span><span class="muted">impact ${i.impact ?? '?'} · effort ${i.effort ?? '?'} · fit ${i.fit ?? '?'} · ${esc(i.time || '')}</span>
       <select onchange="api('/api/ideas/${i.id}/status',{status:this.value}).then(load)">${opt(S.idea_statuses, i.status)}</select><button class="b ghost sm" onclick="api('/api/ideas/${i.id}/delete',{}).then(load)">remove</button></div>
       <div>${esc(i.idea || '')}</div><div class="muted">why: ${esc(i.why_it_works || '')}</div>
@@ -220,7 +239,8 @@ function showDoctor(rows) {
 async function setVault() { const r = await api('/api/vault', { name: $('#vName').value, user: $('#vUser').value, value: $('#vVal').value }); toast(r.error || 'stored', r.error ? 'err' : 'ok'); $('#vVal').value = ''; load(); }
 
 /* ---- profile and coach ---- */
-async function loadProfile() { $('#pText').value = (await api('/api/profile')).text; }
+let PROFILE_LOADED = '';  // last text loaded from / saved to disk: tells unsaved editor edits apart
+async function loadProfile() { $('#pText').value = PROFILE_LOADED = (await api('/api/profile')).text; }
 function adjustProfile(btn) {
   const ins = $('#pAdj').value.trim(); if (!ins) return toast('type an instruction first', 'err');
   run('adjust', { text: $('#pText').value, instruction: ins, kind: 'master profile' }, r => { $('#pText').value = r.text; toast('adjusted; review, then Save', 'ok'); }, btn);
@@ -238,9 +258,14 @@ function renderBank(v) {
   $('#bOnFile').style.display = v.on_file ? '' : 'none'; $('#bOnFile').textContent = v.on_file;
 }
 async function bankOp(body, okMsg) {
+  if (body.op === 'contact' && !String(body.value || '').trim()) return toast('paste your LinkedIn profile URL first', 'err');
+  if (body.op === 'add' && !String(body.name || '').trim()) return toast('type a name first', 'err');
   const r = await api('/api/profile/bank', body);
   if (r.error) return toast('error: ' + r.error, 'err');
-  renderBank(r); toast(okMsg, 'ok'); $('#bSkill').value = $('#bSkillCat').value = $('#bLang').value = $('#bLangLvl').value = '';
+  renderBank(r);
+  if (!r.changed) return toast(body.op === 'add' ? 'already in the bank (or not a valid entry)' : 'nothing changed', 'err');
+  toast(okMsg, 'ok');
+  if (body.op === 'add') (body.kind === 'skills' ? ['#bSkill', '#bSkillCat'] : ['#bLang', '#bLangLvl']).forEach(s => { $(s).value = ''; });
 }
 function bankRemove(kind, i) { const it = BANK.bank[kind][i]; if (it) bankOp({ op: 'remove', kind, name: it.name }, 'removed ' + it.name); }
 function importToBank(inputId, linkedin, btn) {
@@ -250,14 +275,19 @@ function importToBank(inputId, linkedin, btn) {
     renderBank(r);
     const got = Object.entries(r.added).filter(([, n]) => n).map(([k, n]) => n + ' ' + k).join(', ') || 'nothing new';
     toast(`${r.new_file ? 'saved' : 'already saved'} ${f.name}: ${got} (${r.used_ai ? 'AI' : 'offline'} extraction)${r.seeded_master ? '; master profile filled in' : ''}`, 'ok');
-    if (r.seeded_master) loadProfile();
+    if (r.seeded_master) {  // never clobber text typed into the editor but not saved yet
+      if ($('#pText').value === PROFILE_LOADED) loadProfile();
+      else toast('profile.md was filled in from the bank; your unsaved editor text was kept (Save would replace the filled-in file)', 'err');
+    }
     if (!linkedin) { $('#pImport').value = r.text; $('#pImport').style.display = ''; $('#pImportActions').style.display = ''; }
   }, btn);
   rd.readAsDataURL(f);
 }
 function rebuildMaster(btn) {
-  if (!confirm('Replace profile.md with a version built from the bank? The current file is snapshotted to profile-history/ first.')) return;
-  run('profile_rebuild', {}, r => { $('#pText').value = r.text; renderBank(r); toast('master rebuilt from the bank', 'ok'); }, btn);
+  const dirty = $('#pText').value !== PROFILE_LOADED;
+  if (!confirm('Replace profile.md with a version built from the bank? The saved file is snapshotted to profile-history/ first.' +
+    (dirty ? '\n\nThe editor has UNSAVED changes; they are not in any snapshot and will be lost. Save first to keep them.' : ''))) return;
+  run('profile_rebuild', {}, r => { $('#pText').value = PROFILE_LOADED = r.text; renderBank(r); toast('master rebuilt from the bank', 'ok'); }, btn);
 }
 function editDoc() {
   const n = $('#docTabs button.on')?.textContent; if (!n || n === 'timeline' || n === 'description') return toast('pick a document tab first', 'err');
@@ -276,8 +306,9 @@ function adjustDoc(btn) {
   run('adjust', { text: cur.docs[n], instruction: ins, kind }, r => { $('#docEdit').value = r.text; $('#docEdit').style.display = ''; $('#docSave').style.display = ''; $('#docEdit').dataset.name = n; toast('adjusted; review, then Save document', 'ok'); }, btn);
 }
 async function saveProfile() {
-  const r = await api('/api/profile', { text: $('#pText').value });
+  const text = $('#pText').value, r = await api('/api/profile', { text });
   if (r.error) return toast('save failed: ' + r.error, 'err');
+  PROFILE_LOADED = text;
   toast('profile saved (previous version kept in profile-history/)', 'ok'); loadBank();
 }
 function resetChat() {
@@ -292,7 +323,7 @@ function sendChat() {
   chatHist.push({ role: 'user', content: q }); $('#chat').insertAdjacentHTML('beforeend', `<div class="msg me">${esc(q)}</div>`);
   const council = $('#cCouncil').checked, mock = $('#cMode').value === 'mock';
   const action = mock ? 'mock' : council ? 'council' : 'chat';
-  const params = mock ? { id: $('#cJob').value, messages: chatHist } : council ? { prompt: q } : { messages: chatHist };
+  const params = mock ? { id: $('#cJob').value, messages: chatHist } : council ? { prompt: q, messages: chatHist } : { messages: chatHist };
   run(action, params, r => {
     const a = council && !mock ? r.synthesis : r.reply; chatHist.push({ role: 'assistant', content: a });
     $('#chat').insertAdjacentHTML('beforeend', `<div class="msg ai">${esc(a)}</div>`); $('#chat').scrollTop = 1e9;

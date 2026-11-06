@@ -113,6 +113,12 @@ def _post(url: str, headers: dict, body: dict, retries: int = 2) -> dict:
                 raise SystemExit(f"{name}: the model '{body.get('model')}' was rejected ({msg[:160]}). "
                                  f"Pick one from `lodestar providers models` and set {name.upper()}_MODEL.") from None
             raise RuntimeError(f"{url} -> HTTP {e.code}: {msg}") from None
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:  # DNS blip, reset, timeout: same backoff
+            if attempt < retries:
+                time.sleep(2 ** attempt * 3)
+                continue
+            raise RuntimeError(f"{url} unreachable after {retries + 1} attempts: {getattr(e, 'reason', e)}") from None
+    raise RuntimeError("unreachable")
 
 
 def _record(url: str, model: str, resp: dict) -> None:
@@ -157,28 +163,37 @@ def chat(messages: list[dict], system: str | None = None, provider: str | None =
     key = api_key(name)
     if not key:
         raise SystemExit(f"{name}: missing {p['key']} (lodestar vault set {p['key']})")
+    model = model_for(name)
     for attempt in (1, 2):
         try:
             if p["kind"] == "anthropic":
-                body = {"model": model_for(name), "max_tokens": max_tokens, "messages": messages}
+                body = {"model": model, "max_tokens": max_tokens, "messages": messages}
                 if system:
                     body["system"] = system
                 r = _post(p["url"], {"x-api-key": key, "anthropic-version": "2023-06-01"}, body)
-                return "".join(b.get("text", "") for b in r["content"])
-            msgs = ([{"role": "system", "content": system}] if system else []) + messages
-            # ponytail: no temperature/max_tokens - newest OpenAI models reject them; defaults are fine for prose
-            r = _post(p["url"], {"Authorization": f"Bearer {key}"}, {"model": model_for(name), "messages": msgs})
-            return r["choices"][0]["message"]["content"]
-        except SystemExit as e:  # "model rejected": pick one the provider actually offers, remember it, retry once
+                text, cut = "".join(b.get("text", "") for b in r["content"]), r.get("stop_reason") == "max_tokens"
+            else:
+                msgs = ([{"role": "system", "content": system}] if system else []) + messages
+                # ponytail: no temperature/max_tokens - newest OpenAI models reject them; defaults are fine for prose
+                r = _post(p["url"], {"Authorization": f"Bearer {key}"}, {"model": model, "messages": msgs})
+                text, cut = r["choices"][0]["message"]["content"], r["choices"][0].get("finish_reason") == "length"
+            if cut:  # a half resume saved as if complete is worse than a clear failure
+                raise RuntimeError(f"{name}: the reply hit the length limit and was cut off; nothing was saved. "
+                                   "Retry, shorten the input, or pick another provider.")
+            if model != model_for(name):
+                from . import settings
+
+                settings.set_model(name, model)  # remembered only once the replacement actually answered
+                print(f"  {name}: switched to model '{model}' (saved in prefs.models)")
+            return text
+        except SystemExit as e:  # "model rejected": pick one the provider actually offers and retry once
             if attempt == 2 or "was rejected" not in str(e) or setting(f"{name.upper()}_MODEL"):
                 raise
-            from . import settings
-
             new = pick_model(name)
-            if not new or new == model_for(name):
+            if not new or new == model:
                 raise
-            print(f"  {name}: model '{model_for(name)}' not offered; switched to '{new}' (saved in prefs.models)")
-            settings.set_model(name, new)
+            print(f"  {name}: model '{model}' not offered; trying '{new}'")
+            model = new
     raise RuntimeError("unreachable")
 
 

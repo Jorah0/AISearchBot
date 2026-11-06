@@ -7,9 +7,9 @@ from .resume import app_dir, candidate_text
 SYSTEM = "You are a veteran hiring manager and interview coach. Be concrete, honest, and grounded in the candidate's real history."
 
 
-def _resume(job) -> str:
+def _resume(job, strict: bool = True) -> str:
     p = app_dir(job) / "resume.md"
-    return p.read_text(encoding="utf-8") if p.is_file() else candidate_text()
+    return p.read_text(encoding="utf-8") if p.is_file() else candidate_text(strict=strict)
 
 
 def prep(job, use_council: bool = False, provider: str | None = None) -> Path:
@@ -28,8 +28,9 @@ JOB DESCRIPTION:
 CANDIDATE:
 {_resume(job)}"""
     text = ai.council(prompt, SYSTEM)["synthesis"] if use_council else ai.ask(prompt, SYSTEM, provider, max_tokens=8000)
-    out = app_dir(job) / "interview_prep.md"
-    out.write_text(text, encoding="utf-8")
+    from .resume import write_doc
+
+    out = write_doc(app_dir(job) / "interview_prep.md", text)
     db.add_event(job["id"], "interview_prep", str(out))
     return out
 
@@ -39,7 +40,7 @@ def mock_system(job) -> str:
         SYSTEM + f" Conduct a realistic mock interview for {job['title']} at {job['company']}. Ask ONE question at a time, "
         "wait for the answer, give two lines of feedback, then ask the next. Mix technical and behavioral. When the "
         "candidate says 'done', give a scored (1-10) debrief with specific improvements.\n\n"
-        f"JOB DESCRIPTION:\n{job['jd'] or '(infer from title)'}\n\nCANDIDATE:\n{_resume(job)}"
+        f"JOB DESCRIPTION:\n{job['jd'] or '(infer from title)'}\n\nCANDIDATE:\n{_resume(job, strict=False)}"
     )
 
 

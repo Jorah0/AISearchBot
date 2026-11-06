@@ -101,7 +101,16 @@ def check(days: int = 3, limit: int = 100, dry: bool = False, provider: str | No
     host, user, pw = setting("IMAP_HOST", "imap.gmail.com"), setting("IMAP_USER"), setting("IMAP_PASS")
     if not (user and pw):
         raise SystemExit("Set IMAP_USER and IMAP_PASS (Gmail: App Password). e.g.  lodestar vault set IMAP_PASS")
-    box = imaplib.IMAP4_SSL(host)
+    from .util import run_lock
+
+    with run_lock("email"):  # two overlapping scans would classify, propose and reply to the same message twice
+        return _scan(host, user, pw, days, limit, dry, provider)
+
+
+def _scan(host: str, user: str, pw: str, days: int, limit: int, dry: bool, provider: str | None) -> list[dict]:
+    from .util import tls_context
+
+    box = imaplib.IMAP4_SSL(host, ssl_context=tls_context())
     box.login(user, pw)
     box.select("INBOX", readonly=True)
     since = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
@@ -166,7 +175,7 @@ def _apply(info: dict, dry: bool) -> None:
     # trusted = passes DMARC/DKIM alignment AND (no stored contact yet, or same domain as the stored contact)
     info["trusted"] = bool(info.get("dkim_pass")) and (not known or _domain(known) == _domain(sender_email))
     if job:
-        if human and not job["contact_email"]:
+        if human and not job["contact_email"] and info.get("dkim_pass"):  # forged senders never become the reply-to contact
             db.update_job(job["id"], contact_email=sender_email, contact_name=info.get("sender_name") or "")
             job = db.get_job(job["id"])
         if new and db.STATUSES.index(new) > db.STATUSES.index(job["status"]):
