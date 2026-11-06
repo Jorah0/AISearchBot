@@ -559,7 +559,7 @@ def set_contact(field: str, value: str) -> dict:
 
 # ----------------------------------------------------------------------------- rendering + prompts
 def _preferences(master: str) -> str:
-    m = re.search(r"(?ms)^## Preferences.*?(?=^## |\Z)", master)
+    m = PREFS_RE.search(master)
     return m.group(0).strip() if m else "## Preferences (used for job search ranking)\nTarget roles: | Locations / remote: | Salary floor: | Deal-breakers: | Industries to avoid:"
 
 
@@ -650,9 +650,13 @@ def brief(text: str, limit: int) -> str:
     return "".join(keep[i] for i in sorted(keep)).strip()
 
 
-def candidate_text(limit: int | None = None, strict: bool = True) -> str:
+PREFS_RE = re.compile(r"(?ms)^## Preferences.*?(?=^## |\Z)")
+
+
+def candidate_text(limit: int | None = None, strict: bool = True, private: bool = True) -> str:
     """What prompts should read: the master profile plus bank facts it leaves out, fitted to `limit` by section.
-    strict=False (coach, ideas) tolerates an unfilled profile: those helpers are how a new user builds one."""
+    strict=False (coach, ideas) tolerates an unfilled profile: those helpers are how a new user builds one.
+    private=False drops the Preferences section (salary floor, deal-breakers) for text an employer will read."""
     from .resume import profile_text
 
     master = profile_text()
@@ -666,7 +670,14 @@ def candidate_text(limit: int | None = None, strict: bool = True) -> str:
         master = render_markdown(bank, master)
     extra = extras_text(master)
     text = master.rstrip() + ("\n\n" + extra if extra else "")
+    if not private:
+        text = PREFS_RE.sub("", text)
     return brief(text, limit) if limit else text
+
+
+def preferences_text() -> str:
+    """Just the Preferences section of the master profile (for private judgements: gap check, offer, ranking)."""
+    return _preferences(master_text())
 
 
 def summary_text() -> str:

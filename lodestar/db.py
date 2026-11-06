@@ -34,7 +34,11 @@ def connect(path=None) -> sqlite3.Connection:
     have = {r["name"] for r in c.execute("PRAGMA table_info(jobs)")}
     for col, typ in MIGRATIONS.items():
         if col not in have:
-            c.execute(f"ALTER TABLE jobs ADD COLUMN {col} {typ}")
+            try:
+                c.execute(f"ALTER TABLE jobs ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError as e:  # another thread/process added it between our check and ALTER
+                if "duplicate column" not in str(e).lower():
+                    raise
     return c
 
 
@@ -217,7 +221,22 @@ def get_pending(pid: int):
     return row
 
 
+STUCK_MINUTES = 30  # far beyond any SMTP/AI timeout: a 'running' row this old means the process died mid-action
+
+
+def recover_stuck() -> int:
+    """Close out items left 'running' by a crash. Never re-queued automatically: the mail may already have gone."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=STUCK_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+    cur = con().execute(
+        "UPDATE pending SET status='error', decided_at=?, result='interrupted: Lodestar stopped while this was running; "
+        "check whether it happened (e.g. your Sent folder) before redoing it by hand' "
+        "WHERE status='running' AND COALESCE(decided_at, ts) < ?", (_now(), cutoff))
+    con().commit()
+    return cur.rowcount
+
+
 def list_pending(status: str | None = "pending", limit: int = 100):
+    recover_stuck()
     q, args = "SELECT * FROM pending", ()
     if status:
         q, args = q + " WHERE status=?", (status,)
@@ -226,7 +245,8 @@ def list_pending(status: str | None = "pending", limit: int = 100):
 
 def claim_pending(pid: int) -> bool:
     """Atomically move pending -> running. False when another thread (or a double-click) got there first."""
-    cur = con().execute("UPDATE pending SET status='running' WHERE id=? AND status='pending'", (pid,))
+    # decided_at doubles as the claim time while running; decide_pending overwrites it
+    cur = con().execute("UPDATE pending SET status='running', decided_at=? WHERE id=? AND status='pending'", (_now(), pid))
     con().commit()
     return cur.rowcount == 1
 

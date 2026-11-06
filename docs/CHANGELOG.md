@@ -1,5 +1,20 @@
 # Changelog (development passes, newest first)
 
+## Pass 13 (2026-11-06): the faults pass 12 left open
+
+- Private preferences: `candidate_text(private=False)` drops the Preferences section (salary floor, deal-breakers)
+  from everything an employer reads: tailored resume, cover letter, outreach, follow-up and thank-you mail, email
+  replies, form answers. The gap check gets the preferences as a separate private block, so it still weighs the floor
+  after a tailored resume exists. Ranking, offer review, interview prep, research, ideas and coach keep them.
+- Mail trust: a job is matched to an email by its stored contact address, then by the sender's company domain
+  (`careers.acme.com` -> Acme), and only then by the company name the classifier read. Only the first two can act
+  without review. Free-mail senders (gmail.com, outlook.com, ...) are trusted only when they are the job's exact stored
+  contact; they never become a contact on their own, and outreach from them (or unauthenticated outreach) waits in
+  the inbox instead of creating a job.
+- Inbox items left `running` by a crash are closed as `error` ("interrupted: check before redoing") after 30 minutes,
+  never re-run automatically (the mail may already have gone). The claim time is stored in `decided_at`.
+- Schema migration: a column added by another thread or process between the check and the ALTER is ignored.
+
 ## Pass 12 (2026-11-05): profile bank, LinkedIn import, design-review fixes
 
 - Profile bank (`lodestar/profile.py`): every imported resume is kept; contact, skills, spoken languages, roles,
@@ -20,8 +35,8 @@
   inbox draft edits survive the refresh; drafted answers show on the Answers tab; council chat keeps the coach
   context; merge uses the editor text; the .docx is regenerated when an edited document is saved; follow-up cadence
   counts nudges once and proposes the ghosted close-out once; the AI client retries network errors and timeouts.
-- Not fixed yet: email-to-job matching by company name only, DKIM trust for free-mail domains, private preferences
-  living inside the resume file, inbox items stuck in "running" after a crash, schema migration race between threads.
+- Left open here, fixed in pass 13: email-to-job matching by company name only, DKIM trust for free-mail domains,
+  private preferences living inside the resume file, inbox items stuck in "running", schema migration race.
 
 ## Pass. Verified state (2026-11-04, seventh pass: coverage and analytics)
 

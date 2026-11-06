@@ -59,15 +59,16 @@ class Email(unittest.TestCase):
         jid = db.add_job("Globex", "Data Engineer")
         db.set_status(jid, "applied")
         info = {"category": "interview", "company": "Globex", "summary": "invite", "action": "reply", "subject": "Interview",
-                "from": "x@globex.com", "dkim_pass": True}  # authenticated mail may move a job under the auto default
+                "from": "x@globex.com", "sender_email": "x@globex.com", "dkim_pass": True}  # authenticated company mail may move a job under the auto default
         email_monitor._apply(info, dry=False)
         self.assertEqual(db.get_job(jid)["status"], "interview")
         # a later "application received" must not downgrade
         email_monitor._apply(info | {"category": "application_received"}, dry=False)
         self.assertEqual(db.get_job(jid)["status"], "interview")
-        # unknown company recruiter outreach auto-creates a job
+        # unknown company recruiter outreach from an authenticated company domain auto-creates a job
         before = len(db.list_jobs())
-        email_monitor._apply({"category": "recruiter_outreach", "company": "Initech", "title": "SRE", "summary": "hi", "action": None, "subject": "Opportunity", "from": "r@initech.com"}, dry=False)
+        email_monitor._apply({"category": "recruiter_outreach", "company": "Initech", "title": "SRE", "summary": "hi", "action": None,
+                              "subject": "Opportunity", "from": "r@initech.com", "sender_email": "r@initech.com", "dkim_pass": True}, dry=False)
         self.assertEqual(len(db.list_jobs()), before + 1)
 
 
@@ -1223,3 +1224,69 @@ class ProfileReviewFixes(unittest.TestCase):
             self.assertFalse(db.seen("listing:https://j/9"))  # still awaiting judgement
         finally:
             web_monitor.notify, apply.auto_track = real_notify, real_track
+
+
+class OpenFaultFixes(unittest.TestCase):
+    """The faults pass 12 left open: private preferences, mail trust, crashed inbox items."""
+
+    def setUp(self):
+        from lodestar import settings
+        db._local.con = db.connect(":memory:")
+        settings.PATH.unlink(missing_ok=True)
+
+    def test_preferences_stay_out_of_employer_facing_text(self):
+        from lodestar import profile
+        from lodestar.config import PROFILE
+        PROFILE.write_text("# Jane Doe\nJane Doe | Austin, TX | jane@example.com\n## Skills\n- Python\n"
+                           "## Preferences\nSalary floor: 123k\n", encoding="utf-8")
+        self.assertIn("123k", profile.candidate_text())
+        self.assertNotIn("123k", resume.candidate_text(private=False))
+        self.assertIn("Python", resume.candidate_text(private=False))
+        jid = db.add_job("Acme", "Eng", jd="Python role")
+        prompts, real_ask, real_json = [], resume.ai.ask, resume.ai.ask_json
+        resume.ai.ask = lambda p, *a, **k: prompts.append(p) or "# Tailored\n- Python"
+        resume.ai.ask_json = lambda p, *a, **k: prompts.append(p) or {"match_score": 80, "verdict": "apply"}
+        try:
+            resume.tailor(db.get_job(jid))
+            resume.gap(db.get_job(jid))  # reads the tailored resume, which no longer has Preferences
+        finally:
+            resume.ai.ask, resume.ai.ask_json = real_ask, real_json
+        self.assertNotIn("123k", prompts[0])  # the tailored resume is sent to employers
+        self.assertIn("123k", prompts[1])     # the private fit check still weighs the floor
+
+    def test_free_mail_and_name_only_matches_never_auto_act(self):
+        from lodestar import email_monitor as em, settings
+        settings.set_tool("email_classify", auto=True)
+        jid = db.add_job("Globex", "Data Engineer"); db.set_status(jid, "applied")
+        real = em.ai.ask_json
+        em.ai.ask_json = lambda *a, **k: {"subject": "Re", "body": "ok", "chosen_time": None}
+        base = {"category": "interview", "company": "Globex", "summary": "s", "action": "", "subject": "Interview",
+                "sender_name": "X", "message_id": "<m>", "body": "b", "dkim_pass": True}
+        try:
+            em._apply(base | {"from": "x@gmail.com", "sender_email": "x@gmail.com"}, dry=False)
+            job = db.get_job(jid)
+            self.assertEqual((job["status"], job["contact_email"]), ("applied", None))  # DKIM-valid gmail is anyone
+            self.assertTrue(any(r["kind"] == "set_status" for r in db.list_pending()))
+            em._apply(base | {"from": "x@agency.com", "sender_email": "x@agency.com"}, dry=False)
+            self.assertEqual(db.get_job(jid)["status"], "applied")  # third party naming the company
+            em._apply(base | {"from": "r@careers.globex.com", "sender_email": "r@careers.globex.com"}, dry=False)
+            self.assertEqual(db.get_job(jid)["status"], "interview")  # the company's own domain
+            before = len(db.list_jobs())
+            em._apply(base | {"category": "recruiter_outreach", "company": "Hooli", "from": "h@gmail.com",
+                              "sender_email": "h@gmail.com"}, dry=False)
+            self.assertEqual(len(db.list_jobs()), before)  # free-mail outreach waits in the inbox
+        finally:
+            em.ai.ask_json = real
+        db.update_job(jid, contact_email="jane@gmail.com")
+        self.assertEqual(em._match({"sender_email": "jane@gmail.com"}), (db.get_job(jid), True))
+        self.assertFalse(em._match({"sender_email": "other@gmail.com", "company": "Globex"})[1])
+
+    def test_crashed_running_item_is_closed_not_rerun(self):
+        old = db.add_pending("email_reply", "send_email", None, "old", "{}")
+        new = db.add_pending("email_reply", "send_email", None, "new", "{}")
+        self.assertTrue(db.claim_pending(old) and db.claim_pending(new))
+        db.con().execute("UPDATE pending SET decided_at='2000-01-01 00:00:00' WHERE id=?", (old,))
+        db.list_pending()
+        self.assertEqual(db.get_pending(old)["status"], "error")
+        self.assertIn("interrupted", db.get_pending(old)["result"])
+        self.assertEqual(db.get_pending(new)["status"], "running")  # still within its window

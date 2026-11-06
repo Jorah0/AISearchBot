@@ -80,16 +80,17 @@ def _jd(job) -> str:
     return job["jd"]
 
 
-def candidate_text(limit: int | None = None, strict: bool = True) -> str:
-    """Master profile + profile-bank facts it leaves out, fitted to `limit` by whole sections. Prompts read this."""
+def candidate_text(limit: int | None = None, strict: bool = True, private: bool = True) -> str:
+    """Master profile + profile-bank facts it leaves out, fitted to `limit` by whole sections. Prompts read this.
+    private=False for anything an employer reads (resume, letters, mail, form answers): no salary floor."""
     from .profile import candidate_text as _ct
 
-    return _ct(limit, strict)
+    return _ct(limit, strict, private)
 
 
 def _current_resume(job) -> str:
     p = app_dir(job) / "resume.md"
-    return p.read_text(encoding="utf-8") if p.is_file() else candidate_text()
+    return p.read_text(encoding="utf-8") if p.is_file() else candidate_text(private=False)
 
 
 def tailor(job, use_council: bool = False, provider: str | None = None) -> Path:
@@ -102,7 +103,7 @@ JOB DESCRIPTION:
 {_jd(job)}
 
 MASTER RESUME (an "On file" section, if present, lists further true facts from the candidate's other resumes):
-{candidate_text()}"""
+{candidate_text(private=False)}"""
     text = ai.council(prompt, SYSTEM)["synthesis"] if use_council else ai.ask(prompt, SYSTEM, provider)
     out = write_doc(app_dir(job) / "resume.md", text)
     from .extras import resume_hash
@@ -213,6 +214,7 @@ def salary_mentions(text: str) -> list[str]:
 
 def gap(job, provider: str | None = None) -> dict:
     from . import comp
+    from .profile import preferences_text
 
     sal = salary_mentions(_jd(job))
     market = comp.lookup(job["title"], _jd(job))
@@ -226,7 +228,10 @@ JOB DESCRIPTION:
 {_jd(job)}
 
 CANDIDATE RESUME:
-{_current_resume(job)}"""
+{_current_resume(job)}
+
+CANDIDATE PREFERENCES (private, never quoted to the employer):
+{preferences_text()}"""
     data = ai.ask_json(prompt, SYSTEM, provider)
     data["salary_in_posting"] = sal
     data["market_range"] = market

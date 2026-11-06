@@ -35,6 +35,31 @@ def _aligned(d: str, dom: str) -> bool:
     return bool(d) and (d == dom or dom.endswith("." + d))
 
 
+# DKIM on these proves only that someone owns the mailbox, not that they work anywhere in particular.
+FREEMAIL = {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "msn.com", "yahoo.com", "ymail.com",
+            "icloud.com", "me.com", "mac.com", "aol.com", "proton.me", "protonmail.com", "pm.me", "gmx.com", "gmx.net",
+            "mail.com", "yandex.com", "zohomail.com", "fastmail.com", "hey.com"}  # ponytail: common ones; extend as met
+
+
+def _match(info: dict):
+    """(job, strong). Strong = the sender is tied to the job by its stored contact address/domain or by a company
+    domain that names the company. Weak = only the company name the classifier read out of the text matched,
+    which any third party (agency, newsletter, phisher) can write."""
+    addr = (info.get("sender_email") or "").lower()
+    dom = _domain(addr)
+    corporate = bool(dom) and dom not in FREEMAIL
+    for j in db.list_jobs():
+        known = (j["contact_email"] or "").lower()
+        if j["status"] not in ("rejected", "withdrawn") and known and (
+                known == addr or (corporate and _domain(known) == dom)):
+            return j, True
+    if corporate:
+        j = db.find_job_by_company(" ".join(dom.split(".")[:-1]))  # careers.acme.com -> "careers acme" -> Acme
+        if j:
+            return j, True
+    return db.find_job_by_company(info.get("company") or ""), False
+
+
 def mail_authenticated(auth_headers: list[str], sender_email: str) -> bool:
     """True only when the receiving MTA's own (top-most) Authentication-Results header carries a passing DMARC or DKIM
     result whose domain aligns with the From address. Headers further down can be forged by the sender."""
@@ -158,9 +183,7 @@ def _scan(host: str, user: str, pw: str, days: int, limit: int, dry: bool, provi
 
 
 def _apply(info: dict, dry: bool) -> None:
-    job = db.find_job_by_company(info.get("company") or "")
-    if not job and info.get("sender_email"):  # fall back to the sender's domain, never the free-text From line
-        job = db.find_job_by_company(info["sender_email"].split("@")[-1].split(".")[0])
+    job, strong = _match(info)
     action = info.get("action")
     line = f"EMAIL {info['category'].upper()}: {info.get('company') or info['from']} - {info.get('summary')}"
     if action and str(action).lower() != "none":
@@ -171,11 +194,15 @@ def _apply(info: dict, dry: bool) -> None:
     new = STATUS_FOR.get(info["category"])
     sender_email = info.get("sender_email") or ""
     human = bool(sender_email) and not NOREPLY.search(sender_email)
-    known = (job["contact_email"] if job else "") or ""
-    # trusted = passes DMARC/DKIM alignment AND (no stored contact yet, or same domain as the stored contact)
-    info["trusted"] = bool(info.get("dkim_pass")) and (not known or _domain(known) == _domain(sender_email))
+    known = ((job["contact_email"] if job else "") or "").lower()
+    free = _domain(sender_email) in FREEMAIL
+    same = known == sender_email.lower() if free else _domain(known) == _domain(sender_email)
+    # trusted = DMARC/DKIM-aligned AND tied to this job by address or company domain (a name match is not enough)
+    # AND consistent with the stored contact. A brand-new job from mail is trusted only from a company domain.
+    info["trusted"] = bool(info.get("dkim_pass")) and (
+        (strong and (not known or same)) if job else not free)
     if job:
-        if human and not job["contact_email"] and info.get("dkim_pass"):  # forged senders never become the reply-to contact
+        if human and not job["contact_email"] and info["trusted"]:  # forged or merely name-matched senders never become the contact
             db.update_job(job["id"], contact_email=sender_email, contact_name=info.get("sender_name") or "")
             job = db.get_job(job["id"])
         if new and db.STATUSES.index(new) > db.STATUSES.index(job["status"]):
@@ -195,9 +222,11 @@ def _apply(info: dict, dry: bool) -> None:
     elif info["category"] in ("recruiter_outreach", "interview", "offer") and info.get("company"):
         r = approvals.propose("email_classify", "add_job",
                               {"company": info["company"], "title": info.get("title") or "Unknown role",
-                               "notes": f"from email: {info['subject']}", "contact_email": sender_email if human else "",
+                               "notes": f"from email: {info['subject']}",
+                               "contact_email": sender_email if human and info.get("dkim_pass") else "",
                                "contact_name": info.get("sender_name") or ""},
-                              f"track {info['company']} - {info.get('title') or 'Unknown role'} ({info['category']} email)")
+                              f"track {info['company']} - {info.get('title') or 'Unknown role'} ({info['category']} email)",
+                              force_pending=not info["trusted"])  # forged / free-mail outreach waits for you
         if r.get("status") == "done":
             job = db.find_job_by_company(info["company"])
     if human and job:
@@ -247,7 +276,7 @@ Subject: {info['subject']}
 {info.get('body', '')[:3000]}
 
 CANDIDATE (for name and signature only):
-{candidate_text(800)}""")
+{candidate_text(800, private=False)}""")
     except (Exception, SystemExit) as e:  # missing profile / provider / bad JSON: log on the job, keep scanning
         db.add_event(job["id"], "reply", f"draft failed: {e}")
         notify(f"REPLY SKIPPED for {job['company']}: {e}")
@@ -273,6 +302,6 @@ def draft_reply(job, intent: str, provider: str | None = None) -> str:
         f"""Draft a short professional email (under 150 words) from the candidate to {job['company']} regarding the
 {job['title']} application. Intent: {intent}. Match a friendly, direct tone; include a subject line.
 Candidate background (for name/signature only):
-{candidate_text(1500)}""",
+{candidate_text(1500, private=False)}""",
         provider=provider,
     )

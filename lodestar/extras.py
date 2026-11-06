@@ -33,7 +33,7 @@ JOB DESCRIPTION:
 {(job['jd'] or '')[:3000]}
 
 CANDIDATE:
-{candidate_text(5000)}""",
+{candidate_text(5000, private=False)}""",
         provider=provider,
     )
 

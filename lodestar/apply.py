@@ -37,7 +37,7 @@ PRIOR ANSWERS:
 {bank}
 
 CANDIDATE:
-{candidate_text(5000)}""",
+{candidate_text(5000, private=False)}""",
         provider=provider,
     )
     prop = approvals.propose("answers", "save_answer", {"question": question, "answer": text, "tags": job["company"]},
@@ -78,7 +78,7 @@ with one concrete reason, ask for a status update or next step, no pressure, no 
 {JSON_MAIL}
 
 CANDIDATE SUMMARY:
-{candidate_text(1500)}""",
+{candidate_text(1500, private=False)}""",
         provider=provider,
     )
     db.add_event(job["id"], "followup", "drafted")
@@ -98,7 +98,7 @@ interview for {job['title']} at {job['company']}. Reference something specific f
 {JSON_MAIL}
 
 CANDIDATE SUMMARY:
-{candidate_text(1500)}""",
+{candidate_text(1500, private=False)}""",
         provider=provider,
     )
     db.add_event(job["id"], "thanks", "drafted")
