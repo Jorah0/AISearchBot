@@ -3,6 +3,7 @@
 Long-running AI actions run in a thread and are polled via /api/tasks/<id> so the page never blocks.
 """
 import json
+import re
 import secrets
 import threading
 import traceback
@@ -12,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import __version__, ai, apply, approvals, db, extras, log, loop, settings, vault
+from . import __version__, ai, apply, approvals, comp, db, extras, log, loop, settings, vault
 from .config import ALERTS, PROFILE
 
 STATIC = Path(__file__).parent / "static"
@@ -43,7 +44,7 @@ def _capture_token() -> str:
 CAPTURE_TOKEN = _capture_token()
 PUBLIC = {"/api/capture", "/api/autofill"}  # the only routes other origins may call
 TASK_LOCK = threading.Lock()
-DOC_NAMES = {"resume.md", "cover_letter.md", "interview_prep.md", "research.md", "offer.md"}  # editable per-job files
+DOC_NAMES = {"resume.md", "cover_letter.md", "interview_prep.md", "research.md", "offer.md", "mock_interview.md"}  # editable per-job files
 TASKS: dict[str, dict] = {}
 COACH = ("You are a sharp, practical career coach and job-search strategist. Use the candidate's profile and tracker "
          "below to give specific, actionable advice. Be brief and direct.")
@@ -114,9 +115,11 @@ def _act(action: str, p: dict):
         case "prep":
             return {"path": str(interview.prep(job, council, prov)), "docs": _docs(job)}
         case "review":
+            if "text" in p and not str(p["text"] or "").strip():  # an empty editor must not silently review profile.md
+                raise SystemExit("nothing to review: the text is empty")
             return {"text": resume.review(p.get("text") or resume.profile_text(), prov)}
         case "reply":
-            return {"text": email_monitor.draft_reply(job, p.get("intent", "polite follow-up"), prov)}
+            return email_monitor.draft_reply(job, p.get("intent", "polite follow-up"), prov)
         case "email_check":
             return {"found": email_monitor.check(int(p.get("days", 3)), dry=bool(p.get("dry")), provider=prov)}
         case "watch_run":
@@ -129,16 +132,20 @@ def _act(action: str, p: dict):
         case "chat":
             return {"reply": ai.chat(p["messages"], _coach_system(), prov)}
         case "mock":
-            from . import interview
-
-            return {"reply": ai.chat(p["messages"], interview.mock_system(job), prov)}
+            if not job:
+                raise ValueError("pick a job to interview for (add one on the Board first)")
+            msgs = p["messages"]
+            reply = ai.chat(msgs, interview.mock_system(job), prov)
+            if msgs and str(msgs[-1].get("content", "")).strip().lower() == "done":  # the debrief: keep it with the job
+                return {"reply": reply, "path": str(interview.save_mock(job, [*msgs, {"role": "assistant", "content": reply}]))}
+            return {"reply": reply}
         case "council":
             if p.get("messages"):  # coach chat in council mode: same profile, tracker and conversation as plain chat
                 convo = "\n\n".join(f"{m['role'].upper()}: {m['content']}" for m in p["messages"][-12:])
                 return ai.council(f"Conversation so far (answer the last USER message):\n\n{convo}", _coach_system())
             return ai.council(p["prompt"])
         case "outreach":
-            return {"text": extras.outreach(job, p.get("person", ""), p.get("channel", "linkedin"), prov)}
+            return extras.outreach(job, p.get("person", ""), p.get("channel", "linkedin"), prov)
         case "ics":
             return {"path": str(extras.ics(job, extras.parse_when(p["when"]), int(p.get("minutes", 60)))), "docs": _docs(job)}
         case "digest":
@@ -188,8 +195,18 @@ def _act(action: str, p: dict):
             return {"rows": rows}
         case "backup":
             return {"path": str(extras.backup())}
-        case "export_json":
-            return {"path": str(extras.export_data("json"))}
+        case "export":  # {fmt: json|csv}; CSV writes one file per table into ~/.lodestar/exports
+            return {"path": str(extras.export_data("csv" if p.get("fmt") == "csv" else "json"))}
+        case "providers_local":
+            return {"text": ai.local_preset()}
+        case "models":  # the ids each configured provider offers, to pin one under Tools > Preferences > models
+            ms: dict[str, list[str] | str] = {}
+            for n in ai.available():
+                try:
+                    ms[n] = ai.list_models(n)
+                except Exception as e:
+                    ms[n] = f"FAIL {e}"
+            return ms
         case "providers_test":
             res: dict[str, str] = {}
             for n in ai.available():
@@ -244,7 +261,7 @@ def setup_status() -> dict:
 
     text = master_text()
     return {
-        "profile_ready": len(text) > 200 and not is_template(text),
+        "profile_ready": not is_template(text),  # same rule prompts use; a short real profile counts
         "provider_ready": bool(ai.available()),
         "email_ready": bool(setting("IMAP_USER") and setting("IMAP_PASS")),
     }
@@ -258,7 +275,7 @@ def state() -> dict:
         "jobs": [dict(j) for j in db.list_jobs()],
         "statuses": db.STATUSES,
         "stats": db.stats(),
-        "followups": [j["id"] for j in db.needs_followup(7)],
+        "followups": [j["id"] for j in db.needs_followup()],
         "variants": db.variant_stats(),
         "funnel": db.funnel(),
         "pending": [dict(r) | {"payload": json.loads(r["payload"])} for r in db.list_pending("pending")],
@@ -272,8 +289,11 @@ def state() -> dict:
         "watches": [dict(w) for w in db.watches()],
         "alerts": ALERTS.read_text(encoding="utf-8").splitlines()[-30:] if ALERTS.is_file() else [],
         "vault": [{"name": n, "user": u} for n, u in vault.names()],
+        "comp": comp.load(),
+        "upcoming": [i | {"when": f"{i['when']:%a %Y-%m-%d %H:%M}"} for i in extras.upcoming_interviews(14)],
         "profile_path": str(PROFILE),
         "usage_today": ai.usage(1)["total"],
+        "usage": ai.usage(30),
     }
 
 
@@ -410,7 +430,13 @@ class Handler(BaseHTTPRequestHandler):
                 elif op == "jd":
                     from .util import read_source
 
-                    db.update_job(jid, jd=read_source(p["source"], allow_files=False))
+                    url = http_only(p["source"]) if not db.get_job(jid)["url"] else None  # a JD link is the posting link
+                    db.update_job(jid, jd=read_source(p["source"], allow_files=False), **({"url": url} if url else {}))
+                elif op == "contact":  # the address follow-ups, thank-yous and replies are sent to
+                    email, name = str(p.get("email") or "").strip(), str(p.get("name") or "").strip()
+                    if email and not re.fullmatch(r"[^@\s<>,;]+@[^@\s<>,;]+\.[^@\s<>,;]+", email):
+                        raise ValueError(f"not an email address: {email[:80]}")
+                    db.update_job(jid, contact_email=email or None, contact_name=name[:120])
                 elif op == "delete":
                     db.delete_job(jid)
                 self._json({"ok": True})
@@ -490,6 +516,12 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/prefs":
                 settings.set_pref(p["key"], p["value"])
                 self._json({"ok": True, "prefs": settings.load()["prefs"]})
+            elif path == "/api/comp":  # {op: set|delete, title, city, low, high}: your own market-rate table
+                if p.get("op") == "delete":
+                    comp.delete(p.get("title", ""), p.get("city") or "*")
+                else:
+                    comp.set_range(p.get("title", ""), p.get("city") or "*", p["low"], p["high"])
+                self._json({"ok": True, "comp": comp.load()})
             elif path == "/api/answers":
                 db.save_answer(p["question"], p["answer"], p.get("tags", ""))
                 self._json({"ok": True})
@@ -503,8 +535,11 @@ class Handler(BaseHTTPRequestHandler):
                 elif op == "delete":
                     db.delete_idea(iid)
                 self._json({"ok": True})
-            elif path == "/api/vault":
-                vault.set(p["name"], p["value"], p.get("user"))
+            elif path == "/api/vault":  # {name, value, user?} stores; {name, delete: true} removes
+                if p.get("delete"):
+                    vault.delete(p["name"])
+                else:
+                    vault.set(p["name"], p["value"], p.get("user"))
                 self._json({"ok": True})
             elif path.startswith("/api/run/"):
                 self._json({"task": start_task(parts[3], p)})

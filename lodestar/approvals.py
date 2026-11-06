@@ -23,6 +23,8 @@ def propose(tool: str, kind: str, payload: dict, summary: str, job_id: int | Non
 
 
 def approve(pid: int, edits: dict | None = None) -> dict:
+    if edits is not None and not isinstance(edits, dict):  # checked before the claim, or the item would stick claimed
+        raise ValueError("edits must be a JSON object")
     row = db.get_pending(pid)
     if row["status"] != "pending" or not db.claim_pending(pid):
         row = db.get_pending(pid)
@@ -53,6 +55,8 @@ def _send(p: dict) -> str:
     send_email(p["to"], p["subject"], p["body"], in_reply_to=p.get("in_reply_to"))
     note = ""
     try:  # the mail is out; bookkeeping failures must not turn a sent item into an "error"
+        if p.get("purpose") in ("followup", "thanks") and p.get("job_id"):  # the checklist counts these as done
+            db.add_event(p["job_id"], p["purpose"], f"sent to {p['to']}")
         if p.get("chosen_time") and p.get("job_id") and settings.enabled("calendar"):
             from .extras import conflicts, ics, parse_when
 

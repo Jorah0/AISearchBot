@@ -268,22 +268,26 @@ class Ideas(unittest.TestCase):
             if "draft ideas" in prompt:
                 return [{"title": "critic idea", "idea": "c", "effort": 3, "impact": 3}]
             return [{"title": "raw", "idea": "r", "effort": 3, "impact": 3}]
-        ideas.ai.ask_json = fake
-        ideas.ai.available = lambda: ["anthropic"]
-        ideas.ai.default_provider = lambda: "anthropic"
-        out = ideas.craft("strategy", n=2, use_council=False, provider="anthropic")
-        self.assertEqual([i["title"] for i in out], ["Target fintech", "Weak"])
-        self.assertEqual(out[0]["score"], 200.0)  # 5 * 80 / 2
-        self.assertEqual(len(calls), 3)  # diverge + critic + converge
-        rows = ideas.rows()
-        self.assertEqual((rows[0]["title"], rows[0]["status"], rows[0]["plan"]), ("Target fintech", "new", ["a", "b"]))
-        db.update_idea(rows[0]["id"], status="doing")
-        self.assertEqual(ideas.rows()[0]["status"], "doing")
-        ideas.ai.ask_json = lambda prompt, system=None, provider=None: {"title": "Target fintech v2", "idea": "better", "why_it_works": "y", "effort": 1, "impact": 5, "fit": 90, "plan": ["a"], "metric": "m", "time": "3d"}
-        r = ideas.refine(rows[0]["id"], "cheaper")
-        self.assertEqual((r["title"], r["history"][0]["feedback"]), ("Target fintech v2", "cheaper"))
-        with self.assertRaises(SystemExit):
-            db.update_idea(rows[0]["id"], status="bogus")
+        real = (ideas.ai.ask_json, ideas.ai.available, ideas.ai.default_provider)
+        try:
+            ideas.ai.ask_json = fake
+            ideas.ai.available = lambda: ["anthropic"]
+            ideas.ai.default_provider = lambda: "anthropic"
+            out = ideas.craft("strategy", n=2, use_council=False, provider="anthropic")
+            self.assertEqual([i["title"] for i in out], ["Target fintech", "Weak"])
+            self.assertEqual(out[0]["score"], 200.0)  # 5 * 80 / 2
+            self.assertEqual(len(calls), 3)  # diverge + critic + converge
+            rows = ideas.rows()
+            self.assertEqual((rows[0]["title"], rows[0]["status"], rows[0]["plan"]), ("Target fintech", "new", ["a", "b"]))
+            db.update_idea(rows[0]["id"], status="doing")
+            self.assertEqual(ideas.rows()[0]["status"], "doing")
+            ideas.ai.ask_json = lambda prompt, system=None, provider=None: {"title": "Target fintech v2", "idea": "better", "why_it_works": "y", "effort": 1, "impact": 5, "fit": 90, "plan": ["a"], "metric": "m", "time": "3d"}
+            r = ideas.refine(rows[0]["id"], "cheaper")
+            self.assertEqual((r["title"], r["history"][0]["feedback"]), ("Target fintech v2", "cheaper"))
+            with self.assertRaises(SystemExit):
+                db.update_idea(rows[0]["id"], status="bogus")
+        finally:  # later tests need the real ai layer
+            ideas.ai.ask_json, ideas.ai.available, ideas.ai.default_provider = real
 
     def test_autofill_data_and_features(self):
         from lodestar import extras
@@ -1290,3 +1294,369 @@ class OpenFaultFixes(unittest.TestCase):
         self.assertEqual(db.get_pending(old)["status"], "error")
         self.assertIn("interrupted", db.get_pending(old)["result"])
         self.assertEqual(db.get_pending(new)["status"], "running")  # still within its window
+
+
+class PayInterview(unittest.TestCase):
+    """Pay data from the UI and listings, interview prep/mock context, saved mock debriefs, date-only invites."""
+
+    def setUp(self):
+        from lodestar import comp, settings
+        db._local.con = db.connect(":memory:")
+        settings.PATH.unlink(missing_ok=True)
+        comp.PATH.unlink(missing_ok=True)
+
+    def tearDown(self):
+        from lodestar import comp
+        comp.PATH.unlink(missing_ok=True)
+
+    def test_comp_route_validates_and_deletes(self):
+        import http.client, json as _json
+        from lodestar import comp, desktop, web
+        with self.assertRaises(ValueError):
+            comp.set_range("  ", "*", 1, 2)  # an empty keyword would match every title
+        with self.assertRaises(ValueError):
+            comp.set_range("eng", "*", 200, 100)
+        port = desktop.free_port(8880); srv = web.start_server(port)
+        try:
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            h = {"Content-Type": "application/json", "X-Lodestar-Token": web.TOKEN, "Host": f"127.0.0.1:{port}"}
+
+            def call(body, headers=h):
+                c.request("POST", "/api/comp", _json.dumps(body), headers); r = c.getresponse(); return r.status, _json.loads(r.read())
+            st, v = call({"op": "set", "title": "Data Engineer", "city": "", "low": "120000", "high": "150000"})
+            self.assertEqual((st, v["comp"]), (200, {"data engineer": {"*": [120000, 150000]}}), v)
+            self.assertEqual(web.state()["comp"], comp.load())
+            self.assertEqual(call({"op": "set", "title": "", "low": 1, "high": 2})[0], 400)
+            self.assertEqual(call({"op": "set", "title": "x", "low": 1, "high": 2}, {**h, "X-Lodestar-Token": "no"})[0], 403)
+            self.assertEqual(call({"op": "delete", "title": "data engineer", "city": "*"})[1]["comp"], {})
+            c.close()
+        finally:
+            srv.shutdown()
+
+    def test_listing_salary_is_kept_and_read(self):
+        j = web_monitor._listing("Dev", "A", "https://a/1", salary="120000-160000", desc="Build things.", source="remoteok")
+        jd = web_monitor.jd_with_salary(j)
+        self.assertTrue(jd.startswith("Salary (from remoteok): 120000-160000\n\n") and jd.endswith("Build things."))
+        self.assertEqual(resume.salary_mentions(jd), ["120000-160000"])  # bare numbers SALARY_RE alone would miss
+        self.assertEqual(web_monitor.jd_with_salary(web_monitor._listing("Dev", "A", "u", desc="x")), "x")
+
+    def test_prep_and_mock_get_pay_research_and_gap(self):
+        from lodestar import comp, interview
+        from lodestar.config import PROFILE
+        old = PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else None
+        PROFILE.write_text("# Jane Doe\nJane Doe | Austin | jane@example.com\n## Skills\n- Python\n"
+                           "## Preferences\nSalary floor: 133k\n", encoding="utf-8")
+        comp.set_range("data engineer", "*", 125000, 155000)
+        job = db.get_job(db.add_job("Initech", "Data Engineer", jd="Salary (from remotive): $140k - $160k\n\nETL work"))
+        d = resume.app_dir(job)
+        (d / "research.md").write_text("Initech ships TPS reports.", encoding="utf-8")
+        (d / "gap.json").write_text(json.dumps({"missing_keywords": ["Airflow"], "weak_areas": ["streaming"]}), encoding="utf-8")
+        prompts, real = [], interview.ai.ask
+        interview.ai.ask = lambda p, *a, **k: prompts.append(p) or "# Prep"
+        try:
+            interview.prep(job)
+            system = interview.mock_system(job)
+        finally:
+            interview.ai.ask = real
+            PROFILE.write_text(old, encoding="utf-8") if old is not None else PROFILE.unlink()
+        for needle in ("$140k - $160k", "125000-155000", "133k", "TPS reports", "Airflow"):
+            self.assertIn(needle, prompts[0])
+        self.assertIn("TPS reports", system); self.assertIn("streaming", system)
+
+    def test_web_mock_saves_debrief_on_done(self):
+        from lodestar import web
+        self.assertIn("mock_interview.md", web.DOC_NAMES)
+        with self.assertRaises(ValueError):
+            web._act("mock", {"id": "", "messages": [{"role": "user", "content": "hi"}]})
+        jid = db.add_job("Acme", "Eng", jd="Python")
+        real = web.ai.chat
+        web.ai.chat = lambda msgs, system, prov=None: "Score 7/10" if msgs[-1]["content"].strip().lower() == "done" else "Question 1?"
+        try:
+            self.assertNotIn("path", web._act("mock", {"id": jid, "messages": [{"role": "user", "content": "start"}]}))
+            msgs = [{"role": "user", "content": "start"}, {"role": "assistant", "content": "Question 1?"},
+                    {"role": "user", "content": "I built X"}, {"role": "user", "content": " Done "}]
+            r = web._act("mock", {"id": jid, "messages": msgs})
+        finally:
+            web.ai.chat = real
+        text = Path(r["path"]).read_text(encoding="utf-8")
+        self.assertIn("I built X", text); self.assertIn("Score 7/10", text)
+        self.assertTrue(any(e["kind"] == "mock_interview" for e in db.events(jid)))
+
+    def test_date_only_invite_writes_no_midnight_ics(self):
+        from datetime import datetime, timedelta
+        from lodestar import email_monitor as em, extras, web
+        jid = db.add_job("Globex", "Eng"); db.update_job(jid, contact_email="r@globex.com"); db.set_status(jid, "interview")
+        day = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
+        base = {"category": "interview", "company": "Globex", "summary": "s", "action": "", "subject": "Interview",
+                "from": "r@globex.com", "sender_email": "r@globex.com", "sender_name": "R", "message_id": "<m>",
+                "body": "b", "dkim_pass": True}
+        real = em.ai.ask_json
+        em.ai.ask_json = lambda *a, **k: {"subject": "Re", "body": "ok", "chosen_time": None}
+        try:
+            em._apply(base | {"deadline": day}, dry=False)
+            self.assertEqual(extras.upcoming_interviews(14), [])  # a bare date is not a booked interview
+            self.assertTrue(any(e["kind"] == "interview_date" for e in db.events(jid)))
+            em._apply(base | {"deadline": "not a date"}, dry=False)  # SystemExit from parse_when must not stop the scan
+            em._apply(base | {"deadline": f"{day} 14:30"}, dry=False)
+        finally:
+            em.ai.ask_json = real
+        up = web.state()["upcoming"]
+        self.assertEqual([(i["job_id"], i["when"][-5:]) for i in up], [(jid, "14:30")])
+
+    def test_offer_sees_other_offers_terms(self):
+        from lodestar import apply
+        from lodestar.config import PROFILE
+        old = PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else None
+        PROFILE.write_text("# Jane Doe\nJane Doe | Austin | jane@example.com\n## Skills\n- Python\n", encoding="utf-8")
+        a = db.get_job(db.add_job("Acme", "Eng", jd="x")); b = db.get_job(db.add_job("Hooli", "Eng", jd="y"))
+        prompts, real = [], apply.ai.ask
+        apply.ai.ask = lambda p, *a_, **k: prompts.append(p) or "## Fit"
+        try:
+            out = apply.offer(a, salary="150k", equity="0.1%")
+            apply.offer(b, salary="140k")
+        finally:
+            apply.ai.ask = real
+            PROFILE.write_text(old, encoding="utf-8") if old is not None else PROFILE.unlink()
+        self.assertTrue(out.read_text(encoding="utf-8").startswith("**Terms:** base: 150k"))
+        self.assertIn("#%d Acme - Eng: **Terms:** base: 150k" % a["id"], prompts[1])
+
+
+class ContactSending(unittest.TestCase):
+    """Contact set from the drawer, drafted mail proposed for sending, sends (not drafts) on the checklist,
+    JD URL fills the posting link, email next steps on the timeline, JSON edits, and the accepted state."""
+
+    def setUp(self):
+        from lodestar import settings
+        from lodestar.config import PROFILE
+        db._local.con = db.connect(":memory:")
+        settings.PATH.unlink(missing_ok=True)
+        self.old_profile = PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else None
+        PROFILE.write_text("# Jane Doe\nJane Doe | Austin | jane@example.com\n## Skills\n- Python\n", encoding="utf-8")
+
+    def tearDown(self):
+        from lodestar.config import PROFILE
+        PROFILE.write_text(self.old_profile, encoding="utf-8") if self.old_profile is not None else PROFILE.unlink()
+
+    def test_contact_and_jd_routes(self):
+        import http.client, json as _json
+        from lodestar import desktop, util, web
+        db._local.con = db.connect()  # the server thread opens the on-disk database, so this test uses it too
+        jid = db.add_job("Acme", "Eng")
+        port = desktop.free_port(8890); srv = web.start_server(port)
+        real = util.read_source
+        util.read_source = lambda src, allow_files=True: "JD TEXT"  # no network
+        try:
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            h = {"Content-Type": "application/json", "X-Lodestar-Token": web.TOKEN, "Host": f"127.0.0.1:{port}"}
+
+            def call(op, body, headers=h):
+                c.request("POST", f"/api/jobs/{jid}/{op}", _json.dumps(body), headers); r = c.getresponse(); return r.status, _json.loads(r.read())
+            self.assertEqual(call("contact", {"name": "Sam", "email": " sam@acme.com "})[0], 200)
+            j = db.get_job(jid)
+            self.assertEqual((j["contact_name"], j["contact_email"]), ("Sam", "sam@acme.com"))
+            self.assertEqual(call("contact", {"email": "x@acme.com\nBcc: evil@x.com"})[0], 400)  # no header injection
+            self.assertEqual(call("contact", {"email": "not-an-email"})[0], 400)
+            self.assertEqual(call("contact", {"email": "a@b.co"}, {**h, "X-Lodestar-Token": "no"})[0], 403)
+            self.assertEqual(db.get_job(jid)["contact_email"], "sam@acme.com")
+            call("jd", {"source": "https://acme.com/jobs/1"})
+            self.assertEqual((db.get_job(jid)["url"], db.get_job(jid)["jd"]), ("https://acme.com/jobs/1", "JD TEXT"))
+            call("jd", {"source": "https://other.com/2"})  # an existing posting link is kept
+            self.assertEqual(db.get_job(jid)["url"], "https://acme.com/jobs/1")
+            c.close()
+        finally:
+            util.read_source = real
+            srv.shutdown()
+            db.delete_job(jid)
+
+    def test_reply_and_email_outreach_are_proposed_for_sending(self):
+        from lodestar import ai, email_monitor, extras
+        jid = db.add_job("Acme", "Eng", jd="Python")
+        real_j, real_a = ai.ask_json, ai.ask
+        ai.ask_json = lambda *a, **k: {"subject": "Hello", "body": "Body text"}
+        ai.ask = lambda *a, **k: "short note"
+        try:
+            self.assertEqual(email_monitor.draft_reply(db.get_job(jid), "propose Tue")["proposal"]["status"], "draft_only")
+            db.update_job(jid, contact_email="sam@acme.com", contact_name="Sam")
+            r = email_monitor.draft_reply(db.get_job(jid), "propose Tue")
+            o = extras.outreach(db.get_job(jid), "Pat", "email")
+            li = extras.outreach(db.get_job(jid), "Pat", "linkedin")
+        finally:
+            ai.ask_json, ai.ask = real_j, real_a
+        self.assertEqual(r["proposal"]["status"], "pending"); self.assertEqual(o["proposal"]["status"], "pending")
+        self.assertEqual(li, {"text": "short note"})
+        p = json.loads(db.get_pending(r["proposal"]["id"])["payload"])
+        self.assertEqual((p["to"], p["subject"], p["body"], p["job_id"]), ("sam@acme.com", "Hello", "Body text", jid))
+
+    def test_checklist_counts_sends_not_drafts(self):
+        from lodestar import ai, apply, approvals
+        jid = db.add_job("Acme", "Eng"); db.update_job(jid, contact_email="sam@acme.com"); db.set_status(jid, "interview")
+        done = lambda: {c["item"]: c["done"] for c in apply.checklist(db.get_job(jid))}["Thank-you sent"]
+        db.add_event(jid, "thanks", "drafted")  # what older versions logged on a draft
+        real_j, real_send = ai.ask_json, approvals.send_email
+        ai.ask_json = lambda *a, **k: {"subject": "Thanks", "body": "b"}
+        approvals.send_email = lambda *a, **k: None
+        try:
+            r = apply.thanks(db.get_job(jid))
+            self.assertFalse(done())
+            approvals.approve(r["proposal"]["id"])
+        finally:
+            ai.ask_json, approvals.send_email = real_j, real_send
+        self.assertTrue(done())
+
+    def test_email_next_step_and_due_date_reach_the_timeline(self):
+        from lodestar import email_monitor as em, settings
+        settings.set_tool("email_reply", enabled=False)
+        jid = db.add_job("Globex", "Eng"); db.update_job(jid, contact_email="r@globex.com"); db.set_status(jid, "applied")
+        em._apply({"category": "assessment", "company": "Globex", "summary": "s", "action": "finish the test",
+                   "deadline": "2026-12-01", "subject": "Your assessment", "from": "r@globex.com",
+                   "sender_email": "r@globex.com", "sender_name": "R", "message_id": "<m>", "body": "b", "dkim_pass": True}, dry=False)
+        ev = [e["detail"] for e in db.events(jid) if e["kind"] == "email"]
+        self.assertEqual(ev, ["assessment: Your assessment | next: finish the test | due: 2026-12-01"])
+
+    def test_json_edits_are_validated_and_merged(self):
+        from lodestar import approvals
+        pid = db.add_pending("answers", "save_answer", None, "s", json.dumps({"question": "Why us?", "answer": "AI text"}))
+        with self.assertRaises(ValueError):
+            approvals.approve(pid, ["not", "a", "dict"])
+        self.assertEqual(db.get_pending(pid)["status"], "pending")  # a bad edit must not leave it claimed
+        self.assertEqual(approvals.approve(pid, {"answer": "my words"})["status"], "done")
+        self.assertEqual([a["answer"] for a in db.list_answers() if a["question"] == "Why us?"], ["my words"])
+
+    def test_accepted_proposes_withdrawing_the_rest(self):
+        from lodestar import settings
+        settings.set_tool("followup", auto=True)  # still waits: withdrawing applications is always reviewed
+        a, b, s = db.add_job("Acme", "Eng"), db.add_job("Hooli", "Eng"), db.add_job("Saved", "Eng")
+        for jid, path in ((b, ["applied"]), (a, ["applied", "interview", "offer", "accepted"])):
+            for st in path:
+                db.set_status(jid, st)
+        pend = db.list_pending("pending")
+        self.assertEqual([(p["job_id"], json.loads(p["payload"])["status"]) for p in pend], [(b, "withdrawn")])
+        self.assertEqual(db.get_job(b)["status"], "applied")
+        self.assertEqual(db.stats()["interview_rate"], 0.5)
+        f = db.funnel()["stages"]
+        self.assertEqual((f["offer"]["advanced"], f["accepted"]["reached"]), (1, 1))
+
+
+class SettingsProviders(unittest.TestCase):
+    """Local preset, followup_days, models pref, vault remove, CSV export and usage (settings-providers cluster)."""
+
+    def test_local_preset_pins_an_ollama_model_and_counts_it(self):
+        from lodestar import settings, web
+        real_pick, env = ai.pick_model, os.environ.pop("OLLAMA_MODEL", None)
+        before = {k: settings.pref(k) for k in ("provider", "council_providers", "models")}
+        try:
+            ai.pick_model = lambda name: None  # Ollama not running: the preset says so and pins nothing
+            self.assertIn("not reachable", ai.local_preset())
+            self.assertNotIn("ollama", settings.pref("models"))
+            ai.pick_model = lambda name: "llama3.2:3b" if name == "ollama" else None
+            self.assertIn("llama3.2:3b", web._act("providers_local", {})["text"])
+            self.assertEqual((settings.pref("provider"), settings.pref("models")["ollama"]), ("ollama", "llama3.2:3b"))
+            self.assertIn("ollama", ai.available())
+            self.assertEqual(ai.council_providers(), ["ollama"])  # no SystemExit any more after the preset
+            self.assertEqual(ai.model_for("ollama"), "llama3.2:3b")
+        finally:
+            ai.pick_model = real_pick
+            if env is not None:
+                os.environ["OLLAMA_MODEL"] = env
+            for k, v in before.items():
+                settings.set_pref(k, v)
+
+    def test_followup_days_pref_drives_board_digest_and_loop(self):
+        import argparse
+        from lodestar import loop, settings, web
+        jid = db.add_job("Initech", "Eng"); db.set_status(jid, "applied")
+        db.con().execute("UPDATE events SET ts=datetime('now','-4 days') WHERE job_id=?", (jid,)); db.con().commit()
+        sent, real_notify = [], loop.notify
+        loop.notify = lambda m: sent.append(m)
+        try:
+            self.assertNotIn(jid, web.state()["followups"])  # default 7 days
+            settings.set_pref("followup_days", 3)
+            self.assertIn(jid, web.state()["followups"])
+            self.assertIn(jid, [j["id"] for j in db.needs_followup()])  # the digest's call (no network here: digest asks AI)
+            loop._followups(argparse.Namespace(followup=None, provider=None))
+            self.assertTrue(any(f"#{jid} Initech" in m and "quiet 3+ days" in m for m in sent), sent)
+            self.assertIsNone(build().parse_args(["run"]).followup)  # no flag: the pref applies
+        finally:
+            loop.notify = real_notify
+            settings.set_pref("followup_days", 7)
+            db.delete_job(jid)
+
+    def test_models_pref_takes_provider_equals_model_and_merges(self):
+        from lodestar import settings
+        before = settings.pref("models")
+        try:
+            settings.set_pref("models", {})
+            settings.set_pref("models", "openai=gpt-5")
+            settings.set_pref("models", "groq = llama-3.3-70b")
+            self.assertEqual(settings.pref("models"), {"openai": "gpt-5", "groq": "llama-3.3-70b"})
+            with self.assertRaises(SystemExit):
+                settings.set_pref("models", "[object Object]")  # what the old UI posted
+        finally:
+            settings.set_pref("models", before)
+
+    def test_vault_remove_route_deletes_both_service_names(self):
+        import http.client, json as _json
+        from lodestar import desktop, vault, web
+        calls, real_del, idx = [], vault.keyring.delete_password, vault._index()
+
+        def fake_del(service, name):
+            calls.append((service, name))
+            if service == "jobbot":
+                raise vault.keyring.errors.PasswordDeleteError("not there")
+        vault.keyring.delete_password = fake_del
+        vault._save_index(idx | {"TEST_KEY": {"user": ""}})
+        port = desktop.free_port(8960); srv = web.start_server(port)
+        try:
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            h = {"Content-Type": "application/json", "X-Lodestar-Token": web.TOKEN, "Host": f"127.0.0.1:{port}"}
+            c.request("POST", "/api/vault", _json.dumps({"name": "TEST_KEY", "delete": True}), {**h, "X-Lodestar-Token": "no"})
+            self.assertEqual(c.getresponse().status, 403); c.close()
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            c.request("POST", "/api/vault", _json.dumps({"name": "TEST_KEY", "delete": True}), h)
+            r = c.getresponse(); self.assertEqual((r.status, _json.loads(r.read())), (200, {"ok": True})); c.close()
+            self.assertEqual(calls, [("lodestar", "TEST_KEY"), ("jobbot", "TEST_KEY")])
+            self.assertNotIn("TEST_KEY", dict(vault.names()))
+        finally:
+            srv.shutdown()
+            vault.keyring.delete_password = real_del
+            vault._save_index(idx)
+
+    def test_csv_export_usage_in_state_and_gap_has_no_council(self):
+        from lodestar import web
+        out = Path(web._act("export", {"fmt": "csv"})["path"])
+        self.assertTrue(out.is_dir() and any(out.glob("jobs-*.csv")))
+        self.assertTrue(web._act("export", {})["path"].endswith(".json"))
+        self.assertIn("total", web.state()["usage"])
+        with self.assertRaises(SystemExit):
+            build().parse_args(["resume", "gap", "3", "--council"])  # the flag was accepted and silently ignored
+        self.assertTrue(build().parse_args(["resume", "cover", "3", "--council"]).council)
+
+
+class ReviewedDrafts(unittest.TestCase):
+    """A draft the user asked for (reply, outreach) waits in the Inbox even when email_reply is on auto."""
+
+    def setUp(self):
+        from lodestar import settings
+        from lodestar.config import PROFILE
+        db._local.con = db.connect(":memory:")
+        settings.PATH.unlink(missing_ok=True)
+        self.old = PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else None
+        PROFILE.write_text("# Jane Doe\nJane Doe | Austin | jane@example.com\n## Skills\n- Python\n", encoding="utf-8")
+
+    def tearDown(self):
+        from lodestar.config import PROFILE
+        PROFILE.write_text(self.old, encoding="utf-8") if self.old is not None else PROFILE.unlink()
+
+    def test_requested_drafts_never_send_unseen(self):
+        from lodestar import email_monitor, extras, settings
+        settings.set_tool("email_reply", auto=True)
+        jid = db.add_job("Acme", "Eng"); db.update_job(jid, contact_email="recruiter@acme.com")
+        real = ai.ask_json
+        ai.ask_json = lambda *a, **k: {"subject": "Hi", "body": "Hello"}
+        try:
+            r1 = email_monitor.draft_reply(db.get_job(jid), "ask about timeline")
+            r2 = extras.outreach(db.get_job(jid), person="Jane Doe, EM", channel="email")
+        finally:
+            ai.ask_json = real
+        self.assertEqual((r1["proposal"]["status"], r2["proposal"]["status"]), ("pending", "pending"))
+        self.assertIn("recruiter@acme.com", r2["proposal"]["summary"])  # the label names the real recipient

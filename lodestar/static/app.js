@@ -47,7 +47,7 @@ async function load() {
   $('#stats').innerHTML = `<span>tracked <b>${S.jobs.length}</b></span><span>applied <b>${st.applied_total}</b></span><span>response <b>${pct(st.response_rate)}</b></span><span>interview <b>${pct(st.interview_rate)}</b></span><span>providers <b>${Object.values(S.providers).filter(Boolean).length}</b></span><span>tokens today <b>${(S.usage_today.input + S.usage_today.output).toLocaleString()}</b></span>`;
   const badge = $('#inboxN'); badge.textContent = S.pending.length; badge.classList.toggle('zero', !S.pending.length);
   renderOnboard(); renderLoop(); $('#ver').textContent = 'Lodestar ' + S.version;
-  renderBoard(); renderInbox(); renderSearchless(); renderMonitor(); renderAnswers(); renderIdeas(); renderTools(); renderSetup();
+  renderBoard(); renderInbox(); renderSearchless(); renderMonitor(); renderAnswers(); renderIdeas(); renderTools(); renderSetup(); fillCoachJobs();
 }
 
 function renderBoard() {
@@ -58,8 +58,9 @@ function renderBoard() {
   }).join('');
   const f = S.funnel.stages;
   $('#funnel').innerHTML = f.applied.reached ? 'funnel: ' + Object.entries(f).map(([s, d]) => `<span class="pill">${s} ${d.reached}${d.conversion != null ? ' → ' + Math.round(d.conversion * 100) + '%' : ''}${d.median_days_to_next != null ? ' · ' + d.median_days_to_next + 'd' : ''}</span>`).join('') : '';
+  $('#upcoming').innerHTML = S.upcoming.length ? 'upcoming interviews: ' + S.upcoming.map(i => `<button class="b ghost sm" onclick="openJob(${i.job_id})">${esc(i.when)} · #${i.job_id} ${esc(i.company)} - ${esc(i.title)}</button>`).join(' ') : '';
   $('#variants').innerHTML = S.variants.length ? 'resume variants: ' + S.variants.map(v => `<span class="pill">${v.variant}: ${v.applied} sent, ${Math.round(v.interview_rate * 100)}% interview</span>`).join(' ') : '';
-  if (!S.jobs.length) $('#cols').insertAdjacentHTML('afterend', '');
+  $('#boardEmpty').style.display = S.jobs.length ? 'none' : '';
 }
 
 /* ---- onboarding + health ---- */
@@ -96,7 +97,8 @@ async function openJob(id) {
     <div class="group"><h4>Documents</h4><div class="row">
       <button class="b" onclick="jobRun('gap',{},this)">Gap / ATS score</button>
       <button class="b" onclick="jobRun('tailor',{docx:true},this)">Tailor resume (+docx)</button>
-      <button class="b" onclick="jobRun('cover',{docx:true},this)">Cover letter (+docx)</button>
+      <button class="b" onclick="jobRun('cover',{docx:true,tone:$('#jTone').value,words:$('#jWords').value},this)">Cover letter (+docx)</button>
+      <input id="jTone" placeholder="tone: confident, warm, specific" style="width:190px"><input id="jWords" type="number" min="100" max="800" placeholder="words (300)" style="width:100px">
       <button class="b ghost" onclick="jobRun('prep',{},this)">Interview prep</button>
       <button class="b ghost" onclick="jobRun('research',{},this)">Company research</button>
       <button class="b ghost" onclick="run('checklist',{id:${j.id}},r=>show('jOut',r.checklist.map(c=>(c.done?'[x] ':'[ ] ')+c.item+(c.done?'':'   -> '+c.next)).join('\\n')),this)">Checklist</button>
@@ -108,17 +110,18 @@ async function openJob(id) {
       <div class="row"><button class="b ghost" onclick="jobRun('followup',{},this)">Follow-up email</button><input id="jInt" placeholder="interviewer" style="width:140px"><input id="jTnotes" class="grow" placeholder="something specific from the interview"><button class="b ghost" onclick="jobRun('thanks',{interviewer:$('#jInt').value,notes:$('#jTnotes').value},this)">Thank-you note</button></div></div>
 
     <div class="group"><h4>Schedule and decide</h4>
-      <div class="row"><input id="jWhen" placeholder="interview: YYYY-MM-DD HH:MM" style="width:200px"><button class="b ghost" onclick="jobRun('ics',{when:$('#jWhen').value},this)">Calendar .ics</button></div>
+      <div class="row"><input id="jWhen" placeholder="interview: YYYY-MM-DD HH:MM" style="width:200px"><input id="jMin" type="number" min="5" placeholder="minutes (60)" style="width:110px"><button class="b ghost" onclick="jobRun('ics',{when:$('#jWhen').value,minutes:$('#jMin').value||60},this)">Calendar .ics</button></div>
       <div class="row"><input id="oSal" placeholder="base" style="width:90px"><input id="oBon" placeholder="bonus" style="width:90px"><input id="oEq" placeholder="equity" style="width:90px"><input id="oBen" placeholder="benefits" style="width:120px"><input id="oDl" placeholder="deadline" style="width:100px"><input id="oNotes" class="grow" placeholder="notes"><button class="b ghost" onclick="jobRun('offer',{salary:$('#oSal').value,bonus:$('#oBon').value,equity:$('#oEq').value,benefits:$('#oBen').value,deadline:$('#oDl').value,notes:$('#oNotes').value},this)">Evaluate offer</button></div></div>
 
     <div class="group"><h4>Admin</h4>
       <div class="row"><input id="jNote" class="grow" placeholder="add a note"><button class="b ghost sm" onclick="api('/api/jobs/${j.id}/note',{text:$('#jNote').value}).then(()=>openJob(${j.id}))">note</button></div>
+      <div class="row"><input id="jCn" placeholder="contact name" style="width:160px" value="${esc(j.contact_name || '')}"><input id="jCe" class="grow" placeholder="contact email (replies, follow-ups and thank-yous go here)" value="${esc(j.contact_email || '')}"><button class="b ghost sm" onclick="api('/api/jobs/${j.id}/contact',{name:$('#jCn').value,email:$('#jCe').value}).then(r=>{if(r.error)return toast('error: '+r.error,'err');toast('contact saved','ok');openJob(${j.id})})">set contact</button></div>
       <div class="row"><input id="jJd" class="grow" placeholder="set job description: URL or pasted text"><button class="b ghost sm" onclick="api('/api/jobs/${j.id}/jd',{source:$('#jJd').value}).then(()=>openJob(${j.id}))">set JD</button></div>
       <div class="row"><button class="b ghost sm" onclick="jobRun('packet',{},this)">export packet (zip)</button><button class="b danger sm" onclick="if(confirm('Delete job #${j.id}?'))api('/api/jobs/${j.id}/delete',{}).then(()=>{closeDrawer();load()})">delete job</button></div></div>
 
     <div class="tabs" id="docTabs">${['timeline', 'description', ...docs].map((n, i) => `<button class="${i === 0 ? 'on' : ''}" onclick="showDoc('${n}',this)">${n}</button>`).join('')}</div>
     <pre id="docView"></pre>
-    <div class="row"><button class="b ghost sm" onclick="editDoc()">Edit document</button><input id="dAdj" class="grow" placeholder="adjust this document with AI: shorter / warmer / lead with X"><button class="b ghost sm" onclick="adjustDoc(this)">Adjust</button></div>
+    <div class="row"><button class="b ghost sm" onclick="editDoc()">Edit document</button><input id="dAdj" class="grow" placeholder="adjust this document with AI: shorter / warmer / lead with X"><button class="b ghost sm" onclick="adjustDoc(this)">Adjust</button><button class="b ghost sm" onclick="reviewDoc(this)">Review</button></div>
     <textarea id="docEdit" style="display:none; min-height:260px"></textarea><button class="b sm" id="docSave" style="display:none" onclick="saveDoc()">Save document</button>
     <div class="out"><h4 class="muted">AI output</h4><pre id="jOut">(run an action above)</pre></div>`;
   $('#drawer').classList.add('open');
@@ -151,8 +154,8 @@ function renderInbox() {
   $('#inboxList').innerHTML = S.pending.map(r => {
     const p = r.payload, mail = r.kind === 'send_email';
     return `<div class="item"><div class="hd"><b>#${r.id}</b><span class="pill">${r.tool}</span><span class="pill">${r.kind}</span>${esc(r.summary)}<span class="muted">${r.ts.slice(0, 16)}</span></div>
-      ${mail ? `<div class="row"><input id="to${r.id}" value="${esc(p.to)}" style="width:260px"><input id="sub${r.id}" class="grow" value="${esc(p.subject)}"></div><textarea id="body${r.id}">${esc(p.body)}</textarea>${p.chosen_time ? `<div class="muted">accepts slot ${esc(p.chosen_time)}; an .ics will be written on send</div>` : ''}`
-        : `<pre>${esc(JSON.stringify(p, null, 2))}</pre>`}
+      ${mail ? `<div class="row"><input id="to${r.id}" value="${esc(p.to)}" style="width:260px"><input id="sub${r.id}" class="grow" value="${esc(p.subject)}"></div><textarea id="body${r.id}">${esc(p.body)}</textarea>${'chosen_time' in p ? `<div class="row"><input id="ct${r.id}" value="${esc(p.chosen_time || '')}" placeholder="YYYY-MM-DD HH:MM" style="width:170px"><span class="muted">interview slot this reply accepts; an .ics is written on send. Empty = no .ics.</span></div>` : ''}`
+        : `<textarea id="js${r.id}" spellcheck="false" style="font-family:monospace">${esc(JSON.stringify(p, null, 2))}</textarea>`}
       <div class="row"><button class="b" onclick="decide(${r.id},'approve',${mail})">Approve${mail ? ' and send' : ''}</button><button class="b ghost" onclick="decide(${r.id},'reject',false)">Reject</button></div></div>`;
   }).join('') || '<div class="empty">Inbox empty. Automatic actions appear here when a tool is enabled but not set to auto.</div>';
   for (const [id, v] of Object.entries(edited)) { const e = document.getElementById(id); if (e) e.value = v; }
@@ -161,7 +164,11 @@ function renderInbox() {
   $('#decidedList').innerHTML = S.decided.map(r => `<div>#${r.id} <b>${r.status}</b> ${esc(r.summary)} <span class="muted">${esc((r.result || '').slice(0, 140))}</span></div>`).join('') || '<div class="muted">nothing decided yet</div>';
 }
 async function decide(id, op, mail) {
-  const body = op === 'approve' && mail ? { edits: { to: $('#to' + id).value, subject: $('#sub' + id).value, body: $('#body' + id).value } } : {};
+  let body = op === 'approve' && mail ? { edits: { to: $('#to' + id).value, subject: $('#sub' + id).value, body: $('#body' + id).value } } : {};
+  const js = op === 'approve' && !mail && $('#js' + id);  // other kinds: the payload is edited as JSON
+  if (js) { try { body = { edits: JSON.parse(js.value) }; } catch (e) { return toast('not valid JSON: ' + e.message, 'err'); }
+    if (!body.edits || typeof body.edits !== 'object' || Array.isArray(body.edits)) return toast('the payload must be a JSON object', 'err'); }
+  const ct = $('#ct' + id); if (body.edits && ct) body.edits.chosen_time = ct.value.trim() || null;
   const r = await api(`/api/approvals/${id}/${op}`, body);
   toast(r.error ? 'error: ' + r.error : op === 'approve' ? `#${id} ${r.status}: ${r.result || ''}` : `#${id} rejected`, r.error ? 'err' : 'ok'); load();
 }
@@ -179,7 +186,7 @@ function doSearch(btn) {
 }
 async function saveListing(i) {
   const j = RESULTS[i]; if (!j) return;
-  const r = await api('/api/jobs', { company: j.company, title: j.title, url: j.url, jd: j.desc, notes: 'found via ' + j.source });
+  const r = await api('/api/jobs', { company: j.company, title: j.title, url: j.url, jd: (j.salary ? `Salary (from ${j.source}): ${j.salary}\n\n` : '') + (j.desc || ''), notes: 'found via ' + j.source });
   if (r.error) return toast('error: ' + r.error, 'err');
   toast('tracked as #' + r.id, 'ok'); load();
 }
@@ -214,7 +221,7 @@ function renderIdeas() {
     || '<div class="empty">No ideas yet. Pick a topic and craft.</div>';
 }
 function craft(btn) {
-  run('craft', { topic: $('#iTopic').value, id: $('#iJob').value || undefined, role: $('#iRole').value, extra: $('#iExtra').value, single: $('#iSingle').checked }, r => toast(r.ideas.length + ' idea(s) saved', 'ok'), btn);
+  run('craft', { topic: $('#iTopic').value, id: $('#iJob').value || undefined, role: $('#iRole').value, extra: $('#iExtra').value, n: $('#iN').value || 8, single: $('#iSingle').checked }, r => toast(r.ideas.length + ' idea(s) saved', 'ok'), btn);
 }
 
 /* ---- tools and setup ---- */
@@ -222,12 +229,20 @@ function renderTools() {
   $('#toolTable').innerHTML = `<table><tr><th>Tool</th><th>enabled</th><th>auto</th></tr>${S.tools.map(t => `<tr><td><b>${t.tool}</b><div class="muted">${esc(t.description)}</div></td>
     <td><input type="checkbox" ${t.enabled ? 'checked' : ''} onchange="api('/api/tools',{tool:'${t.tool}',enabled:this.checked}).then(load)"></td>
     <td><input type="checkbox" ${t.auto ? 'checked' : ''} onchange="api('/api/tools',{tool:'${t.tool}',auto:this.checked}).then(load)"></td></tr>`).join('')}</table>`;
-  $('#prefs').innerHTML = Object.entries(S.prefs).map(([k, v]) => `<div class="row"><span style="width:200px">${k}</span>${typeof v === 'boolean' ? `<input type="checkbox" ${v ? 'checked' : ''} onchange="api('/api/prefs',{key:'${k}',value:this.checked}).then(load)">` : `<input class="grow" value="${esc(v)}" onchange="api('/api/prefs',{key:'${k}',value:this.value}).then(load)">`}</div>`).join('');
+  $('#prefs').innerHTML = Object.entries(S.prefs).map(([k, v]) => `<div class="row"><span style="width:200px">${k}</span>${typeof v === 'boolean' ? `<input type="checkbox" ${v ? 'checked' : ''} onchange="setPref('${k}',this.checked)">`
+    : typeof v === 'object' && v ? `<span class="muted">${esc(Object.entries(v).map(([p, m]) => p + '=' + (m || '(default)')).join(', ') || 'none pinned')}</span><input class="grow" placeholder="provider=model to pin (empty model = default); Setup > List models shows ids" onchange="setPref('${k}',this.value)">`
+    : `<input class="grow" value="${esc(v)}" onchange="setPref('${k}',this.value)">`}</div>`).join('');
 }
+async function setPref(key, value) { const r = await api('/api/prefs', { key, value }); if (r.error) toast('error: ' + r.error, 'err'); load(); }
 function renderSetup() {
   $('#prov').innerHTML = Object.entries(S.providers).map(([n, ok]) => `<span class="pill ${ok ? 'ok' : ''}">${n}${ok ? ' ✓' : ''}</span>`).join('');
-  $('#vList').textContent = S.vault.map(v => v.name + (v.user ? ' (' + v.user + ')' : '')).join(' · ') || 'empty';
+  $('#vList').innerHTML = S.vault.map((v, i) => `<span class="pill">${esc(v.name + (v.user ? ' (' + v.user + ')' : ''))} <button class="b ghost sm" aria-label="remove" onclick="delVault(${i})">×</button></span>`).join(' ') || 'empty';
+  const u = Object.entries(S.usage).filter(([k]) => k !== 'total');
+  $('#usage').innerHTML = u.length ? 'last 30 days: ' + u.map(([k, d]) => `<span class="pill">${esc(k)}: ${d.calls} calls · ${(d.input + d.output).toLocaleString()} tokens</span>`).join(' ') : '';
   $('#pPath').textContent = S.profile_path;
+  const rates = Object.entries(S.comp).flatMap(([t, cities]) => Object.entries(cities).map(([c, [lo, hi]]) => ({ t, c, lo, hi })));
+  $('#compList').innerHTML = rates.map((r, i) => `<div><b>${esc(r.t)}</b> <span class="muted">${esc(r.c === '*' ? 'any city' : r.c)}</span> ${esc(r.lo.toLocaleString())} - ${esc(r.hi.toLocaleString())} <button class="b ghost sm" onclick="compOp({op:'delete',title:RATES[${i}].t,city:RATES[${i}].c})">remove</button></div>`).join('') || '<div class="muted">none recorded: gap checks, offer evaluation and interview prep then say "none recorded"</div>';
+  RATES = rates;
   const o = location.origin;
   $('#bm').href = `javascript:(()=>{const t=document.title,u=location.href,d=(document.querySelector('main')||document.body).innerText.slice(0,12000);fetch('${o}/api/capture?t=${CAPTURE}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t,url:u,desc:d})}).then(r=>r.json()).then(r=>alert(r.error?('Lodestar: '+r.error):('Lodestar tracked #'+r.id+': '+r.company+' - '+r.title))).catch(e=>alert('Lodestar UI not running? '+e))})();`;
   $('#af').href = `javascript:(()=>{fetch('${o}/api/autofill?t=${CAPTURE}').then(r=>r.json()).then(d=>{const map={first_name:/first.?name|given|fname|legalname.*first/i,last_name:/last.?name|surname|family|lname|legalname.*last/i,name:/^(full.?)?name$|your.?name|^name$|cards\\[.*\\]\\[name\\]/i,email:/e-?mail/i,phone:/phone|mobile|tel/i,linkedin:/linkedin/i,github:/github/i,website:/website|portfolio|^url|personal.?site/i,location:/city|location|address|where.*located/i};const ats={first_name:['#first_name','input[name=\"first_name\"]','[data-automation-id=\"legalNameSection_firstName\"]','#first-name','input[name=\"_systemfield_first_name\"]'],last_name:['#last_name','input[name=\"last_name\"]','[data-automation-id=\"legalNameSection_lastName\"]','#last-name','input[name=\"_systemfield_last_name\"]'],name:['input[name=\"name\"]','input[name=\"_systemfield_name\"]','#full_name'],email:['#email','input[name=\"email\"]','input[name=\"_systemfield_email\"]','[data-automation-id=\"email\"]','input[type=\"email\"]'],phone:['#phone','input[name=\"phone\"]','[data-automation-id=\"phone-number\"]','#phone-number','input[type=\"tel\"]'],linkedin:['input[name=\"urls[LinkedIn]\"]','#linkedin','input[name*=\"linkedin\" i]'],github:['input[name=\"urls[GitHub]\"]','input[name*=\"github\" i]'],website:['input[name=\"urls[Portfolio]\"]','input[name*=\"website\" i]','input[name*=\"portfolio\" i]'],location:['input[name=\"job_application[location]\"]','#location','input[name*=\"location\" i]']};let n=0;for(const k in ats){if(!d[k])continue;for(const sel of ats[k]){const el=document.querySelector(sel);if(el&&!el.value&&!el.dataset.ls){el.value=d[k];el.dataset.ls='1';el.dispatchEvent(new Event('input',{bubbles:true}));n++;break}}}document.querySelectorAll('input,textarea').forEach(el=>{if(el.type==='hidden'||el.type==='password'||el.value||el.dataset.ls)return;const lab=(el.labels&&el.labels[0]?el.labels[0].innerText:'')+' '+(el.name||'')+' '+(el.id||'')+' '+(el.placeholder||'')+' '+(el.getAttribute('aria-label')||'')+' '+(el.getAttribute('data-automation-id')||'')+' '+(el.getAttribute('autocomplete')||'')+' '+(el.getAttribute('data-qa')||'');for(const k in map){if(map[k].test(lab)&&d[k]){el.value=d[k];el.dispatchEvent(new Event('input',{bubbles:true}));n++;break}}});alert('Lodestar filled '+n+' field(s). Review everything, then submit yourself.')}).catch(e=>alert('Lodestar UI not running? '+e))})();`;
@@ -235,6 +250,16 @@ function renderSetup() {
 function showDoctor(rows) {
   const mark = { ok: ['PASS', 'ok'], warn: ['WARN', 'warn'], fail: ['FAIL', ''] };
   $('#doctorOut').innerHTML = `<div class="list">` + rows.map(r => `<div><span class="pill ${mark[r.status][1]}" ${r.status === 'fail' ? 'style="background:#4d1f1f;color:var(--bad)"' : ''}>${mark[r.status][0]}</span><b>${esc(r.what)}</b> <span class="muted">${esc(r.detail)}</span></div>`).join('') + '</div>';
+}
+let RATES = [];  // titles stay in JS; markup carries only an index
+async function compOp(body) {
+  const r = await api('/api/comp', body); if (r.error) return toast('error: ' + r.error, 'err');
+  if (body.op !== 'delete') ['#mTitle', '#mCity', '#mLow', '#mHigh'].forEach(s => { $(s).value = ''; });
+  toast(body.op === 'delete' ? 'removed' : 'recorded', 'ok'); load();
+}
+async function delVault(i) {  // names stay in JS; markup carries only an index
+  const v = S.vault[i]; if (!v || !confirm(`Remove ${v.name} from the OS keyring?`)) return;
+  const r = await api('/api/vault', { name: v.name, delete: true }); toast(r.error || 'removed ' + v.name, r.error ? 'err' : 'ok'); load();
 }
 async function setVault() { const r = await api('/api/vault', { name: $('#vName').value, user: $('#vUser').value, value: $('#vVal').value }); toast(r.error || 'stored', r.error ? 'err' : 'ok'); $('#vVal').value = ''; load(); }
 
@@ -253,6 +278,7 @@ function renderBank(v) {
   $('#liUrl').value = b.contact.linkedin || ''; $('#liExport').href = v.linkedin_export_url;
   $('#bSkills').innerHTML = b.skills.map((s, i) => chip('skills', i, s.name + (s.category ? ' · ' + s.category : ''))).join(' ') || '<span class="muted">none yet: import a resume or LinkedIn, or add one</span>';
   $('#bLangs').innerHTML = b.languages.map((l, i) => chip('languages', i, l.name + (l.proficiency ? ' · ' + l.proficiency : ''))).join(' ') || '<span class="muted">none yet</span>';
+  $('#bCerts').innerHTML = b.certifications.map((c, i) => chip('certifications', i, c.name + (c.issuer ? ' · ' + c.issuer : ''))).join(' ') || '<span class="muted">none yet</span>';
   $('#bCounts').textContent = `${b.experience.length} roles · ${b.education.length} education · ${b.certifications.length} certifications · ${b.projects.length} projects · ${b.resumes.length} saved resume(s)`;
   $('#bResumes').innerHTML = b.resumes.map(r => `<div>${esc(r.added.slice(0, 10))} <span class="pill">${esc(r.source)}</span>${esc(r.name)} <span class="muted">resumes/${esc(r.file)}</span></div>`).join('') || '<div class="muted">none yet</div>';
   $('#bOnFile').style.display = v.on_file ? '' : 'none'; $('#bOnFile').textContent = v.on_file;
@@ -265,13 +291,13 @@ async function bankOp(body, okMsg) {
   renderBank(r);
   if (!r.changed) return toast(body.op === 'add' ? 'already in the bank (or not a valid entry)' : 'nothing changed', 'err');
   toast(okMsg, 'ok');
-  if (body.op === 'add') (body.kind === 'skills' ? ['#bSkill', '#bSkillCat'] : ['#bLang', '#bLangLvl']).forEach(s => { $(s).value = ''; });
+  if (body.op === 'add') ({ skills: ['#bSkill', '#bSkillCat'], languages: ['#bLang', '#bLangLvl'], certifications: ['#bCert', '#bCertIss'] }[body.kind] || []).forEach(s => { $(s).value = ''; });
 }
 function bankRemove(kind, i) { const it = BANK.bank[kind][i]; if (it) bankOp({ op: 'remove', kind, name: it.name }, 'removed ' + it.name); }
 function importToBank(inputId, linkedin, btn) {
   const f = $('#' + inputId).files[0]; if (!f) return toast('choose a file first', 'err');
   const rd = new FileReader();
-  rd.onload = () => run('profile_import', { name: f.name, data: rd.result.split(',')[1], linkedin }, r => {
+  rd.onload = () => run('profile_import', { name: f.name, data: rd.result.split(',')[1], linkedin, ai: $('#pNoAi').checked ? false : undefined }, r => {
     renderBank(r);
     const got = Object.entries(r.added).filter(([, n]) => n).map(([k, n]) => n + ' ' + k).join(', ') || 'nothing new';
     toast(`${r.new_file ? 'saved' : 'already saved'} ${f.name}: ${got} (${r.used_ai ? 'AI' : 'offline'} extraction)${r.seeded_master ? '; master profile filled in' : ''}`, 'ok');
@@ -305,16 +331,29 @@ function adjustDoc(btn) {
   const kind = n.includes('cover') ? 'cover letter' : n.includes('resume') ? 'resume' : 'document';
   run('adjust', { text: cur.docs[n], instruction: ins, kind }, r => { $('#docEdit').value = r.text; $('#docEdit').style.display = ''; $('#docSave').style.display = ''; $('#docEdit').dataset.name = n; toast('adjusted; review, then Save document', 'ok'); }, btn);
 }
+function reviewDoc(btn) {  // reviews the open document, unsaved edits included; result goes to AI output, nothing is saved
+  const n = $('#docTabs button.on')?.textContent;
+  if (!n || !n.includes('resume')) return toast('Review critiques a resume: open the resume tab first', 'err');  // the prompt is resume-specific
+  const text = $('#docEdit').style.display !== 'none' && $('#docEdit').dataset.name === n ? $('#docEdit').value : cur.docs[n];
+  if (!(text || '').trim()) return toast('this document is empty', 'err');
+  run('review', { text }, r => { $('#jOut').textContent = r.text; }, btn);
+}
 async function saveProfile() {
   const text = $('#pText').value, r = await api('/api/profile', { text });
   if (r.error) return toast('save failed: ' + r.error, 'err');
   PROFILE_LOADED = text;
   toast('profile saved (previous version kept in profile-history/)', 'ok'); loadBank();
 }
+function fillCoachJobs() {  // rebuilt on every refresh so jobs added later appear; keeps the selected job
+  const keep = $('#cJob').value;
+  $('#cJob').innerHTML = S.jobs.map(j => `<option value="${j.id}">#${j.id} ${esc(j.company)} - ${esc(j.title)}</option>`).join('');
+  if (S.jobs.some(j => String(j.id) === keep)) $('#cJob').value = keep;
+}
 function resetChat() {
   const mock = $('#cMode').value === 'mock';
-  $('#cJob').style.display = mock ? '' : 'none';
-  if (mock && !$('#cJob').options.length) $('#cJob').innerHTML = S.jobs.map(j => `<option value="${j.id}">#${j.id} ${esc(j.company)} - ${esc(j.title)}</option>`).join('');
+  $('#cJob').style.display = $('#cSpeakL').style.display = mock ? '' : 'none';
+  window.speechSynthesis?.cancel();
+  fillCoachJobs();
   chatHist = [];
   $('#chat').innerHTML = `<div class="msg ai">${mock ? 'Mock interview ready. Send any message to begin; the interviewer asks one question at a time. Type "done" for a scored debrief.' : 'Ask me anything about your search. I can see your profile and tracker.'}</div>`;
 }
@@ -327,6 +366,10 @@ function sendChat() {
   run(action, params, r => {
     const a = council && !mock ? r.synthesis : r.reply; chatHist.push({ role: 'assistant', content: a });
     $('#chat').insertAdjacentHTML('beforeend', `<div class="msg ai">${esc(a)}</div>`); $('#chat').scrollTop = 1e9;
+    if (mock && $('#cSpeak').checked && window.speechSynthesis) {  // browser text-to-speech: practise listening, then answer aloud
+      const u = new SpeechSynthesisUtterance(a); u.lang = navigator.language || 'en-US'; speechSynthesis.speak(u);
+    }
+    if (r.path) toast('transcript and debrief saved to mock_interview.md in the job', 'ok');
   }, $('#cGo'));
 }
 function dictate() {  // browser speech recognition; audio goes only where the browser's own service sends it

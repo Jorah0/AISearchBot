@@ -41,7 +41,7 @@ def checks() -> list[tuple[str, str, str]]:
     from . import profile
 
     text = profile.master_text()
-    filled = len(text) > 200 and not profile.is_template(text)
+    filled = not profile.is_template(text)
     out.append(("ok" if filled else "warn", "master profile", str(PROFILE) + ("" if filled else " still the template: fill it in or import a resume")))
     bank = profile.load()
     n = {k: len(bank[k]) for k in ("skills", "languages", "experience", "resumes")}

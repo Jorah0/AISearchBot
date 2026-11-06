@@ -202,10 +202,14 @@ UPLOADED RESUME:
 SALARY_RE = re.compile(r"[$€£]\s?\d{2,3}(?:,\d{3})?\s?[kK]?(?:\s?(?:-|–|to)\s?[$€£]?\s?\d{2,3}(?:,\d{3})?\s?[kK]?)?")
 
 
+# the line saved listings carry (web_monitor.jd_with_salary): job APIs often give bare numbers, e.g. '120000-160000'
+SALARY_LINE_RE = re.compile(r"^Salary \(from [^)\n]*\):[ \t]*(\S[^\n]*)", re.M)
+
+
 def salary_mentions(text: str) -> list[str]:
     """Pay figures stated in a posting, e.g. '$140,000 - $170,000' or '€80k'. Real data beats an AI guess."""
     seen: list[str] = []
-    for m in SALARY_RE.findall(text or ""):
+    for m in SALARY_LINE_RE.findall(text or "") + SALARY_RE.findall(text or ""):
         m = " ".join(m.split())
         if m not in seen and any(ch.isdigit() for ch in m):
             seen.append(m)

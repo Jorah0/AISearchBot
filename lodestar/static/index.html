@@ -35,8 +35,11 @@
     <input id="nCo" placeholder="Company" style="width:160px"><input id="nTi" placeholder="Title" style="width:220px">
     <input id="nJd" class="grow" placeholder="Job description: URL or pasted text"><button class="b" onclick="addJob()">Add job</button>
   </div>
+  <div class="row" id="upcoming" style="margin-top:4px"></div>
   <div class="muted" id="variants"></div>
   <div class="muted" id="funnel"></div>
+  <div class="panel" id="boardEmpty" style="display:none"><h3>No jobs tracked yet</h3><div class="row">Paste a job description above and click Add job,
+    <button class="b sm" onclick="go('search')">Search job APIs</button> or drag the capture bookmarklet from <button class="b ghost sm" onclick="go('setup')">Setup</button> to track postings from LinkedIn, Indeed or any careers page.</div></div>
   <div class="board" id="cols"></div>
 </section>
 
@@ -52,7 +55,8 @@
   <h2>Search</h2>
   <div class="row"><input id="sQ" placeholder='query, e.g. "python backend"' style="width:260px"><input id="sK" placeholder="must-have keywords (comma)" style="width:220px">
     <label class="muted"><input type="checkbox" id="sRank"> AI rank vs my profile</label><button class="b" onclick="doSearch(this)">Search free job APIs</button>
-    <span class="muted">Remotive, Arbeitnow, RemoteOK. No keys needed. The capture bookmarklet (Setup) covers LinkedIn and Indeed.</span></div>
+    <button class="b ghost" title="AI-judge the results; strong fits go to the Inbox (tool: auto_track)" onclick="run('auto_track',{query:$('#sQ').value,keywords:$('#sK').value},r=>toast(r.results.length+' strong fit(s) proposed (Inbox, or tracked if auto_track is auto)','ok'),this)">Auto-track strong fits</button>
+    <span class="muted">Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse. No keys needed. The capture bookmarklet (Setup) covers LinkedIn and Indeed.</span></div>
   <div class="panel" id="sRes"><div class="empty">No results yet.</div></div>
 </section>
 
@@ -64,6 +68,7 @@
       <div id="wList"></div>
       <div class="row"><button class="b ghost" onclick="run('email_check',{days:7,dry:true},r=>show('aOut',r.found),this)">Email dry-run (7 days)</button>
         <button class="b ghost" onclick="run('digest',{days:7},r=>show('aOut',r.text),this)">Weekly digest</button>
+        <button class="b ghost" title="also sends it to LODESTAR_NOTIFY_EMAIL" onclick="run('digest',{days:7,send:true},r=>show('aOut',r.text),this)">Email digest</button>
         <button class="b ghost" onclick="run('obsidian',{},r=>toast('vault notes written to '+r.path,'ok'),this)">Export tracker to Obsidian</button></div>
       <pre id="aOut" style="display:none"></pre></div>
     <div class="panel"><h3>Alerts</h3><pre id="alerts"></pre></div>
@@ -75,7 +80,7 @@
   <p class="sub">Diverge across every configured provider (or one provider plus a critic pass), merge, score impact × fit ÷ effort, save. Grounded in your profile, tracker stats, variant outcomes and gap checks.</p>
   <div class="panel"><div class="row" style="margin:0">
     <select id="iTopic"></select><select id="iJob"></select><input id="iRole" placeholder="target role (optional)" style="width:180px">
-    <input id="iExtra" class="grow" placeholder="extra instructions, or the custom topic"><label class="muted"><input type="checkbox" id="iSingle"> single provider</label>
+    <input id="iExtra" class="grow" placeholder="extra instructions, or the custom topic"><input id="iN" type="number" min="1" max="20" value="8" title="number of ideas" style="width:60px"><label class="muted"><input type="checkbox" id="iSingle"> single provider</label>
     <button class="b" onclick="craft(this)">Craft</button></div></div>
   <div id="ideaList"></div>
 </section>
@@ -86,7 +91,7 @@
     <div class="row"><select id="aJob"></select><input id="aQ" class="grow" placeholder='e.g. "Why do you want to work at Acme?" or "Salary expectations?"'><button class="b" onclick="askAnswer(this)">Draft</button></div>
     <pre id="aOut2" style="display:none"></pre></div>
   <div class="panel"><h3>Answer bank</h3>
-    <div class="row"><input id="bQ" class="grow" placeholder="question"><input id="bA" class="grow" placeholder="answer"><button class="b ghost" onclick="api('/api/answers',{question:$('#bQ').value,answer:$('#bA').value}).then(load)">Save</button></div>
+    <div class="row"><input id="bQ" class="grow" placeholder="question"><input id="bA" class="grow" placeholder="answer"><input id="bT" placeholder="tags (comma)" style="width:140px"><button class="b ghost" onclick="api('/api/answers',{question:$('#bQ').value,answer:$('#bA').value,tags:$('#bT').value}).then(load)">Save</button></div>
     <div id="bank"></div></div>
 </section>
 
@@ -95,13 +100,13 @@
   <div class="panel">
     <div class="row" style="margin-top:0"><select id="cMode" onchange="resetChat()"><option value="coach">Career coach</option><option value="mock">Mock interview for…</option></select><select id="cJob" onchange="resetChat()" style="display:none"></select><span class="muted" id="cHint">Coach sees your profile and tracker. Mock interview asks one question at a time; type "done" for a scored debrief.</span></div>
     <div class="chat" id="chat"><div class="msg ai">Ask me anything about your search. I can see your profile and tracker.</div></div>
-    <div class="row"><input id="cIn" class="grow" placeholder="e.g. Which of my applications should I follow up on first?" onkeydown="if(event.key==='Enter')sendChat()"><button class="b ghost" id="cMic" onclick="dictate()" aria-label="Dictate" title="Dictate (browser speech recognition)">🎤</button><button class="b" id="cGo" onclick="sendChat()">Send</button><label class="muted"><input type="checkbox" id="cCouncil"> council (all providers)</label></div></div>
+    <div class="row"><input id="cIn" class="grow" placeholder="e.g. Which of my applications should I follow up on first?" onkeydown="if(event.key==='Enter')sendChat()"><button class="b ghost" id="cMic" onclick="dictate()" aria-label="Dictate" title="Dictate (browser speech recognition)">🎤</button><button class="b" id="cGo" onclick="sendChat()">Send</button><label class="muted" id="cSpeakL" style="display:none"><input type="checkbox" id="cSpeak" onchange="if(!this.checked)window.speechSynthesis?.cancel()"> speak replies</label><label class="muted"><input type="checkbox" id="cCouncil"> council (all providers)</label></div></div>
 </section>
 
 <section id="profile">
   <h2>Profile</h2>
   <p class="sub">Your master resume. Everything Lodestar writes is derived from this file and never invents facts.</p>
-  <div class="row"><span class="muted" id="pPath"></span><button class="b" onclick="saveProfile()">Save</button><button class="b ghost" onclick="run('review',{},r=>show('pOut',r.text),this)">AI review</button></div>
+  <div class="row"><span class="muted" id="pPath"></span><button class="b" onclick="saveProfile()">Save</button><button class="b ghost" onclick="run('review',{text:$('#pText').value},r=>show('pOut',r.text),this)">AI review</button></div>
   <div class="row"><input id="pAdj" class="grow" placeholder="adjust with AI, e.g. tighten to one page / emphasise leadership / rewrite summary for data roles"><button class="b ghost" onclick="adjustProfile(this)">Adjust</button><span class="muted">result replaces the editor; nothing is saved until you click Save</span></div>
   <textarea id="pText"></textarea>
   <div class="panel" id="bankPanel"><h3>Profile bank</h3>
@@ -109,10 +114,13 @@
     <div class="row"><b style="width:90px">LinkedIn</b><input id="liUrl" class="grow" placeholder="https://www.linkedin.com/in/your-name"><button class="b ghost sm" onclick="bankOp({op:'contact',field:'linkedin',value:$('#liUrl').value},'LinkedIn linked')">Link</button>
       <a id="liExport" class="b ghost sm" target="_blank" rel="noopener" href="#">Request my LinkedIn data ↗</a></div>
     <div class="row"><input type="file" id="liFile" accept=".zip,.pdf"><button class="b ghost" onclick="importToBank('liFile',true,this)">Import LinkedIn</button><span class="muted">the "Download your data" .zip, or your profile's "Save to PDF". Only profile facts are kept from the zip.</span></div>
+    <div class="row"><label class="muted"><input type="checkbox" id="pNoAi"> offline only: imports here and below never send the file to an AI provider (extracts contact, skills and languages)</label></div>
     <div class="row"><b style="width:90px">Skills</b><div id="bSkills" class="grow"></div></div>
     <div class="row"><span style="width:90px"></span><input id="bSkill" placeholder="add a skill" style="width:200px"><input id="bSkillCat" placeholder="category (optional)" style="width:180px"><button class="b ghost sm" onclick="bankOp({op:'add',kind:'skills',name:$('#bSkill').value,detail:$('#bSkillCat').value},'skill added')">Add</button></div>
     <div class="row"><b style="width:90px">Languages</b><div id="bLangs" class="grow"></div></div>
     <div class="row"><span style="width:90px"></span><input id="bLang" placeholder="add a language" style="width:200px"><input id="bLangLvl" placeholder="proficiency, e.g. Native / B2" style="width:180px"><button class="b ghost sm" onclick="bankOp({op:'add',kind:'languages',name:$('#bLang').value,detail:$('#bLangLvl').value},'language added')">Add</button></div>
+    <div class="row"><b style="width:90px">Certifications</b><div id="bCerts" class="grow"></div></div>
+    <div class="row"><span style="width:90px"></span><input id="bCert" placeholder="add a certification" style="width:200px"><input id="bCertIss" placeholder="issuer (optional)" style="width:180px"><button class="b ghost sm" onclick="bankOp({op:'add',kind:'certifications',name:$('#bCert').value,detail:$('#bCertIss').value},'certification added')">Add</button></div>
     <div class="muted" id="bCounts"></div>
     <div class="row"><button class="b ghost" onclick="rebuildMaster(this)">Rebuild master profile from bank</button><span class="muted">the current profile.md is snapshotted to profile-history/ first</span></div>
     <pre id="bOnFile" style="display:none"></pre>
@@ -135,11 +143,18 @@
   <h2>Setup</h2>
   <div class="grid2">
     <div class="panel"><h3>AI providers</h3><div id="prov"></div>
-      <div class="row"><button class="b ghost" onclick="run('providers_test',{},r=>show('provOut',r),this)">Test providers</button></div><pre id="provOut" style="display:none"></pre></div>
+      <div class="row"><button class="b ghost" onclick="run('providers_test',{},r=>show('provOut',r),this)">Test providers</button>
+        <button class="b ghost" title="ids each provider offers; pin one under Tools > Preferences > models" onclick="run('models',{},r=>show('provOut',r),this)">List models</button>
+        <button class="b ghost" title="default provider and council restricted to Ollama on this machine; picks a model it serves" onclick="run('providers_local',{},r=>toast(r.text,'ok'),this)">Local only (Ollama)</button></div><pre id="provOut" style="display:none"></pre>
+      <div class="muted" id="usage"></div></div>
     <div class="panel"><h3>Vault (OS keyring)</h3>
       <div class="row"><input id="vName" placeholder="ANTHROPIC_API_KEY / IMAP_PASS / linkedin.com" style="width:240px"><input id="vUser" placeholder="username (optional)" style="width:150px"><input id="vVal" type="password" class="grow" placeholder="secret"><button class="b" onclick="setVault()">Store</button></div>
       <div class="muted" id="vList"></div>
-      <p class="muted">Keys: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, MISTRAL_API_KEY. Email: IMAP_USER, IMAP_PASS (Gmail app password).</p></div>
+      <p class="muted">Keys: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, MISTRAL_API_KEY. Local: OLLAMA_MODEL (or "Local only" above). Email: IMAP_USER, IMAP_PASS (Gmail app password).</p></div>
+    <div class="panel"><h3>Market rates</h3>
+      <p class="muted">Your own annual pay ranges by title keyword (and city). Lodestar never guesses pay: gap checks, offer evaluation and interview prep quote these plus figures stated in postings.</p>
+      <div class="row"><input id="mTitle" placeholder="title keyword, e.g. data engineer" style="width:200px"><input id="mCity" placeholder="city (empty = any)" style="width:130px"><input id="mLow" type="number" min="0" placeholder="low" style="width:100px"><input id="mHigh" type="number" min="0" placeholder="high" style="width:100px"><button class="b" onclick="compOp({op:'set',title:$('#mTitle').value,city:$('#mCity').value,low:$('#mLow').value,high:$('#mHigh').value})">Record</button></div>
+      <div id="compList" class="list"></div></div>
     <div class="panel"><h3>Browser bookmarklets</h3>
       <p class="muted">Drag these to your bookmarks bar. The UI must be running.</p>
       <div class="row"><a id="bm" class="b" href="#">+ Lodestar capture</a><a id="af" class="b ghost" href="#">+ Lodestar autofill</a></div>
@@ -151,12 +166,14 @@
       <div id="doctorOut"></div></div>
     <div class="panel"><h3>Data</h3>
       <div class="row"><button class="b ghost" onclick="run('backup',{},r=>toast('backup written: '+r.path,'ok'),this)">Backup now</button>
-        <button class="b ghost" onclick="run('export_json',{},r=>toast('exported: '+r.path,'ok'),this)">Export JSON</button>
+        <button class="b ghost" onclick="run('export',{fmt:'json'},r=>toast('exported: '+r.path,'ok'),this)">Export JSON</button>
+        <button class="b ghost" onclick="run('export',{fmt:'csv'},r=>toast('CSV files written to '+r.path,'ok'),this)">Export CSV</button>
+        <button class="b ghost" onclick="api('/api/open_folder',{which:'exports'})">Open exports</button>
         <button class="b ghost" onclick="api('/api/open_folder',{which:'data'})">Open data folder</button>
         <button class="b ghost" onclick="api('/api/open_folder',{which:'applications'})">Open documents</button>
         <button class="b ghost" onclick="api('/api/open_folder',{which:'backups'})">Open backups</button>
         <button class="b ghost" onclick="api('/api/open_folder',{which:'log'})">Open log</button></div>
-      <p class="muted">Nightly backups keep the last 7 zips (tool <b>backup</b>). Exports are JSON dumps of every table.</p></div>
+      <p class="muted">Nightly backups keep the last 7 zips (tool <b>backup</b>). Exports are a JSON dump of every table, or one CSV per table.</p></div>
     <div class="panel"><h3>About</h3><p class="muted"><span id="ver"></span> · Lodestar is local-first: the UI binds to 127.0.0.1, secrets live in the OS keyring, data is in your home folder. Docs: README.md, docs/SETUP.md, docs/AUTOMATION.md, docs/COMMANDS.md.</p></div>
   </div>
 </section>

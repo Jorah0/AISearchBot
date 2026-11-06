@@ -72,17 +72,21 @@ with a clear error and the draft stays visible so you can copy it.
 ## Contact capture
 
 Replies and follow-ups need a human address. lodestar records the sender of the first human (non no-reply) email about
-a job as its contact. Set one yourself with `lodestar jobs contact ID email --name "Jane Doe"`.
+a job as its contact. Set one yourself in the job drawer (Admin > set contact) or with
+`lodestar jobs contact ID email --name "Jane Doe"`. With a contact, Draft reply and email outreach are proposed for
+sending through the Inbox like follow-ups; the checklist counts a follow-up or thank-you as done only once it is sent.
 
 ## Security model of the local UI
 
 - The page embeds a per-launch token; every `/api/*` request must carry it (`X-Lodestar-Token` header). A web page
   you visit cannot call your inbox, tools, or vault routes: it gets 403.
 - Only `/api/capture` and `/api/autofill` accept cross-origin calls, and only with `?t=<token>`, which the
-  bookmarklets receive when you drag them from the Setup tab. Re-drag them after restarting the app.
+  bookmarklets receive when you drag them from the Setup tab. The capture token persists across restarts; delete
+  `~/.lodestar/capture.token` to revoke it and re-drag.
 - Mail that failed classification (provider outage) is left unread for the next run instead of being skipped.
-- Company matching uses whole-word tokens of the classifier's company or the sender's domain, never substrings of
-  the free-text From line.
+- A message is matched to a job by the stored contact address, then the sender's company domain
+  (`careers.acme.com` -> Acme), then the company name the classifier read. Only contact or domain matches act without
+  review. Free-mail senders (gmail.com, outlook.com, ...) count only when they are the exact stored contact.
 - `council_providers` limits which providers ever receive your profile. `backup` keeps the last 7 nightly zips.
 
 ### After the ECC and security reviews (2026-11-04)
@@ -92,7 +96,9 @@ a job as its contact. Set one yourself with `lodestar jobs contact ID email --na
 - The server refuses any request whose `Host` header is not this loopback address (DNS-rebinding defence) and any
   POST that is not `application/json`.
 - Actions triggered by inbound mail (status moves, replies) run automatically only when the message carries
-  `Authentication-Results: dkim=pass`; otherwise they wait in the inbox even if the tool is set to auto.
+  `Authentication-Results: dkim=pass` aligned with the sender **and** is tied to the job by contact address or company
+  domain (see above); otherwise they wait in the inbox even if the tool is set to auto. Free-mail or unauthenticated
+  recruiter outreach waits in the inbox instead of creating a job.
 - Approving an item claims it atomically: a double-click or a CLI/UI race cannot send twice. Rejecting a decided item
   is a no-op, so the record of a sent mail is never overwritten.
 - `council_providers` is a hard boundary: synthesis and the default provider come from the list, and a list that

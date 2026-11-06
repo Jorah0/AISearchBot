@@ -60,6 +60,12 @@ def _listing(title, company, url, location="", salary="", date="", desc="", sour
                 date=(date or "")[:10], desc=strip_html(desc or "")[:3000], source=source)
 
 
+def jd_with_salary(j: dict) -> str:
+    """The listing text to store as the job description. The jobs table has no salary column, so a listing's salary
+    field rides along as a first line that resume.salary_mentions reads (app.js saveListing builds the same line)."""
+    return (f"Salary (from {j.get('source') or 'listing'}): {j['salary']}\n\n" if j.get("salary") else "") + (j.get("desc") or "")
+
+
 def _remotive(q):
     d = fetch_json(f"https://remotive.com/api/remote-jobs?search={urllib.parse.quote(q)}&limit=30")
     return [_listing(j["title"], j["company_name"], j["url"], j.get("candidate_required_location"), j.get("salary"),

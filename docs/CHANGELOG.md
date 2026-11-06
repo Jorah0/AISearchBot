@@ -1,5 +1,36 @@
 # Changelog (development passes, newest first)
 
+## Pass 14 (2026-11-06): gap audit, CLI features in the UI, docs caught up
+
+- New status `accepted` (after offer): accepting a job proposes withdrawing your other open applications, always
+  through the Inbox. Stats, variants and the funnel count it as a positive outcome.
+- Mail you send yourself goes through the Inbox too: Draft reply and email outreach are proposed to the job's contact
+  like follow-ups, and always wait for review even when `email_reply` is on auto (the Inbox label names the real
+  recipient, since an outreach note may be written for someone else). Set the contact in the job drawer. The checklist counts a follow-up or thank-you as done only once
+  it is sent, not when drafted.
+- Interviews: a mail with only a date (often a reply-by date) no longer writes an .ics at midnight; the date goes on
+  the timeline. Interview prep quotes real pay figures (posting, your market range, your private floor) and uses the
+  research pack and gap check. Mock interviews save the transcript and debrief to `mock_interview.md`; in the Coach
+  tab they can speak the questions aloud.
+- Offers: each `offer.md` opens with its terms line, and evaluating one offer now weighs it against the others.
+- `followup_days` drives the Board, digest, loop and `jobs followups` (`--followup` / `--days` still override).
+- Listing salaries are kept on saved jobs, so the gap check sees them.
+- UI: upcoming interviews and an empty-board hint on the Board; cover letter tone, length and .docx; .ics from
+  the drawer; editable non-mail Inbox payloads (JSON); "Auto-track strong fits" on Search; Email digest; idea count;
+  answer tags; certifications in the profile bank; offline-only imports; review of an open document; Setup gets
+  List models, Local only (Ollama), Market rates, a 30-day usage line, vault removal, Export CSV and Open exports.
+- `providers local` pins a model Ollama actually serves. `tools set models provider=model` is validated. `vault rm`
+  also removes the old `jobbot` copy.
+- Docs: CAPTURE.md shows the token-carrying bookmarklet and documents autofill; RUNDOWN lists all modules, all ten
+  tabs and the shipped roadmap; COMMANDS documents the API token, every background action, `/api/open_folder`,
+  `/api/comp` and all preferences; SETUP lists every data file and installer flag; AUTOMATION describes the pass-13
+  mail trust rules; FEATURES.md regenerated (now with `lodestar profile`).
+- Found by the review of this pass and fixed: Review in the drawer is limited to resumes (its prompt is
+  resume-specific) and an empty text is an error instead of silently reviewing profile.md; `jobs followups` prints
+  the real day count; Setup, onboarding and doctor use the same "profile filled in" rule as prompts, so a short real
+  profile no longer keeps the Getting started banner up. Browser smoke test of Board, Coach, Setup and the drawer.
+  92 tests.
+
 ## Pass 13 (2026-11-06): the faults pass 12 left open
 
 - Private preferences: `candidate_text(private=False)` drops the Preferences section (salary floor, deal-breakers)

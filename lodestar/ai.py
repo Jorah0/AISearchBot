@@ -60,10 +60,28 @@ def api_key(name: str) -> str | None:
 
 
 def available() -> list[str]:
+    from . import settings
+
     out = [n for n, p in PROVIDERS.items() if p["key"] and api_key(n)]
-    if setting("OLLAMA_MODEL"):
-        out.append("ollama")
+    if setting("OLLAMA_MODEL") or settings.pref("models").get("ollama") or settings.pref("provider") == "ollama":
+        out.append("ollama")  # Ollama has no key: an env model, a model the local preset pinned, or the provider pref
     return out
+
+
+def local_preset() -> str:
+    """Ollama-only preset: single calls and the council stay local, and a model Ollama actually serves is pinned."""
+    from . import settings
+
+    settings.set_pref("provider", "ollama")
+    settings.set_pref("council_providers", "ollama")
+    head = "local-only preset: provider=ollama, council_providers=ollama"
+    if setting("OLLAMA_MODEL"):
+        return f"{head}, model {setting('OLLAMA_MODEL')} (from OLLAMA_MODEL)"
+    m = pick_model("ollama")
+    if not m:
+        return f"{head}. Ollama is not reachable at localhost:11434 or serves no model: start it, `ollama pull llama3.1`, and run this again."
+    settings.set_model("ollama", m)
+    return f"{head}, model {m} (saved in prefs.models)"
 
 
 def council_providers() -> list[str]:

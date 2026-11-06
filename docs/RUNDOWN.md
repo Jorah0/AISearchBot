@@ -13,26 +13,28 @@ one SQLite file. Nothing leaves your machine except the API calls you configure 
 | Data | `lodestar/db.py` | jobs, events, watches, seen-keys; status pipeline; stats; follow-up query; thread-local connections | sqlite3 |
 | Documents | `lodestar/resume.py` | master profile, per-job tailoring, cover letter, ATS gap JSON, review, Markdown to .docx | `python-docx` |
 | Inbox | `lodestar/email_monitor.py` | IMAP scan, keyword prefilter, AI classification, status upgrade rules, auto-created jobs, reply drafts | imaplib |
-| Web | `lodestar/web_monitor.py` | career-page diffs with keyword filter; Remotive / Arbeitnow / RemoteOK search; AI fit ranking | urllib |
+| Web | `lodestar/web_monitor.py` | career-page diffs with keyword filter; six free job sources (Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse); AI fit ranking | urllib |
 | Interview | `lodestar/interview.py` | prep pack (questions, STAR answers, pitch, negotiation); mock-interview REPL | ai |
-| CLI | `lodestar/cli.py` | argparse front end, `run` scheduler loop, `chat` coach, `ui` launcher | all |
-| UI | `lodestar/web.py` + `lodestar/static/index.html` | localhost dashboard; long actions run as background tasks and are polled | http.server |
+| Profile bank | `lodestar/profile.py` | saved resumes, pooled skills / languages / roles, LinkedIn import, `candidate_text()` for prompts | ai |
+| Apply | `lodestar/apply.py` | answer bank drafts, checklist, follow-up, thank-you, offer review, auto-track | ai, approvals |
+| Approvals | `lodestar/approvals.py` | the Inbox: propose, execute, reject; the only code that acts on Lodestar's initiative | db, settings |
+| Settings | `lodestar/settings.py` | tool switches (enabled / auto) and preferences in `settings.json` | stdlib |
+| Ideas | `lodestar/ideas.py` | idea crafting: diverge across providers, critique, rank, refine | ai |
+| Extras | `lodestar/extras.py` | outreach, .ics, digest, Obsidian export, backup, export, research, packet, autofill data | ai, db |
+| Loop | `lodestar/loop.py` | the monitor cycle behind `run`, `app` and `desktop` (email, watches, follow-ups, backups) | all |
+| Desktop | `lodestar/desktop.py` | native window (Edge WebView2 via pywebview), browser fallback | pywebview |
+| Doctor | `lodestar/doctor.py` | install diagnostics (`lodestar doctor`, Setup > Diagnostics) | stdlib |
+| Comp | `lodestar/comp.py` | your market-rate table, quoted by gap, offer and prep | stdlib |
+| Inventory | `lodestar/inventory.py` | `lodestar features`: the generated FEATURES.md | argparse |
+| Support | `lodestar/log.py`, `lodestar/util.py` | rotating log file; safe URL fetches, source reading, alerts, SMTP sending | stdlib |
+| CLI | `lodestar/cli.py` | argparse front end, `chat` coach, `ui` launcher | all |
+| UI | `lodestar/web.py` + `lodestar/static/index.html`, `app.js`, `app.css` | localhost dashboard; long actions run as background tasks and are polled | http.server |
 
-Data layout on disk:
-
-```
-~/.lodestar/
-  profile.md                 master resume (you edit; everything else derives from it)
-  lodestar.db                  tracker
-  applications/<id>-<company>-<title>/   resume.md, resume.docx, cover_letter.md, gap.json, interview_prep.md
-  snapshots/<watch-id>.txt   last page text per watch (for diffs)
-  alerts.log                 everything the monitors flagged
-  vault_index.json           names + usernames only; secrets live in the OS keyring
-```
+Data layout: see [SETUP.md, Where things live](SETUP.md#8-where-things-live).
 
 ## 2. The workflow it supports
 
-1. **Find**: `jobs search` hits three free job APIs, dedupes, filters by must-have keywords, optionally AI-ranks
+1. **Find**: `jobs search` hits six free job sources, dedupes, filters by must-have keywords, optionally AI-ranks
    against your profile (0-100 with a one-line reason). `watch search-add` turns a query into a standing alert.
 2. **Qualify**: `resume gap` scores the posting like an ATS and a hiring manager: match score, missing keywords,
    weak areas, red flags, verdict apply / stretch / skip. Cheap, so run it before spending effort.
@@ -50,16 +52,23 @@ Data layout on disk:
 
 ## 3. The UI
 
-`lodestar ui` serves a dashboard on `http://127.0.0.1:8765` (localhost only, no auth, so do not expose it).
+`lodestar ui` (or the desktop window) serves the dashboard on 127.0.0.1 (port 8765, or the first free port for
+`desktop`). Every API call carries a per-launch token and the Host header must be loopback; see
+[AUTOMATION.md, Security model](AUTOMATION.md#security-model-of-the-local-ui).
 
-- **Board**: kanban by status, orange edge on anything quiet 7+ days, add a job from a URL or pasted text.
-  Click a card: timeline, job description, generated documents as tabs, status dropdown, notes, and one-click
+- **Board**: kanban by status, orange edge on anything quiet for `followup_days` (default 7), upcoming interviews,
+  add a job from a URL or pasted text. Click a card: timeline, job description, generated documents as tabs, status dropdown, notes, and one-click
   gap / tailor / cover / prep / draft-reply with a council toggle.
+- **Inbox**: approve, edit or reject the actions Lodestar queued on its own.
 - **Search**: free-API search with keyword filter and AI ranking, "track" button saves a listing with its description.
 - **Monitor**: watches (URL or saved search), run watches, check email, email dry-run, live alert log.
-- **Profile**: edit the master resume in place, AI review button.
-- **Coach**: chat with profile and tracker context, council mode.
-- **Setup**: provider readiness, provider test, keyring vault entry form.
+- **Ideas**: craft, refine and track ideas across providers.
+- **Answers**: application-form answer bank; draft an answer for a job.
+- **Coach**: chat with profile and tracker context, council mode; mock interview for a tracked job, with dictation.
+- **Profile**: edit the master resume in place, AI review, import, Adjust, profile bank, LinkedIn import.
+- **Tools**: per-tool enabled / auto switches and preferences.
+- **Setup**: provider readiness and test, model list, local-only preset, keyring vault, market rates, bookmarklets,
+  Diagnostics (doctor), Data panel (backup, export, folders).
 
 All AI and network actions run as background tasks (`/api/run/<action>` returns a task id, the page polls
 `/api/tasks/<id>`), so the UI stays responsive and a failed provider shows a readable error instead of a hang.
@@ -85,17 +94,22 @@ document is produced (`--council`) and as a standalone `council "<question>"` co
 - `.gitignore` excludes every personal artifact (profile, database, applications, alerts, snapshots, vault index,
   `.env`) and every development artifact (graph outputs, caches, build dirs), so the repo can be shared safely.
 
-## 6. Current state (2026-11-04)
+## 6. Current state (2026-11-06, pass 14)
 
-42 offline tests pass. Live-verified: installer, desktop window (Edge WebView2), every UI route with token and Host
-checks, six free job sources, page watches, Obsidian export. Not yet exercised with real credentials: AI calls and
-SMTP sending. Pass-by-pass history is in [CHANGELOG.md](CHANGELOG.md).
+92 offline tests pass (`python -m unittest discover -s tests`). Live-verified: installer, desktop window (Edge
+WebView2), every UI route with token and Host checks, six free job sources, page watches, Obsidian export. Not yet
+exercised with real credentials: AI calls and SMTP sending. Pass-by-pass history is in [CHANGELOG.md](CHANGELOG.md).
 
-## 7. Further tools worth adding (ranked by payoff for interviews)
+## 7. Roadmap (shipped)
 
-Done in the second pass: 1 (capture), 3 (outreach), 4 (calendar), 6 (variant tracking), 10 (digest), 12 (Obsidian mirror).
-Done in the third pass: approvals + tool switches, auto-replies, scheduling, follow-ups, thank-you, answer bank, checklist, offer evaluation, listing triage.
-Done in the fourth pass: idea crafting, company research pack, autofill bookmarklet, docx template, feature inventory. Remaining: compensation data, voice mock interview, local-only preset.
+All twelve items below have shipped: 1 capture bookmarklet, 2 autofill bookmarklet, 3 `outreach`, 4 `.ics`, 5 `comp`
+market-rate table, 6 `variants`, 7 `template.docx`, 8 `research`, 9 mock interview with dictation (and spoken
+questions) in the Coach tab, 10 `digest`, 11 `providers local`, 12 `export obsidian`. Also shipped along the way:
+approvals and tool switches, auto-replies, scheduling, follow-ups, thank-you notes, answer bank, checklist, offer
+evaluation, listing triage, idea crafting, feature inventory, profile bank. Still open: item 5 fills its table by hand
+(`comp set` or Setup > Market rates); nothing pulls ranges from levels.fyi or Glassdoor automatically.
+
+The original proposals, kept for the reasoning:
 
 1. **LinkedIn / Indeed capture via the browser you already use.** Neither has a public API. A tiny bookmarklet or a
    Claude-in-Chrome routine that posts the current page's title, company, and description to `POST /api/jobs` on the

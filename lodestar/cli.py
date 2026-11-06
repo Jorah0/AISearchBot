@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from . import ai, db, vault
-from .config import ALERTS, APPS_DIR, HOME, PROFILE, setting
+from .config import ALERTS, APPS_DIR, HOME, PROFILE
 from .util import read_source
 
 COACH = (
@@ -47,8 +47,6 @@ def cmd_init(a):
 
 
 def cmd_providers(a):
-    from . import settings
-
     avail = ai.available()
     if a.op == "models":
         for n in (a.names or avail):
@@ -59,10 +57,7 @@ def cmd_providers(a):
                 print(f"{n}: {e}")
         return
     if a.op == "local":
-        settings.set_pref("provider", "ollama")
-        settings.set_pref("council_providers", "ollama")
-        print("local-only preset: provider=ollama, council_providers=ollama" + ("" if setting("OLLAMA_MODEL") else
-              "  (set OLLAMA_MODEL=<model> in .env to enable Ollama)"))
+        print(ai.local_preset())
         return
     for name, p in ai.PROVIDERS.items():
         state = "ready" if name in avail else f"missing {p['key'] or 'OLLAMA_MODEL'}"
@@ -185,8 +180,11 @@ def cmd_jobs(a):
 
         print(f"wrote {packet(db.get_job(a.id))}")
     elif op == "followups":
-        rows = db.needs_followup(a.days)
-        print(f"{len(rows)} application(s) quiet for {a.days}+ days:")
+        from . import settings
+
+        days = a.days or int(settings.pref("followup_days") or 7)
+        rows = db.needs_followup(days)
+        print(f"{len(rows)} application(s) quiet for {days}+ days:")
         for j in rows:
             print(_job_line(j))
     elif op == "search":
@@ -201,7 +199,7 @@ def cmd_jobs(a):
         if a.save:
             for idx in a.save:
                 j = found[idx]
-                jid = db.add_job(j["company"], j["title"], j["url"], j["desc"], f"found via {j['source']}")
+                jid = db.add_job(j["company"], j["title"], j["url"], web_monitor.jd_with_salary(j), f"found via {j['source']}")
                 print(f"saved #{jid}: {j['title']} @ {j['company']}")
         if a.auto:
             from .apply import auto_track
@@ -309,7 +307,7 @@ def cmd_email(a):
         found = email_monitor.check(a.days, dry=a.dry, provider=a.provider)
         print(f"\n{len(found)} relevant email(s)")
     elif a.op == "reply":
-        print(email_monitor.draft_reply(db.get_job(a.id), a.intent, a.provider))
+        _print_mail(email_monitor.draft_reply(db.get_job(a.id), a.intent, a.provider))
 
 
 def cmd_watch(a):
@@ -399,7 +397,8 @@ def cmd_desktop(a):
 def cmd_outreach(a):
     from . import extras
 
-    print(extras.outreach(db.get_job(a.id), a.person or "", a.channel, a.provider))
+    r = extras.outreach(db.get_job(a.id), a.person or "", a.channel, a.provider)
+    print(r["text"]) if "text" in r else _print_mail(r)
 
 
 def cmd_digest(a):
@@ -499,18 +498,20 @@ def cmd_answers(a):
         print(f"\n[reused: {r['reused'] or 'none'}] [save -> {r['proposal'].get('status')}]")
 
 
+def _print_mail(r: dict) -> None:
+    print(f"Subject: {r['draft'].get('subject', '')}\n\n{r['draft'].get('body', '')}\n\n-> {r['proposal']}")
+
+
 def cmd_followup(a):
     from . import apply
 
-    r = apply.followup(db.get_job(a.id), a.provider)
-    print(f"Subject: {r['draft']['subject']}\n\n{r['draft']['body']}\n\n-> {r['proposal']}")
+    _print_mail(apply.followup(db.get_job(a.id), a.provider))
 
 
 def cmd_thanks(a):
     from . import apply
 
-    r = apply.thanks(db.get_job(a.id), a.interviewer or "", a.notes or "", a.provider)
-    print(f"Subject: {r['draft']['subject']}\n\n{r['draft']['body']}\n\n-> {r['proposal']}")
+    _print_mail(apply.thanks(db.get_job(a.id), a.interviewer or "", a.notes or "", a.provider))
 
 
 def cmd_offer(a):
@@ -639,8 +640,8 @@ def build() -> argparse.ArgumentParser:
     v.add_parser("stats")
     v.add_parser("funnel", help="stage conversion, median days per stage, rejections by stage, outcomes by source")
     x = v.add_parser("packet", help="zip everything about one application (documents, JD, notes)"); x.add_argument("id", type=int)
-    x = v.add_parser("followups"); x.add_argument("--days", type=int, default=7)
-    x = v.add_parser("search", help="free job APIs: remotive, arbeitnow, remoteok")
+    x = v.add_parser("followups"); x.add_argument("--days", type=int, default=None, help="default: pref followup_days")
+    x = v.add_parser("search", help="free job APIs: Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse")
     x.add_argument("query"); x.add_argument("--keywords", help="comma list, must appear in title/desc")
     x.add_argument("--rank", action="store_true", help="AI fit score vs your profile"); x.add_argument("--limit", type=int, default=25)
     x.add_argument("--save", type=int, nargs="*", help="result indexes to add to tracker")
@@ -649,7 +650,8 @@ def build() -> argparse.ArgumentParser:
 
     s = sub.add_parser("resume", help="tailor, gap-check, cover letter, review, export")
     v = s.add_subparsers(dest="op", required=True)
-    for name in ("tailor", "cover", "gap"):
+    x = v.add_parser("gap"); x.add_argument("id", type=int)  # one structured JSON score: no council pooling
+    for name in ("tailor", "cover"):
         x = v.add_parser(name); x.add_argument("id", type=int); x.add_argument("--council", action="store_true", help="pool all providers")
         if name == "tailor":
             x.add_argument("--docx", action="store_true")
@@ -706,7 +708,7 @@ def build() -> argparse.ArgumentParser:
     def loop_args(p):
         p.add_argument("--every", type=int, default=30, help="minutes")
         p.add_argument("--days", type=int, default=2, help="email lookback")
-        p.add_argument("--followup", type=int, default=7, help="nudge after N quiet days")
+        p.add_argument("--followup", type=int, default=None, help="nudge after N quiet days (default: pref followup_days)")
         p.add_argument("--no-email", dest="email", action="store_false")
 
     s = sub.add_parser("run", help="automation loop: email + watches + follow-up nudges")
@@ -762,7 +764,9 @@ def build() -> argparse.ArgumentParser:
     v.add_parser("list")
     for op in ("enable", "disable", "auto", "manual"):
         x = v.add_parser(op); x.add_argument("name")
-    x = v.add_parser("set", help="preference: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, signature")
+    x = v.add_parser("set", help="preference: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, "
+                                     "weekly_target (applications/week, used by idea crafting), provider, council_providers, "
+                                     "council_judge, signature, models (provider=model; also written by self-healing model selection)")
     x.add_argument("name"); x.add_argument("value")
     s.set_defaults(f=cmd_tools)
     s = sub.add_parser("inbox", help="actions waiting for your approval")

@@ -6,7 +6,9 @@ from datetime import datetime, timedelta, timezone
 
 from .config import DB_PATH
 
-STATUSES = ["saved", "applied", "screening", "interview", "offer", "rejected", "withdrawn"]
+# order matters: callers move a job only forward by index (accepted sits before the two closed states)
+STATUSES = ["saved", "applied", "screening", "interview", "offer", "accepted", "rejected", "withdrawn"]
+POSITIVE = ("screening", "interview", "offer", "accepted")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs(
@@ -95,6 +97,14 @@ def set_status(job_id: int, status: str, detail: str = "") -> None:
     extra = {"applied_at": _now()[:10]} if status == "applied" else {}
     update_job(job_id, status=status, **extra)
     add_event(job_id, "status", f"{status} {detail}".strip())
+    if status == "accepted":  # a hire: offer to close the other live applications, always through the Inbox
+        from . import approvals
+
+        for j in list_jobs():
+            if j["id"] != job_id and j["status"] in ("applied", "screening", "interview", "offer"):
+                approvals.propose("followup", "set_status", {"job_id": j["id"], "status": "withdrawn", "note": "accepted another offer"},
+                                  f"withdraw #{j['id']} {j['company']} - {j['title']} (accepted #{job_id})", j["id"],
+                                  force_pending=True)
 
 
 def delete_job(job_id: int) -> None:
@@ -146,8 +156,8 @@ def stats() -> dict:
     rows = con().execute("SELECT status, COUNT(*) n FROM jobs GROUP BY status").fetchall()
     counts = {s: 0 for s in STATUSES} | {r["status"]: r["n"] for r in rows}
     applied = sum(counts[s] for s in STATUSES if s != "saved")
-    responded = counts["screening"] + counts["interview"] + counts["offer"] + counts["rejected"]
-    positive = counts["screening"] + counts["interview"] + counts["offer"]
+    positive = sum(counts[s] for s in POSITIVE)
+    responded = positive + counts["rejected"]
     return {
         "counts": counts,
         "applied_total": applied,
@@ -159,7 +169,7 @@ def stats() -> dict:
 def variant_stats() -> list[dict]:
     """Outcomes per resume variant (hash of the tailored resume), best interview rate first."""
     rows = con().execute(
-        "SELECT resume_hash h, COUNT(*) n, SUM(status IN ('screening','interview','offer')) pos, "
+        "SELECT resume_hash h, COUNT(*) n, SUM(status IN ('screening','interview','offer','accepted')) pos, "
         "SUM(status='rejected') neg FROM jobs WHERE resume_hash IS NOT NULL AND status != 'saved' GROUP BY resume_hash"
     ).fetchall()
     out = [{"variant": r["h"], "applied": r["n"], "positive": r["pos"], "rejected": r["neg"],
@@ -168,7 +178,11 @@ def variant_stats() -> list[dict]:
     return sorted(out, key=lambda v: -v["interview_rate"])
 
 
-def needs_followup(days: int = 7):
+def needs_followup(days: int | None = None):
+    if not days:  # the board, digest and loop all follow the followup_days preference unless told otherwise
+        from . import settings
+
+        days = int(settings.pref("followup_days") or 7)
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
     return con().execute(
         "SELECT j.* FROM jobs j WHERE j.status IN ('applied','screening','interview') "
@@ -321,7 +335,7 @@ def delete_idea(iid: int) -> None:
 
 
 # --- funnel -------------------------------------------------------------------
-STAGE_ORDER = ["applied", "screening", "interview", "offer"]
+STAGE_ORDER = ["applied", "screening", "interview", "offer", "accepted"]
 
 
 def funnel() -> dict:
@@ -356,5 +370,5 @@ def funnel() -> dict:
                else "email" if "from email" in n else "manual")
         d = by_source.setdefault(src, {"tracked": 0, "positive": 0})
         d["tracked"] += 1
-        d["positive"] += j["status"] in ("screening", "interview", "offer")
+        d["positive"] += j["status"] in POSITIVE
     return {"stages": stages, "rejected_from": rejected_from, "by_source": by_source}

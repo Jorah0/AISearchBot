@@ -48,9 +48,10 @@ CANDIDATE:
 # ----------------------------------------------------------------------------- checklist
 def checklist(job) -> list[dict]:
     d = app_dir(job)
-    kinds = {e["kind"] for e in db.events(job["id"])}
+    # 'followup'/'thanks' events are written when the mail is sent; older databases logged them as "drafted"
+    kinds = {e["kind"] for e in db.events(job["id"]) if e["detail"] != "drafted"}
     gap = json.loads((d / "gap.json").read_text(encoding="utf-8")) if (d / "gap.json").is_file() else {}
-    past_apply = job["status"] in ("screening", "interview", "offer")
+    past_apply = job["status"] in ("screening", "interview", "offer", "accepted")
     items = [
         ("Job description on file", bool(job["jd"]), f"lodestar jobs jd {job['id']} <url>"),
         ("Fit checked", bool(gap), f"lodestar resume gap {job['id']}"),
@@ -81,13 +82,9 @@ CANDIDATE SUMMARY:
 {candidate_text(1500, private=False)}""",
         provider=provider,
     )
-    db.add_event(job["id"], "followup", "drafted")
-    if job["contact_email"]:
-        prop = approvals.propose("followup", "send_email",
-                                 {"to": job["contact_email"], "subject": mail["subject"], "body": mail["body"], "job_id": job["id"]},
-                                 f"follow-up to {job['contact_name'] or job['contact_email']} at {job['company']}", job["id"])
-        return {"draft": mail, "proposal": prop}
-    return {"draft": mail, "proposal": {"status": "draft_only", "reason": "no contact email on this job"}}
+    db.add_event(job["id"], "followup_draft", mail.get("subject", ""))
+    return mail_proposal(job, mail, "followup", f"follow-up to {job['contact_name'] or job['contact_email']} at {job['company']}",
+                         purpose="followup")
 
 
 def thanks(job, interviewer: str = "", notes: str = "", provider: str | None = None) -> dict:
@@ -101,19 +98,34 @@ CANDIDATE SUMMARY:
 {candidate_text(1500, private=False)}""",
         provider=provider,
     )
-    db.add_event(job["id"], "thanks", "drafted")
-    if job["contact_email"]:
-        prop = approvals.propose("email_reply", "send_email",
-                                 {"to": job["contact_email"], "subject": mail["subject"], "body": mail["body"], "job_id": job["id"]},
-                                 f"thank-you note to {job['company']}", job["id"])
-        return {"draft": mail, "proposal": prop}
-    return {"draft": mail, "proposal": {"status": "draft_only", "reason": "no contact email on this job"}}
+    db.add_event(job["id"], "thanks_draft", mail.get("subject", ""))
+    return mail_proposal(job, mail, "email_reply", f"thank-you note to {job['company']}", purpose="thanks")
+
+
+def mail_proposal(job, mail: dict, tool: str, summary: str, purpose: str = "", review: bool = False) -> dict:
+    """Propose sending a drafted {subject, body} to the job's contact. purpose ('followup' / 'thanks') is logged as
+    an event on the job only once the mail is actually sent, so the checklist reflects sends, not drafts.
+    review=True: a draft the user asked for always waits in the Inbox, even when the tool is on auto."""
+    if not job["contact_email"]:
+        return {"draft": mail, "proposal": {"status": "draft_only", "reason": "no contact email on this job"}}
+    payload = {"to": job["contact_email"], "subject": mail.get("subject", ""), "body": mail.get("body", ""), "job_id": job["id"]}
+    if purpose:
+        payload["purpose"] = purpose
+    summary = f"{summary} -> {payload['to']}"  # the label always names the real recipient
+    return {"draft": mail, "proposal": approvals.propose(tool, "send_email", payload, summary, job["id"], force_pending=review)}
 
 
 # ----------------------------------------------------------------------------- offers
 def offer(job, salary: str = "", bonus: str = "", equity: str = "", benefits: str = "", deadline: str = "",
           notes: str = "", provider: str | None = None):
-    others = [f"#{j['id']} {j['company']} - {j['title']}" for j in db.list_jobs("offer") if j["id"] != job["id"]]
+    terms = (f"**Terms:** base: {salary or '?'} | bonus: {bonus or '?'} | equity: {equity or '?'} | "
+             f"benefits: {benefits or '?'} | deadline: {deadline or '?'}")
+    others = []
+    for j in db.list_jobs("offer"):
+        if j["id"] != job["id"]:  # each evaluated offer.md opens with its terms line, so offers can be weighed
+            f = app_dir(j) / "offer.md"
+            others.append(f"#{j['id']} {j['company']} - {j['title']}"
+                          + (": " + f.read_text(encoding="utf-8")[:600] if f.is_file() else ""))
     text = ai.ask(
         f"""Evaluate this job offer for the candidate and produce Markdown with sections:
 1. Fit against the candidate's stated preferences and salary floor (quote them).
@@ -124,9 +136,10 @@ def offer(job, salary: str = "", bonus: str = "", equity: str = "", benefits: st
 Never invent market data; if a number is unknown say what to look up.
 
 OFFER: {job['title']} at {job['company']}
-base: {salary or '?'} | bonus: {bonus or '?'} | equity: {equity or '?'} | benefits: {benefits or '?'} | deadline: {deadline or '?'}
+{terms}
 notes: {notes}
-OTHER LIVE OFFERS: {', '.join(others) or 'none'}
+OTHER LIVE OFFERS:
+{chr(10).join(others) or 'none'}
 RECORDED MARKET RANGE: {__import__('lodestar.comp', fromlist=['lookup']).lookup(job['title'], job['jd'] or '') or 'none recorded'}
 
 CANDIDATE PROFILE (see Preferences):
@@ -135,7 +148,7 @@ CANDIDATE PROFILE (see Preferences):
     )
     from .resume import write_doc
 
-    out = write_doc(app_dir(job) / "offer.md", text)
+    out = write_doc(app_dir(job) / "offer.md", f"{terms}\n\n{text}")
     db.add_event(job["id"], "offer_eval", str(out))
     if job["status"] != "offer":
         db.set_status(job["id"], "offer", "offer received")
@@ -145,7 +158,7 @@ CANDIDATE PROFILE (see Preferences):
 # ----------------------------------------------------------------------------- listing judgement
 def auto_track(listings: list[dict], provider: str | None = None) -> list[dict]:
     """Score new listings against the profile; propose tracking those above the threshold (tool: auto_track)."""
-    from .web_monitor import rank
+    from .web_monitor import jd_with_salary, rank
 
     if not listings or not settings.enabled("auto_track"):
         return []
@@ -155,7 +168,7 @@ def auto_track(listings: list[dict], provider: str | None = None) -> list[dict]:
     for j in ranked:
         if j.get("score", 0) >= floor:
             prop = approvals.propose("auto_track", "add_job",
-                                     {"company": j["company"], "title": j["title"], "url": j["url"], "jd": j["desc"],
+                                     {"company": j["company"], "title": j["title"], "url": j["url"], "jd": jd_with_salary(j),
                                       "notes": f"auto-track fit {j['score']}: {j.get('why', '')} (via {j['source']})"},
                                      f"track {j['title']} @ {j['company']} (fit {j['score']})")
             out.append({**j, "proposal": prop})

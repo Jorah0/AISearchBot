@@ -12,9 +12,11 @@ interviews, mirrors everything into Obsidian, and can pool several AI providers 
 Double-click **`install.bat`**. It creates `.venv`, installs Lodestar with the desktop extras, creates your data files
 in `~/.lodestar`, copies `.env.example` to `.env`, and puts two shortcuts on the Desktop and Start Menu: **Lodestar**
 (a native desktop window with the monitor loop running inside it) and **Lodestar monitor** (loop only). The window is
-Edge WebView2 via pywebview; if it cannot open, the same UI opens in your browser. Options: `-Schedule` registers a background task that keeps monitoring even when
-the app is closed; `-Exe` builds a standalone `dist\lodestar.exe`. `uninstall.ps1 [-Purge]` reverses it.
+Edge WebView2 via pywebview; if it cannot open, the same UI opens in your browser. Options (`install.ps1`): `-Schedule [-Every 30]` registers a background task that
+keeps monitoring even when the app is closed; `-NoShortcuts` skips the shortcuts; `-Exe` builds a standalone
+`dist\lodestar.exe`. `uninstall.ps1 [-Purge]` reverses it.
 
+macOS / Linux: `./install.sh [--schedule] [--every 30]` (desktop launcher on Linux, cron line with `--schedule`).
 Quick run without installing shortcuts: `start.bat` (or `./start.sh`). Developer install: `pip install -e .`.
 
 Docs: [docs/FEATURES.md](docs/FEATURES.md) (full inventory) · [docs/SETUP.md](docs/SETUP.md) · [docs/AUTOMATION.md](docs/AUTOMATION.md) (tool switches + approvals inbox) · [docs/COMMANDS.md](docs/COMMANDS.md) · [docs/CAPTURE.md](docs/CAPTURE.md) · [docs/RUNDOWN.md](docs/RUNDOWN.md)
@@ -24,6 +26,7 @@ Everything lives in `~/.lodestar/` (override with `LODESTAR_HOME`).
 ## Setup (5 minutes)
 
 1. **Master resume.** Edit `~/.lodestar/profile.md`. Put *everything* in it; lodestar trims per job and never invents facts.
+   Faster: `lodestar profile import resume.docx` or `lodestar profile linkedin export.zip`.
 2. **At least one AI key** (stored in Windows Credential Manager / Keychain, never on disk):
    ```powershell
    lodestar vault set ANTHROPIC_API_KEY      # prompts, hidden input
@@ -39,6 +42,7 @@ Everything lives in `~/.lodestar/` (override with `LODESTAR_HOME`).
    lodestar vault set IMAP_PASS
    ```
    Other mail hosts: set `IMAP_HOST` in `.env` (see `.env.example`).
+4. **Check the install:** `lodestar doctor` (add `--live` for one real call per provider).
 
 ## Daily use
 
@@ -124,16 +128,7 @@ Env vars and a `.env` file override the vault for any setting.
 
 ## How the pieces fit
 
-| Module | Does |
-|---|---|
-| `ai.py` | one `chat()` for Anthropic + every OpenAI-compatible API; `council()` asks all and merges |
-| `db.py` | SQLite tracker: jobs, events, watches, dedupe |
-| `resume.py` | tailor, cover letter, ATS gap, review, Markdown to .docx |
-| `email_monitor.py` | IMAP scan, keyword prefilter, AI classify, status upgrade rules, auto-create jobs from recruiter mail |
-| `web_monitor.py` | career-page diffs with keyword filter; Remotive / Arbeitnow / RemoteOK search; AI ranking |
-| `interview.py` | prep pack, mock interview REPL |
-| `vault.py` | keyring wrapper |
-| `cli.py` | argparse front end; `run` is the scheduler loop |
+Module map (24 modules, what each does): [docs/RUNDOWN.md, section 1](docs/RUNDOWN.md#1-what-it-is-made-of).
 
 Tests (offline): `python -m unittest discover -s tests -v`
 
@@ -146,7 +141,8 @@ schtasks /Create /SC MINUTE /MO 30 /TN lodestar /TR "lodestar run --once" /F
 ## Limits worth knowing
 
 - Email classification only sees mail that passes a keyword prefilter or comes from a tracked company, so cost stays low.
-- Job APIs are the free, keyless ones. LinkedIn / Indeed have no public API; use `watch add` on a search URL instead.
+- Job APIs are the free, keyless ones. LinkedIn / Indeed have no public API; use the Capture bookmarklet from the Setup tab
+  ([docs/CAPTURE.md](docs/CAPTURE.md)) on the posting you have open.
 - Nothing auto-submits applications. That is deliberate: most sites ban it and it tanks response rates.
 
 ## Web UI
@@ -155,5 +151,7 @@ schtasks /Create /SC MINUTE /MO 30 /TN lodestar /TR "lodestar run --once" /F
 lodestar ui            # http://127.0.0.1:8765 (localhost only); --port N, --no-open
 ```
 
-Board by status, job detail with one-click gap / tailor / cover / prep, free-API search with AI ranking, watches and
-email checks, profile editor, coach chat, provider and vault setup. Full walkthrough and roadmap: [docs/RUNDOWN.md](docs/RUNDOWN.md).
+Board by status, job detail with one-click gap / tailor / cover / prep, free-API search with AI ranking (six free
+sources: Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse), watches and email checks, approvals
+inbox, idea crafting, answer bank, profile editor and bank, coach chat with a mock interview (dictation), tool
+switches, provider and vault setup. Full walkthrough and roadmap: [docs/RUNDOWN.md](docs/RUNDOWN.md).

@@ -45,10 +45,11 @@ def user(name: str) -> str:
 
 
 def delete(name: str) -> None:
-    try:
-        keyring.delete_password(SERVICE, name)
-    except keyring.errors.PasswordDeleteError:
-        pass
+    for service in (SERVICE, "jobbot"):  # the old-name copy too, or get() would copy it straight back
+        try:
+            keyring.delete_password(service, name)
+        except keyring.errors.PasswordDeleteError:  # not stored under that name
+            pass
     idx = _index()
     idx.pop(name, None)
     _save_index(idx)

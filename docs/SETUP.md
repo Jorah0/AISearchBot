@@ -9,14 +9,20 @@ desktop extras, initialize `~/.lodestar`, and open the desktop window with the m
 ```powershell
 powershell -ExecutionPolicy Bypass -File start.ps1 -NoLoop        # UI only
 powershell -ExecutionPolicy Bypass -File start.ps1 -Every 15      # loop every 15 min
+powershell -ExecutionPolicy Bypass -File start.ps1 -Browser -NoUI # loop only (-NoUI needs -Browser)
+powershell -ExecutionPolicy Bypass -File start.ps1 -Port 8800     # fixed port instead of the first free one
 ```
 
-macOS / Linux: `./start.sh` (flags `--no-loop`, `--no-ui`, `--every 15`, `--port 8765`).
+macOS / Linux: `./start.sh` (flags `--no-loop`, `--no-ui`, `--every 15`, `--port 8765`) for a quick run, or
+`./install.sh [--schedule] [--every 30]` to install: a desktop launcher on Linux (an alias hint on macOS) and, with
+`--schedule`, a cron line that runs `lodestar run --once`.
 
 ## 1. Master resume
 
 `lodestar init` creates `~/.lodestar/profile.md`. Fill it with everything: every job, every bullet, numbers, projects,
 education, certifications, and the Preferences line (target roles, locations, salary floor, deal-breakers).
+The Preferences section is private: it feeds ranking, gap, offer review and coaching, but never a resume, letter,
+email or form answer.
 lodestar never invents facts, so anything not in this file cannot appear in a tailored resume.
 You can also edit it in the UI (Profile tab) and get an AI review there.
 
@@ -114,6 +120,16 @@ idea crafting; `lodestar providers local` makes everything Ollama-only. `lodesta
                                   history/ keeps a regenerated document's previous version
 ~/.lodestar/capture.token         bookmarklet token (delete to revoke; bookmarklets then need re-dragging)
 ~/.lodestar/alerts.log            monitor output
+~/.lodestar/settings.json         tool switches and preferences
+~/.lodestar/comp.json             your market-rate table
+~/.lodestar/usage.jsonl           tokens per AI call
+~/.lodestar/lodestar.log          rotating log (2 MB x 3)
+~/.lodestar/backups/              nightly zips (last 7)
+~/.lodestar/exports/              JSON / CSV dumps, job packets
+~/.lodestar/snapshots/            last page text per watch (for diffs)
+~/.lodestar/vault_index.json      secret names and usernames only; secrets live in the OS keyring
+~/.lodestar/template.docx         optional: styles for .docx export
+~/.lodestar/.env                  optional: setting overrides
 <vault>/jobs/                   Obsidian mirror of the tracker
 ```
 

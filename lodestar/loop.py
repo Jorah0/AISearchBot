@@ -30,7 +30,8 @@ def _step(name: str, fn) -> None:
 
 
 def _followups(a) -> None:
-    for j in db.needs_followup(a.followup):
+    days = getattr(a, "followup", None) or int(settings.pref("followup_days") or 7)  # --followup overrides the pref
+    for j in db.needs_followup(days):
         step = followup_step(j)
         if step == "done":
             continue
@@ -42,7 +43,7 @@ def _followups(a) -> None:
                 print(f"  ghosted close-out -> {r.get('status')}")
             db.add_event(j["id"], "followup_nudge", "cadence exhausted")
             continue
-        notify(f"FOLLOW UP: #{j['id']} {j['company']} - {j['title']} has been quiet {a.followup}+ days")
+        notify(f"FOLLOW UP: #{j['id']} {j['company']} - {j['title']} has been quiet {days}+ days")
         db.add_event(j["id"], "followup_nudge", "")
         if settings.enabled("followup") and j["contact_email"] and ai.available():
             from .apply import followup
@@ -57,7 +58,7 @@ def _reminders() -> None:
         key = f"remind:{it['path']}"
         if not db.seen(key):
             notify(f"INTERVIEW {it['when']:%a %Y-%m-%d %H:%M}: #{it['job_id']} {it['company']} - {it['title']}. "
-                   f"Prep: lodestar interview prep {it['job_id']}")
+                   f"Prep: open job #{it['job_id']} on the Board > Interview prep (CLI: lodestar interview prep {it['job_id']})")
             db.mark_seen(key)
 
 

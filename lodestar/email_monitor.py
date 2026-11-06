@@ -110,7 +110,7 @@ def classify(subject: str, sender: str, body: str, provider: str | None = None) 
 Use "other" for newsletters, job-board digests, marketing, and anything not about a specific application or recruiter contact.
 Known tracked applications: {tracked or 'none'}
 Return JSON: {{"category": "...", "company": "...", "title": "...", "summary": "one line",
-"action": "what the candidate should do next, or none", "deadline": "YYYY-MM-DD or null"}}
+"action": "what the candidate should do next, or none", "deadline": "YYYY-MM-DD, or YYYY-MM-DD HH:MM (24h) only when the email states the interview time, or null"}}
 
 FROM: {sender}
 SUBJECT: {subject}
@@ -205,19 +205,29 @@ def _apply(info: dict, dry: bool) -> None:
         if human and not job["contact_email"] and info["trusted"]:  # forged or merely name-matched senders never become the contact
             db.update_job(job["id"], contact_email=sender_email, contact_name=info.get("sender_name") or "")
             job = db.get_job(job["id"])
+        detail = f"{info['category']}: {info['subject'][:80]}"  # next step and due date belong on the timeline too
+        if action and str(action).lower() != "none":
+            detail += f" | next: {action}"
+        if info.get("deadline"):
+            detail += f" | due: {info['deadline']}"
+        db.add_event(job["id"], "email", detail)
         if new and db.STATUSES.index(new) > db.STATUSES.index(job["status"]):
             approvals.propose("email_classify", "set_status",
                               {"job_id": job["id"], "status": new, "note": f"(email: {info['subject'][:60]})"},
                               f"move #{job['id']} {job['company']} to {new} ({info['category']} email)", job["id"],
                               force_pending=not info.get("trusted", False))  # unauthenticated mail never moves a job unreviewed
-        else:
-            db.add_event(job["id"], "email", f"{info['category']}: {info['subject'][:80]}")
         if info["category"] == "interview" and info.get("deadline") and settings.enabled("calendar"):
-            try:  # calendar file + prep reminder; a bad date must not break the scan
+            d = str(info["deadline"]).strip()
+            try:  # calendar file + prep reminder; a bad date must not break the scan (parse_when raises SystemExit)
                 from .extras import ics, parse_when
 
-                notify(f"CALENDAR: wrote {ics(job, parse_when(str(info['deadline'])))}")
-            except Exception as e:
+                when = parse_when(d)
+                if ":" in d:
+                    notify(f"CALENDAR: wrote {ics(job, when)}")
+                else:  # a bare date is often a reply-by date: an .ics at 00:00 would count as a booked interview
+                    db.add_event(job["id"], "interview_date", f"{d} (no time stated; the .ics is written when a slot is accepted)")
+                    notify(f"INTERVIEW DATE {d} for #{job['id']} {job['company']}: no time stated, no .ics written")
+            except (Exception, SystemExit) as e:
                 db.add_event(job["id"], "calendar", f"could not parse date {info['deadline']!r}: {e}")
     elif info["category"] in ("recruiter_outreach", "interview", "offer") and info.get("company"):
         r = approvals.propose("email_classify", "add_job",
@@ -295,13 +305,18 @@ CANDIDATE (for name and signature only):
     notify(f"REPLY {r.get('status', '?').upper()}: {payload['subject']}" + (f"  (inbox #{r['id']})" if r.get("status") == "pending" else ""))
 
 
-def draft_reply(job, intent: str, provider: str | None = None) -> str:
+def draft_reply(job, intent: str, provider: str | None = None) -> dict:
+    """{draft, proposal}: proposed for sending to the job's contact through the Inbox (tool: email_reply)."""
+    from .apply import JSON_MAIL, _sig, mail_proposal
     from .resume import candidate_text
 
-    return ai.ask(
+    mail = ai.ask_json(
         f"""Draft a short professional email (under 150 words) from the candidate to {job['company']} regarding the
-{job['title']} application. Intent: {intent}. Match a friendly, direct tone; include a subject line.
+{job['title']} application. Intent: {intent}. Match a friendly, direct tone.{_sig()}
+{JSON_MAIL}
 Candidate background (for name/signature only):
 {candidate_text(1500, private=False)}""",
         provider=provider,
     )
+    return mail_proposal(job, mail, "email_reply", f"email to {job['contact_name'] or 'contact'} at "
+                         f"{job['company']}: {intent[:60]}", review=True)  # a requested draft is never sent unseen

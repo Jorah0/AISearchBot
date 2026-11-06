@@ -1,7 +1,7 @@
 :root {
   --bg: #0f1115; --panel: #171a21; --panel-2: #1c2029; --line: #262b36; --fg: #e6e8ee; --dim: #8a93a6;
   --acc: #5b9cff; --acc-2: #9cc4ff; --ok: #3ccf7a; --warn: #f2b84b; --bad: #ff6b6b;
-  --s-saved: #8a93a6; --s-applied: #5b9cff; --s-screening: #9cc4ff; --s-interview: #f2b84b; --s-offer: #3ccf7a; --s-rejected: #ff6b6b; --s-withdrawn: #555b68;
+  --s-saved: #8a93a6; --s-applied: #5b9cff; --s-screening: #9cc4ff; --s-interview: #f2b84b; --s-offer: #3ccf7a; --s-accepted: #1fa35c; --s-rejected: #ff6b6b; --s-withdrawn: #555b68;
   --r: 10px; --shadow: 0 8px 30px rgba(0,0,0,.35);
 }
 * { box-sizing: border-box; }
@@ -66,7 +66,7 @@ a { color: var(--acc); text-decoration: none; }
 .col { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 10px; min-height: 140px; border-top: 3px solid var(--line); }
 .col[data-s="saved"] { border-top-color: var(--s-saved); } .col[data-s="applied"] { border-top-color: var(--s-applied); }
 .col[data-s="screening"] { border-top-color: var(--s-screening); } .col[data-s="interview"] { border-top-color: var(--s-interview); }
-.col[data-s="offer"] { border-top-color: var(--s-offer); } .col[data-s="rejected"] { border-top-color: var(--s-rejected); } .col[data-s="withdrawn"] { border-top-color: var(--s-withdrawn); }
+.col[data-s="offer"] { border-top-color: var(--s-offer); } .col[data-s="accepted"] { border-top-color: var(--s-accepted); } .col[data-s="rejected"] { border-top-color: var(--s-rejected); } .col[data-s="withdrawn"] { border-top-color: var(--s-withdrawn); }
 .col h3 { display: flex; justify-content: space-between; }
 .card { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; margin-bottom: 7px; cursor: pointer; transition: border-color .12s, transform .12s; }
 .card:hover { border-color: var(--acc); transform: translateY(-1px); }

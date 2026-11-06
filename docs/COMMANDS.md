@@ -6,9 +6,9 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 
 | Command | What it does |
 |---|---|
-| `lodestar app [--every 30] [--port 8765] [--no-loop] [--no-open]` | The workbot: monitor loop in the background + web UI. What the "lodestar" shortcut runs. |
+| `lodestar app [--every 30] [--days 2] [--followup N] [--no-email] [--port 8765] [--no-loop] [--no-open]` | The workbot: monitor loop in the background + web UI. What the "lodestar" shortcut runs. |
 | `lodestar ui [--port] [--no-open]` | Web UI only. |
-| `lodestar run [--every 30] [--days 2] [--followup 7] [--no-email] [--once]` | Monitor loop: email check, watches, follow-up nudges. `--once` for schedulers. |
+| `lodestar run [--every 30] [--days 2] [--followup N] [--no-email] [--once]` | Monitor loop: email check, watches, follow-up nudges (N defaults to pref `followup_days`). `--once` for schedulers. |
 | `lodestar schedule install [--every 30]` / `remove` | Windows scheduled task that runs `run --once`; prints the cron line elsewhere. |
 | `lodestar digest [--days 7] [--send]` | Weekly summary with a coach's 5-action plan; `--send` emails it. |
 | `lodestar alerts` | Tail of `alerts.log`. |
@@ -21,11 +21,11 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 | `lodestar jobs add "Company" "Title" [--jd url\|file\|text] [--url] [--notes]` | Track a job; `--jd` URL is fetched and stored as text. |
 | `lodestar jobs list [--status S]` | Board as a table. |
 | `lodestar jobs show ID` | Fields + full event timeline. |
-| `lodestar jobs status ID saved\|applied\|screening\|interview\|offer\|rejected\|withdrawn [--note]` | Move it. `applied` stamps `applied_at`. |
+| `lodestar jobs status ID saved\|applied\|screening\|interview\|offer\|accepted\|rejected\|withdrawn [--note]` | Move it. `applied` stamps `applied_at`. `accepted` proposes withdrawing your other open applications (Inbox). |
 | `lodestar jobs note ID "text"` / `jobs jd ID source` / `jobs rm ID` | Notes, replace description, delete. |
 | `lodestar jobs stats` | Counts, response rate, interview rate. |
 | `lodestar variants` | Outcomes per tailored-resume variant: which resume gets interviews. |
-| `lodestar jobs followups [--days 7]` | Applications quiet for N+ days. |
+| `lodestar jobs followups [--days N]` | Applications quiet for N+ days (default: pref `followup_days`). |
 | `lodestar jobs search "query" [--keywords a,b] [--rank] [--limit 25] [--save 0 3]` | Free job APIs; `--rank` scores fit 0-100 against your profile; `--save` tracks results by index. |
 | `lodestar export obsidian [--folder jobs]` | One note per application + index table in your vault. |
 
@@ -35,7 +35,7 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 |---|---|
 | `lodestar resume gap ID` | ATS + hiring-manager comparison: score, missing keywords, verdict. Writes `gap.json`. |
 | `lodestar resume tailor ID [--council] [--docx]` | Tailored `resume.md` (+ `.docx`); records the variant hash. |
-| `lodestar resume cover ID [--council] [--tone "..."]` | Cover letter. |
+| `lodestar resume cover ID [--council] [--tone "..."] [--words 300] [--docx]` | A complete letter: contact block, date, addressee (the job's contact or Hiring Manager), greeting, 3-4 paragraphs built from the tailored resume, gap check and research pack, sign-off; `--docx` exports. |
 | `lodestar resume review [file]` | Brutal critique of your master profile or any file. |
 | `lodestar resume export file.md` | Markdown to .docx. |
 | `lodestar resume profile` | Print the master profile path. |
@@ -47,7 +47,7 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 | Command | What it does |
 |---|---|
 | `lodestar interview prep ID [--council]` | Prep pack: questions with model answers, STAR stories, gaps, questions to ask, pitch, negotiation. |
-| `lodestar interview mock ID` | Live mock interview, one question at a time, scored debrief on `done`. |
+| `lodestar interview mock ID` | Live mock interview, one question at a time, scored debrief on `done`; the transcript and debrief are saved to `mock_interview.md` (also from Coach > Mock interview, which can speak the questions aloud). |
 | `lodestar ics ID --when "YYYY-MM-DD HH:MM" [--minutes 60]` | Calendar file for the interview plus a prep reminder 2 days before. Email check creates this automatically when an interview mail carries a date. |
 
 ## Monitoring
@@ -75,9 +75,10 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 | `lodestar vault set NAME [value] [--user U]` | Store in the OS keyring (prompts if no value). |
 | `lodestar vault get NAME [--show]` / `vault rm NAME` / `vault list` | Read, delete, list names. |
 
-## Web API (for the bookmarklet and your own scripts)
+## Web API (for the page and the bookmarklets)
 
-All on `http://127.0.0.1:8765`, JSON in and out, localhost only.
+All on `http://127.0.0.1:<port>`, JSON in and out. Every route needs the per-launch `X-Lodestar-Token` header that the
+page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, with `?t=<~/.lodestar/capture.token>`.
 
 | Route | Purpose |
 |---|---|
@@ -85,11 +86,13 @@ All on `http://127.0.0.1:8765`, JSON in and out, localhost only.
 | `GET /api/jobs/ID` | job, events, generated documents |
 | `POST /api/jobs` `{company,title,jd,url,notes}` | add |
 | `POST /api/capture` `{title,url,desc}` | add from a browser page title (bookmarklet) |
-| `POST /api/jobs/ID/status|note|jd|delete` | update |
+| `POST /api/jobs/ID/status|note|jd|contact|delete` | update (`contact` takes `{email, name}`) |
 | `POST /api/watches` `{url,keywords,search}` / `POST /api/watches/ID` | add / remove |
 | `GET|POST /api/profile` | read / save the master resume |
-| `POST /api/vault` `{name,value,user}` | store a secret |
-| `POST /api/run/ACTION` then `GET /api/tasks/ID` | background actions: tailor, cover, gap, prep, review, reply, outreach, ics, email_check, watch_run, search, chat, council, digest, obsidian, providers_test |
+| `POST /api/vault` `{name,value,user}` / `{name,delete:true}` | store / remove a secret |
+| `POST /api/comp` `{op: set\|delete, title, city, low, high}` | edit your market-rate table |
+| `POST /api/open_folder` `{which: data\|exports\|backups\|applications\|log}` | reveal a folder in the file manager |
+| `POST /api/run/ACTION` then `GET /api/tasks/ID` | background actions: tailor, cover, gap, prep, review, reply, outreach, ics, email_check, watch_run, search, chat, council, digest, obsidian, providers_test, providers_local, models, export (`{fmt: json or csv}`), auto_track, mock (`{messages, id}`), packet, doctor (`{live}`), backup |
 
 ## Automation and approvals (see AUTOMATION.md)
 
@@ -97,11 +100,11 @@ All on `http://127.0.0.1:8765`, JSON in and out, localhost only.
 |---|---|
 | `lodestar tools list` | every automated tool with its enabled / auto switches, plus preferences |
 | `lodestar tools enable\|disable\|auto\|manual NAME` | flip a switch |
-| `lodestar tools set KEY VALUE` | preferences: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, signature |
+| `lodestar tools set KEY VALUE` | preferences: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, weekly_target (applications/week, used by idea crafting), provider, council_providers, council_judge, signature, models (`provider=model`; also written by self-healing model selection) |
 | `lodestar inbox [--all] [-v]` | actions waiting for approval (`-v` shows the drafted email / payload) |
 | `lodestar approve ID... [--subject] [--body FILE] [--to]` | execute, optionally editing the email first |
 | `lodestar reject ID... [--reason]` | discard |
-| `lodestar answers list\|add\|rm\|ask ID "question"` | answer bank for application-form questions; `ask` drafts from profile + bank and proposes saving |
+| `lodestar answers list\|add Q A [--tags t1,t2]\|rm ID\|ask ID "question"` | answer bank for application-form questions; `ask` drafts from profile + bank and proposes saving |
 | `lodestar jobs contact ID EMAIL [--name]` | recruiter / hiring-manager address used for replies and follow-ups |
 | `lodestar jobs checklist ID` | done / next for every stage of this application |
 | `lodestar followup ID` | follow-up email draft; sent through the inbox when a contact is known |
@@ -110,7 +113,7 @@ All on `http://127.0.0.1:8765`, JSON in and out, localhost only.
 | `lodestar jobs search "q" --auto` | AI-judge results; propose tracking fits at or above `auto_track_min_score` |
 
 Web API additions: `POST /api/approvals/ID/approve {edits}` / `reject`, `POST /api/tools {tool, enabled, auto}`,
-`POST /api/prefs {key, value}`, `POST /api/answers {question, answer}` / `POST /api/answers/ID` (delete); actions
+`POST /api/prefs {key, value}`, `POST /api/answers {question, answer, tags}` / `POST /api/answers/ID` (delete); actions
 `answer`, `checklist`, `followup`, `thanks`, `offer`, `auto_track`. `GET /api/state` now includes `pending`, `decided`,
 `tools`, `prefs`, `answers`.
 
@@ -138,7 +141,7 @@ Web: Ideas tab (craft, status, refine), `GET /api/autofill` (data for the autofi
 | `lodestar backup [--out DIR] [--keep 7]` | zip of profile, tracker, settings, answers, ideas, documents; the `backup` tool does this nightly |
 | `lodestar export json / csv [--out DIR]` | dump jobs, events, answers, ideas, pending |
 | `lodestar providers models [NAME...]` | model ids each provider advertises; set `<PROVIDER>_MODEL` from the list |
-| `lodestar providers local` | local-only preset: default provider and council restricted to Ollama |
+| `lodestar providers local` | local-only preset: default provider and council restricted to Ollama, and a model Ollama serves is pinned (UI: Setup > Local only) |
 | `lodestar tools set provider NAME` / `council_providers a,b` | default provider and which providers the council / idea crafting may send data to |
 
 Log file: `~/.lodestar/lodestar.log` (rotating, 2 MB x 3) records every command, UI request, alert, and task failure.
@@ -160,7 +163,7 @@ tries Greenhouse, Lever, Workday, Ashby and SmartRecruiters field selectors befo
 
 | Command | What it does |
 |---|---|
-| `lodestar desktop [--port N] [--no-loop] [--every 30] [--no-email]` | native window (Edge WebView2 via pywebview) with the server and monitor loop in the same process; the Desktop shortcut runs this. Falls back to the browser if the window cannot open. |
+| `lodestar desktop [--port N] [--no-loop] [--every 30] [--days 2] [--followup N] [--no-email]` | native window (Edge WebView2 via pywebview) with the server and monitor loop in the same process; the Desktop shortcut runs this. Falls back to the browser if the window cannot open. |
 
 Install the window dependency with `pip install -e ".[desktop]"` (the installer does this); `.[pdf]` adds PDF resume import.
 
@@ -170,18 +173,17 @@ Install the window dependency with `pip install -e ".[desktop]"` (the installer 
 |---|---|
 | `lodestar resume import FILE [--merge] [--save]` | bring in an existing .docx / .pdf / .md / .txt resume; `--merge` folds it into the master profile structure with AI; `--save` writes the profile |
 | `lodestar resume adjust "instruction" [--job ID] [--doc resume.md\|cover_letter.md] [--save]` | AI-revise the master profile (default) or a job document, keeping every fact; prints unless `--save` |
-| `lodestar resume cover ID [--tone ...] [--words 300] [--docx]` | a complete letter: contact block, date, addressee (the job's contact or Hiring Manager), greeting, 3-4 paragraphs built from the tailored resume, gap check and research pack, sign-off; `--docx` exports |
 
 UI: the Profile tab imports a file (preview, then "Merge into my profile" or "Replace"), and has an Adjust box; every
 per-job document tab has "Edit document" and an Adjust box; nothing is saved until you click Save.
 Web API: `POST /api/upload {name, data(base64)}` -> `{text}`; `POST /api/docs/ID {name, text}` saves one of
-resume.md, cover_letter.md, interview_prep.md, research.md, offer.md; actions `adjust`, `merge_profile`.
+resume.md, cover_letter.md, interview_prep.md, research.md, offer.md, mock_interview.md; actions `adjust`, `merge_profile`.
 
 ## Market rates and cadence (pass 8)
 
 | Command | What it does |
 |---|---|
-| `lodestar comp set "software engineer" austin 130000 170000` | record a market range (city optional; `*` = anywhere); gap checks and offer evaluations quote it |
+| `lodestar comp set "software engineer" austin 130000 170000` | record a market range (city optional; `*` = anywhere); gap checks, offer evaluations and interview prep quote it. Also in the UI: Setup > Market rates |
 | `lodestar comp list` / `comp lookup "title" [city]` | inspect the table |
 
 Follow-up cadence: a quiet application is nudged (and drafted, if a contact is known) every `followup_days`; after the
@@ -203,7 +205,8 @@ preference order (for example `claude-sonnet-5*`, `gpt-5*`, `gemini-2.5-flash*`)
 preference, and retries once. `lodestar providers --test` prints the model each provider ends up using. An explicit
 `<PROVIDER>_MODEL` env setting is never overridden.
 
-Setup now has a Data panel: Backup now, Export JSON, and buttons that open the data, documents and backups folders.
+Setup now has a Data panel: Backup now, Export JSON, Export CSV, and buttons that open the data, exports, documents
+and backups folders.
 
 ## Diagnostics (pass 11)
 

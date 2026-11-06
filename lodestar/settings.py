@@ -91,7 +91,12 @@ def set_pref(key: str, value) -> None:
         data = load()
         cur = PREFS[key]
         if isinstance(cur, dict):
-            data["prefs"][key] = dict(value) if isinstance(value, dict) else dict(cur, **{str(value).split("=")[0]: str(value).split("=", 1)[1]})
+            if not isinstance(value, dict):  # one entry at a time: "provider=model" (empty model = back to the default)
+                k, sep, v = str(value).partition("=")
+                if not sep or not k.strip():
+                    raise SystemExit(f"{key} takes provider=model, e.g. openai=gpt-5")
+                value = {**data["prefs"].get(key, {}), k.strip(): v.strip()}
+            data["prefs"][key] = dict(value)
             save(data)
             return
         if isinstance(cur, bool):

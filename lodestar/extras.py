@@ -20,22 +20,27 @@ def _job_dir(j) -> Path:
 
 
 # ----------------------------------------------------------------------------- outreach
-def outreach(job, person: str = "", channel: str = "linkedin", provider: str | None = None) -> str:
+def outreach(job, person: str = "", channel: str = "linkedin", provider: str | None = None) -> dict:
+    """{text} for a LinkedIn note; for email {draft, proposal}, proposed to the job's contact through the Inbox."""
+    from .apply import JSON_MAIL, mail_proposal
     from .resume import candidate_text
 
-    limit = "under 300 characters, no greeting fluff" if channel == "linkedin" else "under 120 words, include a subject line"
-    return ai.ask(
-        f"""Write a {channel} message from the candidate to {person or 'a hiring manager or recruiter'} at {job['company']}
-about the {job['title']} role. Goal: a reply or a referral, not a pitch. {limit}. Mention one specific, relevant
-achievement and one specific reason this company. Plain text.
+    email = channel == "email"
+    limit = f"under 120 words. {JSON_MAIL}" if email else "under 300 characters, no greeting fluff. Plain text."
+    prompt = f"""Write a {channel} message from the candidate to {person or 'a hiring manager or recruiter'} at {job['company']}
+about the {job['title']} role. Goal: a reply or a referral, not a pitch. Mention one specific, relevant
+achievement and one specific reason this company. {limit}
 
 JOB DESCRIPTION:
 {(job['jd'] or '')[:3000]}
 
 CANDIDATE:
-{candidate_text(5000, private=False)}""",
-        provider=provider,
-    )
+{candidate_text(5000, private=False)}"""
+    if not email:
+        return {"text": ai.ask(prompt, provider=provider)}
+    # always reviewed: the note may be written for `person` while the only stored address is another contact
+    return mail_proposal(job, ai.ask_json(prompt, provider=provider), "email_reply",
+                         f"outreach email{' written for ' + person if person else ''} at {job['company']}", review=True)
 
 
 # ----------------------------------------------------------------------------- calendar
@@ -63,7 +68,7 @@ def ics(job, when: datetime, minutes: int = 60, title: str | None = None, remind
     body = "\n".join([
         "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//lodestar//EN",
         ev(when, minutes, summary, f"lodestar job #{job['id']} {job['url'] or ''}".strip()),
-        ev(prep, 30, f"Prep: {job['company']} interview", f"run: lodestar interview prep {job['id']}"),
+        ev(prep, 30, f"Prep: {job['company']} interview", f"Lodestar: open job #{job['id']} > Interview prep (CLI: lodestar interview prep {job['id']})"),
         "END:VCALENDAR", ""])
     d = _job_dir(job)
     d.mkdir(parents=True, exist_ok=True)
@@ -77,7 +82,7 @@ def ics(job, when: datetime, minutes: int = 60, title: str | None = None, remind
 def digest(days: int = 7, send: bool = False, provider: str | None = None) -> str:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
     recent = [j for j in db.list_jobs() if j["updated_at"] >= cutoff]
-    follow = db.needs_followup(7)
+    follow = db.needs_followup()
     alerts = [ln for ln in (ALERTS.read_text(encoding="utf-8").splitlines() if ALERTS.is_file() else [])
               if ln[1:11] >= cutoff]
     st = db.stats()
