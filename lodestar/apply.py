@@ -54,7 +54,7 @@ def checklist(job) -> list[dict]:
     past_apply = job["status"] in ("screening", "interview", "offer", "accepted")
     items = [
         ("Job description on file", bool(job["jd"]), f"lodestar jobs jd {job['id']} <url>"),
-        ("Fit checked", bool(gap), f"lodestar resume gap {job['id']}"),
+        ("Fit checked", "missing_keywords" in gap, f"lodestar resume gap {job['id']}"),
         (f"Verdict worth applying ({gap.get('verdict', '?')}, score {gap.get('match_score', '?')})",
          gap.get("verdict") in ("apply", "stretch"), "reconsider or move on"),
         ("Resume tailored", (d / "resume.md").is_file(), f"lodestar resume tailor {job['id']} --docx"),
@@ -69,10 +69,40 @@ def checklist(job) -> list[dict]:
     return [{"item": i, "done": bool(ok), "next": nxt} for i, ok, nxt in items]
 
 
-# ----------------------------------------------------------------------------- follow-up / thanks
-def followup(job, provider: str | None = None) -> dict:
+# ----------------------------------------------------------------------------- follow-up / thanks / withdraw
+TEMPLATES = {  # offline drafts: plain, honest, only what the tracker knows; never the profile (so never the salary floor)
+    "followup": ("Following up on my {title} application",
+                 "I am writing to follow up on my application for the {title} position at {company}. I am still very "
+                 "interested in the role and would be grateful for any update on the next steps."),
+    "thanks": ("Thank you for the {title} interview",
+               "Thank you for taking the time to speak with me about the {title} position at {company}.{notes} I enjoyed "
+               "the conversation and remain very interested in the role."),
+    "withdraw": ("Withdrawing my application for {title}",
+                 "Thank you for considering me for the {title} position at {company}. I have decided to withdraw my "
+                 "application. I appreciate the time you spent on it and wish you the best with the search."),
+}
+
+
+def template_mail(kind: str, job, to: str = "", notes: str = "") -> dict:
+    """{subject, body} from TEMPLATES, filled from the job and your name (signature / name pref, else the profile bank)."""
+    from .profile import load
+
+    subject, body = TEMPLATES[kind]
+    name = settings.pref("signature") or settings.pref("name") or load()["contact"].get("name") or ""
+    who = (to or job["contact_name"] or "").strip()
+    fill = {"title": job["title"], "company": job["company"],
+            "notes": f" I especially valued our conversation about {notes.strip().rstrip('.')}." if notes.strip() else ""}
+    return {"subject": subject.format(**fill),
+            "body": f"Hello{' ' + who if who else ''},\n\n{body.format(**fill)}\n\nBest regards,\n{name}".rstrip()}
+
+
+def _offline(template: bool) -> bool:
+    return template or not ai.available()  # no provider configured: the template, still proposed through the Inbox
+
+
+def followup(job, provider: str | None = None, template: bool = False) -> dict:
     last = next((e for e in reversed(db.events(job["id"])) if e["kind"] == "status"), None)
-    mail = ai.ask_json(
+    mail = template_mail("followup", job) if _offline(template) else ai.ask_json(
         f"""Write a brief, warm follow-up email (under 110 words) from the candidate about the {job['title']} application
 at {job['company']} (status: {job['status']}, last update: {last['ts'][:10] if last else 'unknown'}). Reaffirm interest
 with one concrete reason, ask for a status update or next step, no pressure, no cliches.{_sig()}
@@ -87,8 +117,8 @@ CANDIDATE SUMMARY:
                          purpose="followup")
 
 
-def thanks(job, interviewer: str = "", notes: str = "", provider: str | None = None) -> dict:
-    mail = ai.ask_json(
+def thanks(job, interviewer: str = "", notes: str = "", provider: str | None = None, template: bool = False) -> dict:
+    mail = template_mail("thanks", job, interviewer, notes) if _offline(template) else ai.ask_json(
         f"""Write a thank-you email (under 120 words) from the candidate to {interviewer or 'the interviewer'} after an
 interview for {job['title']} at {job['company']}. Reference something specific from the conversation if given:
 "{notes}". Reaffirm fit in one sentence, no flattery.{_sig()}
@@ -102,15 +132,35 @@ CANDIDATE SUMMARY:
     return mail_proposal(job, mail, "email_reply", f"thank-you note to {job['company']}", purpose="thanks")
 
 
-def mail_proposal(job, mail: dict, tool: str, summary: str, purpose: str = "", review: bool = False) -> dict:
+def withdraw(job, provider: str | None = None, template: bool = False) -> dict:
+    """Draft a withdrawal email; once sent from the Inbox the job moves to withdrawn. Always waits for review."""
+    mail = template_mail("withdraw", job) if _offline(template) else ai.ask_json(
+        f"""Write a short, gracious email (under 90 words) from the candidate withdrawing their application for
+{job['title']} at {job['company']}. Thank them for their time, keep any reason brief and general, invent nothing, leave
+the door open, no cliches.{_sig()}
+{JSON_MAIL}
+
+CANDIDATE SUMMARY (for the name only):
+{candidate_text(800, private=False)}""",
+        provider=provider,
+    )
+    db.add_event(job["id"], "withdraw_draft", mail.get("subject", ""))
+    return mail_proposal(job, mail, "email_reply", f"withdrawal to {job['company']}", review=True, new_status="withdrawn")
+
+
+def mail_proposal(job, mail: dict, tool: str, summary: str, purpose: str = "", review: bool = False,
+                  new_status: str = "") -> dict:
     """Propose sending a drafted {subject, body} to the job's contact. purpose ('followup' / 'thanks') is logged as
     an event on the job only once the mail is actually sent, so the checklist reflects sends, not drafts.
-    review=True: a draft the user asked for always waits in the Inbox, even when the tool is on auto."""
+    review=True: a draft the user asked for always waits in the Inbox, even when the tool is on auto.
+    new_status: where the job moves once the mail is sent (forward only, see approvals._send)."""
     if not job["contact_email"]:
         return {"draft": mail, "proposal": {"status": "draft_only", "reason": "no contact email on this job"}}
     payload = {"to": job["contact_email"], "subject": mail.get("subject", ""), "body": mail.get("body", ""), "job_id": job["id"]}
     if purpose:
         payload["purpose"] = purpose
+    if new_status:
+        payload["new_status"] = new_status
     summary = f"{summary} -> {payload['to']}"  # the label always names the real recipient
     return {"draft": mail, "proposal": approvals.propose(tool, "send_email", payload, summary, job["id"], force_pending=review)}
 
@@ -158,7 +208,7 @@ CANDIDATE PROFILE (see Preferences):
 # ----------------------------------------------------------------------------- listing judgement
 def auto_track(listings: list[dict], provider: str | None = None) -> list[dict]:
     """Score new listings against the profile; propose tracking those above the threshold (tool: auto_track)."""
-    from .web_monitor import jd_with_salary, rank
+    from .web_monitor import jd_with_salary, listing_fields, rank
 
     if not listings or not settings.enabled("auto_track"):
         return []
@@ -169,7 +219,8 @@ def auto_track(listings: list[dict], provider: str | None = None) -> list[dict]:
         if j.get("score", 0) >= floor:
             prop = approvals.propose("auto_track", "add_job",
                                      {"company": j["company"], "title": j["title"], "url": j["url"], "jd": jd_with_salary(j),
-                                      "notes": f"auto-track fit {j['score']}: {j.get('why', '')} (via {j['source']})"},
+                                      "notes": f"auto-track fit {j['score']}: {j.get('why', '')} (via {j['source']})",
+                                      **listing_fields(j)},
                                      f"track {j['title']} @ {j['company']} (fit {j['score']})")
             out.append({**j, "proposal": prop})
     return out

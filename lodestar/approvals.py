@@ -81,7 +81,8 @@ def _status(p: dict) -> str:
 
 
 def _add_job(p: dict) -> str:
-    jid = db.add_job(p["company"], p["title"], p.get("url"), p.get("jd"), p.get("notes"))
+    jid = db.add_job(p["company"], p["title"], p.get("url"), p.get("jd"), p.get("notes"),
+                     **{k: p[k] for k in ("location", "posted_at") if p.get(k)})  # validated: an edited bad date fails here
     if p.get("contact_email"):
         db.update_job(jid, contact_email=p["contact_email"], contact_name=p.get("contact_name", ""))
     return f"tracked #{jid} {p['company']} - {p['title']}"

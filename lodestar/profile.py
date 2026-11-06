@@ -509,6 +509,8 @@ def import_file(data: bytes, filename: str, source: str = "resume", provider: st
             entry = {"id": sha[:8], "name": name, "source": source, "added": datetime.now().isoformat(timespec="seconds"),
                      "sha": sha, "chars": len(text), "file": stored}
             bank["resumes"].append(entry)
+        elif not is_zip and Path(str(entry.get("file", ""))).name == entry.get("file") and not entry["file"].endswith((".txt", ".md")):
+            (RESUMES / Path(entry["file"]).with_suffix(".txt").name).write_text(text, encoding="utf-8")  # re-import: fresh extraction
         assert entry is not None
         added = merge(bank, facts, f"{source}:{entry['id']}")
         save(bank)
@@ -558,9 +560,27 @@ def set_contact(field: str, value: str) -> dict:
 
 
 # ----------------------------------------------------------------------------- rendering + prompts
+PREFS_HEAD_RE = re.compile(r"(?mi)^(#{1,6})[ \t]*preferences\b")  # any level, any case: lint treats them all as private
+
+
+def _prefs_span(text: str) -> tuple[int, int] | None:
+    """The first Preferences section: its heading up to the next section (# or ##) or a heading of its own level."""
+    if not (m := PREFS_HEAD_RE.search(text)):
+        return None
+    end = re.compile(rf"(?m)^#{{1,{max(len(m[1]), 2)}}}[ \t]").search(text, m.end())
+    return m.start(), end.start() if end else len(text)
+
+
+def drop_preferences(text: str) -> str:
+    """Text without any Preferences section (salary floor, deal-breakers): for anything an employer reads."""
+    while s := _prefs_span(text):
+        text = text[:s[0]] + text[s[1]:]
+    return text
+
+
 def _preferences(master: str) -> str:
-    m = PREFS_RE.search(master)
-    return m.group(0).strip() if m else "## Preferences (used for job search ranking)\nTarget roles: | Locations / remote: | Salary floor: | Deal-breakers: | Industries to avoid:"
+    s = _prefs_span(master)
+    return master[s[0]:s[1]].strip() if s else "## Preferences (used for job search ranking)\nTarget roles: | Locations / remote: | Salary floor: | Deal-breakers: | Industries to avoid:"
 
 
 def render_markdown(bank: dict, master: str | None = None) -> str:
@@ -650,9 +670,6 @@ def brief(text: str, limit: int) -> str:
     return "".join(keep[i] for i in sorted(keep)).strip()
 
 
-PREFS_RE = re.compile(r"(?ms)^## Preferences.*?(?=^## |\Z)")
-
-
 def candidate_text(limit: int | None = None, strict: bool = True, private: bool = True) -> str:
     """What prompts should read: the master profile plus bank facts it leaves out, fitted to `limit` by section.
     strict=False (coach, ideas) tolerates an unfilled profile: those helpers are how a new user builds one.
@@ -671,8 +688,27 @@ def candidate_text(limit: int | None = None, strict: bool = True, private: bool 
     extra = extras_text(master)
     text = master.rstrip() + ("\n\n" + extra if extra else "")
     if not private:
-        text = PREFS_RE.sub("", text)
+        text = drop_preferences(text)
     return brief(text, limit) if limit else text
+
+
+def saved_resumes() -> list[dict]:
+    """Saved resumes that can be a tailoring base: [{id, name, added}]. LinkedIn zips keep only facts, so they are out."""
+    return [{"id": r["id"], "name": r.get("name", ""), "added": r.get("added", "")} for r in load()["resumes"]
+            if r.get("id") and not str(r.get("file", "")).endswith(".linkedin.json")]
+
+
+def saved_text(rid: str) -> str:
+    """The plain text of saved resume `rid` (the extracted .txt kept beside a .docx / .pdf original)."""
+    r = next((r for r in load()["resumes"] if r.get("id") == rid and not str(r.get("file", "")).endswith(".linkedin.json")), None)
+    f = str(r.get("file", "")) if r else ""
+    if not f or Path(f).name != f:  # a bare file name inside resumes/, nothing else
+        raise SystemExit(f"no saved resume '{rid}': `lodestar profile show` lists their ids")
+    p = RESUMES / f
+    p = p if p.suffix in (".txt", ".md") else p.with_suffix(".txt")
+    if not p.is_file():
+        raise SystemExit(f"the text of saved resume '{rid}' is missing ({p.name}); import the file again")
+    return p.read_text(encoding="utf-8")
 
 
 def preferences_text() -> str:
@@ -689,5 +725,5 @@ def summary_text() -> str:
              f"experience: {len(bank['experience'])} | education: {len(bank['education'])} | certifications: "
              f"{len(bank['certifications'])} | projects: {len(bank['projects'])}",
              f"saved resumes ({len(bank['resumes'])}):"]
-    lines += [f"  {r['added'][:10]}  {r['source']:<9} {r['name']}  -> resumes/{r['file']}" for r in bank["resumes"]] or ["  (none)"]
+    lines += [f"  {r['id']}  {r['added'][:10]}  {r['source']:<9} {r['name']}  -> resumes/{r['file']}" for r in bank["resumes"]] or ["  (none)"]
     return "\n".join(lines)

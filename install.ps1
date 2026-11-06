@@ -69,7 +69,7 @@ if ($Schedule) {
 if ($Exe) {
   Write-Host "[6/6] building dist\lodestar.exe with PyInstaller (a few minutes)"
   & $py -m pip install --quiet --disable-pip-version-check pyinstaller
-  & $py -m PyInstaller --noconfirm --onefile --name lodestar --add-data "lodestar/static;lodestar/static" --add-data "assets;assets" --collect-all keyring --collect-all docx --collect-all webview --icon (Join-Path $root "assets\lodestar.ico") (Join-Path $root "lodestar\__main__.py") | Out-Null
+  & $py -m PyInstaller --noconfirm --onefile --name lodestar --add-data "lodestar/static;lodestar/static" --add-data "lodestar/data;lodestar/data" --add-data "assets;assets" --collect-all keyring --collect-all docx --collect-all webview --icon (Join-Path $root "assets\lodestar.ico") (Join-Path $root "lodestar\__main__.py") | Out-Null
   Write-Host "   dist\lodestar.exe ready (run: dist\lodestar.exe desktop)"
 } else { Write-Host "[6/6] standalone exe skipped (re-run with -Exe)" }
 

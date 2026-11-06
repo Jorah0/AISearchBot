@@ -1,4 +1,5 @@
 """SQLite application tracker: jobs, events, url watches, dedupe table."""
+import json
 import re
 import sqlite3
 import threading
@@ -26,7 +27,13 @@ CREATE TABLE IF NOT EXISTS ideas(id INTEGER PRIMARY KEY, topic TEXT, title TEXT,
 CREATE TABLE IF NOT EXISTS answers(id INTEGER PRIMARY KEY, question TEXT UNIQUE, answer TEXT, tags TEXT,
   updated_at TEXT DEFAULT (datetime('now')));
 """
-MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "TEXT"}  # ponytail: additive only
+MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "TEXT",  # ponytail: additive only
+              # tracker fields (pass 15); every user write goes through set_fields
+              "location": "TEXT", "remote": "TEXT", "salary_min": "INTEGER", "salary_max": "INTEGER", "currency": "TEXT",
+              "source": "TEXT", "posted_at": "TEXT", "deadline": "TEXT", "excitement": "INTEGER", "tags": "TEXT",
+              "match_score": "INTEGER", "next_action": "TEXT", "next_action_at": "TEXT",
+              "ats_skip": "TEXT"}  # JSON list: keywords marked "not mine" for JD coverage (toggle_ats_skip)
+BACKFILL_KEY = "backfill:fields-v1"
 
 
 def connect(path=None) -> sqlite3.Connection:
@@ -41,7 +48,141 @@ def connect(path=None) -> sqlite3.Connection:
             except sqlite3.OperationalError as e:  # another thread/process added it between our check and ALTER
                 if "duplicate column" not in str(e).lower():
                     raise
+    backfill(c)
     return c
+
+
+def backfill(c: sqlite3.Connection) -> int:
+    """Fill source / remote / salary on rows that predate those columns, from their notes and JD. Writes only NULLs and
+    leaves updated_at alone, so a rerun changes nothing; the seen-table marker just skips the scan after the first run."""
+    if c.execute("SELECT 1 FROM seen WHERE key=?", (BACKFILL_KEY,)).fetchone():
+        return 0
+    n = 0
+    for r in c.execute("SELECT id, jd, notes, source, remote, salary_min, salary_max, currency FROM jobs").fetchall():
+        d = {k: v for k, v in derive_fields(r["jd"], r["notes"]).items() if v is not None and r[k] is None}
+        if d:
+            c.execute(f"UPDATE jobs SET {', '.join(k + '=?' for k in d)} WHERE id=?", (*d.values(), r["id"]))
+            n += 1
+    c.execute("INSERT OR IGNORE INTO seen(key) VALUES(?)", (BACKFILL_KEY,))
+    c.commit()
+    return n
+
+
+# --- tracker fields ---------------------------------------------------------
+REMOTE = ("onsite", "hybrid", "remote")
+REMOTE_BOARDS = ("remotive", "remoteok", "jobicy")  # job APIs that only list remote roles
+_TEXT = {"location": 120, "source": 60, "next_action": 200}
+_INT = {"salary_min": (0, 10_000_000), "salary_max": (0, 10_000_000), "excitement": (1, 5), "match_score": (0, 100)}
+_DATE = ("posted_at", "deadline", "next_action_at")
+FIELDS = (*_TEXT, *_INT, *_DATE, "remote", "currency", "tags")
+
+
+def source_of(notes) -> str:
+    """Where a job came from, read off the notes add paths write: captured / search:<api> / email / manual."""
+    n = notes or ""
+    if "captured from" in n:
+        return "captured"
+    if "via " in n:
+        return "search:" + (n.split("via ")[-1].split() or ["?"])[0].strip("()")
+    return "email" if "from email" in n else "manual"
+
+
+# 'hybrid' as a workplace, not 'hybrid cloud' / 'hybrid app' in a tech stack
+HYBRID_RE = re.compile(r"\bhybrid\b(?![- ](?:cloud|infrastructure|environments?|apps?|mobile|multi-cloud|architecture|it)\b)")
+
+
+def remote_kind(text) -> str | None:
+    t = (text or "").lower()
+    return ("hybrid" if HYBRID_RE.search(t) else "remote" if re.search(r"\bremote\b", t)
+            else "onsite" if re.search(r"\bon-?site\b|\bin[- ]office\b", t) else None)
+
+
+def derive_fields(jd, notes, location="") -> dict:
+    """Tracker fields a listing already carries: source from the notes, pay from the JD, remote from location + JD."""
+    from .resume import parse_salary
+
+    src = source_of(notes)
+    remote = "remote" if src.split(":")[-1] in REMOTE_BOARDS else remote_kind(f"{location or ''}\n{(jd or '')[:1500]}")
+    return {"source": src, "remote": remote, **parse_salary(jd or "")}
+
+
+def tag_list(tags) -> list[str]:
+    return [t.strip() for t in (tags or "").split(",") if t.strip()]
+
+
+def _clean(k: str, v):
+    """One user-settable field, validated. Empty clears (None)."""
+    if k not in FIELDS:
+        raise SystemExit(f"unknown field '{k}'. Fields: {', '.join(FIELDS)}")
+    s = "" if v is None else str(v).strip()
+    if not s:
+        return None
+    if k in _INT:
+        lo, hi = _INT[k]
+        try:
+            n = int(s[:-1]) * 1000 if k.startswith("salary") and s[-1] in "kK" else int(s)
+        except ValueError:
+            raise SystemExit(f"{k} must be a whole number: {s[:40]}") from None
+        if not lo <= n <= hi:
+            raise SystemExit(f"{k} must be between {lo} and {hi}")
+        return n
+    if k in _DATE:
+        try:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+                raise ValueError
+            datetime.strptime(s, "%Y-%m-%d")
+        except ValueError:
+            raise SystemExit(f"{k} must be a date, YYYY-MM-DD: {s[:40]}") from None
+        return s
+    if k == "remote":
+        if s.lower() not in REMOTE:
+            raise SystemExit(f"remote must be one of {', '.join(REMOTE)}")
+        return s.lower()
+    if k == "currency":
+        if not re.fullmatch(r"[A-Za-z]{3}", s):
+            raise SystemExit("currency must be a 3-letter code, e.g. USD")
+        return s.upper()
+    if k == "tags":
+        tags = list(dict.fromkeys(tag_list(s)))
+        if len(tags) > 20 or any(len(t) > 40 for t in tags):
+            raise SystemExit("tags: at most 20, each up to 40 characters")
+        return ",".join(tags) or None
+    if len(s) > _TEXT[k]:
+        raise SystemExit(f"{k} is longer than {_TEXT[k]} characters")
+    return s
+
+
+def set_fields(job_id: int, **fields) -> dict:
+    """Set whitelisted tracker fields (FIELDS); every value is validated first, so a bad one changes nothing."""
+    clean = {k: _clean(k, v) for k, v in fields.items()}
+    row = get_job(job_id)
+    lo, hi = (clean[k] if k in clean else row[k] for k in ("salary_min", "salary_max"))
+    if lo is not None and hi is not None and lo > hi:
+        raise SystemExit(f"salary_min ({lo}) is above salary_max ({hi})")
+    if clean:
+        update_job(job_id, touch=False, **clean)  # tracker metadata, not activity: 'stalest first' must stay true
+    return clean
+
+
+def ats_skip(job) -> list[str]:
+    """Keywords the user marked "not mine" for this job's JD coverage."""
+    try:
+        return [str(t) for t in json.loads(job["ats_skip"] or "[]")]
+    except (ValueError, TypeError):
+        return []
+
+
+def toggle_ats_skip(job_id: int, term) -> list[str]:
+    """Mark a JD keyword "not mine" for this job, or unmark it. Returns the new list."""
+    t = " ".join(str(term or "").lower().split())
+    if not 0 < len(t) <= 80:
+        raise SystemExit("term must be 1-80 characters")
+    terms = ats_skip(get_job(job_id))
+    terms = [x for x in terms if x != t] if t in terms else [*terms, t]
+    if len(terms) > 300:
+        raise SystemExit("at most 300 skipped keywords per job")
+    update_job(job_id, touch=False, ats_skip=json.dumps(terms) if terms else None)
+    return terms
 
 
 _local = threading.local()  # one connection per thread: the web UI serves requests from a thread pool
@@ -58,13 +199,24 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def add_job(company, title, url=None, jd=None, notes=None) -> int:
+def add_job(company, title, url=None, jd=None, notes=None, **fields) -> int:
+    """fields: tracker fields the caller knows (a listing's location, posted_at). Source, remote and pay are derived
+    from the notes and JD; a field given explicitly wins."""
+    given = {k: v for k, v in ((k, _clean(k, v)) for k, v in fields.items()) if v is not None}  # validated before insert
     if url:  # the same posting captured or searched twice is one card, not two
         dup = con().execute("SELECT id FROM jobs WHERE url=? AND status NOT IN ('rejected','withdrawn')", (url,)).fetchone()
         if dup:
             add_event(dup["id"], "duplicate", f"add ignored: {company} - {title}")
             return dup["id"]
+    derived = derive_fields(jd, notes, given.get("location"))
+    if {"salary_min", "salary_max"} & given.keys():  # a stated range replaces the parsed one whole, never half of it
+        derived = {k: v for k, v in derived.items() if not k.startswith("salary") and k != "currency"}
+    extra = {k: v for k, v in derived.items() if v is not None} | given
+    if extra.get("salary_min", 0) > extra.get("salary_max", 10**9):
+        raise SystemExit("salary_min is above salary_max")
     cur = con().execute("INSERT INTO jobs(company,title,url,jd,notes) VALUES(?,?,?,?,?)", (company, title, url, jd, notes))
+    if extra:
+        con().execute(f"UPDATE jobs SET {', '.join(k + '=?' for k in extra)} WHERE id=?", (*extra.values(), cur.lastrowid))
     con().commit()
     add_event(cur.lastrowid, "created", f"{company} - {title}")
     return cur.lastrowid
@@ -77,15 +229,38 @@ def get_job(job_id: int) -> sqlite3.Row:
     return row
 
 
-def list_jobs(status=None):
+def _pay(j):
+    return j["salary_max"] if j["salary_max"] is not None else j["salary_min"]
+
+
+# sort key -> row key; None sorts last, ties keep the most recently updated first
+SORTS = {"match": lambda j: (j["match_score"] is None, -(j["match_score"] or 0)),
+         "salary": lambda j: (_pay(j) is None, -(_pay(j) or 0)),
+         "excitement": lambda j: (j["excitement"] is None, -(j["excitement"] or 0)),
+         "deadline": lambda j: (j["deadline"] is None, j["deadline"] or ""),
+         "updated": None}
+
+
+def list_jobs(status=None, sort=None, remote=None, min_salary=None, tag=None):
     q, args = "SELECT * FROM jobs", ()
     if status:
         q, args = q + " WHERE status=?", (status,)
-    return con().execute(q + " ORDER BY updated_at DESC", args).fetchall()
+    rows = con().execute(q + " ORDER BY updated_at DESC", args).fetchall()
+    if remote:
+        rows = [j for j in rows if j["remote"] == remote]
+    if min_salary:
+        rows = [j for j in rows if (_pay(j) or 0) >= min_salary]
+    if tag:
+        rows = [j for j in rows if tag.strip().lower() in (t.lower() for t in tag_list(j["tags"]))]
+    if SORTS.get(sort):
+        rows.sort(key=SORTS[sort])
+    return rows
 
 
-def update_job(job_id: int, **fields) -> None:
-    fields["updated_at"] = _now()
+def update_job(job_id: int, touch: bool = True, **fields) -> None:
+    """touch=False for derived or bookkeeping fields (match score, tags, 'not mine'): they are not 'last activity'."""
+    if touch:
+        fields["updated_at"] = _now()
     sets = ", ".join(f"{k}=?" for k in fields)
     con().execute(f"UPDATE jobs SET {sets} WHERE id=?", (*fields.values(), job_id))
     con().commit()
@@ -365,10 +540,7 @@ def funnel() -> dict:
             rejected_from[last] = rejected_from.get(last, 0) + 1
     by_source: dict[str, dict] = {}
     for j in list_jobs():
-        n = j["notes"] or ""
-        src = ("captured" if "captured from" in n else "search:" + n.split("via ")[-1].split()[0].strip("()") if "via " in n
-               else "email" if "from email" in n else "manual")
-        d = by_source.setdefault(src, {"tracked": 0, "positive": 0})
+        d = by_source.setdefault(j["source"] or source_of(j["notes"]), {"tracked": 0, "positive": 0})
         d["tracked"] += 1
         d["positive"] += j["status"] in POSITIVE
     return {"stages": stages, "rejected_from": rejected_from, "by_source": by_source}

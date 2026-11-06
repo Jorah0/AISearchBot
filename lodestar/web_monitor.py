@@ -66,6 +66,20 @@ def jd_with_salary(j: dict) -> str:
     return (f"Salary (from {j.get('source') or 'listing'}): {j['salary']}\n\n" if j.get("salary") else "") + (j.get("desc") or "")
 
 
+def listing_fields(j: dict) -> dict:
+    """Tracker fields a listing carries beyond its JD (db.add_job derives pay and remote from the JD). Lenient: a value
+    the tracker would reject is dropped, so a messy API field never blocks tracking the job."""
+    import re
+    from datetime import datetime
+
+    date = str(j.get("posted_at") or j.get("date") or "")[:10]
+    try:
+        date = datetime.strptime(date, "%Y-%m-%d").strftime("%Y-%m-%d") if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) else ""
+    except ValueError:
+        date = ""
+    return {"location": " ".join(str(j.get("location") or "").split())[:120], "posted_at": date}
+
+
 def _remotive(q):
     d = fetch_json(f"https://remotive.com/api/remote-jobs?search={urllib.parse.quote(q)}&limit=30")
     return [_listing(j["title"], j["company_name"], j["url"], j.get("candidate_required_location"), j.get("salary"),

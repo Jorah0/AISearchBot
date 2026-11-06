@@ -40,7 +40,10 @@ PREFS = {
     "council_judge": False,
     "models": {},
     "signature": "",
+    "desktop_notifications": False,  # OS toasts from the monitor loop: daily agenda, interview in 2 h, deadline tomorrow
+    "resume_style": "classic",  # .docx / PDF look (resume.STYLES); a template.docx beside profile.md overrides it
 }
+CHOICES = {"resume_style": ("classic", "modern", "compact")}  # prefs limited to a fixed set of values
 
 
 def load() -> dict:
@@ -88,6 +91,8 @@ def set_pref(key: str, value) -> None:
     with _LOCK:
         if key not in PREFS:
             raise SystemExit(f"unknown preference '{key}'. Keys: {', '.join(PREFS)}")
+        if key in CHOICES and value not in CHOICES[key]:
+            raise SystemExit(f"{key} is one of: {', '.join(CHOICES[key])}")
         data = load()
         cur = PREFS[key]
         if isinstance(cur, dict):

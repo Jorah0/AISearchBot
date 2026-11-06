@@ -1,5 +1,73 @@
 # Changelog (development passes, newest first)
 
+## Pass 15 (2026-11-06): best-in-class gaps
+
+- Tracker fields: location, workplace (onsite/hybrid/remote), pay range and currency, source, posted date, deadline,
+  excitement (1-5), tags, match score, next action and its due date. Filled on add, capture and search-save from what
+  the listing carries; old jobs backfilled once (empty fields only, `updated_at` untouched). Validated, whitelisted
+  writes through `db.set_fields`, `lodestar jobs set ID key=value`, `POST /api/jobs/ID/fields` and the drawer's
+  Details form. The funnel's "by source" now reads the editable source field.
+- Board: drag and drop between columns (moving back asks first; `accepted` keeps proposing withdrawals), focusable
+  cards, filter bar (text, status, workplace, minimum pay, tag, has deadline), sort (last activity, stalest, match,
+  salary, excitement, deadline), Board/Table toggle with sortable headers and bulk status / tag / delete, all
+  remembered in localStorage. Cards show stars, pay, match, location and a red deadline chip at 3 days.
+- `jobs list` gains `--sort`, `--remote`, `--min-salary`, `--tag` and shows the new fields.
+- Today: `lodestar today` and a Today panel on the Board (next actions due or overdue, deadlines within 3 days,
+  interviews within 48 h, follow-ups due, Inbox size).
+- Desktop notifications (opt-in, default off): daily agenda, interview within 2 hours, deadline tomorrow, each once.
+  Windows toast via PowerShell, macOS osascript, Linux notify-send; never raises. Setup has a toggle and a test.
+- Offline drafts: follow-up, thank-you and the new withdrawal email fall back to a plain template when no provider
+  is configured, still routed through the Inbox; `--template` / a drawer checkbox picks it with a key present. The
+  monitor loop now drafts template follow-ups without a provider. Sending a withdrawal moves the job to `withdrawn`.
+- Unknown `POST /api/jobs/ID/<op>` operations now return an error instead of a silent ok.
+- 12 new tests (`tests/test_pass15_tracker.py`), 104 in total; browser smoke test of drag, table, bulk tag, filters
+  and the Details form on a temp home.
+- JD coverage engine (`lodestar/ats.py`, lexicon `lodestar/data/skills.json`, ~1,500 terms across 16 fields plus
+  certifications, soft skills, degrees and aliases): deterministic score 0-100 by category (hard .45, title .15,
+  education .10 only when a degree is named, soft .10, other .20 from repeated posting phrases), word-boundary matching
+  that handles c++, c#, .net and node.js, stuffing flags, and per-job "not mine" keywords (`jobs.ats_skip`,
+  `POST /api/jobs/ID/skip`). Presented as JD coverage, not an ATS verdict. `lodestar match ID [--file] [--skip]` and a
+  Match section in the drawer (score, category bars, keyword table, title and education lines).
+- `resume gap` computes coverage first and saves it even without an AI provider or when the AI call fails; the AI gets
+  the missing-keyword table and keeps verdict, weak areas and suggestions. `missing_keywords` / `present_keywords` and
+  `match_score` in `gap.json` now come from coverage (the AI no longer supplies its own score). `resume tailor`
+  re-scores and logs `coverage X -> Y`. The job's match score follows every coverage run.
+- Resume lint (`lodestar/lint.py`, `lodestar resume lint [file] [--job ID]`, Check buttons on Profile and in the drawer):
+  weak openers, bullets without numbers, pronouns, passive-voice hint, repeated verbs, long/short bullets, cliches,
+  missing email/phone/sections, gaps over 6 months as information only. No age or graduation-year heuristics.
+  `resume review` passes the lint results to the AI.
+- File audit (`lodestar resume audit FILE`, drawer and profile-bank buttons): contact in header/footer, tables, text
+  boxes, images, columns, fonts under 10 pt, non-standard headings, scanned or unreadable PDFs, size over 2 MB, odd file
+  names, and the plain text a parser sees. Lodestar's own .docx export comes out clean.
+- Packaging: `data/*` in package data and `--add-data "lodestar/data;lodestar/data"` in the PyInstaller line.
+- 16 new tests (`tests/test_pass15_coverage.py`), 120 in total.
+- Bullet-level tailoring: `resume.tailor_bullets` / `apply_bullets`, `lodestar resume tailor ID --bullets` and
+  `--accept all|unflagged|1,3,5`, and a "Tailor by bullet" table in the drawer (original | proposed with added keywords
+  highlighted | accept). One AI call; deterministic "unsupported" (added keyword not in profile or bank) and "new
+  number" flags; flagged rows start rejected. Proposals in `bullets.json`; building writes `resume.md` through the
+  tailoring save path (history kept, `.docx` regenerated), re-scores coverage and logs the delta. Whole-document tailor
+  unchanged.
+- Tailoring can start from a saved resume in the profile bank (`--base RID`, "tailor from" select); `profile show`
+  now prints each saved resume's id.
+- Resume styles `classic` (default, the previous look), `modern`, `compact` (preference `resume_style`, validated;
+  selects in the drawer and Tools > Preferences); each passes the file audit.
+- PDF export (`lodestar resume export ID --pdf`, drawer "Export PDF"): Microsoft Word over COM, else LibreOffice, else
+  an HTML print page opened in the system browser; reports which one ran. `resume export` now takes a job id too.
+- 8 new tests (`tests/test_pass15_bullets.py`), 128 in total; browser smoke test of the bullet table, Build and Export
+  PDF on a temp home.
+- Review fixes. Bullet tailoring works from a saved `.docx` (the importer now keeps Title/Heading N as `#` and list
+  paragraphs as `-` bullets; re-importing the same file refreshes its text) and from PDF text with `•`-style marks and bare
+  section names. Reordering never moves a bullet to another employer: bold or plain role lines between bullets start
+  a new group. The "unsupported" flag also covers any hard skill, certification or degree the rewrite adds, not just
+  posting keywords. Preferences headings at any level or case are kept out of employer text, and a bullet build that
+  still names a salary floor stops. Coverage is saved to `coverage.json` (gap.json is the gap check's: "Fit checked"
+  no longer ticks from coverage alone; an existing gap.json's keyword lists are refreshed on re-score). `$120-150k`
+  parses as 120,000-150,000. "Hybrid cloud" no longer marks a job hybrid. Tracker field writes, match score and "not
+  mine" leave `updated_at` alone. `resume export ID` without a tailored resume prints a message, not a traceback.
+  UI: Save details no longer writes back a stale match score after Compute or "not mine"; Search "track" sends the
+  listing's location and date; the drawer status select needs "move" (arrow keys fired a change per step) and
+  marking a job accepted asks first. 9 new tests (`tests/test_pass15_fixes.py`), 137 in total.
+
 ## Pass 14 (2026-11-06): gap audit, CLI features in the UI, docs caught up
 
 - New status `accepted` (after offer): accepting a job proposes withdrawing your other open applications, always

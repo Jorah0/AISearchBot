@@ -35,12 +35,29 @@
     <input id="nCo" placeholder="Company" style="width:160px"><input id="nTi" placeholder="Title" style="width:220px">
     <input id="nJd" class="grow" placeholder="Job description: URL or pasted text"><button class="b" onclick="addJob()">Add job</button>
   </div>
+  <div class="panel today" id="today" style="display:none"></div>
   <div class="row" id="upcoming" style="margin-top:4px"></div>
   <div class="muted" id="variants"></div>
   <div class="muted" id="funnel"></div>
   <div class="panel" id="boardEmpty" style="display:none"><h3>No jobs tracked yet</h3><div class="row">Paste a job description above and click Add job,
     <button class="b sm" onclick="go('search')">Search job APIs</button> or drag the capture bookmarklet from <button class="b ghost sm" onclick="go('setup')">Setup</button> to track postings from LinkedIn, Indeed or any careers page.</div></div>
+  <div class="row filters" role="search" aria-label="Filter and sort jobs">
+    <input id="fQ" type="search" placeholder="search company, title, location, tags" aria-label="Search jobs" style="width:230px">
+    <select id="fStatus" aria-label="Status filter"></select>
+    <select id="fRemote" aria-label="Workplace filter"><option value="">any workplace</option><option>remote</option><option>hybrid</option><option>onsite</option></select>
+    <input id="fSal" type="number" min="0" step="1000" placeholder="min salary" aria-label="Minimum salary" style="width:110px">
+    <input id="fTag" placeholder="tag" aria-label="Tag filter" style="width:100px">
+    <label class="muted"><input type="checkbox" id="fDl"> has deadline</label>
+    <label class="muted">sort <select id="fSort" aria-label="Sort jobs"><option value="updated">last activity</option><option value="stale">stalest first</option><option value="match">match</option><option value="salary">salary</option><option value="excitement">excitement</option><option value="deadline">deadline</option><option value="">(table column)</option></select></label>
+    <button class="b ghost sm" id="fView" onclick="toggleView()" aria-pressed="false">Table view</button>
+    <span class="muted">drag a card to another column, or change its status in the job drawer</span>
+  </div>
+  <div class="row" id="bulk" style="display:none"><b id="bulkN"></b>
+    <select id="bulkStatus" aria-label="New status for the selected jobs"></select><button class="b ghost sm" onclick="bulkStatus()">Set status</button>
+    <input id="bulkTag" placeholder="tag" aria-label="Tag to add to the selected jobs" style="width:110px"><button class="b ghost sm" onclick="bulkTag()">Add tag</button>
+    <button class="b danger sm" onclick="bulkDelete()">Delete selected</button></div>
   <div class="board" id="cols"></div>
+  <div id="jobTable" style="display:none"></div>
 </section>
 
 <section id="inbox" class="inbox">
@@ -106,7 +123,8 @@
 <section id="profile">
   <h2>Profile</h2>
   <p class="sub">Your master resume. Everything Lodestar writes is derived from this file and never invents facts.</p>
-  <div class="row"><span class="muted" id="pPath"></span><button class="b" onclick="saveProfile()">Save</button><button class="b ghost" onclick="run('review',{text:$('#pText').value},r=>show('pOut',r.text),this)">AI review</button></div>
+  <div class="row"><span class="muted" id="pPath"></span><button class="b" onclick="saveProfile()">Save</button><button class="b ghost" onclick="run('review',{text:$('#pText').value},r=>show('pOut',r.text),this)">AI review</button><button class="b ghost" onclick="run('lint',{text:$('#pText').value},r=>{$('#pCheck').innerHTML=lintHtml(r)},this)">Check</button><span class="muted">Check: instant offline checks (weak openers, missing numbers, pronouns, sections), line numbers match the editor</span></div>
+  <div id="pCheck"></div>
   <div class="row"><input id="pAdj" class="grow" placeholder="adjust with AI, e.g. tighten to one page / emphasise leadership / rewrite summary for data roles"><button class="b ghost" onclick="adjustProfile(this)">Adjust</button><span class="muted">result replaces the editor; nothing is saved until you click Save</span></div>
   <textarea id="pText"></textarea>
   <div class="panel" id="bankPanel"><h3>Profile bank</h3>
@@ -124,7 +142,9 @@
     <div class="muted" id="bCounts"></div>
     <div class="row"><button class="b ghost" onclick="rebuildMaster(this)">Rebuild master profile from bank</button><span class="muted">the current profile.md is snapshotted to profile-history/ first</span></div>
     <pre id="bOnFile" style="display:none"></pre>
-    <details><summary class="muted">Saved resumes</summary><div id="bResumes" class="list"></div></details></div>
+    <details><summary class="muted">Saved resumes</summary><div id="bResumes" class="list"></div></details>
+    <div class="row"><button class="b ghost" onclick="run('audit',{},r=>{$('#bAudit').innerHTML=auditHtml(r)},this)">Audit latest saved resume file</button><span class="muted">the newest .docx or .pdf you imported: header/footer contact, tables, text boxes, columns, small fonts, scans, and the text a parser sees</span></div>
+    <div id="bAudit"></div></div>
   <div class="panel"><h3>Import an existing resume</h3>
     <div class="row"><input type="file" id="pFile" accept=".docx,.pdf,.md,.txt"><button class="b ghost" onclick="importToBank('pFile',false,this)">Import</button><span class="muted">.docx, .pdf, .md, .txt · saved to the bank, facts extracted; a template profile is filled in automatically</span></div>
     <textarea id="pImport" style="display:none; min-height:160px" placeholder="imported text appears here"></textarea>
@@ -159,6 +179,10 @@
       <p class="muted">Drag these to your bookmarks bar. The UI must be running.</p>
       <div class="row"><a id="bm" class="b" href="#">+ Lodestar capture</a><a id="af" class="b ghost" href="#">+ Lodestar autofill</a></div>
       <p class="muted"><b>Capture</b> sends the job posting you are looking at (LinkedIn, Indeed, any careers page) to the Board. <b>Autofill</b> types your name, email, phone, links and location into empty application-form fields matched by label, and never clicks Submit.</p></div>
+    <div class="panel"><h3>Desktop notifications</h3>
+      <div class="row"><label><input type="checkbox" id="pNotify" onchange="setPref('desktop_notifications',this.checked)"> notify me on this computer</label>
+        <button class="b ghost sm" onclick="run('notify_test',{},r=>toast(r.ok?'test notification sent':'this computer did not accept the notification',r.ok?'ok':'err'),this)">Send a test</button></div>
+      <p class="muted">Off by default (also under Tools &gt; Preferences). While the monitor loop runs: one agenda a day, an interview within 2 hours, a deadline tomorrow; each fires once.</p></div>
     <div class="panel"><h3>Diagnostics</h3>
       <div class="row"><button class="b ghost" onclick="run('doctor',{},r=>showDoctor(r.rows),this)">Run diagnostics</button>
         <button class="b ghost" onclick="run('doctor',{live:true},r=>showDoctor(r.rows),this)">Diagnostics + live AI call</button>

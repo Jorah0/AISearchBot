@@ -1,11 +1,39 @@
 """The automation cycle: email -> watches -> follow-up cadence -> interview reminders -> sync/digest/backup.
 `lodestar run`, `app` and `desktop` all drive this. Every automatic action still goes through approvals."""
 import time
+from datetime import date, datetime, timedelta
 
-from . import ai, approvals, db, log, settings
-from .util import notify
+from . import approvals, db, log, settings
+from .util import desktop_notify, notify
 
 STATUS = {"running": False, "every": None, "last_cycle": None, "cycles": 0, "last_error": None}  # read by the UI top bar
+CLOSED = ("accepted", "rejected", "withdrawn")
+
+
+def agenda(now: datetime | None = None) -> dict:
+    """Today's list (Board panel, `lodestar today`, the daily toast): next actions due today or overdue, deadlines in
+    the next 3 days, follow-ups due (followup_days), interviews in the next 48 hours, and the Inbox size."""
+    from .extras import upcoming_interviews
+
+    now = now or datetime.now()
+    today, soon = f"{now:%Y-%m-%d}", f"{now + timedelta(days=3):%Y-%m-%d}"
+    live = [j for j in db.list_jobs() if j["status"] not in CLOSED]
+
+    def item(j, **kw) -> dict:
+        return {"id": j["id"], "company": j["company"], "title": j["title"], **kw}
+
+    actions = [item(j, when=j["next_action_at"], what=j["next_action"] or "next action", overdue=j["next_action_at"] < today)
+               for j in live if j["next_action_at"] and j["next_action_at"] <= today]
+    deadlines = [item(j, when=j["deadline"], days=(date.fromisoformat(j["deadline"]) - now.date()).days)
+                 for j in live if j["deadline"] and today <= j["deadline"] <= soon]
+    return {
+        "actions": sorted(actions, key=lambda i: i["when"]),
+        "deadlines": sorted(deadlines, key=lambda i: i["when"]),
+        "followups": [item(j, when=j["updated_at"][:10]) for j in db.needs_followup()],
+        "interviews": [{"id": i["job_id"], "company": i["company"], "title": i["title"], "when": f"{i['when']:%a %Y-%m-%d %H:%M}"}
+                       for i in upcoming_interviews(2)],
+        "pending": len(db.list_pending("pending")),
+    }
 
 
 def followup_step(job) -> str:
@@ -45,7 +73,7 @@ def _followups(a) -> None:
             continue
         notify(f"FOLLOW UP: #{j['id']} {j['company']} - {j['title']} has been quiet {days}+ days")
         db.add_event(j["id"], "followup_nudge", "")
-        if settings.enabled("followup") and j["contact_email"] and ai.available():
+        if settings.enabled("followup") and j["contact_email"]:  # no AI provider: the plain template (apply.TEMPLATES)
             from .apply import followup
 
             _step(f"follow-up draft #{j['id']}", lambda j=j: print(f"  follow-up draft -> {followup(j, a.provider)['proposal'].get('status')}"))
@@ -60,6 +88,37 @@ def _reminders() -> None:
             notify(f"INTERVIEW {it['when']:%a %Y-%m-%d %H:%M}: #{it['job_id']} {it['company']} - {it['title']}. "
                    f"Prep: open job #{it['job_id']} on the Board > Interview prep (CLI: lodestar interview prep {it['job_id']})")
             db.mark_seen(key)
+
+
+def _toast_once(key: str, title: str, body: str) -> None:
+    if not db.seen(key):
+        desktop_notify(title, body)
+        db.mark_seen(key)  # even when the OS said no: never retry a toast every cycle
+
+
+def _desktop(now: datetime | None = None) -> None:
+    """Opt-in OS notifications (pref desktop_notifications), each fired once via the seen table: one agenda per day,
+    an interview within 2 hours, a deadline tomorrow."""
+    if not settings.pref("desktop_notifications"):
+        return
+    from .extras import upcoming_interviews
+
+    now = now or datetime.now()
+    ag = agenda(now)
+    counts = [(len(ag["actions"]), "next action(s) due"), (len(ag["deadlines"]), "deadline(s) within 3 days"),
+              (len(ag["followups"]), "follow-up(s) due"), (len(ag["interviews"]), "interview(s) within 48 h"),
+              (ag["pending"], "waiting in the Inbox")]
+    line = " · ".join(f"{n} {what}" for n, what in counts if n)
+    if line:
+        _toast_once(f"toast:agenda:{now:%Y-%m-%d}", "Lodestar: today", line)
+    for it in upcoming_interviews(1):
+        if it["when"] <= now + timedelta(hours=2):
+            _toast_once(f"toast:interview:{it['path']}", f"Interview at {it['when']:%H:%M}",
+                        f"#{it['job_id']} {it['company']} - {it['title']}")
+    tomorrow = f"{now + timedelta(days=1):%Y-%m-%d}"
+    for d in ag["deadlines"]:
+        if d["when"] == tomorrow:
+            _toast_once(f"toast:deadline:{d['id']}:{tomorrow}", "Deadline tomorrow", f"#{d['id']} {d['company']} - {d['title']}")
 
 
 def _digest(a) -> None:
@@ -92,6 +151,7 @@ def cycle(a) -> None:
     _step("watches", web_monitor.check_watches)
     _step("follow-ups", lambda: _followups(a))
     _step("interview reminders", _reminders)
+    _step("desktop notifications", _desktop)
     if settings.auto("obsidian_sync"):
         from .extras import export_obsidian
 

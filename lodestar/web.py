@@ -66,6 +66,12 @@ def _bank_view() -> dict:
             "linkedin_export_url": profile.LINKEDIN_EXPORT_URL}
 
 
+def _bases() -> list[dict]:
+    from .profile import saved_resumes
+
+    return saved_resumes()
+
+
 def _docs(job) -> dict:
     from .resume import app_dir
 
@@ -80,11 +86,17 @@ def _act(action: str, p: dict):
     job = db.get_job(int(p["id"])) if p.get("id") else None
     prov, council = p.get("provider") or None, bool(p.get("council"))
     match action:
-        case "tailor":
-            out = resume.tailor(job, council, prov)
+        case "tailor":  # base: a saved resume id from the profile bank to start from instead of the master
+            out = resume.tailor(job, council, prov, p.get("base") or None)
             if p.get("docx"):
                 resume.export_docx(out)
             return {"path": str(out), "docs": _docs(job)}
+        case "bullets":  # per-bullet proposals into bullets.json; resume.md is untouched until bullets_apply
+            return resume.tailor_bullets(job, p.get("base") or None, prov) | {"docs": _docs(job)}
+        case "bullets_apply":  # {accept: [bullet ids]}: build resume.md (+docx) from the accepted rows
+            return resume.apply_bullets(job, p.get("accept") or [], docx=True) | {"docs": _docs(job)}
+        case "export_pdf":  # Word, else LibreOffice, else an HTML print page opened in the system browser
+            return resume.export_pdf(resume.app_dir(job) / "resume.md") | {"docs": _docs(job)}
         case "cover":
             out = resume.cover_letter(job, council, prov, p.get("tone") or "confident, warm, specific", int(p.get("words") or 300))
             if p.get("docx"):
@@ -112,6 +124,30 @@ def _act(action: str, p: dict):
             return {"path": str(out), "text": out.read_text(encoding="utf-8")} | _bank_view()
         case "gap":
             return {"gap": resume.gap(job, prov), "docs": _docs(job)}
+        case "match":  # deterministic JD coverage of the job's current resume; no AI
+            return {"coverage": resume.coverage(job), "docs": _docs(job)}
+        case "lint":  # {text}: the editor's resume text (master profile or a job's resume.md); defaults to profile.md
+            from .lint import lint
+
+            if "text" in p and not str(p["text"] or "").strip():
+                raise SystemExit("nothing to check: the text is empty")
+            return lint(p.get("text") or resume.profile_text())
+        case "audit":  # {id}: the job's generated resume.docx; no id: the newest .docx/.pdf saved in the profile bank
+            from . import profile
+            from .lint import audit
+
+            if job:
+                f, name = resume.app_dir(job) / "resume.docx", "resume.docx"
+                if not f.is_file():
+                    raise SystemExit("no resume.docx for this job yet: run 'Tailor resume (+docx)' first")
+            else:
+                saved = [r for r in profile.load()["resumes"] if str(r.get("file", "")).lower().endswith((".docx", ".pdf"))
+                         and Path(r["file"]).name == r["file"]]  # a bare file name inside resumes/, nothing else
+                if not saved:
+                    raise SystemExit("no .docx or .pdf resume saved in the profile bank yet: import one on the Profile tab")
+                newest = max(saved, key=lambda r: r.get("added", ""))
+                f, name = profile.RESUMES / newest["file"], newest.get("name") or newest["file"]
+            return audit(f.read_bytes(), name)
         case "prep":
             return {"path": str(interview.prep(job, council, prov)), "docs": _docs(job)}
         case "review":
@@ -156,10 +192,16 @@ def _act(action: str, p: dict):
             return apply.answer(job, p["question"], prov)
         case "checklist":
             return {"checklist": apply.checklist(job)}
-        case "followup":
-            return apply.followup(job, prov)
+        case "followup":  # template: the plain offline draft even when a provider is configured
+            return apply.followup(job, prov, bool(p.get("template")))
         case "thanks":
-            return apply.thanks(job, p.get("interviewer", ""), p.get("notes", ""), prov)
+            return apply.thanks(job, p.get("interviewer", ""), p.get("notes", ""), prov, bool(p.get("template")))
+        case "withdraw":
+            return apply.withdraw(job, prov, bool(p.get("template")))
+        case "notify_test":  # sent even with the preference off: you asked for it
+            from .util import desktop_notify
+
+            return {"ok": desktop_notify("Lodestar", "Test notification: desktop notifications work on this computer.")}
         case "offer":
             out = apply.offer(job, p.get("salary", ""), p.get("bonus", ""), p.get("equity", ""), p.get("benefits", ""),
                               p.get("deadline", ""), p.get("notes", ""), prov)
@@ -282,6 +324,8 @@ def state() -> dict:
         "decided": [dict(r) for r in db.list_pending(None, 15) if r["status"] != "pending"],
         "tools": settings.table(),
         "prefs": settings.load()["prefs"],
+        "pref_choices": settings.CHOICES,
+        "bases": _bases(),
         "answers": [dict(r) for r in db.list_answers()],
         "ideas": [dict(r) | json.loads(r["body"]) for r in db.list_ideas()],
         "idea_statuses": db.IDEA_STATUSES,
@@ -291,6 +335,7 @@ def state() -> dict:
         "vault": [{"name": n, "user": u} for n, u in vault.names()],
         "comp": comp.load(),
         "upcoming": [i | {"when": f"{i['when']:%a %Y-%m-%d %H:%M}"} for i in extras.upcoming_interviews(14)],
+        "today": loop.agenda(),
         "profile_path": str(PROFILE),
         "usage_today": ai.usage(1)["total"],
         "usage": ai.usage(30),
@@ -413,14 +458,16 @@ class Handler(BaseHTTPRequestHandler):
 
                 jd = read_source(p["jd"], allow_files=False) if p.get("jd") else None
                 url = http_only(p.get("url") or (p["jd"] if str(p.get("jd", "")).startswith("http") else None))
-                self._json({"id": db.add_job(p["company"], p["title"], url, jd, p.get("notes"))})
+                from .web_monitor import listing_fields  # a saved search listing carries location and posting date
+
+                self._json({"id": db.add_job(p["company"], p["title"], url, jd, p.get("notes"), **listing_fields(p))})
             elif path == "/api/capture":  # bookmarklet: {title, url, desc} from the open tab
                 title, company = split_title(p.get("title", ""))
                 jid = db.add_job(company or "Unknown company", title or "Unknown role", http_only(p.get("url")),
                                  (p.get("desc") or "")[:12000], f"captured from {p.get('url', '')}")
                 self._json({"id": jid, "company": company, "title": title})
             elif path.startswith("/api/jobs/") and len(parts) == 5:
-                jid, op = int(parts[3]), parts[4]
+                jid, op, out = int(parts[3]), parts[4], {"ok": True}
                 if op == "status":
                     db.set_status(jid, p["status"], p.get("note", ""))
                 elif op == "note":
@@ -437,9 +484,17 @@ class Handler(BaseHTTPRequestHandler):
                     if email and not re.fullmatch(r"[^@\s<>,;]+@[^@\s<>,;]+\.[^@\s<>,;]+", email):
                         raise ValueError(f"not an email address: {email[:80]}")
                     db.update_job(jid, contact_email=email or None, contact_name=name[:120])
+                elif op == "fields":  # tracker details; db.set_fields whitelists and validates every key
+                    db.set_fields(jid, **{str(k): v for k, v in p.items()})
+                elif op == "skip":  # {term}: JD coverage keyword "not mine" on/off; answers with the recomputed coverage
+                    from .resume import toggle_skip
+
+                    out["coverage"] = toggle_skip(db.get_job(jid), p.get("term"))
                 elif op == "delete":
                     db.delete_job(jid)
-                self._json({"ok": True})
+                else:
+                    raise ValueError(f"unknown job operation {op}")
+                self._json(out)
             elif path == "/api/watches":
                 db.add_watch(p["url"] if not p.get("search") else f"search:{p['url']}", p.get("keywords", ""))
                 self._json({"ok": True})

@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import ai, db, vault
+from . import ai, db, settings, vault
 from .config import ALERTS, APPS_DIR, HOME, PROFILE
 from .util import read_source
 
@@ -22,6 +22,71 @@ def _p(x):
 
 def _job_line(j) -> str:
     return f"#{j['id']:<4} {j['status']:<10} {j['company'][:24]:<24} {j['title'][:38]:<38} {j['updated_at'][:10]}"
+
+
+def _details(j) -> str:
+    """Tracker fields worth a glance on a list line: pay, match, excitement, workplace, deadline, tags."""
+    lo, hi = j["salary_min"], j["salary_max"]
+    pay = (f"{j['currency'] or ''} {lo:,}-{hi:,}" if lo is not None and hi is not None and lo != hi
+           else f"{j['currency'] or ''} {(hi if hi is not None else lo):,}" if (lo, hi) != (None, None) else "")
+    bits = [pay.strip(), f"match {j['match_score']}" if j["match_score"] is not None else "",
+            "*" * (j["excitement"] or 0), j["remote"] or "", f"due {j['deadline']}" if j["deadline"] else "",
+            f"[{j['tags']}]" if j["tags"] else ""]
+    return "  ".join(b for b in bits if b)
+
+
+def _file_text(path: str) -> str:
+    """A resume file (.docx / .pdf / .md / .txt) as plain text, the way the profile importer reads it."""
+    from .extras import import_document
+
+    return import_document(Path(path).read_bytes(), path)
+
+
+def _coverage_text(cov: dict) -> str:
+    c = cov["categories"]
+    lines = [f"JD coverage {cov['score']}/100"]
+    lines += [f"  {k:<10} {c[k]['score']:>3}%  {c[k]['matched']}/{c[k]['total']}" for k in ("hard", "soft", "title", "education", "other")
+              if c[k]["total"]]
+    if cov["title_match"]:
+        lines.append(f"  title \"{cov['title_match']['title']}\": {'found' if cov['title_match']['found'] else 'not found'} in the resume")
+    if cov["education_required"]:
+        lines.append(f"  posting names {', '.join(cov['education_required'])}: {'covered' if c['education']['matched'] else 'not found in the resume'}")
+    miss = [k for k in cov["keywords"] if not k["matched"] and not k["skipped"]]
+    lines.append("missing (most mentioned first): " + (", ".join(f"{k['term']} ({k['jd_count']}x)" for k in miss) or "none"))
+    lines.append("matched: " + (", ".join(k["term"] for k in cov["keywords"] if k["matched"] and not k["skipped"]) or "none"))
+    if skipped := [k["term"] for k in cov["keywords"] if k["skipped"]]:
+        lines.append("not mine (left out of the score): " + ", ".join(skipped))
+    if cov["stuffing"]:
+        lines.append("repeated far more often than the posting does (reads as stuffing): " + ", ".join(cov["stuffing"]))
+    return "\n".join(lines + [cov["note"]])
+
+
+def _issues_text(r: dict) -> str:
+    out = []
+    for sev in ("high", "medium", "low", "info"):
+        if items := [i for i in r["issues"] if i["severity"] == sev]:
+            out.append(f"{sev.upper()} ({len(items)})")
+            out += [f"  {'line ' + str(i['line']) + ': ' if i.get('line') else ''}{i['text']}\n      -> {i['hint']}" for i in items]
+    return "\n".join(out) or "no issues found"
+
+
+def _bullets_text(job, data: dict) -> str:
+    rows = data["proposals"]
+    out = [f"#{job['id']} {job['company']} - {job['title']}: {sum(r['changed'] for r in rows)} of {len(rows)} bullets rewritten "
+           f"(coverage now {data['coverage']}); bullets follow the suggested order within each role"]
+    for r in rows:
+        out.append(f"{r['id']:>3}. [{r['role']}] {'accept' if r['accepted'] else 'keep original' if r['changed'] else 'unchanged'}")
+        out.append(f"     was: {r['original']}")
+        if r["changed"]:
+            out.append(f"     now: {r['proposed'] or '(drop this bullet)'}" + (f"   + {', '.join(r['added_terms'])}" if r["added_terms"] else ""))
+        if r["reason"]:
+            out.append(f"     why: {r['reason']}")
+        if r["unsupported"]:
+            out.append(f"     FLAG unsupported (not found in your profile or bank): {', '.join(r['unsupported'])}")
+        if r["new_numbers"]:
+            out.append(f"     FLAG new number (not in the original bullet): {', '.join(r['new_numbers'])}")
+    out.append(f"saved bullets.json. Build the resume: lodestar resume tailor {job['id']} --accept unflagged  (or all, or 1,3,5)")
+    return "\n".join(out)
 
 
 def _tracker_summary() -> str:
@@ -136,8 +201,14 @@ def cmd_jobs(a):
         jid = db.add_job(a.company, a.title, url, jd, a.notes)
         print(f"added job #{jid}" + (" (JD captured)" if jd else ""))
     elif op == "list":
-        for j in db.list_jobs(a.status):
-            print(_job_line(j))
+        for j in db.list_jobs(a.status, a.sort, a.remote, a.min_salary, a.tag):
+            print(f"{_job_line(j)}  {_details(j)}".rstrip())
+    elif op == "set":
+        pairs = [kv.partition("=") for kv in a.pairs]
+        if bad := [k for k, sep, _ in pairs if not sep or not k.strip()]:
+            raise SystemExit(f"use key=value (empty value clears), not: {' '.join(bad)}. Fields: {', '.join(db.FIELDS)}")
+        changed = db.set_fields(a.id, **{k.strip(): v for k, _, v in pairs})
+        print(f"#{a.id} " + ", ".join(f"{k}={'' if v is None else v}" for k, v in changed.items()))
     elif op == "show":
         j = db.get_job(a.id)
         _p({k: (j[k][:800] if isinstance(j[k], str) else j[k]) for k in j.keys()})
@@ -199,7 +270,8 @@ def cmd_jobs(a):
         if a.save:
             for idx in a.save:
                 j = found[idx]
-                jid = db.add_job(j["company"], j["title"], j["url"], web_monitor.jd_with_salary(j), f"found via {j['source']}")
+                jid = db.add_job(j["company"], j["title"], j["url"], web_monitor.jd_with_salary(j), f"found via {j['source']}",
+                                 **web_monitor.listing_fields(j))
                 print(f"saved #{jid}: {j['title']} @ {j['company']}")
         if a.auto:
             from .apply import auto_track
@@ -246,8 +318,36 @@ def cmd_resume(a):
     if op == "review":
         print(resume.review(read_source(a.file) if a.file else resume.profile_text(), a.provider))
         return
-    if op == "export":
-        print(resume.export_docx(a.file))
+    if op == "export":  # a job id exports that job's resume.md; anything else is a markdown file
+        md = resume.app_dir(db.get_job(int(a.file))) / "resume.md" if a.file.isdigit() and not Path(a.file).is_file() else Path(a.file)
+        if not a.pdf:
+            print(resume.export_docx(md, a.style))
+            return
+        r = resume.export_pdf(md, a.style)
+        print(f"wrote {r['path']}  ({r['note']})")
+        for t in r["tried"]:
+            print(f"  tried {t}")
+        return
+    if op == "lint":
+        from .lint import lint
+
+        if a.job:
+            p = resume.app_dir(db.get_job(a.job)) / "resume.md"
+            if not p.is_file():
+                raise SystemExit(f"job #{a.job} has no tailored resume yet: lodestar resume tailor {a.job}")
+            text = p.read_text(encoding="utf-8")
+        else:
+            text = _file_text(a.file) if a.file else resume.profile_text()
+        r = lint(text)
+        print(_issues_text(r))
+        print(f"\nscore {r['score']}/100 (secondary: the list above is what to fix)")
+        return
+    if op == "audit":
+        from .lint import audit
+
+        r = audit(Path(a.file).read_bytes(), a.file)
+        print(_issues_text(r))
+        print(f"\n{r['note']}\n\n--- what a parser sees ---\n{r['text']}")
         return
     if op == "import":
         from .extras import import_document
@@ -286,8 +386,14 @@ def cmd_resume(a):
             print(f"\n(nothing saved; add --save to write {target})")
         return
     job = db.get_job(a.id)
-    if op == "tailor":
-        out = resume.tailor(job, a.council, a.provider)
+    if op == "tailor" and (a.bullets or a.accept):
+        if a.bullets:
+            print(_bullets_text(job, resume.tailor_bullets(job, a.base, a.provider)))
+        if a.accept:
+            r = resume.apply_bullets(job, a.accept, a.docx)
+            print(f"wrote {r['path']}: {len(r['accepted'])} rewrite(s) accepted, coverage {r['coverage']['before']} -> {r['coverage']['after']}")
+    elif op == "tailor":
+        out = resume.tailor(job, a.council, a.provider, a.base)
         print(f"wrote {out}")
         if a.docx:
             print(f"wrote {resume.export_docx(out)}")
@@ -298,6 +404,17 @@ def cmd_resume(a):
             print(f"wrote {resume.export_docx(out)}")
     elif op == "gap":
         _p(resume.gap(job, a.provider))
+
+
+def cmd_match(a):
+    from . import resume
+
+    for term in a.skip or ():
+        resume.toggle_skip(db.get_job(a.id), term)
+    job = db.get_job(a.id)
+    cov = resume.coverage(job, _file_text(a.file), save=False) if a.file else resume.coverage(job)
+    print(f"#{job['id']} {job['company']} - {job['title']}" + (f"  (scored {a.file}; not saved)" if a.file else ""))
+    print(_coverage_text(cov))
 
 
 def cmd_email(a):
@@ -505,13 +622,32 @@ def _print_mail(r: dict) -> None:
 def cmd_followup(a):
     from . import apply
 
-    _print_mail(apply.followup(db.get_job(a.id), a.provider))
+    _print_mail(apply.followup(db.get_job(a.id), a.provider, a.template))
 
 
 def cmd_thanks(a):
     from . import apply
 
-    _print_mail(apply.thanks(db.get_job(a.id), a.interviewer or "", a.notes or "", a.provider))
+    _print_mail(apply.thanks(db.get_job(a.id), a.interviewer or "", a.notes or "", a.provider, a.template))
+
+
+def cmd_withdraw(a):
+    from . import apply
+
+    _print_mail(apply.withdraw(db.get_job(a.id), a.provider, a.template))
+
+
+def cmd_today(a):
+    from .loop import agenda
+
+    ag = agenda()
+    for label, key in (("Next actions due", "actions"), ("Deadlines within 3 days", "deadlines"),
+                       ("Interviews within 48 h", "interviews"), ("Follow-ups due", "followups")):
+        print(f"{label}: {len(ag[key]) or 'none'}")
+        for i in ag[key]:
+            extra = f"  {'OVERDUE ' if i.get('overdue') else ''}{i['what']}" if "what" in i else ""
+            print(f"  #{i['id']:<4} {i['when']:<20} {i['company'][:24]} - {i['title'][:38]}{extra}")
+    print(f"Inbox: {ag['pending']} waiting" + ("  (lodestar inbox)" if ag["pending"] else ""))
 
 
 def cmd_offer(a):
@@ -630,6 +766,11 @@ def build() -> argparse.ArgumentParser:
     v = s.add_subparsers(dest="op", required=True)
     x = v.add_parser("add"); x.add_argument("company"); x.add_argument("title"); x.add_argument("--url"); x.add_argument("--jd", help="url, file, or text"); x.add_argument("--notes")
     x = v.add_parser("list"); x.add_argument("--status", choices=db.STATUSES)
+    x.add_argument("--sort", choices=list(db.SORTS), help="default: updated (most recent first)")
+    x.add_argument("--remote", choices=db.REMOTE); x.add_argument("--min-salary", type=int, help="top of the stated range")
+    x.add_argument("--tag")
+    x = v.add_parser("set", help="tracker fields: " + ", ".join(db.FIELDS) + " (key=value; empty value clears)")
+    x.add_argument("id", type=int); x.add_argument("pairs", nargs="+", metavar="key=value")
     x = v.add_parser("show"); x.add_argument("id", type=int)
     x = v.add_parser("status"); x.add_argument("id", type=int); x.add_argument("status", choices=db.STATUSES); x.add_argument("--note")
     x = v.add_parser("note"); x.add_argument("id", type=int); x.add_argument("text")
@@ -648,13 +789,16 @@ def build() -> argparse.ArgumentParser:
     x.add_argument("--auto", action="store_true", help="AI-judge results and propose/track strong fits (tool: auto_track)")
     s.set_defaults(f=cmd_jobs)
 
-    s = sub.add_parser("resume", help="tailor, gap-check, cover letter, review, export")
+    s = sub.add_parser("resume", help="tailor, gap-check, cover letter, review, lint, file audit, export")
     v = s.add_subparsers(dest="op", required=True)
     x = v.add_parser("gap"); x.add_argument("id", type=int)  # one structured JSON score: no council pooling
     for name in ("tailor", "cover"):
         x = v.add_parser(name); x.add_argument("id", type=int); x.add_argument("--council", action="store_true", help="pool all providers")
         if name == "tailor":
             x.add_argument("--docx", action="store_true")
+            x.add_argument("--base", metavar="ID", help="start from this saved resume (ids: lodestar profile show) instead of the master")
+            x.add_argument("--bullets", action="store_true", help="per-bullet proposals with no-invention flags, saved to bullets.json")
+            x.add_argument("--accept", metavar="WHICH", help="build resume.md from bullets.json: all, unflagged, or numbers like 1,3,5")
         if name == "cover":
             x.add_argument("--tone", default="confident, warm, specific")
             x.add_argument("--words", type=int, default=300)
@@ -664,9 +808,20 @@ def build() -> argparse.ArgumentParser:
     x = v.add_parser("adjust", help="AI-revise the master profile or a job document with an instruction")
     x.add_argument("instruction"); x.add_argument("--job", type=int); x.add_argument("--doc", help="resume.md (default) or cover_letter.md"); x.add_argument("--save", action="store_true")
     x = v.add_parser("review"); x.add_argument("file", nargs="?", help="defaults to master profile")
-    x = v.add_parser("export"); x.add_argument("file", help="markdown -> .docx")
+    x = v.add_parser("lint", help="deterministic checks: weak openers, missing numbers, pronouns, cliches, sections, gaps")
+    x.add_argument("file", nargs="?", help=".md/.txt/.docx/.pdf; defaults to the master profile"); x.add_argument("--job", type=int, help="the job's tailored resume")
+    x = v.add_parser("audit", help="file checks a parser trips on (header contact, tables, text boxes, columns, scans) + the text it sees")
+    x.add_argument("file", help=".docx or .pdf")
+    x = v.add_parser("export", help="markdown -> .docx, or a PDF with --pdf (Word, else LibreOffice, else a browser print page)")
+    x.add_argument("file", help="a job id (its tailored resume.md) or a markdown file")
+    x.add_argument("--pdf", action="store_true"); x.add_argument("--style", choices=settings.CHOICES["resume_style"], help="default: pref resume_style")
     v.add_parser("profile", help="print master profile path")
     s.set_defaults(f=cmd_resume)
+
+    s = sub.add_parser("match", help="JD coverage: which of the posting's keywords your resume mentions (no AI; not an ATS verdict)")
+    s.add_argument("id", type=int); s.add_argument("--file", help="score this resume file instead (.md/.txt/.docx/.pdf; not saved)")
+    s.add_argument("--skip", action="append", metavar="TERM", help="mark a keyword 'not mine' for this job (again to undo)")
+    s.set_defaults(f=cmd_match)
 
     s = sub.add_parser("profile", help="profile bank: saved resumes, skills, languages, LinkedIn import")
     v = s.add_subparsers(dest="op", required=True)
@@ -766,7 +921,7 @@ def build() -> argparse.ArgumentParser:
         x = v.add_parser(op); x.add_argument("name")
     x = v.add_parser("set", help="preference: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, "
                                      "weekly_target (applications/week, used by idea crafting), provider, council_providers, "
-                                     "council_judge, signature, models (provider=model; also written by self-healing model selection)")
+                                     "council_judge, signature, desktop_notifications, models (provider=model; also written by self-healing model selection)")
     x.add_argument("name"); x.add_argument("value")
     s.set_defaults(f=cmd_tools)
     s = sub.add_parser("inbox", help="actions waiting for your approval")
@@ -785,11 +940,16 @@ def build() -> argparse.ArgumentParser:
     x = v.add_parser("rm"); x.add_argument("id", type=int)
     x = v.add_parser("ask", help="draft an answer for a job's form question"); x.add_argument("id", type=int); x.add_argument("question")
     s.set_defaults(f=cmd_answers)
+    tpl = "plain offline template instead of AI (also the fallback when no provider is configured)"
     s = sub.add_parser("followup", help="draft a follow-up email (sent via inbox if a contact is known)")
-    s.add_argument("id", type=int); s.set_defaults(f=cmd_followup)
+    s.add_argument("id", type=int); s.add_argument("--template", action="store_true", help=tpl); s.set_defaults(f=cmd_followup)
     s = sub.add_parser("thanks", help="draft a post-interview thank-you note")
     s.add_argument("id", type=int); s.add_argument("--interviewer"); s.add_argument("--notes", help="something specific from the conversation")
+    s.add_argument("--template", action="store_true", help=tpl)
     s.set_defaults(f=cmd_thanks)
+    s = sub.add_parser("withdraw", help="draft a withdrawal email; sending it from the inbox marks the job withdrawn")
+    s.add_argument("id", type=int); s.add_argument("--template", action="store_true", help=tpl); s.set_defaults(f=cmd_withdraw)
+    sub.add_parser("today", help="today's agenda: next actions, deadlines, interviews, follow-ups, inbox").set_defaults(f=cmd_today)
     s = sub.add_parser("offer", help="evaluate an offer against your preferences; negotiation plan")
     s.add_argument("id", type=int)
     for f in ("salary", "bonus", "equity", "benefits", "deadline", "notes"):

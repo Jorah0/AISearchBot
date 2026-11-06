@@ -132,6 +132,40 @@ def notify(msg: str) -> None:
         print(f"  (email notify failed: {e})")
 
 
+# Windows toast through PowerShell's WinRT bridge, shown under PowerShell's own AppUserModelID (Lodestar registers none).
+# The text arrives in environment variables, never spliced into the script.
+_TOAST_PS = r"""$ErrorActionPreference = 'Stop'
+[void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+[void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+$x = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+$t = $x.GetElementsByTagName('text')
+[void]$t.Item(0).AppendChild($x.CreateTextNode($env:LS_TITLE))
+[void]$t.Item(1).AppendChild($x.CreateTextNode($env:LS_BODY))
+$app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($app).Show([Windows.UI.Notifications.ToastNotification]::new($x))"""
+
+
+def desktop_notify(title: str, body: str) -> bool:
+    """Best-effort OS notification: Windows toast, macOS osascript, Linux notify-send. True if the OS accepted it.
+    Never raises: a missing tool, a locked-down shell or a timeout is just False."""
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "LS_TITLE": str(title)[:120], "LS_BODY": str(body)[:400]}
+    try:
+        if sys.platform.startswith("win"):
+            cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", _TOAST_PS]
+        elif sys.platform == "darwin":
+            cmd = ["osascript", "-e", 'display notification (system attribute "LS_BODY") with title (system attribute "LS_TITLE")']
+        else:
+            cmd = ["notify-send", "--", env["LS_TITLE"], env["LS_BODY"]]
+        r = subprocess.run(cmd, env=env, capture_output=True, timeout=20, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return r.returncode == 0
+    except Exception:  # ponytail: a notification is a nicety; nothing upstream may fail because of it
+        return False
+
+
 def tls_context():
     """Certificate-verifying TLS for IMAP/SMTP. imaplib and smtplib default to an unverified context, which would hand
     the mailbox password to anyone able to intercept the connection."""

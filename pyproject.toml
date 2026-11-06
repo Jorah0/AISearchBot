@@ -22,4 +22,4 @@ jobbot = "lodestar.cli:main"  # legacy alias
 include = ["lodestar*"]
 
 [tool.setuptools.package-data]
-lodestar = ["static/*"]
+lodestar = ["static/*", "data/*"]

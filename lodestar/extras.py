@@ -344,6 +344,20 @@ def packet(job) -> Path:
 
 
 # ----------------------------------------------------------------------------- resume import
+def _md_line(p) -> str:
+    """A .docx paragraph as a Markdown line: Title / Heading N become '#' x N, list paragraphs '- ', so the structure
+    (sections, roles, bullets) survives for bullet tailoring and the profile importer."""
+    t, style = p.text.strip(), (p.style.name if p.style is not None else "") or ""
+    if not t:
+        return ""
+    if style == "Title" or (style.startswith("Heading ") and style[8:].isdigit()):
+        return "#" * min(int(style[8:]) if style != "Title" else 1, 6) + " " + t
+    ppr = p._p.pPr
+    if style.startswith("List") or (ppr is not None and ppr.numPr is not None):
+        return "- " + t.lstrip("-*•·▪◦‣● ").strip()
+    return p.text
+
+
 def import_document(data: bytes, filename: str) -> str:
     """Bytes of a .docx / .pdf / .md / .txt resume -> plain text. PDF needs the `pdf` extra (pypdf)."""
     import io
@@ -353,7 +367,7 @@ def import_document(data: bytes, filename: str) -> str:
         from docx import Document
 
         doc = Document(io.BytesIO(data))
-        lines = [p.text for p in doc.paragraphs]
+        lines = [_md_line(p) for p in doc.paragraphs]
         for t in doc.tables:
             for row in t.rows:
                 lines.append(" | ".join(c.text.strip() for c in row.cells if c.text.strip()))

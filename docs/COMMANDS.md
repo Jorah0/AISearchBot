@@ -19,7 +19,9 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 | Command | What it does |
 |---|---|
 | `lodestar jobs add "Company" "Title" [--jd url\|file\|text] [--url] [--notes]` | Track a job; `--jd` URL is fetched and stored as text. |
-| `lodestar jobs list [--status S]` | Board as a table. |
+| `lodestar jobs list [--status S] [--sort match\|salary\|excitement\|deadline\|updated] [--remote onsite\|hybrid\|remote] [--min-salary N] [--tag T]` | Board as a table, with pay, match, excitement, workplace, deadline and tags on each line. `--min-salary` compares the top of the stated range. |
+| `lodestar jobs set ID key=value ...` | Tracker fields: `location`, `remote` (onsite/hybrid/remote), `salary_min`, `salary_max` (`120k` works), `currency` (3 letters), `source`, `posted_at`, `deadline`, `next_action_at` (YYYY-MM-DD), `excitement` (1-5), `tags` (comma list), `match_score` (0-100), `next_action`. An empty value clears; a bad value changes nothing. |
+| `lodestar today` | Today's agenda: next actions due or overdue, deadlines within 3 days, interviews within 48 h, follow-ups due, Inbox size. The Board shows the same as a Today panel. |
 | `lodestar jobs show ID` | Fields + full event timeline. |
 | `lodestar jobs status ID saved\|applied\|screening\|interview\|offer\|accepted\|rejected\|withdrawn [--note]` | Move it. `applied` stamps `applied_at`. `accepted` proposes withdrawing your other open applications (Inbox). |
 | `lodestar jobs note ID "text"` / `jobs jd ID source` / `jobs rm ID` | Notes, replace description, delete. |
@@ -33,11 +35,16 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 
 | Command | What it does |
 |---|---|
-| `lodestar resume gap ID` | ATS + hiring-manager comparison: score, missing keywords, verdict. Writes `gap.json`. |
-| `lodestar resume tailor ID [--council] [--docx]` | Tailored `resume.md` (+ `.docx`); records the variant hash. |
+| `lodestar resume gap ID` | JD coverage (deterministic, works without AI) plus the AI's verdict, weak areas and suggestions, which see the missing-keyword table. Writes `gap.json` and the job's match score. |
+| `lodestar match ID [--file resume.md\|.docx\|.pdf] [--skip TERM]` | JD coverage: which of the posting's keywords your resume mentions, by category, with missing and matched terms. No AI; a tailoring guide, not an ATS verdict. `--skip` marks a keyword "not mine" for this job (again to undo). `--file` scores another file without saving. |
+| `lodestar resume tailor ID [--council] [--docx] [--base RID]` | Tailored `resume.md` (+ `.docx`); records the variant hash. `--base` starts from a saved resume in the profile bank (ids: `lodestar profile show`) instead of the master. |
+| `lodestar resume tailor ID --bullets [--base RID]` | Per-bullet proposals (one AI call) with no-invention flags, printed numbered and saved to `bullets.json`; `resume.md` is untouched. |
+| `lodestar resume tailor ID --accept all\|unflagged\|1,3,5 [--docx]` | Build `resume.md` from `bullets.json`: accepted rows take the proposed text, the rest keep the original. Re-scores coverage and logs the change. |
 | `lodestar resume cover ID [--council] [--tone "..."] [--words 300] [--docx]` | A complete letter: contact block, date, addressee (the job's contact or Hiring Manager), greeting, 3-4 paragraphs built from the tailored resume, gap check and research pack, sign-off; `--docx` exports. |
-| `lodestar resume review [file]` | Brutal critique of your master profile or any file. |
-| `lodestar resume export file.md` | Markdown to .docx. |
+| `lodestar resume review [file]` | Brutal critique of your master profile or any file; the AI is given the lint results. |
+| `lodestar resume lint [file] [--job ID]` | Offline line checks: weak openers, bullets without a number, pronouns, passive hint, repeated verbs, long/short bullets, cliches, missing email/phone/sections, employment gaps (info). Default: the master profile. |
+| `lodestar resume audit file.docx\|.pdf` | File checks a parser trips on (contact in header/footer, tables, text boxes, images, columns, fonts under 10 pt, non-standard headings, scanned PDFs, size, file name) and the plain text a parser sees. |
+| `lodestar resume export ID\|file.md [--pdf] [--style classic\|modern\|compact]` | Markdown (a job id means its `resume.md`) to .docx in the chosen style; `--pdf` converts with Microsoft Word, else LibreOffice, else opens an HTML print page in your browser, and says which it used. |
 | `lodestar resume profile` | Print the master profile path. |
 | `lodestar outreach ID [--person "Name, title"] [--channel linkedin\|email]` | Short note asking for a conversation or referral. |
 | `lodestar email reply ID --intent "..."` | Reply draft to the company. |
@@ -84,15 +91,17 @@ page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, w
 |---|---|
 | `GET /api/state` | jobs, stats, variants, watches, alerts, providers, vault names |
 | `GET /api/jobs/ID` | job, events, generated documents |
-| `POST /api/jobs` `{company,title,jd,url,notes}` | add |
+| `POST /api/jobs` `{company,title,jd,url,notes,location?,posted_at?}` | add; source, workplace and pay are read from the notes and JD |
 | `POST /api/capture` `{title,url,desc}` | add from a browser page title (bookmarklet) |
 | `POST /api/jobs/ID/status|note|jd|contact|delete` | update (`contact` takes `{email, name}`) |
+| `POST /api/jobs/ID/fields` `{deadline: "2026-12-01", tags: "a,b", ...}` | set tracker fields (same whitelist and validation as `jobs set`; `""` clears) |
+| `POST /api/jobs/ID/skip` `{term}` | JD coverage: mark a keyword "not mine" for this job, or unmark it; returns `{coverage}` |
 | `POST /api/watches` `{url,keywords,search}` / `POST /api/watches/ID` | add / remove |
 | `GET|POST /api/profile` | read / save the master resume |
 | `POST /api/vault` `{name,value,user}` / `{name,delete:true}` | store / remove a secret |
 | `POST /api/comp` `{op: set\|delete, title, city, low, high}` | edit your market-rate table |
 | `POST /api/open_folder` `{which: data\|exports\|backups\|applications\|log}` | reveal a folder in the file manager |
-| `POST /api/run/ACTION` then `GET /api/tasks/ID` | background actions: tailor, cover, gap, prep, review, reply, outreach, ics, email_check, watch_run, search, chat, council, digest, obsidian, providers_test, providers_local, models, export (`{fmt: json or csv}`), auto_track, mock (`{messages, id}`), packet, doctor (`{live}`), backup |
+| `POST /api/run/ACTION` then `GET /api/tasks/ID` | background actions: tailor, cover, gap, prep, review, reply, outreach, ics, email_check, watch_run, search, chat, council, digest, obsidian, providers_test, providers_local, models, export (`{fmt: json or csv}`), auto_track, mock (`{messages, id}`), packet, doctor (`{live}`), backup, match (`{id}`), lint (`{text}`), audit (`{id}`, or `{}` for the newest saved resume file) |
 
 ## Automation and approvals (see AUTOMATION.md)
 
@@ -100,15 +109,16 @@ page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, w
 |---|---|
 | `lodestar tools list` | every automated tool with its enabled / auto switches, plus preferences |
 | `lodestar tools enable\|disable\|auto\|manual NAME` | flip a switch |
-| `lodestar tools set KEY VALUE` | preferences: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, weekly_target (applications/week, used by idea crafting), provider, council_providers, council_judge, signature, models (`provider=model`; also written by self-healing model selection) |
+| `lodestar tools set KEY VALUE` | preferences: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, weekly_target (applications/week, used by idea crafting), provider, council_providers, council_judge, signature, desktop_notifications, models (`provider=model`; also written by self-healing model selection) |
 | `lodestar inbox [--all] [-v]` | actions waiting for approval (`-v` shows the drafted email / payload) |
 | `lodestar approve ID... [--subject] [--body FILE] [--to]` | execute, optionally editing the email first |
 | `lodestar reject ID... [--reason]` | discard |
 | `lodestar answers list\|add Q A [--tags t1,t2]\|rm ID\|ask ID "question"` | answer bank for application-form questions; `ask` drafts from profile + bank and proposes saving |
 | `lodestar jobs contact ID EMAIL [--name]` | recruiter / hiring-manager address used for replies and follow-ups |
 | `lodestar jobs checklist ID` | done / next for every stage of this application |
-| `lodestar followup ID` | follow-up email draft; sent through the inbox when a contact is known |
-| `lodestar thanks ID [--interviewer] [--notes]` | post-interview thank-you note |
+| `lodestar followup ID [--template]` | follow-up email draft; sent through the inbox when a contact is known |
+| `lodestar thanks ID [--interviewer] [--notes] [--template]` | post-interview thank-you note |
+| `lodestar withdraw ID [--template]` | withdrawal email; always waits in the inbox, and sending it moves the job to `withdrawn` |
 | `lodestar offer ID [--salary --bonus --equity --benefits --deadline --notes]` | offer evaluation vs your preferences + negotiation plan (`offer.md`) |
 | `lodestar jobs search "q" --auto` | AI-judge results; propose tracking fits at or above `auto_track_min_score` |
 
@@ -232,3 +242,82 @@ Setup also has a Diagnostics panel (same checks as `lodestar doctor`, with an op
 The Profile tab has the same as a "Profile bank" panel: LinkedIn link and import, skill and language chips, saved
 resumes, rebuild. Web API: `GET /api/profile/bank`, `POST /api/profile/bank {op: add|remove|contact, ...}`,
 `POST /api/run/profile_import {name, data: base64, linkedin?, ai?}`, `POST /api/run/profile_rebuild`.
+
+## Tracker board, Today and notifications (pass 15)
+
+Jobs carry structured fields: location, workplace (onsite / hybrid / remote), pay range and currency, source, posted
+and deadline dates, excitement (1-5 stars), tags, a match score (0-100) and a next action with a due date. Adding a
+job fills what the listing already carries: pay from a salary line or figure in the JD, workplace from the location
+and JD (remote-only job boards count as remote), source from how it was added, location and posting date from a
+saved search result. Existing jobs were backfilled once from their notes and JD (only empty fields are written).
+
+Board: drag a card to another column to change its status (moving it back asks first; `accepted` still proposes
+withdrawing your other applications, after a confirm). Without a mouse, focus a card and press Enter, then pick a
+status in the drawer's select and press "move" (arrowing through the select changes nothing on its own). A filter bar narrows by text, status, workplace, minimum pay, tag and "has deadline", and sorts by last
+activity, stalest first, match, salary, excitement or deadline. "Table view" shows a sortable table with checkboxes
+for bulk status, add tag and delete. View, sort and filters are remembered by the browser. Cards show stars, pay,
+match, location and a deadline chip that turns red three days out. The drawer's Details form edits every field.
+The Today panel on top lists overdue and due next actions, deadlines within 3 days, interviews within 48 hours,
+follow-ups due and the Inbox count.
+
+Offline drafts: without an AI provider, follow-up, thank-you and withdrawal emails use a plain template filled from
+the job and your name (pref `signature` or `name`, else the profile bank), proposed through the Inbox like AI drafts.
+Choose it with a key present via `--template` or the "plain template, no AI" box in the drawer. Templates never
+include your private preferences.
+
+Desktop notifications (pref `desktop_notifications`, off by default; Setup > Desktop notifications or Tools >
+Preferences): while the monitor loop runs, one agenda per day, an interview within 2 hours and a deadline tomorrow,
+each shown once. Windows uses a toast (under PowerShell's app identity), macOS `osascript`, Linux `notify-send`;
+a system that refuses is silently skipped. Actions: `POST /api/run/withdraw {id, template?}`,
+`POST /api/run/notify_test`; `followup` and `thanks` accept `template`. `GET /api/state` includes `today`.
+
+## JD coverage, resume check and file audit (pass 15)
+
+JD coverage (`lodestar match ID`, the drawer's Match section) compares the posting with your current resume (the job's
+tailored `resume.md`, else your profile without Preferences) using a lexicon of about 1,500 terms in
+`lodestar/data/skills.json`: hard skills across software, data, cloud, security, design, product, marketing, sales,
+finance, healthcare, education, operations, HR, legal, trades and customer service, plus certifications, soft skills,
+degrees and aliases (`k8s` = Kubernetes, `ms excel` = Excel, `rn` = registered nurse). Categories and weights: hard
+skills 45%, job title 15%, education 10% (only when the posting names a degree; a higher degree covers a lower one),
+soft skills 10%, other 20% (phrases the posting repeats that the lexicon does not know). An empty category hands its
+weight to the rest. Keywords repeated far more often than the posting uses them are flagged as possible stuffing.
+Mark a keyword "not mine" to leave it out of the score for that job. The score is saved as the job's match score
+and in `coverage.json`; when a gap check has run, its `gap.json` keyword lists follow too (the AI verdict stays as
+judged). Tailoring re-scores and logs `coverage 54 -> 78` on the timeline. Computing coverage, "not mine", tags and
+other Details fields do not count as the job's last activity. It is a guide for tailoring, not a pass/fail ATS verdict.
+
+Check (`lodestar resume lint`, the Check buttons on Profile and in the drawer) lists line-numbered issues by severity
+with a fix hint; the 0-100 score is secondary. Audit (`lodestar resume audit`, "Audit resume.docx" in the drawer,
+"Audit latest saved resume file" in the profile bank) inspects the file itself and shows the text a parser would
+read. A PDF audit needs the optional `pypdf` for its text checks; without it the size, name and image checks still run.
+
+## Bullet tailoring, resume styles and PDF (pass 15)
+
+"Tailor by bullet" in the drawer (`lodestar resume tailor ID --bullets`) reads the experience and project bullets of
+your master profile (or a saved resume chosen under "tailor from" / `--base`; Preferences never included), works out
+which of the posting's keywords are missing, and asks the AI once for rewrites that carry them only where the facts
+allow, plus a relevance order per role. Two checks then run without AI:
+
+- **unsupported**: a keyword the rewrite adds (a posting keyword, or any hard skill, certification or degree the
+  original bullet did not name, declared by the AI or not) that appears nowhere in your profile, the bank's facts or
+  the source resume;
+- **new number**: a number, percentage or amount the original bullet does not have.
+
+Flagged rows start unchecked. The table shows original | proposed (added keywords highlighted, flags in amber) |
+accept; "Accept all unflagged" resets the checks and "Build resume" writes `resume.md` (the previous one moves to
+`history/`), regenerates `resume.docx`, re-scores coverage and logs `coverage X -> Y`. Within each role the bullets
+follow the suggested order; an accepted "drop" removes the bullet. A role is a `###` heading, a heading deeper than
+its section (`# Experience` then `## Engineer - Acme`), or any plain line between bullets (`**Analyst**, Beta`), so a
+bullet never moves to another employer. Bullets are lines starting with `-`, `*` or `•`-style marks; a saved `.docx`
+keeps its headings and list bullets when imported (one imported before pass 15: import it again), and a PDF's text
+works when it keeps its bullet marks. Any Preferences heading (any level, any case) is left out, and a build that
+would still contain "Salary floor" stops with a message. The whole-document "Tailor resume" is unchanged.
+
+Styles (preference `resume_style`, the drawer's "style" select or Tools > Preferences): `classic` (the previous look,
+Calibri 10.5), `modern` (Arial, navy headings, 0.8" margins), `compact` (Calibri 10, tight spacing, 0.6" margins). All
+are single column with no tables, text boxes, headers or footers, and pass the file audit. A `template.docx` beside
+`profile.md` still overrides them. "Export PDF" (`lodestar resume export ID --pdf`) uses Microsoft Word over COM
+(Windows, 2-minute timeout), else LibreOffice (`soffice --headless`), else writes `resume.html` with print CSS and opens
+it in the system browser (also from the desktop window) to print to PDF. `POST /api/run/bullets {id, base?}`,
+`/api/run/bullets_apply {id, accept: [ids]}` and `/api/run/export_pdf {id}`; `GET /api/state` includes `bases` (saved
+resumes) and `pref_choices`.

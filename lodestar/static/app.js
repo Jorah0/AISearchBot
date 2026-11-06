@@ -47,15 +47,137 @@ async function load() {
   $('#stats').innerHTML = `<span>tracked <b>${S.jobs.length}</b></span><span>applied <b>${st.applied_total}</b></span><span>response <b>${pct(st.response_rate)}</b></span><span>interview <b>${pct(st.interview_rate)}</b></span><span>providers <b>${Object.values(S.providers).filter(Boolean).length}</b></span><span>tokens today <b>${(S.usage_today.input + S.usage_today.output).toLocaleString()}</b></span>`;
   const badge = $('#inboxN'); badge.textContent = S.pending.length; badge.classList.toggle('zero', !S.pending.length);
   renderOnboard(); renderLoop(); $('#ver').textContent = 'Lodestar ' + S.version;
+  if (!$('#fStatus').options.length) initFilters();
   renderBoard(); renderInbox(); renderSearchless(); renderMonitor(); renderAnswers(); renderIdeas(); renderTools(); renderSetup(); fillCoachJobs();
 }
 
+/* ---- board: filters, sort, view (kept in localStorage), drag and drop, table, Today ---- */
+const VIEW_KEY = 'ls_board_view';
+let V = { view: 'board', key: 'updated_at', dir: -1, q: '', status: '', remote: '', minSal: '', tag: '', dl: false };
+try { Object.assign(V, JSON.parse(localStorage.getItem(VIEW_KEY) || '{}')); } catch (_) { /* storage blocked or corrupt: defaults */ }
+const saveView = () => { try { localStorage.setItem(VIEW_KEY, JSON.stringify(V)); } catch (_) { /* storage blocked */ } };
+const SORTS = { updated: ['updated_at', -1], stale: ['updated_at', 1], match: ['match_score', -1], salary: ['salary', -1], excitement: ['excitement', -1], deadline: ['deadline', 1] };
+const tagsOf = j => (j.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+const payOf = j => j.salary_max ?? j.salary_min ?? null;
+const sortVal = (j, k) => k === 'salary' ? payOf(j) : k === 'status' ? S.statuses.indexOf(j.status) : j[k] ?? null;
+const k0 = n => n >= 1000 ? Math.round(n / 1000) + 'k' : String(n);
+const salaryText = j => payOf(j) == null ? '' : (j.currency ? j.currency + ' ' : '') + (j.salary_min != null && j.salary_max != null && j.salary_min !== j.salary_max ? k0(j.salary_min) + '–' + k0(j.salary_max) : k0(payOf(j)));
+const stars = j => { const n = Math.max(0, Math.min(5, j.excitement | 0)); return n ? `<span class="stars" title="excitement ${n} of 5" aria-label="excitement ${n} of 5">${'★'.repeat(n)}${'☆'.repeat(5 - n)}</span>` : ''; };
+function daysTo(d) { const t = new Date(); t.setHours(0, 0, 0, 0); return Math.round((new Date(d + 'T00:00:00') - t) / 864e5); }
+function deadlineChip(j) {
+  if (!j.deadline) return '';
+  const d = daysTo(j.deadline);
+  return `<span class="chip ${d <= 3 ? 'due' : ''}" title="deadline ${esc(j.deadline)}">${d < 0 ? 'deadline passed' : d === 0 ? 'due today' : 'due in ' + d + 'd'}</span>`;
+}
+const where = j => [j.location, j.remote].filter(Boolean).join(' · ');
+function visibleJobs() {
+  const q = V.q.trim().toLowerCase(), tag = V.tag.trim().toLowerCase(), min = Number(V.minSal) || 0;
+  return S.jobs.filter(j => (!q || [j.company, j.title, j.location, j.tags].join(' ').toLowerCase().includes(q))
+    && (!V.status || j.status === V.status) && (!V.remote || j.remote === V.remote) && (!min || (payOf(j) ?? -1) >= min)
+    && (!tag || tagsOf(j).some(t => t.toLowerCase() === tag)) && (!V.dl || j.deadline))
+    .sort((a, b) => {  // missing values always last; ties keep the server order (most recent activity first)
+      const x = sortVal(a, V.key), y = sortVal(b, V.key);
+      if (x === y) return 0; if (x == null) return 1; if (y == null) return -1;
+      return (typeof x === 'string' ? x.localeCompare(y) : x - y) * V.dir;
+    });
+}
+function initFilters() {
+  $('#fStatus').innerHTML = '<option value="">any status</option>' + opt(S.statuses, V.status);
+  $('#bulkStatus').innerHTML = opt(S.statuses);
+  $('#fQ').value = V.q; $('#fRemote').value = V.remote; $('#fSal').value = V.minSal; $('#fTag').value = V.tag; $('#fDl').checked = V.dl;
+  syncSort();
+  ['#fQ', '#fStatus', '#fRemote', '#fSal', '#fTag', '#fDl'].forEach(s => $(s).addEventListener('input', () => {
+    V.q = $('#fQ').value; V.status = $('#fStatus').value; V.remote = $('#fRemote').value; V.minSal = $('#fSal').value; V.tag = $('#fTag').value; V.dl = $('#fDl').checked;
+    saveView(); renderBoard();
+  }));
+  $('#fSort').addEventListener('change', e => { if (!SORTS[e.target.value]) return; [V.key, V.dir] = SORTS[e.target.value]; saveView(); renderBoard(); });
+}
+function syncSort() { $('#fSort').value = Object.keys(SORTS).find(k => SORTS[k][0] === V.key && SORTS[k][1] === V.dir) || ''; }
+function sortBy(k) {  // table header: same column flips the direction; numbers start high-first, text and dates A-Z / soonest
+  if (V.key === k) V.dir = -V.dir; else { V.key = k; V.dir = ['match_score', 'excitement', 'salary', 'updated_at'].includes(k) ? -1 : 1; }
+  saveView(); syncSort(); renderBoard();
+}
+function toggleView() { V.view = V.view === 'table' ? 'board' : 'table'; saveView(); renderBoard(); }
+function card(j) {
+  const chips = [stars(j), salaryText(j) && `<span>${esc(salaryText(j))}</span>`, j.match_score != null && `<span>match ${esc(j.match_score)}%</span>`,
+    where(j) && `<span>${esc(where(j))}</span>`, deadlineChip(j)].filter(Boolean).join('');
+  return `<div class="card ${S.followups.includes(j.id) ? 'late' : ''} ${cur && cur.job.id === j.id ? 'sel' : ''}" data-id="${j.id}" draggable="true" tabindex="0" role="button"
+    aria-label="${esc(`#${j.id} ${j.company} - ${j.title}, ${j.status}`)}" ondragstart="event.dataTransfer.setData('text/plain','${j.id}');event.dataTransfer.effectAllowed='move'"
+    onclick="openJob(${j.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openJob(${j.id})}">
+    <div class="co">${esc(j.company)}</div><div class="ti">${esc(j.title)}</div>${chips ? `<div class="chips">${chips}</div>` : ''}
+    <div class="meta"><span>#${j.id}</span><span>${esc(j.updated_at.slice(0, 10))}</span></div></div>`;
+}
+function dragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; e.currentTarget.classList.add('drop'); }
+function dropJob(e, status) { e.preventDefault(); e.currentTarget.classList.remove('drop'); const id = Number(e.dataTransfer.getData('text/plain')); if (id) moveJob(id, status); }
+async function moveJob(id, status) {  // a drag or the drawer's move button (a select's change fires per arrow key): backward and 'accepted' ask first
+  const j = S.jobs.find(x => x.id === id);
+  const forward = j && S.statuses.indexOf(status) > S.statuses.indexOf(j.status);
+  if (j && j.status !== status && (status === 'accepted'
+      ? confirm(`Mark #${id} ${j.company} - ${j.title} accepted? Withdrawing your other open applications will be proposed in the Inbox.`)
+      : forward || confirm(`Move #${id} ${j.company} - ${j.title} back from "${j.status}" to "${status}"?`))) {
+    const r = await api(`/api/jobs/${id}/status`, { status, note: '(moved by you)' });
+    if (r.error) toast('error: ' + r.error, 'err');
+    else { toast(`#${id} → ${status}` + (status === 'accepted' ? '. Withdrawing your other open applications is proposed in the Inbox.' : ''), 'ok'); await load(); }
+  }
+  if (cur && cur.job.id === id) openJob(id);  // also resets the drawer select after a cancelled move
+}
+function renderToday() {
+  const t = S.today, el = $('#today');
+  const item = (i, label, cls = '') => `<button class="b ghost sm ${cls}" onclick="openJob(${i.id})">${esc(label)} · #${i.id} ${esc(i.company)} - ${esc(i.title)}</button>`;
+  const parts = [...t.actions.map(i => item(i, (i.overdue ? 'overdue ' + i.when : 'today') + ': ' + i.what, i.overdue ? 'due' : '')),
+    ...t.deadlines.map(i => item(i, i.days === 0 ? 'deadline today' : `deadline in ${i.days}d`, 'due')),
+    ...t.interviews.map(i => item(i, 'interview ' + i.when)), ...t.followups.map(i => item(i, 'follow up'))];
+  el.style.display = parts.length || t.pending ? '' : 'none';
+  el.innerHTML = `<h3>Today</h3><div class="row">${parts.join('')}${t.pending ? `<button class="b sm" onclick="go('inbox')">${t.pending} waiting in the Inbox</button>` : ''}</div>`;
+}
+let SEL = new Set();  // table checkboxes; survives the 60 s refresh
+const COLS = [['id', '#'], ['company', 'Company'], ['title', 'Title'], ['status', 'Status'], ['salary', 'Salary'], ['match_score', 'Match'], ['excitement', 'Excitement'], ['deadline', 'Deadline'], ['location', 'Location'], ['updated_at', 'Last activity']];
+function renderTable(jobs) {
+  const shown = new Set(jobs.map(j => j.id)); SEL = new Set([...SEL].filter(id => shown.has(id)));  // bulk acts on what you see
+  const sortAttr = k => V.key === k ? (V.dir > 0 ? 'ascending' : 'descending') : 'none';
+  $('#jobTable').innerHTML = `<table class="jobs"><thead><tr><th><input type="checkbox" aria-label="select all shown jobs" ${jobs.length && SEL.size === jobs.length ? 'checked' : ''} onchange="selAll(this.checked)"></th>`
+    + COLS.map(([k, l]) => `<th aria-sort="${sortAttr(k)}"><button class="th" onclick="sortBy('${k}')">${l}${V.key === k ? (V.dir > 0 ? ' ▲' : ' ▼') : ''}</button></th>`).join('') + '</tr></thead><tbody>'
+    + jobs.map(j => `<tr class="${S.followups.includes(j.id) ? 'late' : ''}"><td><input type="checkbox" aria-label="select #${j.id}" ${SEL.has(j.id) ? 'checked' : ''} onchange="selOne(${j.id},this.checked)"></td>
+      <td>${j.id}</td><td><a href="#" onclick="openJob(${j.id});return false">${esc(j.company)}</a></td><td>${esc(j.title)}</td><td>${esc(j.status)}</td><td>${esc(salaryText(j))}</td>
+      <td>${esc(j.match_score ?? '')}</td><td>${stars(j)}</td><td>${deadlineChip(j)}</td><td>${esc(where(j))}</td><td>${esc(j.updated_at.slice(0, 10))}</td></tr>`).join('')
+    + '</tbody></table>' + (jobs.length ? '' : '<div class="empty">No jobs match these filters.</div>');
+  renderBulk();
+}
+function renderBulk() { $('#bulk').style.display = V.view === 'table' && SEL.size ? '' : 'none'; $('#bulkN').textContent = SEL.size + ' selected'; }
+function selOne(id, on) { if (on) SEL.add(id); else SEL.delete(id); renderBulk(); }
+function selAll(on) { SEL = new Set(on ? visibleJobs().map(j => j.id) : []); renderBoard(); }
+async function bulk(fn, done) {
+  const ids = [...SEL]; let bad = 0;
+  for (const id of ids) { const r = await fn(id); if (!r || r.error) bad++; }
+  SEL.clear(); toast(bad ? `${bad} of ${ids.length} failed` : done(ids.length), bad ? 'err' : 'ok'); load();
+}
+function bulkStatus() {
+  const s = $('#bulkStatus').value; if (!confirm(`Set ${SEL.size} job(s) to "${s}"?`)) return;
+  bulk(id => api(`/api/jobs/${id}/status`, { status: s, note: '(bulk, by you)' }), n => `${n} job(s) → ${s}`);
+}
+function bulkTag() {
+  const t = $('#bulkTag').value.trim(); if (!t) return toast('type a tag first', 'err');
+  bulk(id => { const j = S.jobs.find(x => x.id === id); return j && api(`/api/jobs/${id}/fields`, { tags: [...new Set([...tagsOf(j), t])].join(',') }); }, n => `tagged ${n} job(s)`);
+}
+function bulkDelete() {
+  if (!confirm(`Delete ${SEL.size} job(s) with their timelines? This cannot be undone.`)) return;
+  if (cur && SEL.has(cur.job.id)) closeDrawer();
+  bulk(id => api(`/api/jobs/${id}/delete`, {}), n => `deleted ${n} job(s)`);
+}
+
 function renderBoard() {
-  $('#cols').innerHTML = S.statuses.map(s => {
-    const jobs = S.jobs.filter(j => j.status === s);
-    return `<div class="col" data-s="${s}"><h3>${s} <span>${jobs.length}</span></h3>` + jobs.map(j =>
-      `<div class="card ${S.followups.includes(j.id) ? 'late' : ''} ${cur && cur.job.id === j.id ? 'sel' : ''}" onclick="openJob(${j.id})"><div class="co">${esc(j.company)}</div><div class="ti">${esc(j.title)}</div><div class="meta"><span>#${j.id}</span><span>${j.updated_at.slice(0, 10)}</span></div></div>`).join('') + '</div>';
-  }).join('');
+  renderToday();
+  const jobs = visibleJobs(), table = V.view === 'table';
+  $('#fView').textContent = table ? 'Board view' : 'Table view'; $('#fView').setAttribute('aria-pressed', String(table));
+  $('#cols').style.display = table ? 'none' : ''; $('#jobTable').style.display = table ? '' : 'none';
+  if (table) renderTable(jobs);
+  else {
+    renderBulk();
+    $('#cols').innerHTML = S.statuses.map(s => {
+      const col = jobs.filter(j => j.status === s);
+      return `<div class="col" data-s="${s}" ondragover="dragOver(event)" ondragleave="this.classList.remove('drop')" ondrop="dropJob(event,'${s}')"><h3>${s} <span>${col.length}</span></h3>` + col.map(card).join('') + '</div>';
+    }).join('');
+  }
   const f = S.funnel.stages;
   $('#funnel').innerHTML = f.applied.reached ? 'funnel: ' + Object.entries(f).map(([s, d]) => `<span class="pill">${s} ${d.reached}${d.conversion != null ? ' → ' + Math.round(d.conversion * 100) + '%' : ''}${d.median_days_to_next != null ? ' · ' + d.median_days_to_next + 'd' : ''}</span>`).join('') : '';
   $('#upcoming').innerHTML = S.upcoming.length ? 'upcoming interviews: ' + S.upcoming.map(i => `<button class="b ghost sm" onclick="openJob(${i.job_id})">${esc(i.when)} · #${i.job_id} ${esc(i.company)} - ${esc(i.title)}</button>`).join(' ') : '';
@@ -86,28 +208,40 @@ function closeDrawer() { $('#drawer').classList.remove('open'); cur = null; $$('
 async function openJob(id) {
   const d = await api('/api/jobs/' + id); if (d.error) return toast(d.error, 'err');
   cur = d; const j = d.job, docs = Object.keys(d.docs);
-  $$('.card').forEach(c => c.classList.toggle('sel', c.getAttribute('onclick') === `openJob(${id})`));
+  $$('.card').forEach(c => c.classList.toggle('sel', c.dataset.id === String(id)));
   $('#drawer').innerHTML = `
     <div class="head"><b>${esc(j.company)}</b><span class="muted">${esc(j.title)} · #${j.id}</span>
       ${safeUrl(j.url) ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">posting ↗</a>` : ''}
-      <select onchange="api('/api/jobs/${j.id}/status',{status:this.value}).then(()=>{load();openJob(${j.id})})">${opt(S.statuses, j.status)}</select>
+      <select id="jStatus" aria-label="Status">${opt(S.statuses, j.status)}</select><button class="b ghost sm" onclick="moveJob(${j.id},$('#jStatus').value)">move</button>
       <button class="b ghost sm close" onclick="closeDrawer()" aria-label="Close job details">✕</button></div>
     <div class="muted">contact: ${esc(j.contact_name || '')} ${esc(j.contact_email || '(none; replies and follow-ups need one)')}</div>
+${detailsForm(j)}
+
+    <div class="group"><h4>Match</h4>
+      <div class="row"><button class="b" onclick="jobMatch(this)">${savedCoverage(d) ? 'Recompute' : 'Compute'} JD coverage</button><button class="b ghost" onclick="jobLint(this)">Check resume</button><button class="b ghost" onclick="run('audit',{id:${j.id}},r=>{$('#jCheck').innerHTML=auditHtml(r)},this)">Audit resume.docx</button></div>
+      <div class="muted">JD coverage is the share of the posting's keywords your current resume (tailored, else your profile) mentions: a guide for tailoring, not an ATS pass/fail. No AI involved.</div>
+      <div id="jMatch"></div><div id="jCheck"></div></div>
 
     <div class="group"><h4>Documents</h4><div class="row">
-      <button class="b" onclick="jobRun('gap',{},this)">Gap / ATS score</button>
-      <button class="b" onclick="jobRun('tailor',{docx:true},this)">Tailor resume (+docx)</button>
+      <button class="b" onclick="jobRun('gap',{},this)">Gap check (coverage + AI verdict)</button>
+      <button class="b" onclick="jobRun('tailor',{docx:true,base:baseOpt()},this)">Tailor resume (+docx)</button>
+      <button class="b" onclick="tailorBullets(this)">Tailor by bullet</button>
       <button class="b" onclick="jobRun('cover',{docx:true,tone:$('#jTone').value,words:$('#jWords').value},this)">Cover letter (+docx)</button>
       <input id="jTone" placeholder="tone: confident, warm, specific" style="width:190px"><input id="jWords" type="number" min="100" max="800" placeholder="words (300)" style="width:100px">
       <button class="b ghost" onclick="jobRun('prep',{},this)">Interview prep</button>
       <button class="b ghost" onclick="jobRun('research',{},this)">Company research</button>
       <button class="b ghost" onclick="run('checklist',{id:${j.id}},r=>show('jOut',r.checklist.map(c=>(c.done?'[x] ':'[ ] ')+c.item+(c.done?'':'   -> '+c.next)).join('\\n')),this)">Checklist</button>
-      <label class="muted"><input type="checkbox" id="jCouncil"> council (all providers)</label></div></div>
+      <label class="muted"><input type="checkbox" id="jCouncil"> council (all providers)</label></div>
+      <div class="row">${S.bases.length ? `<label class="muted">tailor from <select id="jBase"><option value="">master profile</option>${S.bases.map(b => `<option value="${esc(b.id)}">saved: ${esc(b.name)} (${esc(b.added.slice(0, 10))})</option>`).join('')}</select></label>` : ''}
+        <label class="muted">style <select id="jStyle" onchange="setPref('resume_style',this.value)">${opt(S.pref_choices.resume_style, S.prefs.resume_style)}</select></label>
+        <button class="b ghost" onclick="exportPdf(this)">Export PDF</button></div>
+      <div id="jBullets"></div></div>
 
     <div class="group"><h4>Communicate</h4>
       <div class="row"><input id="jIntent" class="grow" placeholder="reply intent, e.g. accept interview, propose Tue/Wed afternoons"><button class="b ghost" onclick="jobRun('reply',{intent:$('#jIntent').value},this)">Draft reply</button></div>
       <div class="row"><input id="jPerson" class="grow" placeholder="outreach to: Name, title (optional)"><select id="jChannel"><option value="linkedin">LinkedIn note</option><option value="email">Email</option></select><button class="b ghost" onclick="jobRun('outreach',{person:$('#jPerson').value,channel:$('#jChannel').value},this)">Draft outreach</button></div>
-      <div class="row"><button class="b ghost" onclick="jobRun('followup',{},this)">Follow-up email</button><input id="jInt" placeholder="interviewer" style="width:140px"><input id="jTnotes" class="grow" placeholder="something specific from the interview"><button class="b ghost" onclick="jobRun('thanks',{interviewer:$('#jInt').value,notes:$('#jTnotes').value},this)">Thank-you note</button></div></div>
+      <div class="row"><button class="b ghost" onclick="jobRun('followup',{template:$('#jTpl').checked},this)">Follow-up email</button><input id="jInt" placeholder="interviewer" style="width:140px"><input id="jTnotes" class="grow" placeholder="something specific from the interview"><button class="b ghost" onclick="jobRun('thanks',{interviewer:$('#jInt').value,notes:$('#jTnotes').value,template:$('#jTpl').checked},this)">Thank-you note</button></div>
+      <div class="row"><button class="b ghost" onclick="jobRun('withdraw',{template:$('#jTpl').checked},this)">Withdrawal email</button><label class="muted"><input type="checkbox" id="jTpl" ${Object.values(S.providers).some(Boolean) ? '' : 'checked disabled'}> plain template, no AI (follow-up, thank-you, withdrawal; used automatically without a provider)</label></div></div>
 
     <div class="group"><h4>Schedule and decide</h4>
       <div class="row"><input id="jWhen" placeholder="interview: YYYY-MM-DD HH:MM" style="width:200px"><input id="jMin" type="number" min="5" placeholder="minutes (60)" style="width:110px"><button class="b ghost" onclick="jobRun('ics',{when:$('#jWhen').value,minutes:$('#jMin').value||60},this)">Calendar .ics</button></div>
@@ -125,6 +259,8 @@ async function openJob(id) {
     <textarea id="docEdit" style="display:none; min-height:260px"></textarea><button class="b sm" id="docSave" style="display:none" onclick="saveDoc()">Save document</button>
     <div class="out"><h4 class="muted">AI output</h4><pre id="jOut">(run an action above)</pre></div>`;
   $('#drawer').classList.add('open');
+  renderCoverage(savedCoverage(d));
+  renderBullets(savedBullets(d), false);
   showDoc('timeline', $('#docTabs button'));
   $('#drawer .close')?.focus();
 }
@@ -133,9 +269,117 @@ function showDoc(n, btn) {
   $('#docView').textContent = n === 'timeline' ? cur.events.map(e => `${e.ts}  ${e.kind.padEnd(16)} ${e.detail || ''}`).join('\n')
     : n === 'description' ? (cur.job.jd || '(no job description on file; set one in Admin)') : cur.docs[n];
 }
+const DETAILS = ['location', 'remote', 'salary_min', 'salary_max', 'currency', 'excitement', 'match_score', 'deadline', 'posted_at', 'source', 'tags', 'next_action', 'next_action_at'];
+function detailsForm(j) {
+  const inp = (k, label, attrs = '') => `<label class="fld">${label}<input id="d_${k}" value="${esc(j[k] ?? '')}" ${attrs}></label>`;
+  const sel = (k, label, vals) => `<label class="fld">${label}<select id="d_${k}"><option value="">-</option>${vals.map(([v, t]) => `<option value="${v}" ${String(j[k] ?? '') === String(v) ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
+  return `<div class="group"><h4>Details</h4>
+    <div class="row">${inp('location', 'location', 'style="width:150px"')}${sel('remote', 'workplace', [['onsite', 'onsite'], ['hybrid', 'hybrid'], ['remote', 'remote']])}
+      ${inp('salary_min', 'salary min', 'type="number" min="0" step="1000" style="width:105px"')}${inp('salary_max', 'salary max', 'type="number" min="0" step="1000" style="width:105px"')}
+      ${inp('currency', 'currency', 'maxlength="3" style="width:62px"')}${sel('excitement', 'excitement', [1, 2, 3, 4, 5].map(n => [n, '★'.repeat(n)]))}
+      ${inp('match_score', 'match %', 'type="number" min="0" max="100" style="width:72px"')}</div>
+    <div class="row">${inp('deadline', 'deadline', 'type="date"')}${inp('posted_at', 'posted', 'type="date"')}${inp('source', 'source', 'style="width:130px"')}${inp('tags', 'tags (comma)', 'style="width:190px"')}</div>
+    <div class="row">${inp('next_action', 'next action', 'style="width:260px" placeholder="e.g. ask Sam for a referral"')}${inp('next_action_at', 'due', 'type="date"')}
+      <button class="b sm" onclick="saveDetails(${j.id})">Save details</button></div></div>`;
+}
+async function saveDetails(id) {  // every field is sent; an empty one clears it (the server validates each)
+  const r = await api(`/api/jobs/${id}/fields`, Object.fromEntries(DETAILS.map(k => [k, $('#d_' + k).value.trim()])));
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast('details saved', 'ok'); await load(); openJob(id);
+}
 function jobRun(action, extra, btn) {
   const id = cur.job.id;
   run(action, { id, council: $('#jCouncil')?.checked, ...extra }, r => { const t = mailText(r); openJob(id).then(() => { $('#jOut').textContent = t; }); }, btn);
+}
+
+/* ---- JD coverage, resume check, file audit (lodestar/ats.py, lodestar/lint.py); all deterministic, no AI ---- */
+let COV = null;  // keywords stay in JS; the "not mine" buttons carry only an index
+function savedCoverage(d) { try { return JSON.parse(d.docs['coverage.json'] || 'null') || JSON.parse(d.docs['gap.json'] || '{}').coverage || null; } catch (_) { return null; } }
+const covBar = (label, c) => `<div class="cov-row"><span>${esc(label)}</span><span class="bar" role="img" aria-label="${esc(label)} ${esc(c.score)}%"><i style="width:${Math.max(0, Math.min(100, Number(c.score) || 0))}%"></i></span><span>${esc(c.score)}% · ${esc(c.matched)}/${esc(c.total)}</span></div>`;
+function renderCoverage(cov) {
+  COV = cov; const el = $('#jMatch'); if (!el) return;
+  if (!cov) { el.innerHTML = ''; return; }
+  const c = cov.categories, t = cov.title_match, edu = cov.education_required;
+  const names = { hard: 'hard skills', soft: 'soft skills', title: 'job title', education: 'education', other: 'other posting terms' };
+  el.innerHTML = `<div class="row"><b class="cov-score">${esc(cov.score)}%</b><span class="muted">JD coverage</span></div>`
+    + Object.entries(names).filter(([k]) => c[k].total).map(([k, l]) => covBar(l, c[k])).join('')
+    + (t ? `<div class="muted">title "${esc(t.title)}": ${t.found ? 'found in your resume' : 'not found in your resume'}</div>` : '')
+    + (edu.length ? `<div class="muted">posting names ${esc(edu.join(', '))}: ${c.education.matched ? 'covered by your resume' : 'not found in your resume'}</div>` : '')
+    + (cov.stuffing.length ? `<div class="warnbox">Repeated far more often than the posting does (can read as keyword stuffing): ${esc(cov.stuffing.join(', '))}</div>` : '')
+    + (cov.keywords.length ? `<table class="kw"><thead><tr><th>keyword</th><th>kind</th><th>in posting</th><th>in resume</th><th></th></tr></thead><tbody>`
+      + cov.keywords.map((k, i) => `<tr class="${k.skipped ? 'skip' : k.matched ? 'hit' : 'miss'}"><td>${esc(k.term)}</td><td>${esc(k.kind)}</td><td>${esc(k.jd_count)}×</td>
+        <td>${k.skipped ? 'not mine' : k.matched ? esc(k.resume_count) + '× ✓' : 'missing'}</td>
+        <td><button class="b ghost sm" onclick="skipTerm(${i})" aria-label="${esc((k.skipped ? 'count again: ' : 'not mine: ') + k.term)}">${k.skipped ? 'undo' : 'not mine'}</button></td></tr>`).join('')
+      + '</tbody></table>' : '<div class="muted">no known keywords found in the posting</div>')
+    + `<div class="muted">${esc(cov.note)}</div>`;
+}
+function syncScore(c) {  // coverage rewrote match_score on the server: keep Save details from writing back a stale one
+  const el = $('#d_match_score'); if (el && c) el.value = el.defaultValue = String(c.score);
+}
+function jobMatch(btn) { run('match', { id: cur.job.id }, r => { cur.docs = r.docs; renderCoverage(r.coverage); syncScore(r.coverage); toast('JD coverage ' + r.coverage.score + '%', 'ok'); }, btn); }
+async function skipTerm(i) {  // "not mine": the keyword leaves the score for this job; again to undo
+  const k = COV && COV.keywords[i]; if (!k || !cur) return;
+  const r = await api(`/api/jobs/${cur.job.id}/skip`, { term: k.term });
+  if (r.error) return toast('error: ' + r.error, 'err');
+  renderCoverage(r.coverage); syncScore(r.coverage); toast(`${k.skipped ? 'counting' : 'not counting'} "${k.term}" · coverage ${r.coverage.score}%`, 'ok'); load();
+}
+function issuesHtml(r) {
+  return ['high', 'medium', 'low', 'info'].map(s => [s, r.issues.filter(i => i.severity === s)]).filter(([, l]) => l.length)
+    .map(([s, l]) => `<div class="iss ${s}"><b>${s} (${l.length})</b><ul>${l.map(i => `<li>${i.line ? 'line ' + esc(i.line) + ': ' : ''}${esc(i.text)}<div class="muted">${esc(i.hint)}</div></li>`).join('')}</ul></div>`).join('')
+    || '<div class="muted">no issues found</div>';
+}
+const lintHtml = r => `<h4 class="muted">Resume check</h4>${issuesHtml(r)}<div class="muted">score ${esc(r.score)}/100 (secondary: the list is what to fix)</div>`;
+const auditHtml = r => `<h4 class="muted">File audit: ${esc(r.file)}</h4>${issuesHtml(r)}<div class="muted">${esc(r.note)}</div><details><summary class="muted">What a parser sees</summary><pre>${esc(r.text || '(no text extracted)')}</pre></details>`;
+function jobLint(btn) {  // the open resume.md, unsaved edits included
+  const editing = $('#docEdit').style.display !== 'none' && $('#docEdit').dataset.name === 'resume.md';
+  const text = editing ? $('#docEdit').value : cur.docs['resume.md'];
+  if (!(text || '').trim()) return toast('no tailored resume yet: Tailor resume first, then Check it', 'err');
+  run('lint', { text }, r => { $('#jCheck').innerHTML = lintHtml(r); }, btn);
+}
+
+/* ---- bullet-level tailoring and PDF export (resume.tailor_bullets / apply_bullets / export_pdf) ---- */
+let BUL = null;  // proposals stay in JS; the checkboxes carry only an index
+const baseOpt = () => $('#jBase')?.value || '';
+function savedBullets(d) { try { return JSON.parse(d.docs['bullets.json'] || 'null'); } catch (_) { return null; } }
+function marked(t, spans) {  // escape every slice; only the server's offsets for added keywords become <mark>
+  let out = '', at = 0;
+  for (const [s, e] of (spans || []).map(x => [Number(x[0]), Number(x[1])]).sort((a, b) => a[0] - b[0])) {
+    if (!(s >= at && e > s && e <= t.length)) continue;
+    out += esc(t.slice(at, s)) + '<mark>' + esc(t.slice(s, e)) + '</mark>'; at = e;
+  }
+  return out + esc(t.slice(at));
+}
+function renderBullets(data, open = true) {
+  BUL = data; const el = $('#jBullets'); if (!el) return;
+  if (!data) { el.innerHTML = ''; return; }
+  const rows = data.proposals, flagged = rows.filter(r => r.flags.length).length;
+  el.innerHTML = `<details ${open ? 'open' : ''}><summary class="muted">Tailor by bullet: ${rows.filter(r => r.changed).length} of ${rows.length} bullets rewritten, ${flagged} flagged (${esc(data.created)})</summary>
+    <table class="kw bul"><thead><tr><th>#</th><th>original</th><th>proposed</th><th>accept</th></tr></thead><tbody>`
+    + rows.map((r, i) => `<tr class="${r.flags.length ? 'flag' : ''}"><td>${esc(r.id)}</td><td><div class="muted">${esc(r.role)}</div>${esc(r.original)}</td>
+      <td>${!r.changed ? '<span class="muted">unchanged</span>' : r.drop ? '<i>drop this bullet</i>' : marked(r.proposed, r.marks)}
+        ${r.reason ? `<div class="muted">${esc(r.reason)}</div>` : ''}
+        ${r.unsupported.length ? `<div class="flagtxt">unsupported: ${esc(r.unsupported.join(', '))} (not found in your profile or bank)</div>` : ''}
+        ${r.new_numbers.length ? `<div class="flagtxt">new number: ${esc(r.new_numbers.join(', '))} (not in the original bullet)</div>` : ''}</td>
+      <td>${r.changed ? `<input type="checkbox" id="bul${i}" ${r.accepted ? 'checked' : ''} aria-label="accept bullet ${esc(r.id)}">` : ''}</td></tr>`).join('')
+    + `</tbody></table><div class="row"><button class="b ghost sm" onclick="bulletsUnflagged()">Accept all unflagged</button><button class="b sm" onclick="buildBullets(this)">Build resume</button>
+      <span class="muted">Unchecked rows keep the original text; bullets follow the suggested order within each role. The previous resume.md is kept in history/.</span></div></details>`;
+}
+function bulletsUnflagged() { BUL.proposals.forEach((r, i) => { const c = $('#bul' + i); if (c) c.checked = !r.flags.length; }); }
+function tailorBullets(btn) {
+  run('bullets', { id: cur.job.id, base: baseOpt() }, r => { cur.docs = r.docs; renderBullets(r); toast('bullet proposals ready: review, then Build resume', 'ok'); }, btn);
+}
+function buildBullets(btn) {
+  const id = cur.job.id, accept = BUL.proposals.filter((r, i) => $('#bul' + i)?.checked).map(r => r.id);
+  run('bullets_apply', { id, accept }, r => { toast(`resume built: ${r.accepted.length} rewrite(s), coverage ${r.coverage.before} -> ${r.coverage.after}`, 'ok'); openJob(id); }, btn);
+}
+function exportPdf(btn) {
+  const id = cur.job.id;
+  if (!cur.docs['resume.md']) return toast('no tailored resume yet: Tailor resume first, then Export PDF', 'err');
+  run('export_pdf', { id }, r => {
+    const t = `${r.method === 'html' ? 'print page (opened in your browser)' : 'PDF'}: ${r.path}\n${r.note}` + (r.tried.length ? '\n\ntried first:\n' + r.tried.join('\n') : '');
+    toast(r.method === 'html' ? 'opened a print page: Save as PDF from there' : 'PDF written with ' + (r.method === 'word' ? 'Microsoft Word' : 'LibreOffice'), 'ok');
+    openJob(id).then(() => { $('#jOut').textContent = t; });
+  }, btn);
 }
 
 /* ---- board add ---- */
@@ -186,7 +430,7 @@ function doSearch(btn) {
 }
 async function saveListing(i) {
   const j = RESULTS[i]; if (!j) return;
-  const r = await api('/api/jobs', { company: j.company, title: j.title, url: j.url, jd: (j.salary ? `Salary (from ${j.source}): ${j.salary}\n\n` : '') + (j.desc || ''), notes: 'found via ' + j.source });
+  const r = await api('/api/jobs', { company: j.company, title: j.title, url: j.url, jd: (j.salary ? `Salary (from ${j.source}): ${j.salary}\n\n` : '') + (j.desc || ''), notes: 'found via ' + j.source, location: j.location || '', date: j.date || '' });
   if (r.error) return toast('error: ' + r.error, 'err');
   toast('tracked as #' + r.id, 'ok'); load();
 }
@@ -229,7 +473,8 @@ function renderTools() {
   $('#toolTable').innerHTML = `<table><tr><th>Tool</th><th>enabled</th><th>auto</th></tr>${S.tools.map(t => `<tr><td><b>${t.tool}</b><div class="muted">${esc(t.description)}</div></td>
     <td><input type="checkbox" ${t.enabled ? 'checked' : ''} onchange="api('/api/tools',{tool:'${t.tool}',enabled:this.checked}).then(load)"></td>
     <td><input type="checkbox" ${t.auto ? 'checked' : ''} onchange="api('/api/tools',{tool:'${t.tool}',auto:this.checked}).then(load)"></td></tr>`).join('')}</table>`;
-  $('#prefs').innerHTML = Object.entries(S.prefs).map(([k, v]) => `<div class="row"><span style="width:200px">${k}</span>${typeof v === 'boolean' ? `<input type="checkbox" ${v ? 'checked' : ''} onchange="setPref('${k}',this.checked)">`
+  $('#prefs').innerHTML = Object.entries(S.prefs).map(([k, v]) => `<div class="row"><span style="width:200px">${k}</span>${S.pref_choices[k] ? `<select onchange="setPref('${k}',this.value)">${opt(S.pref_choices[k], v)}</select>`
+    : typeof v === 'boolean' ? `<input type="checkbox" ${v ? 'checked' : ''} onchange="setPref('${k}',this.checked)">`
     : typeof v === 'object' && v ? `<span class="muted">${esc(Object.entries(v).map(([p, m]) => p + '=' + (m || '(default)')).join(', ') || 'none pinned')}</span><input class="grow" placeholder="provider=model to pin (empty model = default); Setup > List models shows ids" onchange="setPref('${k}',this.value)">`
     : `<input class="grow" value="${esc(v)}" onchange="setPref('${k}',this.value)">`}</div>`).join('');
 }
@@ -240,6 +485,7 @@ function renderSetup() {
   const u = Object.entries(S.usage).filter(([k]) => k !== 'total');
   $('#usage').innerHTML = u.length ? 'last 30 days: ' + u.map(([k, d]) => `<span class="pill">${esc(k)}: ${d.calls} calls · ${(d.input + d.output).toLocaleString()} tokens</span>`).join(' ') : '';
   $('#pPath').textContent = S.profile_path;
+  $('#pNotify').checked = !!S.prefs.desktop_notifications;
   const rates = Object.entries(S.comp).flatMap(([t, cities]) => Object.entries(cities).map(([c, [lo, hi]]) => ({ t, c, lo, hi })));
   $('#compList').innerHTML = rates.map((r, i) => `<div><b>${esc(r.t)}</b> <span class="muted">${esc(r.c === '*' ? 'any city' : r.c)}</span> ${esc(r.lo.toLocaleString())} - ${esc(r.hi.toLocaleString())} <button class="b ghost sm" onclick="compOp({op:'delete',title:RATES[${i}].t,city:RATES[${i}].c})">remove</button></div>`).join('') || '<div class="muted">none recorded: gap checks, offer evaluation and interview prep then say "none recorded"</div>';
   RATES = rates;

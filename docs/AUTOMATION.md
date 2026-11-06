@@ -62,7 +62,10 @@ Executors are the only code that sends mail, changes status, or adds jobs on lod
 1. Email check: classify new mail, propose or apply status changes, capture the sender as the job's contact, write
    .ics for dated interviews, draft replies for confirmations / assessments / interviews / offers.
 2. Watches: diff career pages; new listings from saved searches are AI-judged and strong fits proposed.
-3. Follow-ups: nudge about quiet applications; draft a follow-up when a contact is known.
+3. Follow-ups: nudge about quiet applications; draft a follow-up when a contact is known (a plain template when no
+   AI provider is configured, still proposed through the inbox).
+   Desktop notifications, if you turned them on (pref `desktop_notifications`): the day's agenda once, an interview
+   within 2 hours, a deadline tomorrow; each fires once (recorded in the `seen` table).
 4. Optional Obsidian sync and Friday digest.
 5. Print how many actions are waiting in the inbox.
 
