@@ -2,6 +2,21 @@
 
 ## Pass 15 (2026-11-06): best-in-class gaps
 
+- Review fixes (batch 2): an interview mail with only a date (often a reply-by date) or from an unverified sender no
+  longer creates an interview round, so it cannot add a fake "interviewed" line to the activity log or Insights.
+  `sponsors import` reads the current USCIS hub export (New Employment / Continuation / Change of Employer / ...
+  Approval columns; every "... Approval" column is summed, denials ignored). The weekly posting check reads Greenhouse
+  embed links (`token=`) and `/apply` / `/application` links as their posting and never flags a link that names no
+  posting. A newly watched company's open roles are a baseline (one summary alert) instead of one alert and AI
+  judgement each. The one-time contacts migration runs under `BEGIN IMMEDIATE`, so parallel first connections cannot
+  duplicate contacts or fail. Reminder and toast keys include the round's time (a rescheduled round reminds again).
+  Cross-source de-dup no longer folds two openings from the same source (or with different ATS ids) into one. Pay
+  stated per month / week / day / hour is no longer read as annual (`parse_salary` skips it; min-salary marks it
+  unknown). Every CSV export defuses formula cells (`extras.csv_cell`). Saving a blank offer records nothing and
+  clearing every field removes the offer. Re-adding a saved search without filter fields keeps its saved filters.
+  Behaviour change: the first poll of a watched company no longer alerts each open role (test updated). 3 new
+  regression tests and 6 extended; 185 in total.
+
 - Tracker fields: location, workplace (onsite/hybrid/remote), pay range and currency, source, posted date, deadline,
   excitement (1-5), tags, match score, next action and its due date. Filled on add, capture and search-save from what
   the listing carries; old jobs backfilled once (empty fields only, `updated_at` untouched). Validated, whitelisted
@@ -67,6 +82,96 @@
   UI: Save details no longer writes back a stale match score after Compute or "not mine"; Search "track" sends the
   listing's location and date; the drawer status select needs "move" (arrow keys fired a change per step) and
   marking a job accepted asks first. 9 new tests (`tests/test_pass15_fixes.py`), 137 in total.
+- Company boards: `lodestar companies add|list|rm`, a Companies panel under Monitor and `POST /api/companies`.
+  `web_monitor.detect_ats` maps Greenhouse (`boards.` / `job-boards.greenhouse.io`), Lever and Ashby links or
+  `vendor:slug` to their documented public JSON feeds; postings become ordinary listings (`source` greenhouse / lever /
+  ashby, HTML stripped, pay and posting date kept). The monitor loop reads each board once per cycle; new postings go
+  through the saved-search path (one alert, `auto_track` judgement, seen only once judged). Workday, Taleo and iCIMS
+  links get a clear "no public feed, use a page watch" message. New table `companies`; jobs gain `ats_feed`.
+- Page watches read robots.txt first (once per host per cycle, `urllib.robotparser`); a disallowed page is skipped with
+  one alert. Page watches added from the UI must be http(s) URLs.
+- Search filters for `jobs search`, saved searches (`watch search-add`, stored in the new `watches.filters` column), the
+  Search tab ("Save as watch") and auto-track: location substring or remote, minimum pay (parsed with the existing
+  salary parser), posted within N days, seniority from the title. Unknown salary / location / date pass and are
+  marked, never dropped. Private dealbreakers (prefs `excluded_companies`, `excluded_title_words`) apply first.
+  Cross-source de-dup on normalised company + title + location keeps the richest description and every link. Results
+  carry JD coverage against `candidate_text(private=False)` with the top 3 matched / missing terms (skipped for a
+  template profile).
+- H-1B sponsor hint: `lodestar sponsors import FILE` loads the user-downloaded USCIS H-1B Employer Data Hub export
+  (CSV or UTF-16 tab file, old and new column names) into a `sponsors` table per employer and fiscal year; results and
+  board cards show "possible H-1B sponsor (N approvals)". `sponsors lookup`, `sponsors clear`. No automatic download.
+- Stale / repost signals: `web_monitor.ghost_signals` scores posting age over 30 days, a repost (same company, title
+  and location first seen over 21 days ago under another link, new `postings` table), a very short or skill-free
+  description, and for board jobs a posting gone from the live feed. "Possibly stale" chip with reasons on results and
+  saved board cards; `auto_track` skips listings at 60+. New tool `posting_check`: weekly, saved board jobs are
+  re-checked and a vanished posting is proposed for `withdrawn` ("posting removed"), always through the Inbox.
+- 13 new tests (`tests/test_pass15_sourcing.py`), 150 in total; all HTTP faked.
+- Contacts CRM: new tables `contacts` (name, email, phone, LinkedIn URL, company, position, how met, source, last /
+  next touch, notes; email and LinkedIn URL unique) and `job_contacts` (role recruiter / hiring_manager / referrer /
+  interviewer / other). One-time migration: each job's stored contact became a contact linked as recruiter; the job
+  columns stay and alone drive mail trust. `lodestar contacts add|list|show|edit|rm|import|due|link`, a Contacts tab
+  (sortable, filterable table; contact drawer with fields, notes, next touch, linked jobs, recent activity) and
+  `GET|POST /api/contacts...`. Setting a job's contact also files the person under Contacts.
+- LinkedIn connections import (opt-in, `profile.linkedin_connections`): the export zip or `Connections.csv`, preamble
+  skipped; de-dup by LinkedIn URL, then email, then name + company; known contacts only gain blank fields; no next
+  touch is set. The profile's LinkedIn import still ignores connections.
+- Warm paths: "you know N people here" on board cards, search results (`jobs search` too) and the job drawer, from a
+  normalised-company match. The drawer's People section links a contact with a role or drafts **Ask for referral**
+  through `extras.outreach` to the contact's own address (Inbox, always reviewed; no address: a LinkedIn note).
+  `extras.outreach` and `apply.mail_proposal` take an explicit recipient.
+- Touches: any scanned mail from a contact's exact address sets its last touch (mail date); sending an approved email
+  to it sets today. Contacts whose next touch has come appear on Today, in `lodestar today`, the daily desktop agenda
+  and `contacts due`; nothing is drafted for them. Exports include both new tables.
+- A contact never makes mail trusted or becomes a job's contact (tested). `jobs contact` now validates the address.
+- Behaviour changes: `state.today` gains `contacts`; JSON / CSV exports gain `contacts` and `job_contacts` (two
+  existing tests updated for that).
+- 11 new tests (`tests/test_pass15_contacts.py`), 161 in total; mail, AI and HTTP faked.
+- Interview rounds: new table `interviews` (job, round, kind phone / technical / onsite / panel / final / other, time,
+  interviewers, notes, questions asked one per line, outcome pending / passed / rejected / unknown). `extras.ics`, an
+  accepted slot and interview mail with a stated time from a trusted sender record rounds (re-scans add nothing); a
+  date-only or unverified mail records only an `interview_date` note. `upcoming_interviews` (Today, reminders, desktop toasts, clash checks) reads the rounds; old calendar
+  events are imported once. Drawer section to add / edit / delete rounds; `lodestar interview log|rounds`,
+  `POST /api/jobs/ID/rounds`, `POST /api/rounds/ID/edit|delete`.
+- Question bank: `lodestar questions [ID]` lists questions logged at the company, then for similar titles, then a
+  bundled set of 30 behavioural questions (`lodestar/data/questions.json`). Prep and mock interviews use logged
+  questions first.
+- STAR stories in the answer bank (new `answers.star` column; `Story: <title>`, tags `story,<competencies>`), ten fixed
+  competency tags, a guided form under Answers > Stories, **Save as story** on ideas of the `stories` topic (no second
+  drafter), `lodestar stories list|show|add|rm` (`--from-idea`), `POST /api/stories`. The drawer prompts with the
+  competencies a posting stresses that no story covers (small keyword table). Prep and mock inject matching stories.
+- Mock scoring: per answer one `ai.ask_json` rubric (STAR parts, relevance, specificity 0-2, metrics used, one fix,
+  rewrite) plus offline metrics (words, ~140 wpm time vs 60-120 s, repeated words, JD keywords, wpm only from a
+  dictation duration; no filler counts). Sessions saved in new table `mock_sessions` with averages; Coach tab cards,
+  session summary and an inline SVG trend; `interview mock` prints the card. `mock_interview.md` is still written.
+- Behaviour changes: JSON / CSV exports gain `interviews` and `mock_sessions` (export test updated); deleting a job also
+  deletes its rounds and mock sessions; the answer bank in the UI no longer lists stories (they have their own view).
+- An unauthenticated POST now has its body read before the 403, so Windows no longer resets the connection (a flaky
+  failure seen once in the sourcing route test).
+- 9 new tests (`tests/test_pass15_interviews.py`), 170 in total; AI faked.
+- Insights: `extras.analytics` / `GET /api/analytics` / `lodestar insights`: per-ISO-week applications (jobs entering
+  `applied`; auto-tracked saves never), interview rounds, offers, people contacted and mock sessions; response and
+  interview rate by source and by match-score band (<40, 40-59, 60-79, 80+); groups under 5 say "not enough data
+  yet". Reuses `db.funnel()` and `db.variant_stats()`. New Insights tab with inline SVG bar charts (`<title>` per bar,
+  table fallback). No cover-letter or outreach A/B.
+- Weekly goals: pref `weekly_goals` (contacts, tailored_applications, mock_sessions, applications), all unset by
+  default, validated; progress from this week's events on Insights and in the Friday digest when set.
+- Offers: new table `offers` (validated `db.set_offer`; recording one moves the job to `offer`), pure `comp.total`
+  (year-1 / 4-year cash and total, equity by year with cliff, match, labelled estimates), `comp.compare` with best per
+  row, market range and the gap to the private salary floor (`profile.salary_floor`, shown only in Lodestar's views).
+  `apply.offer` reads the structured rows (accepted offers count as live too). Counter-offer `apply.counter`: cites
+  the competing figures you tick, AI or offline template, `candidate_text(private=False)`, proposed with
+  `review=True`; a test proves the floor never reaches the draft. `lodestar offers [compare|set|counter]`,
+  `GET /api/offers`, `POST /api/offers/ID`, run action `counter`.
+- Activity log: `extras.activity_log(start, end)` (applied, contacted, followed up, interviewed; only your own
+  actions: sent Inbox mail, rounds up to today, touches you record), weekly counts against pref
+  `activity_weekly_min`, CSV (formula cells neutralised) and Markdown + printable HTML through `resume.export_html`.
+  `lodestar activity`, run action `activity`, a date-range panel on Insights. Labelled a helper report, not a
+  compliance claim.
+- New table `touches`: the contact touches you record (a last-touch date or "Touched today"), so weekly counts have a
+  history; mail touches are not stored there (the sent mail itself is counted).
+- Behaviour changes: JSON / CSV exports gain `offers` and `touches` (export test updated); deleting a job deletes its
+  offer; a non-numeric value for a whole-number preference is now a clear error instead of a traceback.
+- 12 new tests (`tests/test_pass15_insights.py`), 182 in total; AI and HTTP faked.
 
 ## Pass 14 (2026-11-06): gap audit, CLI features in the UI, docs caught up
 

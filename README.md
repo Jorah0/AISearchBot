@@ -128,7 +128,7 @@ Env vars and a `.env` file override the vault for any setting.
 
 ## How the pieces fit
 
-Module map (24 modules, what each does): [docs/RUNDOWN.md, section 1](docs/RUNDOWN.md#1-what-it-is-made-of).
+Module map (26 modules, what each does): [docs/RUNDOWN.md, section 1](docs/RUNDOWN.md#1-what-it-is-made-of).
 
 Tests (offline): `python -m unittest discover -s tests -v`
 
@@ -151,7 +151,9 @@ schtasks /Create /SC MINUTE /MO 30 /TN lodestar /TR "lodestar run --once" /F
 lodestar ui            # http://127.0.0.1:8765 (localhost only); --port N, --no-open
 ```
 
-Board by status, job detail with one-click gap / tailor / cover / prep, free-API search with AI ranking (six free
-sources: Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse), watches and email checks, approvals
-inbox, idea crafting, answer bank, profile editor and bank, coach chat with a mock interview (dictation), tool
-switches, provider and vault setup. Full walkthrough and roadmap: [docs/RUNDOWN.md](docs/RUNDOWN.md).
+Today list and board by status (drag and drop, filters, table view), job detail with tracker fields, JD coverage and
+one-click gap / tailor / cover / prep, free-API search with filters and AI ranking (six free sources: Remotive,
+Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse) plus watched Greenhouse / Lever / Ashby company boards,
+watches and email checks, approvals inbox, contacts with warm paths, interview rounds and a question bank, insights
+with weekly goals, offer comparison and an activity log, idea crafting, answer bank and STAR stories, profile editor
+and bank, coach chat with a scored mock interview (dictation), tool switches, provider and vault setup. Full walkthrough and roadmap: [docs/RUNDOWN.md](docs/RUNDOWN.md).

@@ -2,12 +2,13 @@
 resume-variant hashing, and a scheduled-task installer. One module on purpose; split when any grows real logic.
 """
 import hashlib
+import json
 import os
 import platform
 import re
 import subprocess
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from . import ai, db
@@ -20,15 +21,17 @@ def _job_dir(j) -> Path:
 
 
 # ----------------------------------------------------------------------------- outreach
-def outreach(job, person: str = "", channel: str = "linkedin", provider: str | None = None) -> dict:
-    """{text} for a LinkedIn note; for email {draft, proposal}, proposed to the job's contact through the Inbox."""
+def outreach(job, person: str = "", channel: str = "linkedin", provider: str | None = None, to: str | None = None,
+             goal: str = "a reply or a referral, not a pitch") -> dict:
+    """{text} for a LinkedIn note; for email {draft, proposal}, proposed through the Inbox to `to` (default: the job's
+    contact; '' = draft only)."""
     from .apply import JSON_MAIL, mail_proposal
     from .resume import candidate_text
 
     email = channel == "email"
     limit = f"under 120 words. {JSON_MAIL}" if email else "under 300 characters, no greeting fluff. Plain text."
     prompt = f"""Write a {channel} message from the candidate to {person or 'a hiring manager or recruiter'} at {job['company']}
-about the {job['title']} role. Goal: a reply or a referral, not a pitch. Mention one specific, relevant
+about the {job['title']} role. Goal: {goal}. Mention one specific, relevant
 achievement and one specific reason this company. {limit}
 
 JOB DESCRIPTION:
@@ -40,7 +43,7 @@ CANDIDATE:
         return {"text": ai.ask(prompt, provider=provider)}
     # always reviewed: the note may be written for `person` while the only stored address is another contact
     return mail_proposal(job, ai.ask_json(prompt, provider=provider), "email_reply",
-                         f"outreach email{' written for ' + person if person else ''} at {job['company']}", review=True)
+                         f"outreach email{' written for ' + person if person else ''} at {job['company']}", review=True, to=to)
 
 
 # ----------------------------------------------------------------------------- calendar
@@ -75,6 +78,9 @@ def ics(job, when: datetime, minutes: int = 60, title: str | None = None, remind
     out = d / f"interview-{when:%Y%m%d-%H%M}.ics"
     out.write_text(body, encoding="utf-8")
     db.add_event(job["id"], "calendar", str(out))
+    from .interview import booked
+
+    booked(job["id"], f"{when:%Y-%m-%d %H:%M}", str(out))  # the job's interview round at that time (new or updated)
     return out
 
 
@@ -91,8 +97,10 @@ def digest(days: int = 7, send: bool = False, provider: str | None = None) -> st
              "", f"## Moved this week ({len(recent)})",
              *[f"- #{j['id']} {j['company']} - {j['title']}: {j['status']}" for j in recent[:20]],
              "", f"## Needs follow-up ({len(follow)})",
-             *[f"- #{j['id']} {j['company']} - {j['title']} (quiet since {j['updated_at'][:10]})" for j in follow[:20]],
-             "", f"## Alerts ({len(alerts)})", *[f"- {a}" for a in alerts[-25:]]]
+             *[f"- #{j['id']} {j['company']} - {j['title']} (quiet since {j['updated_at'][:10]})" for j in follow[:20]]]
+    if goals := goal_progress():  # only the goals you set (pref weekly_goals)
+        lines += ["", "## Weekly goals (this week so far)", *[f"- {g['label']}: {g['done']} of {g['target']}" for g in goals]]
+    lines += ["", f"## Alerts ({len(alerts)})", *[f"- {a}" for a in alerts[-25:]]]
     text = "\n".join(lines)
     if ai.available():
         try:
@@ -276,15 +284,28 @@ def backup(out_dir: Path | None = None, keep: int = 7) -> Path:
     return target
 
 
+def csv_cell(v):
+    """A text value a spreadsheet would run as a formula ('=HYPERLINK(...)' in a scraped company name or an imported
+    LinkedIn position) gets a leading apostrophe; numbers and empty values pass unchanged."""
+    return "'" + v if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r") else v
+
+
 def export_data(fmt: str = "json", out_dir: Path | None = None) -> Path:
-    """Dump jobs, events, answers, ideas, pending as JSON (one file) or CSV (one file per table)."""
+    """Dump jobs, events, answers, ideas, pending, contacts, interview rounds, mock sessions, offers and contact
+    touches as JSON (one file) or CSV (one file per table)."""
     import csv
     import json as _json
 
     from .config import HOME
 
     tables = {"jobs": db.list_jobs(), "events": db.con().execute("SELECT * FROM events ORDER BY id").fetchall(),
-              "answers": db.list_answers(), "ideas": db.list_ideas(), "pending": db.list_pending(None, 10000)}
+              "answers": db.list_answers(), "ideas": db.list_ideas(), "pending": db.list_pending(None, 10000),
+              "contacts": db.con().execute("SELECT * FROM contacts ORDER BY id").fetchall(),
+              "job_contacts": db.con().execute("SELECT * FROM job_contacts ORDER BY job_id").fetchall(),
+              "interviews": db.con().execute("SELECT * FROM interviews ORDER BY id").fetchall(),
+              "mock_sessions": db.con().execute("SELECT * FROM mock_sessions ORDER BY id").fetchall(),
+              "offers": db.con().execute("SELECT * FROM offers ORDER BY job_id").fetchall(),
+              "touches": db.con().execute("SELECT * FROM touches ORDER BY day").fetchall()}
     out_dir = out_dir or HOME / "exports"
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = f"{datetime.now():%Y%m%d-%H%M}"
@@ -297,26 +318,27 @@ def export_data(fmt: str = "json", out_dir: Path | None = None) -> Path:
             w = csv.writer(f)
             if rows:
                 w.writerow(rows[0].keys())
-                w.writerows([list(r) for r in rows])
+                w.writerows([[csv_cell(v) for v in r] for r in rows])
     return out_dir
 
 
 # ----------------------------------------------------------------------------- interview reminders + packet
 def upcoming_interviews(days: int = 2) -> list[dict]:
-    """Interviews whose .ics (written by `ics`) falls within the next N days, from the calendar events."""
+    """Interview rounds with a time in the next N days (rounds come from .ics files, interview mail and your own log;
+    calendar events from before rounds existed are imported once). 'path' keys the once-only reminders and toasts: the
+    .ics while the round is still at the time in its file name, else round id + time, so a rescheduled round reminds again."""
+    from .interview import sync_ics
+
+    sync_ics()
     now = datetime.now()
+    rows = db.con().execute("SELECT i.id, i.job_id, i.at, i.ics, j.company, j.title FROM interviews i JOIN jobs j ON j.id=i.job_id "
+                            "WHERE length(i.at)=16 AND i.at BETWEEN ? AND ? ORDER BY i.at",
+                            (f"{now:%Y-%m-%d %H:%M}", f"{now + timedelta(days=days):%Y-%m-%d %H:%M}")).fetchall()
     out = []
-    for e in db.con().execute("SELECT job_id, detail FROM events WHERE kind='calendar' ORDER BY ts").fetchall():
-        m = re.search(r"interview-(\d{8}-\d{4})[.]ics$", e["detail"] or "")
-        if not m:
-            continue
-        when = datetime.strptime(m.group(1), "%Y%m%d-%H%M")
-        if now <= when <= now + timedelta(days=days):
-            try:
-                j = db.get_job(e["job_id"])
-            except SystemExit:
-                continue
-            out.append({"job_id": j["id"], "company": j["company"], "title": j["title"], "when": when, "path": e["detail"]})
+    for r in rows:
+        when = datetime.strptime(r["at"], "%Y-%m-%d %H:%M")
+        key = r["ics"] if r["ics"] and f"{when:%Y%m%d-%H%M}" in r["ics"] else f"round:{r['id']}:{r['at']}"
+        out.append({"job_id": r["job_id"], "company": r["company"], "title": r["title"], "when": when, "path": key})
     return out
 
 
@@ -386,3 +408,198 @@ def import_document(data: bytes, filename: str) -> str:
 def conflicts(when: datetime, window_minutes: int = 90) -> list[dict]:
     """Existing interviews within the window of a proposed time."""
     return [it for it in upcoming_interviews(60) if abs((it["when"] - when).total_seconds()) <= window_minutes * 60]
+
+
+# ----------------------------------------------------------------------------- activity log, insights, weekly goals
+ACTIVITY_COLUMNS = ("date", "activity", "employer", "position", "method", "contact", "result")
+ACTIVITY_NOTE = ("Helper report built from what Lodestar recorded; check your state's requirements. It is not a claim "
+                 "of compliance.")
+MIN_N = 5  # fewer applications than this in a group: "not enough data yet", no rate
+
+
+def _day(d) -> date:
+    return d if isinstance(d, date) else date.fromisoformat(db.valid_date("date", str(d or "").strip()))
+
+
+def _local(ts: str) -> date:
+    """A UTC 'YYYY-MM-DD HH:MM:SS' column value (datetime('now')) as your local calendar day."""
+    return datetime.fromisoformat(ts).replace(tzinfo=timezone.utc).astimezone().date()
+
+
+def monday(d: date) -> date:
+    return d - timedelta(days=d.weekday())
+
+
+def _first_status(status: str):
+    """(local day, job row) of the first time each job entered `status`, from the status events on its timeline."""
+    rows = db.con().execute("SELECT j.*, MIN(e.ts) entered FROM events e JOIN jobs j ON j.id=e.job_id WHERE e.kind='status' "
+                            "AND (e.detail=? OR e.detail LIKE ?) GROUP BY e.job_id", (status, status + " %")).fetchall()
+    return [(_local(r["entered"]), r) for r in rows]
+
+
+def activity_log(start, end) -> list[dict]:
+    """What you did from start to end (dates, inclusive; never past today), oldest first, as rows of ACTIVITY_COLUMNS
+    (+ job_id). Only your own actions count: jobs moved to applied (by you, or by the employer's confirmation mail; an
+    auto-tracked save never is), mail actually sent from the Inbox (pending, rejected and failed items do not count,
+    nor withdrawals), interview rounds up to today, and contact touches you recorded yourself."""
+    start, end = _day(start), min(_day(end), date.today())
+    if start > end:
+        return []
+    rows = []
+
+    def add(d, activity, employer="", position="", method="", contact="", result="", job_id=None):
+        if start <= d <= end:
+            rows.append({"date": d.isoformat(), "activity": activity, "employer": employer or "", "position": position or "",
+                         "method": method, "contact": contact or "", "result": result or "", "job_id": job_id})
+
+    for d, j in _first_status("applied"):
+        add(d, "applied", j["company"], j["title"], "email" if (j["source"] or "") == "email" else "online",
+            " ".join(x for x in (j["contact_name"], j["contact_email"]) if x), j["status"], j["id"])
+    for p in db.con().execute("SELECT p.decided_at, p.payload, j.id, j.company, j.title, j.status FROM pending p LEFT JOIN "
+                              "jobs j ON j.id=p.job_id WHERE p.kind='send_email' AND p.status='done'").fetchall():
+        try:
+            pay = json.loads(p["payload"] or "{}")
+        except ValueError:
+            continue
+        if pay.get("new_status") == "withdrawn" or not p["decided_at"]:  # withdrawing is not a search activity
+            continue
+        add(_local(p["decided_at"]), "followed_up" if pay.get("purpose") in ("followup", "thanks") else "contacted",
+            p["company"], p["title"], "email", pay.get("to"), "sent", p["id"])
+    for r in db.con().execute("SELECT i.at, i.kind, i.interviewers, i.outcome, j.id, j.company, j.title FROM interviews i "
+                              "JOIN jobs j ON j.id=i.job_id WHERE COALESCE(i.at, '') != ''").fetchall():
+        add(date.fromisoformat(r["at"][:10]), "interviewed", r["company"], r["title"],
+            {"onsite": "in person", "phone": "phone"}.get(r["kind"], "online"), r["interviewers"], r["outcome"], r["id"])
+    for t in db.con().execute("SELECT t.day, c.name, c.email, c.company, c.position FROM touches t JOIN contacts c ON "
+                              "c.id=t.contact_id").fetchall():
+        add(date.fromisoformat(t["day"]), "contacted", t["company"], "", "", " ".join(x for x in (t["name"], t["email"]) if x))
+    order = ("applied", "interviewed", "followed_up", "contacted")
+    return sorted(rows, key=lambda r: (r["date"], order.index(r["activity"]), r["employer"]))
+
+
+def activity_report(start, end) -> dict:
+    """activity_log grouped by week (Monday first) with each week's count against your activity_weekly_min pref."""
+    from . import settings
+
+    start, end = _day(start), _day(end)
+    if start > end:
+        raise SystemExit("the start date is after the end date")
+    if (end - start).days > 1100:
+        raise SystemExit("pick a range of at most three years")
+    rows, minimum = activity_log(start, end), int(settings.pref("activity_weekly_min") or 0)
+    weeks, d = {}, monday(start)
+    while d <= end:
+        weeks[d.isoformat()] = 0
+        d += timedelta(days=7)
+    for r in rows:
+        weeks[monday(date.fromisoformat(r["date"])).isoformat()] += 1
+    return {"from": start.isoformat(), "to": end.isoformat(), "rows": rows, "minimum": minimum or None, "note": ACTIVITY_NOTE,
+            "weeks": [{"week": w, "count": n, "met": n >= minimum if minimum else None} for w, n in weeks.items()]}
+
+
+def activity_export(start, end, fmt: str = "csv", out_dir: Path | None = None) -> Path:
+    """The activity report as a CSV, or as Markdown plus a printable HTML page (resume.export_html: print to PDF)."""
+    import csv
+
+    from .config import HOME
+
+    rep = activity_report(start, end)
+    out_dir = out_dir or HOME / "exports"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = out_dir / f"activity-{rep['from']}-to-{rep['to']}"
+    if fmt == "csv":
+        with stem.with_suffix(".csv").open("w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(ACTIVITY_COLUMNS)
+            w.writerows([[csv_cell(str(r[k])) for k in ACTIVITY_COLUMNS] for r in rep["rows"]])
+        return stem.with_suffix(".csv")
+    if fmt != "html":
+        raise SystemExit("format is csv or html")
+    from .resume import export_html
+
+    lines = [f"# Job search activity {rep['from']} to {rep['to']}", "", rep["note"]]
+    for wk in rep["weeks"]:
+        mine = [r for r in rep["rows"] if monday(date.fromisoformat(r["date"])).isoformat() == wk["week"]]
+        need = f" (your weekly minimum: {rep['minimum']}{', met' if wk['met'] else ', not met'})" if rep["minimum"] else ""
+        lines += ["", f"## Week of {wk['week']}: {wk['count']} activit{'y' if wk['count'] == 1 else 'ies'}{need}"]
+        lines += [f"- {r['date']} · {r['activity'].replace('_', ' ')} · {r['employer'] or '-'} · {r['position'] or '-'} · "
+                  f"{r['method'] or '-'} · contact: {r['contact'] or '-'} · result: {r['result'] or '-'}" for r in mine]
+    md = stem.with_suffix(".md")
+    md.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return export_html(md)
+
+
+def goal_progress(today: date | None = None) -> list[dict]:
+    """This week's progress (Monday to today) on each weekly goal you set (pref weekly_goals); [] when none is set."""
+    from . import settings
+
+    goals = settings.pref("weekly_goals") or {}
+    if not any(goals.values()):
+        return []
+    today = today or date.today()
+    week = activity_log(monday(today), today)
+    applied = [r for r in week if r["activity"] == "applied"]
+    done = {"applications": len(applied),
+            "tailored_applications": sum(1 for r in applied if db.get_job(r["job_id"])["resume_hash"]),
+            "contacts": len({r["contact"].lower() for r in week if r["activity"] in ("contacted", "followed_up") and r["contact"]}),
+            "mock_sessions": sum(1 for s in db.con().execute("SELECT ts FROM mock_sessions").fetchall()
+                                 if monday(today) <= _local(s["ts"]) <= today)}
+    return [{"goal": k, "label": k.replace("_", " "), "target": int(goals[k]), "done": done[k]} for k in settings.GOALS if goals.get(k)]
+
+
+BANDS = ("<40", "40-59", "60-79", "80+")
+
+
+def _band(score) -> str:
+    return "unscored" if score is None else BANDS[0] if score < 40 else BANDS[1] if score < 60 else BANDS[2] if score < 80 else BANDS[3]
+
+
+def _rates(key, order=()) -> list[dict]:
+    """Response and interview rate per group over jobs that left 'saved' (as db.stats counts them); n < MIN_N: no rate."""
+    groups: dict[str, list[int]] = {k: [0, 0, 0] for k in order}
+    for j in db.list_jobs():
+        if j["status"] != "saved":
+            g = groups.setdefault(key(j), [0, 0, 0])
+            pos = j["status"] in db.POSITIVE
+            g[0], g[1], g[2] = g[0] + 1, g[1] + (pos or j["status"] == "rejected"), g[2] + pos
+    out = [{"group": k, "n": n, "responded": r, "positive": p, "enough": n >= MIN_N,
+            "response_rate": round(r / n, 2) if n >= MIN_N else None, "interview_rate": round(p / n, 2) if n >= MIN_N else None}
+           for k, (n, r, p) in groups.items()]
+    return out if order else sorted(out, key=lambda g: -g["n"])
+
+
+def analytics(weeks: int = 12, today: date | None = None) -> dict:
+    """Insights: per-week counts of your own activity (activity_log), offers and mock sessions; response rate by source
+    and by match-score band (does tailoring pay off?); the existing funnel and resume-variant data; weekly goals."""
+    today = today or date.today()
+    weeks = max(1, min(int(weeks), 104))
+    first = monday(today) - timedelta(weeks=weeks - 1)
+    buckets = {first + timedelta(weeks=i): {"applications": 0, "interviews": 0, "offers": 0, "contacts": set(), "mock_sessions": 0}
+               for i in range(weeks)}
+
+    def bump(d: date, k: str, who=None):
+        b = buckets.get(monday(d))
+        if b is None or d > today:
+            return
+        if who is None:
+            b[k] += 1
+        else:
+            b[k].add(who)  # contacts: distinct people a week
+
+    for r in activity_log(first, today):
+        d = date.fromisoformat(r["date"])
+        if r["activity"] == "applied":
+            bump(d, "applications")
+        elif r["activity"] == "interviewed":
+            bump(d, "interviews")
+        elif r["contact"]:
+            bump(d, "contacts", r["contact"].lower())
+    for d, _ in _first_status("offer"):
+        bump(d, "offers")
+    for s in db.con().execute("SELECT ts FROM mock_sessions").fetchall():
+        bump(_local(s["ts"]), "mock_sessions")
+    series = [{"week": f"{m.isocalendar()[0]}-W{m.isocalendar()[1]:02d}", "start": m.isoformat(),
+               **{k: len(v) if isinstance(v, set) else v for k, v in b.items()}} for m, b in buckets.items()]
+    return {"weeks": series, "min_n": MIN_N,
+            "by_source": _rates(lambda j: j["source"] or db.source_of(j["notes"])),
+            "by_band": _rates(lambda j: _band(j["match_score"]), (*BANDS, "unscored")),
+            "funnel": db.funnel(), "variants": db.variant_stats(), "goals": goal_progress(today)}

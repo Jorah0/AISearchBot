@@ -149,14 +149,17 @@ CANDIDATE SUMMARY (for the name only):
 
 
 def mail_proposal(job, mail: dict, tool: str, summary: str, purpose: str = "", review: bool = False,
-                  new_status: str = "") -> dict:
+                  new_status: str = "", to: str | None = None) -> dict:
     """Propose sending a drafted {subject, body} to the job's contact. purpose ('followup' / 'thanks') is logged as
     an event on the job only once the mail is actually sent, so the checklist reflects sends, not drafts.
     review=True: a draft the user asked for always waits in the Inbox, even when the tool is on auto.
-    new_status: where the job moves once the mail is sent (forward only, see approvals._send)."""
-    if not job["contact_email"]:
-        return {"draft": mail, "proposal": {"status": "draft_only", "reason": "no contact email on this job"}}
-    payload = {"to": job["contact_email"], "subject": mail.get("subject", ""), "body": mail.get("body", ""), "job_id": job["id"]}
+    new_status: where the job moves once the mail is sent (forward only, see approvals._send).
+    to: another recipient (a contact asked for a referral); '' = draft only."""
+    rcpt = job["contact_email"] if to is None else to
+    if not rcpt:
+        return {"draft": mail, "proposal": {"status": "draft_only",
+                                            "reason": "no contact email on this job" if to is None else "no email address for this person"}}
+    payload = {"to": rcpt, "subject": mail.get("subject", ""), "body": mail.get("body", ""), "job_id": job["id"]}
     if purpose:
         payload["purpose"] = purpose
     if new_status:
@@ -166,15 +169,31 @@ def mail_proposal(job, mail: dict, tool: str, summary: str, purpose: str = "", r
 
 
 # ----------------------------------------------------------------------------- offers
+def _structured(job_id: int) -> str:
+    """The offers table row for a job with comp.total's money by year, for the evaluation prompt ('' when none)."""
+    from .comp import total
+
+    o = db.get_offer(job_id)
+    if not o:
+        return ""
+    fields = ", ".join(f"{k}={o[k]}" for k in db.OFFER_FIELDS if o.get(k) not in (None, "") and k != "notes")
+    t = total(o)
+    return (f"structured: {fields or 'none'} | year-1 cash {t['year1_cash']:,}, year-1 total {t['year1_total']:,}, "
+            f"4-year total {t['four_year_total']:,}, equity by year {t['equity_by_year']}"
+            + (f" (estimates: {'; '.join(t['estimates'])})" if t["estimates"] else ""))
+
+
 def offer(job, salary: str = "", bonus: str = "", equity: str = "", benefits: str = "", deadline: str = "",
           notes: str = "", provider: str | None = None):
     terms = (f"**Terms:** base: {salary or '?'} | bonus: {bonus or '?'} | equity: {equity or '?'} | "
              f"benefits: {benefits or '?'} | deadline: {deadline or '?'}")
+    if s := _structured(job["id"]):  # the offers table (lodestar offers set / Insights > Offers)
+        terms += f"\n**Recorded offer:** {s}"
     others = []
-    for j in db.list_jobs("offer"):
+    for j in [*db.list_jobs("offer"), *db.list_jobs("accepted")]:
         if j["id"] != job["id"]:  # each evaluated offer.md opens with its terms line, so offers can be weighed
             f = app_dir(j) / "offer.md"
-            others.append(f"#{j['id']} {j['company']} - {j['title']}"
+            others.append(f"#{j['id']} {j['company']} - {j['title']}" + (f" | {s}" if (s := _structured(j["id"])) else "")
                           + (": " + f.read_text(encoding="utf-8")[:600] if f.is_file() else ""))
     text = ai.ask(
         f"""Evaluate this job offer for the candidate and produce Markdown with sections:
@@ -205,14 +224,91 @@ CANDIDATE PROFILE (see Preferences):
     return out
 
 
+COUNTER_CITE = {"base": "a base salary of {:,}", "bonus_pct": "a target bonus of {:g}%", "sign_on": "a sign-on bonus of {:,}",
+                "equity_value_estimate": "equity estimated at {:,}", "year1_total": "a first-year total of about {:,}"}
+
+
+def counter_figures(job_id: int, cite) -> list[str]:
+    """The competing figures you ticked, as phrases: cite = ['JOB_ID:field', ...] over other live offers (offer /
+    accepted) and COUNTER_CITE fields. No company names: the draft says 'another offer'."""
+    from .comp import total
+
+    out = []
+    for c in cite or []:
+        jid, _, field = str(c).partition(":")
+        if not jid.strip().isdigit() or field not in COUNTER_CITE:
+            raise SystemExit(f"cite JOB_ID:field with field one of {', '.join(COUNTER_CITE)}: {str(c)[:40]}")
+        j = db.get_job(int(jid))
+        if j["id"] == job_id or j["status"] not in ("offer", "accepted"):
+            raise SystemExit(f"#{j['id']} is not another live offer (status offer or accepted)")
+        o = db.get_offer(j["id"]) or {}
+        v = total(o)["year1_total"] if field == "year1_total" else o.get(field)
+        if not v:
+            raise SystemExit(f"#{j['id']} has no {field} recorded: lodestar offers set {j['id']} {field}=...")
+        out.append(COUNTER_CITE[field].format(v))
+    return list(dict.fromkeys(out))
+
+
+def counter(job, cite, ask: str = "", provider: str | None = None, template: bool = False) -> dict:
+    """Draft a counter-offer citing the competing figures you ticked; proposed via the Inbox and always reviewed (never
+    sent on its own). Employer text: candidate_text(private=False), the offer's own terms, the cited figures and your
+    ask. Nothing private goes in: no salary floor, no Preferences, no offer notes."""
+    figures = counter_figures(job["id"], cite)
+    if not figures and not (ask or "").strip():
+        raise SystemExit("tick at least one competing figure to cite, or say what you are asking for")
+    ask = " ".join((ask or "").split())[:300]
+    if _offline(template):
+        from .profile import load
+
+        name = settings.pref("signature") or settings.pref("name") or load()["contact"].get("name") or ""
+        who = (job["contact_name"] or "").strip()
+        body = (f"Thank you again for the offer for the {job['title']} position at {job['company']}. I am excited about the "
+                f"role and would like to find a way to make it work."
+                + (f" I have since received another offer that includes "
+                   f"{' and '.join(filter(None, (', '.join(figures[:-1]), figures[-1])))}." if figures else "")
+                + (f" Would you be able to consider {ask}?" if ask else
+                   " Would you be able to revisit the compensation package with that in mind?")
+                + " I would be glad to talk it through.")
+        mail = {"subject": f"Re: {job['title']} offer",
+                "body": f"Hello{' ' + who if who else ''},\n\n{body}\n\nBest regards,\n{name}".rstrip()}
+    else:
+        o = db.get_offer(job["id"]) or {}
+        theirs = ", ".join(f"{k}={o[k]}" for k in ("base", "bonus_pct", "sign_on", "equity_value_estimate") if o.get(k))
+        mail = ai.ask_json(
+            f"""Write a short, warm, confident counter-offer email (under 160 words) from the candidate about the {job['title']}
+offer from {job['company']}. Thank them, restate enthusiasm in one sentence, cite only the competing figures listed below
+(say "another offer", never a company name), make the ask, and keep the door open. Never mention a minimum, a floor, a
+walk-away number or any figure not listed here.{_sig()}
+{JSON_MAIL}
+
+THEIR OFFER: {theirs or 'not recorded'}
+COMPETING FIGURES TO CITE: {'; '.join(figures) or 'none'}
+THE ASK: {ask or 'ask them to revisit the package in light of the competing figures'}
+
+CANDIDATE SUMMARY:
+{candidate_text(1500, private=False)}""",
+            provider=provider,
+        )
+    db.add_event(job["id"], "counter_draft", mail.get("subject", ""))
+    return mail_proposal(job, mail, "email_reply", f"counter-offer to {job['company']}", review=True)
+
+
 # ----------------------------------------------------------------------------- listing judgement
 def auto_track(listings: list[dict], provider: str | None = None) -> list[dict]:
-    """Score new listings against the profile; propose tracking those above the threshold (tool: auto_track)."""
-    from .web_monitor import jd_with_salary, listing_fields, rank
+    """Score new listings against the profile; propose tracking those above the threshold (tool: auto_track).
+    Listings that look stale (web_monitor.ghost_signals at GHOST_SKIP or more) are left alone, scored 0, unjudged."""
+    from .web_monitor import GHOST_SKIP, ghost_signals, jd_with_salary, listing_fields, rank
 
     if not listings or not settings.enabled("auto_track"):
         return []
-    ranked = rank(list(listings), provider)
+    fresh = []
+    for j in listings:
+        g = j.get("ghost") or ghost_signals(j)
+        if g["score"] >= GHOST_SKIP:  # a score marks it judged, so a watch does not offer it again
+            j |= {"score": 0, "why": "skipped: possibly stale (" + "; ".join(g["reasons"]) + ")"}
+        else:
+            fresh.append(j)
+    ranked = rank(fresh, provider)
     floor = int(settings.pref("auto_track_min_score"))
     out = []
     for j in ranked:

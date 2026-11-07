@@ -1,6 +1,6 @@
 /* Lodestar dashboard. Talks only to the local /api routes; long actions are background tasks polled by run(). */
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
-let S = null, cur = null, chatHist = [];
+let S = null, cur = null, CT = null, chatHist = [];  // cur: the job in the drawer; CT: the contact in it
 const TOPICS = ['strategy', 'resume', 'gap', 'outreach', 'stories', 'pivot', 'questions', 'negotiation', 'tools', 'custom'];
 
 const TOKEN = window.LODESTAR_TOKEN || '', CAPTURE = window.LODESTAR_CAPTURE || '';
@@ -21,7 +21,9 @@ $$('nav button[data-tab]').forEach(b => b.onclick = () => go(b.dataset.tab));
 function go(tab) {
   $$('nav button[data-tab], main section').forEach(x => x.classList.remove('on'));
   $(`nav button[data-tab="${tab}"]`).classList.add('on'); $('#' + tab).classList.add('on');
-  if (tab !== 'board') closeDrawer();
+  if (tab !== 'board' || CT) closeDrawer();
+  if (tab === 'contacts') loadContacts();
+  if (tab === 'insights') loadInsights();
 }
 
 /* ---- background tasks ---- */
@@ -48,7 +50,7 @@ async function load() {
   const badge = $('#inboxN'); badge.textContent = S.pending.length; badge.classList.toggle('zero', !S.pending.length);
   renderOnboard(); renderLoop(); $('#ver').textContent = 'Lodestar ' + S.version;
   if (!$('#fStatus').options.length) initFilters();
-  renderBoard(); renderInbox(); renderSearchless(); renderMonitor(); renderAnswers(); renderIdeas(); renderTools(); renderSetup(); fillCoachJobs();
+  renderBoard(); renderInbox(); renderSearchless(); renderMonitor(); renderAnswers(); renderStories(); renderIdeas(); renderTools(); renderSetup(); fillCoachJobs(); renderTrend();
 }
 
 /* ---- board: filters, sort, view (kept in localStorage), drag and drop, table, Today ---- */
@@ -100,7 +102,7 @@ function sortBy(k) {  // table header: same column flips the direction; numbers 
 function toggleView() { V.view = V.view === 'table' ? 'board' : 'table'; saveView(); renderBoard(); }
 function card(j) {
   const chips = [stars(j), salaryText(j) && `<span>${esc(salaryText(j))}</span>`, j.match_score != null && `<span>match ${esc(j.match_score)}%</span>`,
-    where(j) && `<span>${esc(where(j))}</span>`, deadlineChip(j)].filter(Boolean).join('');
+    where(j) && `<span>${esc(where(j))}</span>`, deadlineChip(j), staleChip(j.ghost), sponsorChip(j.sponsor), warmChip(j.warm)].filter(Boolean).join('');
   return `<div class="card ${S.followups.includes(j.id) ? 'late' : ''} ${cur && cur.job.id === j.id ? 'sel' : ''}" data-id="${j.id}" draggable="true" tabindex="0" role="button"
     aria-label="${esc(`#${j.id} ${j.company} - ${j.title}, ${j.status}`)}" ondragstart="event.dataTransfer.setData('text/plain','${j.id}');event.dataTransfer.effectAllowed='move'"
     onclick="openJob(${j.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openJob(${j.id})}">
@@ -126,7 +128,8 @@ function renderToday() {
   const item = (i, label, cls = '') => `<button class="b ghost sm ${cls}" onclick="openJob(${i.id})">${esc(label)} · #${i.id} ${esc(i.company)} - ${esc(i.title)}</button>`;
   const parts = [...t.actions.map(i => item(i, (i.overdue ? 'overdue ' + i.when : 'today') + ': ' + i.what, i.overdue ? 'due' : '')),
     ...t.deadlines.map(i => item(i, i.days === 0 ? 'deadline today' : `deadline in ${i.days}d`, 'due')),
-    ...t.interviews.map(i => item(i, 'interview ' + i.when)), ...t.followups.map(i => item(i, 'follow up'))];
+    ...t.interviews.map(i => item(i, 'interview ' + i.when)), ...t.followups.map(i => item(i, 'follow up')),
+    ...(t.contacts || []).map(c => `<button class="b ghost sm" onclick="openContact(${Number(c.id)})">get in touch (due ${esc(c.when)}) · ${esc(c.name)}${c.company ? ' (' + esc(c.company) + ')' : ''}</button>`)];
   el.style.display = parts.length || t.pending ? '' : 'none';
   el.innerHTML = `<h3>Today</h3><div class="row">${parts.join('')}${t.pending ? `<button class="b sm" onclick="go('inbox')">${t.pending} waiting in the Inbox</button>` : ''}</div>`;
 }
@@ -204,10 +207,11 @@ function renderLoop() {
 }
 
 /* ---- job drawer ---- */
-function closeDrawer() { $('#drawer').classList.remove('open'); cur = null; $$('.card.sel').forEach(c => c.classList.remove('sel')); }
+function closeDrawer() { $('#drawer').classList.remove('open'); cur = CT = null; $$('.card.sel').forEach(c => c.classList.remove('sel')); }
 async function openJob(id) {
   const d = await api('/api/jobs/' + id); if (d.error) return toast(d.error, 'err');
-  cur = d; const j = d.job, docs = Object.keys(d.docs);
+  cur = d; CT = null; const j = d.job, docs = Object.keys(d.docs);
+  $('#drawer').setAttribute('aria-label', 'Job details');
   $$('.card').forEach(c => c.classList.toggle('sel', c.dataset.id === String(id)));
   $('#drawer').innerHTML = `
     <div class="head"><b>${esc(j.company)}</b><span class="muted">${esc(j.title)} · #${j.id}</span>
@@ -216,6 +220,8 @@ async function openJob(id) {
       <button class="b ghost sm close" onclick="closeDrawer()" aria-label="Close job details">✕</button></div>
     <div class="muted">contact: ${esc(j.contact_name || '')} ${esc(j.contact_email || '(none; replies and follow-ups need one)')}</div>
 ${detailsForm(j)}
+${peopleGroup(d)}
+${roundsGroup(d)}
 
     <div class="group"><h4>Match</h4>
       <div class="row"><button class="b" onclick="jobMatch(this)">${savedCoverage(d) ? 'Recompute' : 'Compute'} JD coverage</button><button class="b ghost" onclick="jobLint(this)">Check resume</button><button class="b ghost" onclick="run('audit',{id:${j.id}},r=>{$('#jCheck').innerHTML=auditHtml(r)},this)">Audit resume.docx</button></div>
@@ -249,7 +255,7 @@ ${detailsForm(j)}
 
     <div class="group"><h4>Admin</h4>
       <div class="row"><input id="jNote" class="grow" placeholder="add a note"><button class="b ghost sm" onclick="api('/api/jobs/${j.id}/note',{text:$('#jNote').value}).then(()=>openJob(${j.id}))">note</button></div>
-      <div class="row"><input id="jCn" placeholder="contact name" style="width:160px" value="${esc(j.contact_name || '')}"><input id="jCe" class="grow" placeholder="contact email (replies, follow-ups and thank-yous go here)" value="${esc(j.contact_email || '')}"><button class="b ghost sm" onclick="api('/api/jobs/${j.id}/contact',{name:$('#jCn').value,email:$('#jCe').value}).then(r=>{if(r.error)return toast('error: '+r.error,'err');toast('contact saved','ok');openJob(${j.id})})">set contact</button></div>
+      <div class="row"><input id="jCn" placeholder="contact name" style="width:160px" value="${esc(j.contact_name || '')}"><input id="jCe" class="grow" placeholder="contact email (replies, follow-ups and thank-yous go here)" value="${esc(j.contact_email || '')}"><button class="b ghost sm" onclick="api('/api/jobs/${j.id}/contact',{name:$('#jCn').value,email:$('#jCe').value}).then(r=>{if(r.error)return toast('error: '+r.error,'err');toast('contact saved (also filed under Contacts as recruiter)','ok');openJob(${j.id})})">set contact</button></div>
       <div class="row"><input id="jJd" class="grow" placeholder="set job description: URL or pasted text"><button class="b ghost sm" onclick="api('/api/jobs/${j.id}/jd',{source:$('#jJd').value}).then(()=>openJob(${j.id}))">set JD</button></div>
       <div class="row"><button class="b ghost sm" onclick="jobRun('packet',{},this)">export packet (zip)</button><button class="b danger sm" onclick="if(confirm('Delete job #${j.id}?'))api('/api/jobs/${j.id}/delete',{}).then(()=>{closeDrawer();load()})">delete job</button></div></div>
 
@@ -382,6 +388,181 @@ function exportPdf(btn) {
   }, btn);
 }
 
+/* ---- people: warm paths, job links, contacts tab and drawer (lodestar/contacts.py) ---- */
+const roleOpt = (sel = 'other') => (S.contact_roles || []).map(r => `<option value="${esc(r)}" ${r === sel ? 'selected' : ''}>${esc(r.replace('_', ' '))}</option>`).join('');
+const people = w => (w || []).map(p => p.name + (p.position ? ' (' + p.position + ')' : '')).join(', ');
+const warmChip = w => w && w.length ? `<span class="chip warm" title="${esc(people(w))}">you know ${w.length} ${w.length === 1 ? 'person' : 'people'} here</span>` : '';
+function peopleGroup(d) {
+  const linked = new Set(d.people.map(p => p.id)), others = d.warm.filter(p => !linked.has(p.id)), id = d.job.id;
+  const who = p => `<a href="#" onclick="openContact(${Number(p.id)});return false">${esc(p.name)}</a>${p.position ? ` <span class="muted">${esc(p.position)}</span>` : ''}`;
+  const ask = p => `<button class="b ghost sm" title="draft a referral ask: an email into the Inbox (always reviewed) when they have an address, else a LinkedIn note" onclick="jobRun('referral',{contact_id:${Number(p.id)}},this)">Ask for referral</button>`;
+  return `<div class="group"><h4>People</h4>
+    ${d.people.map(p => `<div class="row">${who(p)}<span class="pill">${esc(p.role.replace('_', ' '))}</span>${p.email ? `<span class="muted">${esc(p.email)}</span>` : ''}${ask(p)}
+      <button class="b ghost sm" onclick="contactOp(${Number(p.id)},'unlink',{job_id:${id}})">unlink</button></div>`).join('') || '<div class="muted">nobody linked to this job yet</div>'}
+    ${d.warm.length ? `<div class="row"><span class="chip warm">you know ${d.warm.length} ${d.warm.length === 1 ? 'person' : 'people'} here</span></div>` : ''}
+    ${others.map(p => `<div class="row">${who(p)}<select id="jRole${Number(p.id)}" aria-label="role for ${esc(p.name)}">${roleOpt()}</select>
+      <button class="b ghost sm" onclick="contactOp(${Number(p.id)},'link',{job_id:${id},role:$('#jRole${Number(p.id)}').value})">link</button>${ask(p)}</div>`).join('')}</div>`;
+}
+async function contactOp(cid, op, body, msg) {  // edit / link / unlink / delete; refreshes whichever drawer is open
+  const r = await api(`/api/contacts/${cid}/${op}`, body || {});
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast(msg || ({ link: 'linked', unlink: 'unlinked', edit: 'saved', delete: 'contact removed' }[op]), 'ok');
+  if (op === 'delete') closeDrawer(); else if (CT) openContact(CT.contact.id); else if (cur) openJob(cur.job.id);
+  loadContacts(); load();
+}
+let CTS = [];  // contacts list (GET /api/contacts); markup carries only ids
+const CT_KEY = 'ls_contacts_view';
+let CV = { key: 'name', dir: 1 };
+try { Object.assign(CV, JSON.parse(localStorage.getItem(CT_KEY) || '{}')); } catch (_) { /* storage blocked or corrupt: defaults */ }
+const CT_COLS = [['name', 'Name'], ['company', 'Company'], ['position', 'Position'], ['last_touch', 'Last touch'], ['next_touch', 'Next touch'], ['jobs', 'Linked jobs']];
+const isDue = c => c.next_touch && c.next_touch <= new Date().toLocaleDateString('en-CA') && !(c.last_touch && c.last_touch >= c.next_touch);
+async function loadContacts() { const r = await api('/api/contacts'); if (r.error) return toast('error: ' + r.error, 'err'); CTS = r.contacts; renderContacts(); }
+function sortContacts(k) { if (CV.key === k) CV.dir = -CV.dir; else { CV.key = k; CV.dir = k === 'jobs' || k === 'last_touch' ? -1 : 1; } try { localStorage.setItem(CT_KEY, JSON.stringify(CV)); } catch (_) { /* storage blocked */ } renderContacts(); }
+function renderContacts() {
+  const q = ($('#ctQ').value || '').trim().toLowerCase(), dueOnly = $('#ctDue').checked, MAX = 500;
+  const rows = CTS.filter(c => (!q || [c.name, c.company, c.position, c.email].join(' ').toLowerCase().includes(q)) && (!dueOnly || isDue(c)))
+    .sort((a, b) => { const x = a[CV.key] ?? null, y = b[CV.key] ?? null; if (x === y) return 0; if (x == null || x === '') return 1; if (y == null || y === '') return -1; return (typeof x === 'string' ? x.localeCompare(y) : x - y) * CV.dir; });
+  $('#ctN').textContent = `${rows.length} of ${CTS.length}` + (rows.length > MAX ? ` (first ${MAX} shown: filter to narrow)` : '');
+  const sortAttr = k => CV.key === k ? (CV.dir > 0 ? 'ascending' : 'descending') : 'none';
+  $('#ctTable').innerHTML = CTS.length ? `<table class="jobs"><thead><tr>` + CT_COLS.map(([k, l]) => `<th aria-sort="${sortAttr(k)}"><button class="th" onclick="sortContacts('${k}')">${l}${CV.key === k ? (CV.dir > 0 ? ' ▲' : ' ▼') : ''}</button></th>`).join('') + '</tr></thead><tbody>'
+    + rows.slice(0, MAX).map(c => `<tr class="${isDue(c) ? 'due' : ''}"><td><a href="#" onclick="openContact(${Number(c.id)});return false">${esc(c.name)}</a></td><td>${esc(c.company)}</td><td>${esc(c.position)}</td>
+      <td>${esc(c.last_touch)}</td><td>${esc(c.next_touch)}${isDue(c) ? ' <span class="chip due">due</span>' : ''}</td><td title="${esc(c.job_list)}">${c.jobs ? esc(c.job_list) : ''}</td></tr>`).join('')
+    + '</tbody></table>' + (rows.length ? '' : '<div class="empty">No contacts match.</div>')
+    : '<div class="empty">No contacts yet. Add one above, import your LinkedIn connections, or set a job\'s contact in its drawer.</div>';
+}
+async function addContact() {
+  const body = { name: $('#ctName').value, email: $('#ctEmail').value, company: $('#ctCo').value, position: $('#ctPos').value };
+  if (!body.name.trim()) return toast('type a name first', 'err');
+  const r = await api('/api/contacts', body); if (r.error) return toast('error: ' + r.error, 'err');
+  ['#ctName', '#ctEmail', '#ctCo', '#ctPos'].forEach(s => { $(s).value = ''; }); toast('contact added', 'ok'); await loadContacts(); load(); openContact(r.id);
+}
+function importContacts(btn) {
+  const f = $('#ctFile').files[0]; if (!f) return toast('choose your LinkedIn .zip or Connections.csv first', 'err');
+  const rd = new FileReader();
+  rd.onload = () => run('contacts_import', { name: f.name, data: rd.result.split(',')[1] }, r => {
+    toast(`${r.rows} connection(s): ${r.added} added, ${r.updated} updated, ${r.skipped} unchanged or skipped`, 'ok'); loadContacts();
+  }, btn);
+  rd.readAsDataURL(f);
+}
+const CT_FIELDS = [['name', 'name'], ['email', 'email'], ['phone', 'phone'], ['linkedin_url', 'LinkedIn URL'], ['company', 'company'], ['position', 'position'], ['how_met', 'how you met']];
+async function openContact(id) {
+  const d = await api('/api/contacts/' + id); if (d.error) return toast(d.error, 'err');
+  cur = null; CT = d; const c = d.contact, today = new Date().toLocaleDateString('en-CA');
+  $$('.card.sel').forEach(x => x.classList.remove('sel'));
+  $('#drawer').setAttribute('aria-label', 'Contact details');
+  $('#drawer').innerHTML = `
+    <div class="head"><b>${esc(c.name)}</b><span class="muted">${esc([c.position, c.company].filter(Boolean).join(' at '))} · contact #${Number(c.id)}</span>
+      ${safeUrl(c.linkedin_url) ? `<a href="${esc(c.linkedin_url)}" target="_blank" rel="noopener">LinkedIn ↗</a>` : ''}
+      <button class="b ghost sm close" onclick="closeDrawer()" aria-label="Close contact details">✕</button></div>
+    <div class="muted">source: ${esc(c.source || 'manual')} · added ${esc((c.created_at || '').slice(0, 10))}</div>
+    <div class="group"><h4>Details</h4>
+      <div class="row">${CT_FIELDS.map(([k, l]) => `<label class="fld">${l}<input id="c_${k}" value="${esc(c[k] ?? '')}" style="width:${k === 'linkedin_url' || k === 'how_met' ? 260 : 170}px"></label>`).join('')}</div>
+      <label class="fld">notes<textarea id="c_notes" style="min-height:90px">${esc(c.notes || '')}</textarea></label>
+      <div class="row"><label class="fld">last touch<input id="c_last_touch" type="date" value="${esc(c.last_touch || '')}"></label>
+        <label class="fld">next touch<input id="c_next_touch" type="date" value="${esc(c.next_touch || '')}"></label>
+        <button class="b sm" onclick="saveContact()">Save</button>
+        <button class="b ghost sm" title="sets last touch to today" onclick="contactOp(${Number(c.id)},'edit',{last_touch:'${today}'},'last touch: today')">Touched today</button>
+        <button class="b danger sm" onclick="if(confirm('Remove this contact? Linked jobs stay.'))contactOp(${Number(c.id)},'delete',{})">delete</button></div>
+      <div class="muted">Mail from or to their exact address updates last touch. A next touch puts them on the Today list once it comes, until you are in touch again; nothing is drafted or sent for it.</div></div>
+    <div class="group"><h4>Linked jobs</h4>
+      ${d.jobs.map(j => `<div class="row"><a href="#" onclick="go('board');openJob(${Number(j.id)});return false">#${Number(j.id)} ${esc(j.company)} - ${esc(j.title)}</a><span class="pill">${esc(j.role.replace('_', ' '))}</span><span class="muted">${esc(j.status)}</span>
+        <button class="b ghost sm" onclick="contactOp(${Number(c.id)},'unlink',{job_id:${Number(j.id)}})">unlink</button></div>`).join('') || '<div class="muted">not linked to any job</div>'}
+      <div class="row"><select id="cJobSel" aria-label="Job to link">${S.jobs.map(j => `<option value="${Number(j.id)}">#${Number(j.id)} ${esc(j.company)} - ${esc(j.title)}</option>`).join('')}</select>
+        <select id="cRoleSel" aria-label="Role">${roleOpt()}</select><button class="b ghost sm" onclick="if($('#cJobSel').value)contactOp(${Number(c.id)},'link',{job_id:$('#cJobSel').value,role:$('#cRoleSel').value})">link to job</button></div></div>
+    <div class="group"><h4>Recent activity with ${esc(c.email || 'them')}</h4>
+      ${c.email ? (d.events.map(e => `<div class="muted">${esc(e.ts)} · #${Number(e.job_id)} ${esc(e.company || '')} · ${esc(e.kind)}: ${esc(e.detail)}</div>`).join('') || '<div class="muted">no timeline entries mention this address yet</div>') : '<div class="muted">add an email address to see mail sent to them</div>'}</div>`;
+  $('#drawer').classList.add('open');
+  $('#drawer .close')?.focus();
+}
+function saveContact() {  // every field is sent; an empty one clears it (the server validates each)
+  const body = Object.fromEntries([...CT_FIELDS.map(([k]) => k), 'notes', 'last_touch', 'next_touch'].map(k => [k, $('#c_' + k).value]));
+  contactOp(CT.contact.id, 'edit', body, 'contact saved');
+}
+
+/* ---- interview rounds, question bank, story prompt (lodestar/interview.py) ---- */
+let ROUNDS = [], STRESS = { stressed: [], missing: [] };  // rows stay in JS; buttons carry only an index
+const R_FIELDS = ['round', 'kind', 'at', 'interviewers', 'notes', 'questions_asked', 'outcome'];
+function roundsGroup(d) {
+  ROUNDS = d.rounds || []; STRESS = d.stress || STRESS;
+  const st = STRESS, bank = d.bank || [];
+  const prompt = st.stressed.length ? `<div class="muted">This posting stresses ${esc(st.stressed.join(', '))}.${st.missing.length
+    ? ` No story tagged ${esc(st.missing.join(', '))} yet: worth preparing one before the interview? <button class="b ghost sm" onclick="newStory(STRESS.missing[0])">Add a story</button>`
+    : ' You have a story tagged with each.'}</div>` : '';
+  const rows = ROUNDS.map((r, i) => `<div class="row"><b>round ${Number(r.round)}</b><span class="pill">${esc(r.kind)}</span><span>${esc(r.at || 'no date')}</span>
+      <span class="pill ${r.outcome === 'passed' ? 'ok' : r.outcome === 'rejected' ? 'warn' : ''}">${esc(r.outcome)}</span><span class="muted">${esc(r.interviewers || '')}</span>
+      <button class="b ghost sm" onclick="editRound(${i})">edit</button><button class="b ghost sm" onclick="deleteRound(${i})">delete</button></div>
+    ${r.questions_asked ? `<ul class="muted qs">${r.questions_asked.split('\n').map(q => `<li>${esc(q)}</li>`).join('')}</ul>` : ''}${r.notes ? `<div class="muted" style="white-space:pre-wrap">${esc(r.notes)}</div>` : ''}`).join('')
+    || '<div class="muted">no rounds logged yet</div>';
+  return `<div class="group"><h4>Interview rounds</h4>${prompt}${rows}
+    <details id="rForm"><summary class="muted">Log a round</summary><input type="hidden" id="r_id">
+      <div class="row"><label class="fld">round<input id="r_round" type="number" min="1" max="50" placeholder="next" style="width:70px"></label>
+        <label class="fld">kind<select id="r_kind">${opt(S.round_kinds, 'other')}</select></label>
+        <label class="fld">when<input id="r_at" placeholder="YYYY-MM-DD HH:MM" style="width:150px"></label>
+        <label class="fld">outcome<select id="r_outcome">${opt(S.round_outcomes, 'pending')}</select></label>
+        <label class="fld">interviewers<input id="r_interviewers" style="width:170px"></label></div>
+      <label class="fld">questions you were asked, one per line<textarea id="r_questions_asked" style="min-height:90px"></textarea></label>
+      <label class="fld">notes<textarea id="r_notes" style="min-height:60px"></textarea></label>
+      <div class="row"><button class="b sm" onclick="saveRound()">Save round</button><span class="muted" id="rMode"></span></div></details>
+    ${bank.length ? `<details><summary class="muted">Question bank: ${bank.length} question(s) logged at this company or for similar titles</summary>
+      <ul class="muted qs">${bank.map(x => `<li>${esc(x.q)} <span class="pill">${esc(x.source)}</span>${esc(x.where)}</li>`).join('')}</ul></details>` : ''}
+    <div class="muted">A round with a time reminds you like a calendar file (upcoming interviews, Today). Prep packs and mock interviews ask the questions logged here first.</div></div>`;
+}
+function editRound(i) {
+  const r = ROUNDS[i]; if (!r) return;
+  $('#r_id').value = r.id; R_FIELDS.forEach(k => { $('#r_' + k).value = r[k] ?? ''; });
+  $('#rMode').textContent = 'editing round ' + Number(r.round); $('#rForm').open = true; $('#r_at').focus();
+}
+async function saveRound() {
+  const id = Number($('#r_id').value), body = Object.fromEntries(R_FIELDS.map(k => [k, $('#r_' + k).value]));
+  const r = await api(id ? `/api/rounds/${id}/edit` : `/api/jobs/${cur.job.id}/rounds`, body);
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast(id ? 'round saved' : 'round logged', 'ok'); await load(); openJob(cur.job.id);
+}
+async function deleteRound(i) {
+  const r = ROUNDS[i]; if (!r || !confirm(`Delete round ${Number(r.round)} and the questions logged with it?`)) return;
+  const res = await api(`/api/rounds/${Number(r.id)}/delete`, {}); if (res.error) return toast('error: ' + res.error, 'err');
+  toast('round deleted', 'ok'); await load(); openJob(cur.job.id);
+}
+
+/* ---- STAR stories: rows of the answer bank with structured fields (lodestar/interview.py) ---- */
+const ST_FIELDS = ['title', 'situation', 'task', 'action', 'result', 'metrics'];
+const stIn = k => $('#st' + k[0].toUpperCase() + k.slice(1));
+function renderStories() {
+  if (!$('#stComps').children.length) $('#stComps').innerHTML = S.competencies.map(c => `<label class="muted"><input type="checkbox" value="${esc(c)}"> ${esc(c)}</label>`).join('');
+  const have = new Set(S.stories.flatMap(s => s.competencies)), none = S.competencies.filter(c => !have.has(c));
+  $('#storyList').innerHTML = (S.stories.length && none.length ? `<div class="muted">no story tagged yet: ${esc(none.join(', '))}</div>` : '') + `<div class="list">`
+    + (S.stories.map((s, i) => `<div><b>${esc(s.title)}</b> ${s.competencies.map(c => `<span class="pill">${esc(c)}</span>`).join('')}${s.missing.length ? `<span class="chip stale">incomplete: no ${esc(s.missing.join(', '))}</span>` : ''}
+      <button class="b ghost sm" onclick="editStory(${i})">edit</button><button class="b ghost sm" onclick="deleteStory(${i})">remove</button>
+      <div class="muted" style="white-space:pre-wrap">${esc(['situation', 'task', 'action', 'result', 'metrics'].filter(k => s[k]).map(k => k[0].toUpperCase() + k.slice(1) + ': ' + s[k]).join('\n'))}</div></div>`).join('')
+      || '<div class="empty">No stories yet. Write one above, or use "Save as story" on an idea of the stories topic (Ideas tab).</div>') + '</div>';
+}
+function clearStory() { $('#stId').value = ''; ST_FIELDS.forEach(k => { stIn(k).value = ''; }); $$('#stComps input').forEach(e => { e.checked = false; }); $('#stHint').textContent = ''; }
+function editStory(i) {
+  const s = S.stories[i]; if (!s) return;
+  clearStory(); $('#stId').value = s.id; ST_FIELDS.forEach(k => { stIn(k).value = s[k] || ''; });
+  $$('#stComps input').forEach(e => { e.checked = s.competencies.includes(e.value); });
+  $('#stHint').textContent = 'editing story #' + Number(s.id); $('#storyPanel').scrollIntoView(); stIn('title').focus();
+}
+function newStory(comp) { go('answers'); clearStory(); $$('#stComps input').forEach(e => { e.checked = e.value === comp; }); $('#storyPanel').scrollIntoView(); stIn('title').focus(); }
+async function saveStory() {
+  const body = Object.fromEntries(ST_FIELDS.map(k => [k, stIn(k).value]));
+  body.competencies = $$('#stComps input:checked').map(e => e.value);
+  if ($('#stId').value) body.id = Number($('#stId').value);
+  const r = await api('/api/stories', body); if (r.error) return toast('error: ' + r.error, 'err');
+  $('#stId').value = r.id; $('#stHint').textContent = 'editing story #' + Number(r.id); toast('story saved', 'ok'); load();
+}
+async function deleteStory(i) {
+  const s = S.stories[i]; if (!s || !confirm(`Remove the story "${s.title}"?`)) return;
+  const r = await api(`/api/answers/${Number(s.id)}`, {}); if (r.error) return toast('error: ' + r.error, 'err');
+  if (Number($('#stId').value) === s.id) clearStory();
+  toast('story removed', 'ok'); load();
+}
+async function storyFromIdea(id) {
+  const r = await api('/api/stories', { from_idea: id }); if (r.error) return toast('error: ' + r.error, 'err');
+  await load(); go('answers'); const k = S.stories.findIndex(s => s.id === r.id); if (k >= 0) editStory(k);
+  toast('saved as a story: fill in the task, action and result in your own words', 'ok');
+}
+
 /* ---- board add ---- */
 async function addJob() {
   const r = await api('/api/jobs', { company: $('#nCo').value, title: $('#nTi').value, jd: $('#nJd').value });
@@ -420,27 +601,57 @@ async function decide(id, op, mail) {
 /* ---- search ---- */
 function renderSearchless() { /* search results are rendered on demand */ }
 let RESULTS = [];  // listings stay in JS; markup carries only an index (listing text inside an onclick attribute is an XSS hole)
+const searchParams = () => ({ query: $('#sQ').value, keywords: $('#sK').value, location: $('#sLoc').value, min_salary: $('#sSal').value, posted_within: $('#sDays').value, seniority: $('#sLevel').value });
+const GHOST_SHOW = 30;  // web_monitor.GHOST_SHOW
+const staleChip = g => g && g.score >= GHOST_SHOW ? `<span class="chip stale" title="${esc(g.reasons.join('; '))}">possibly stale</span>` : '';
+const sponsorChip = s => s ? `<span class="chip" title="from the USCIS H-1B data you imported (${esc(s.name)}); a loose name match, not a promise">possible H-1B sponsor (${esc(s.approvals)} approvals)</span>` : '';
+function listingHtml(j, i) {
+  const unknown = ['salary', 'location', 'date'].filter(k => j[k + '_unknown']).map(k => `<span class="chip" title="the listing does not say; kept rather than dropped">${k} unknown</span>`).join('');
+  const cov = j.coverage ? `<span class="chip" title="${esc('matched: ' + (j.coverage.matched.join(', ') || '-') + ' · missing: ' + (j.coverage.missing.join(', ') || '-'))}">JD coverage ${esc(j.coverage.score)}%</span>` : '';
+  const host = u => { try { return new URL(u).hostname; } catch (_) { return 'link'; } };
+  const more = (j.urls || []).slice(1).filter(safeUrl).map(u => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(host(u))} ↗</a>`).join(' ');
+  const g = j.ghost && j.ghost.score >= GHOST_SHOW ? `<div class="muted">possibly stale: ${esc(j.ghost.reasons.join('; '))}</div>` : '';
+  const c = j.coverage && (j.coverage.matched.length || j.coverage.missing.length) ? `<div class="muted">matched: ${esc(j.coverage.matched.join(', ') || '-')} · missing: ${esc(j.coverage.missing.join(', ') || '-')}</div>` : '';
+  return `<div>${j.score != null ? `<span class="score">${esc(j.score)}</span>` : ''}<b>${esc(j.title)}</b> @ ${esc(j.company)} <span class="muted">${esc(j.location)} ${esc(j.salary)} &lt;${esc((j.sources || [j.source]).join(', '))}&gt;</span>
+    ${safeUrl(j.url) ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">open ↗</a>` : ''} ${more} <button class="b ghost sm" onclick="saveListing(${i})">track</button>
+    <div class="chips">${cov}${staleChip(j.ghost)}${sponsorChip(j.sponsor)}${warmChip(j.warm)}${unknown}${j.seniority ? `<span class="chip">${esc(j.seniority)}</span>` : ''}</div>${c}${g}${j.why ? `<div class="muted">${esc(j.why)}</div>` : ''}</div>`;
+}
 function doSearch(btn) {
   $('#sRes').innerHTML = '<div class="muted">searching…</div>';
-  run('search', { query: $('#sQ').value, keywords: $('#sK').value, rank: $('#sRank').checked }, r => {
+  run('search', { ...searchParams(), rank: $('#sRank').checked }, r => {
     RESULTS = r.results || [];
-    $('#sRes').innerHTML = `<div class="list">` + (RESULTS.map((j, i) => `<div>${j.score != null ? `<span class="score">${esc(j.score)}</span>` : ''}<b>${esc(j.title)}</b> @ ${esc(j.company)} <span class="muted">${esc(j.location)} ${esc(j.salary)} &lt;${esc(j.source)}&gt;</span>
-      ${safeUrl(j.url) ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">open ↗</a>` : ''} <button class="b ghost sm" onclick="saveListing(${i})">track</button>${j.why ? `<div class="muted">${esc(j.why)}</div>` : ''}</div>`).join('') || '<div class="empty">nothing found</div>') + '</div>';
+    $('#sRes').innerHTML = `<div class="list">` + (RESULTS.map(listingHtml).join('') || '<div class="empty">nothing found</div>') + '</div>';
   }, btn);
+}
+async function saveSearch() {
+  const p = searchParams(); if (!p.query.trim()) return toast('type a query first', 'err');
+  const r = await api('/api/watches', { ...p, url: p.query, search: true });
+  toast(r.error ? 'error: ' + r.error : `saved: new listings for "${p.query}" will alert (Monitor > Watches)`, r.error ? 'err' : 'ok'); load();
 }
 async function saveListing(i) {
   const j = RESULTS[i]; if (!j) return;
-  const r = await api('/api/jobs', { company: j.company, title: j.title, url: j.url, jd: (j.salary ? `Salary (from ${j.source}): ${j.salary}\n\n` : '') + (j.desc || ''), notes: 'found via ' + j.source, location: j.location || '', date: j.date || '' });
+  const r = await api('/api/jobs', { company: j.company, title: j.title, url: j.url, jd: (j.salary ? `Salary (from ${j.source}): ${j.salary}\n\n` : '') + (j.desc || ''), notes: 'found via ' + j.source, location: j.location || '', date: j.date || '', ats_feed: j.ats_feed || '' });
   if (r.error) return toast('error: ' + r.error, 'err');
   toast('tracked as #' + r.id, 'ok'); load();
 }
 
 /* ---- monitor ---- */
 function renderMonitor() {
-  $('#wList').innerHTML = `<div class="list">` + (S.watches.map(w => `<div>${esc(w.url)} <span class="muted">kw=${esc(w.keywords || '-')} · last ${esc(w.last_seen || 'never')}</span> <button class="b ghost sm" onclick="api('/api/watches/${w.id}',{}).then(load)">remove</button></div>`).join('') || '<div class="empty">No watches yet. Add a careers page URL or a saved search.</div>') + '</div>';
+  const filt = f => Object.entries(f || {}).map(([k, v]) => k + '=' + v).join(', ');
+  $('#wList').innerHTML = `<div class="list">` + (S.watches.map(w => `<div>${esc(w.url)} <span class="muted">kw=${esc(w.keywords || '-')}${filt(w.filters) ? ' · ' + esc(filt(w.filters)) : ''} · last ${esc(w.last_seen || 'never')}</span> <button class="b ghost sm" onclick="api('/api/watches/${w.id}',{}).then(load)">remove</button></div>`).join('') || '<div class="empty">No watches yet. Add a careers page URL or a saved search.</div>') + '</div>';
+  $('#coList').innerHTML = `<div class="list">` + (S.companies.map(c => `<div><b>${esc(c.name)}</b> <span class="pill">${esc(c.vendor)}:${esc(c.slug)}</span><span class="muted">kw=${esc(c.keywords || '-')} · last ${esc(c.last_seen || 'never')}</span>${c.last_error ? ` <span class="chip stale" title="${esc(c.last_error)}">last read failed</span>` : ''} <button class="b ghost sm" onclick="api('/api/companies/${c.id}',{}).then(load)">remove</button></div>`).join('') || '<div class="empty">No companies yet.</div>') + '</div>';
   $('#alerts').textContent = S.alerts.join('\n') || '(no alerts yet)';
 }
-async function addWatch() { await api('/api/watches', { url: $('#wUrl').value, keywords: $('#wKw').value, search: $('#wSearch').checked }); $('#wUrl').value = ''; load(); }
+async function addWatch() {
+  const r = await api('/api/watches', { url: $('#wUrl').value, keywords: $('#wKw').value, search: $('#wSearch').checked });
+  if (r.error) return toast('error: ' + r.error, 'err');
+  $('#wUrl').value = ''; load();
+}
+async function addCompany() {
+  const r = await api('/api/companies', { source: $('#cSrc').value, name: $('#cName').value, keywords: $('#cKw').value });
+  if (r.error) return toast('error: ' + r.error, 'err');
+  ['#cSrc', '#cName', '#cKw'].forEach(s => { $(s).value = ''; }); toast(`watching ${r.name} (${r.vendor}:${r.slug})`, 'ok'); load();
+}
 
 /* ---- answers ---- */
 function renderAnswers() {
@@ -461,6 +672,7 @@ function renderIdeas() {
       <select onchange="api('/api/ideas/${i.id}/status',{status:this.value}).then(load)">${opt(S.idea_statuses, i.status)}</select><button class="b ghost sm" onclick="api('/api/ideas/${i.id}/delete',{}).then(load)">remove</button></div>
       <div>${esc(i.idea || '')}</div><div class="muted">why: ${esc(i.why_it_works || '')}</div>
       <ol class="muted">${(i.plan || []).map(s => `<li>${esc(s)}</li>`).join('')}</ol><div class="muted">metric: ${esc(i.metric || '')}</div>
+      ${i.topic === 'stories' ? `<div class="row"><button class="b ghost sm" title="becomes a STAR story (Answers > Stories) with this title and sketch; you fill in the rest" onclick="storyFromIdea(${Number(i.id)})">Save as story</button></div>` : ''}
       <div class="row"><input id="rf${i.id}" class="grow" placeholder="feedback: make it cheaper / focus on X / too vague"><button class="b ghost sm" onclick="run('refine',{idea_id:${i.id},feedback:$('#rf${i.id}').value},r=>toast('refined: '+r.idea.title,'ok'),this)">Refine</button></div></div>`).join('')
     || '<div class="empty">No ideas yet. Pick a topic and craft.</div>';
 }
@@ -475,7 +687,7 @@ function renderTools() {
     <td><input type="checkbox" ${t.auto ? 'checked' : ''} onchange="api('/api/tools',{tool:'${t.tool}',auto:this.checked}).then(load)"></td></tr>`).join('')}</table>`;
   $('#prefs').innerHTML = Object.entries(S.prefs).map(([k, v]) => `<div class="row"><span style="width:200px">${k}</span>${S.pref_choices[k] ? `<select onchange="setPref('${k}',this.value)">${opt(S.pref_choices[k], v)}</select>`
     : typeof v === 'boolean' ? `<input type="checkbox" ${v ? 'checked' : ''} onchange="setPref('${k}',this.checked)">`
-    : typeof v === 'object' && v ? `<span class="muted">${esc(Object.entries(v).map(([p, m]) => p + '=' + (m || '(default)')).join(', ') || 'none pinned')}</span><input class="grow" placeholder="provider=model to pin (empty model = default); Setup > List models shows ids" onchange="setPref('${k}',this.value)">`
+    : typeof v === 'object' && v ? `<span class="muted">${esc(Object.entries(v).map(([p, m]) => p + '=' + (m || '(default)')).join(', ') || (k === 'weekly_goals' ? 'none set' : 'none pinned'))}</span><input class="grow" placeholder="${k === 'weekly_goals' ? 'goal=number, e.g. contacts=5 (0 clears); also on the Insights tab' : 'provider=model to pin (empty model = default); Setup > List models shows ids'}" onchange="setPref('${k}',this.value)">`
     : `<input class="grow" value="${esc(v)}" onchange="setPref('${k}',this.value)">`}</div>`).join('');
 }
 async function setPref(key, value) { const r = await api('/api/prefs', { key, value }); if (r.error) toast('error: ' + r.error, 'err'); load(); }
@@ -595,8 +807,10 @@ function fillCoachJobs() {  // rebuilt on every refresh so jobs added later appe
   $('#cJob').innerHTML = S.jobs.map(j => `<option value="${j.id}">#${j.id} ${esc(j.company)} - ${esc(j.title)}</option>`).join('');
   if (S.jobs.some(j => String(j.id) === keep)) $('#cJob').value = keep;
 }
+let MOCK = { session: null, secs: 0 };  // the scored session of this mock interview; seconds dictated for the next answer
 function resetChat() {
   const mock = $('#cMode').value === 'mock';
+  MOCK = { session: null, secs: 0 }; $('#mockSum').style.display = 'none'; $('#mockSum').textContent = '';
   $('#cJob').style.display = $('#cSpeakL').style.display = mock ? '' : 'none';
   window.speechSynthesis?.cancel();
   fillCoachJobs();
@@ -608,9 +822,11 @@ function sendChat() {
   chatHist.push({ role: 'user', content: q }); $('#chat').insertAdjacentHTML('beforeend', `<div class="msg me">${esc(q)}</div>`);
   const council = $('#cCouncil').checked, mock = $('#cMode').value === 'mock';
   const action = mock ? 'mock' : council ? 'council' : 'chat';
-  const params = mock ? { id: $('#cJob').value, messages: chatHist } : council ? { prompt: q, messages: chatHist } : { messages: chatHist };
+  const params = mock ? { id: $('#cJob').value, messages: chatHist, session: MOCK.session, seconds: MOCK.secs || undefined } : council ? { prompt: q, messages: chatHist } : { messages: chatHist };
+  MOCK.secs = 0;
   run(action, params, r => {
     const a = council && !mock ? r.synthesis : r.reply; chatHist.push({ role: 'assistant', content: a });
+    if (r.card) { MOCK.session = r.card.session; $('#chat').insertAdjacentHTML('beforeend', cardHtml(r.card)); mockSummary(r.card); }
     $('#chat').insertAdjacentHTML('beforeend', `<div class="msg ai">${esc(a)}</div>`); $('#chat').scrollTop = 1e9;
     if (mock && $('#cSpeak').checked && window.speechSynthesis) {  // browser text-to-speech: practise listening, then answer aloud
       const u = new SpeechSynthesisUtterance(a); u.lang = navigator.language || 'en-US'; speechSynthesis.speak(u);
@@ -623,10 +839,144 @@ function dictate() {  // browser speech recognition; audio goes only where the b
   if (!SR) return toast('this browser has no speech recognition (try Chrome or Edge)', 'err');
   const r = new SR(); r.lang = navigator.language || 'en-US'; r.interimResults = false;
   $('#cMic').disabled = true;
-  r.onresult = e => { $('#cIn').value = ($('#cIn').value + ' ' + e.results[0][0].transcript).trim(); };
+  const t0 = performance.now();  // ponytail: the whole listening time, pauses included; wpm is a rough guide
+  r.onresult = e => { $('#cIn').value = ($('#cIn').value + ' ' + e.results[0][0].transcript).trim(); MOCK.secs += (performance.now() - t0) / 1000; };
   r.onerror = e => toast('dictation: ' + e.error, 'err');
   r.onend = () => { $('#cMic').disabled = false; };
   r.start();
+}
+
+/* ---- mock score cards, session summary, trend (interview.score_answer / sessions) ---- */
+function cardHtml(c) {
+  const r = c.rubric, took = c.seconds ? c.seconds + ' s spoken' : '~' + c.est_seconds + ' s';
+  const pace = { ok: 'within', short: 'under', long: 'over' }[c.pace] || '';
+  return `<div class="mcard" role="note" aria-label="score card for your answer"><div><b>${esc(c.words)}</b> words · ${esc(took)} <span class="${c.pace === 'ok' ? '' : 'lo'}">(${pace} the 60-120 s target)</span>${c.wpm ? ' · ' + esc(c.wpm) + ' wpm' : ''}</div>`
+    + (r ? `<div>STAR S${esc(r.situation)} T${esc(r.task)} A${esc(r.action)} R${esc(r.result)} (average ${esc(r.star)}/2) · relevance ${esc(r.relevance)}/2 · specificity ${esc(r.specificity)}/2 · numbers ${r.metrics_used ? 'yes' : 'no'}</div>`
+      + (r.one_fix ? `<div><b>one fix:</b> ${esc(r.one_fix)}</div>` : '') + (r.suggested_rewrite ? `<details><summary>suggested rewrite</summary>${esc(r.suggested_rewrite)}</details>` : '')
+      : `<div class="muted">no STAR rubric (${esc(c.rubric_error || 'needs an AI provider')}); the numbers above are offline</div>`)
+    + (c.repeated.length ? `<div class="muted">repeated: ${esc(c.repeated.join(', '))}</div>` : '')
+    + (c.jd_keywords.length ? `<div class="muted">posting keywords used: ${esc(c.jd_keywords.join(', '))}</div>` : '') + '</div>';
+}
+function mockSummary(c) {
+  const a = c.averages, f = v => v == null ? '-' : v;
+  $('#mockSum').style.display = '';
+  $('#mockSum').textContent = `session #${c.session}: ${a.answers} answer(s), ${a.scored} scored · STAR average ${f(a.star)}/2 · relevance ${f(a.relevance)}/2 · specificity ${f(a.specificity)}/2`
+    + (a.metrics_used != null ? ` · numbers in ${Math.round(a.metrics_used * 100)}% of answers` : '') + ` · ${f(a.words)} words on average`;
+}
+function renderTrend() {
+  const pts = (S.mock_sessions || []).filter(s => s.averages && s.averages.star != null);
+  $('#mockTrend').style.display = pts.length ? '' : 'none'; if (!pts.length) return;
+  const W = 560, H = 130, P = 22, n = pts.length;
+  const x = i => P + (n === 1 ? (W - 2 * P) / 2 : i * (W - 2 * P) / (n - 1)), y = v => H - P - Math.max(0, Math.min(2, Number(v) || 0)) / 2 * (H - 2 * P);
+  const last = pts[n - 1].averages.star;
+  $('#trendSvg').innerHTML = `<svg class="trend" viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="${esc(`STAR average per mock session: ${n} session(s), latest ${last} of 2`)}">`
+    + [0, 1, 2].map(v => `<line x1="${P}" x2="${W - P}" y1="${y(v)}" y2="${y(v)}" class="gl"/><text x="4" y="${y(v) + 4}">${v}</text>`).join('')
+    + `<polyline points="${pts.map((s, i) => x(i).toFixed(1) + ',' + y(s.averages.star).toFixed(1)).join(' ')}" class="pl"/>`
+    + pts.map((s, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(s.averages.star).toFixed(1)}" r="4"><title>${esc(`${(s.ts || '').slice(0, 16)} · #${s.job_id} ${s.company || ''} · STAR ${s.averages.star}/2 over ${s.averages.scored} answer(s)`)}</title></circle>`).join('') + '</svg>';
+}
+
+/* ---- insights, weekly goals, offers, activity log (extras.analytics, comp.compare, extras.activity_report) ---- */
+let INS = null, OFF = null;  // server data stays in JS; markup carries only indexes and numbers
+const pctx = v => Math.round(Number(v) * 100) + '%', num = v => Number(v || 0).toLocaleString();
+const SERIES = [['applications', 'applications'], ['interviews', 'interviews'], ['offers', 'offers'], ['contacts', 'people contacted'], ['mock_sessions', 'mock sessions']];
+async function loadInsights() {
+  const [a, o] = await Promise.all([api('/api/analytics'), api('/api/offers')]);
+  if (a.error || o.error) return toast('error: ' + (a.error || o.error), 'err');
+  INS = a; OFF = o; renderInsights(); renderOffers();
+  if (!$('#acFrom').value) { const t = new Date(), m = new Date(t); m.setDate(t.getDate() - (t.getDay() + 6) % 7); $('#acFrom').value = m.toLocaleDateString('en-CA'); $('#acTo').value = t.toLocaleDateString('en-CA'); }
+  $('#acMin').value = S && S.prefs.activity_weekly_min ? S.prefs.activity_weekly_min : '';
+}
+function barSvg(label, pts) {  // pts [{x, v, t}]: small bar chart; <title> per bar plus the table under "as a table"
+  const W = 260, H = 96, P = 18, n = pts.length || 1, max = Math.max(1, ...pts.map(p => p.v)), bw = (W - 2 * P) / n;
+  return `<svg class="bars" viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title>`
+    + pts.map((p, i) => { const h = (H - 2 * P) * p.v / max; return `<rect x="${(P + i * bw + 1).toFixed(1)}" y="${(H - P - h).toFixed(1)}" width="${Math.max(1, bw - 2).toFixed(1)}" height="${h.toFixed(1)}"><title>${esc(p.t)}</title></rect>`; }).join('')
+    + `<line x1="${P}" x2="${W - P}" y1="${H - P}" y2="${H - P}" class="gl"/><text x="${P}" y="${H - 4}">${esc(pts[0] ? pts[0].x : '')}</text><text x="${W - P}" y="${H - 4}" text-anchor="end">${esc(pts.length ? pts[pts.length - 1].x : '')}</text><text x="${P}" y="12">max ${max}</text></svg>`;
+}
+function rateRows(groups) {  // CSS bars with the numbers beside them; under min_n only the count
+  return groups.map(g => `<div class="cov-row"><span title="${esc(g.group)}">${esc(g.group)}</span>` + (g.enough
+    ? `<span class="bar" role="img" aria-label="${esc(g.group)}: response ${pctx(g.response_rate)} of ${Number(g.n)}"><i style="width:${Math.round(Number(g.response_rate) * 100)}%"></i></span><span>${pctx(g.response_rate)} · interview ${pctx(g.interview_rate)} · n=${Number(g.n)}</span>`
+    : `<span class="muted">not enough data yet</span><span class="muted">n=${Number(g.n)} (need ${Number(INS.min_n)})</span>`) + '</div>').join('') || '<div class="muted">no applications yet</div>';
+}
+function renderInsights() {
+  const a = INS, goals = (S && S.prefs.weekly_goals) || {};
+  $('#goalForm').innerHTML = a.goal_keys.map(k => `<label class="fld">${esc(k.replace('_', ' '))} a week<input id="g_${esc(k)}" type="number" min="0" max="1000" style="width:110px" value="${goals[k] ? Number(goals[k]) : ''}" placeholder="not set"></label>`).join('')
+    + '<button class="b sm" onclick="saveGoals()">Save goals</button>';
+  $('#goalBars').innerHTML = a.goals.map(g => `<div class="row"><label>${esc(g.label)} <progress value="${Math.min(Number(g.done), Number(g.target))}" max="${Number(g.target)}"></progress> ${Number(g.done)} of ${Number(g.target)} this week${g.done >= g.target ? ' ✓' : ''}</label></div>`).join('')
+    || '<div class="muted">no goals set</div>';
+  $('#insWeeks').innerHTML = SERIES.map(([k, label]) => {
+    const total = a.weeks.reduce((s, w) => s + Number(w[k]), 0);
+    return `<div><b>${esc(label)}</b> <span class="muted">${total} in ${a.weeks.length} weeks</span>${barSvg(`${label} per week, ${a.weeks.length} weeks, ${total} in total`, a.weeks.map(w => ({ x: w.week, v: Number(w[k]), t: `week of ${w.start}: ${w[k]} ${label}` })))}</div>`;
+  }).join('');
+  $('#insWeeksTable').innerHTML = `<table class="kw"><thead><tr><th>week</th><th>from</th>${SERIES.map(([, l]) => `<th>${esc(l)}</th>`).join('')}</tr></thead><tbody>`
+    + a.weeks.map(w => `<tr><td>${esc(w.week)}</td><td>${esc(w.start)}</td>${SERIES.map(([k]) => `<td>${Number(w[k])}</td>`).join('')}</tr>`).join('') + '</tbody></table>';
+  $('#insSource').innerHTML = rateRows(a.by_source);
+  $('#insBand').innerHTML = rateRows(a.by_band) + '<div class="muted">bands of the match score (JD coverage or your own), applications that left "saved"</div>';
+  const st = a.funnel.stages;
+  $('#insFunnel').innerHTML = `<table class="kw"><thead><tr><th>stage</th><th>reached</th><th>moved on</th><th>conversion</th><th>median days to next</th></tr></thead><tbody>`
+    + Object.entries(st).map(([s, d]) => `<tr><td>${esc(s)}</td><td>${Number(d.reached)}</td><td>${Number(d.advanced)}</td><td>${d.conversion == null ? '-' : pctx(d.conversion)}</td><td>${d.median_days_to_next == null ? '-' : esc(d.median_days_to_next)}</td></tr>`).join('') + '</tbody></table>'
+    + (a.variants.length ? '<div class="row">' + a.variants.map(v => `<span class="pill">resume ${esc(v.variant)}: ${Number(v.applied)} sent, ${v.applied >= a.min_n ? pctx(v.interview_rate) + ' interview' : 'not enough data yet'}</span>`).join('') + '</div>' : '<div class="muted">no tailored resume sent yet</div>');
+}
+async function saveGoals() {
+  const value = Object.fromEntries(INS.goal_keys.map(k => [k, $('#g_' + k).value || 0]));
+  const r = await api('/api/prefs', { key: 'weekly_goals', value }); if (r.error) return toast('error: ' + r.error, 'err');
+  toast('weekly goals saved', 'ok'); await load(); loadInsights();
+}
+const OF_LABEL = { base: 'base', bonus: 'bonus (target)', sign_on: 'sign-on', match: 'retirement match', equity_year1: 'equity, year 1', year1_cash: 'year-1 cash', year1_total: 'year-1 total', four_year_total: '4-year total' };
+function renderOffers() {
+  const o = OFF, rows = o.offers, best = (k, r) => (o.best[k] || []).includes(r.job_id);
+  const cell = v => v == null ? '-' : esc(v);
+  $('#offerTable').innerHTML = rows.length ? `<table class="kw offers"><thead><tr><th></th>${rows.map(r => `<th><a href="#" onclick="go('board');openJob(${Number(r.job_id)});return false">#${Number(r.job_id)} ${esc(r.company)}</a><div class="muted">${esc(r.title)} · ${esc(r.status)}</div></th>`).join('')}</tr></thead><tbody>`
+    + Object.entries(OF_LABEL).map(([k, l]) => `<tr><td>${l}</td>${rows.map(r => `<td class="${best(k, r) ? 'best' : ''}">${num(r.total[k])}${best(k, r) ? ' <span class="sr">best</span>' : ''}</td>`).join('')}</tr>`).join('')
+    + `<tr><td>market range</td>${rows.map(r => `<td>${r.market ? num(r.market.low) + '–' + num(r.market.high) + (r.market.delta ? ` <span class="muted">(${r.market.delta > 0 ? '+' : ''}${num(r.market.delta)})</span>` : ' <span class="muted">(within)</span>') : '<span class="muted">none recorded</span>'}</td>`).join('')}</tr>`
+    + (o.floor ? `<tr class="private"><td>vs your salary floor <span class="muted">(private)</span></td>${rows.map(r => `<td>${r.vs_floor == null ? '-' : (r.vs_floor >= 0 ? '+' : '') + num(r.vs_floor)}</td>`).join('')}</tr>` : '')
+    + ['remote', 'start_date', 'deadline'].map(k => `<tr><td>${k.replace('_', ' ')}</td>${rows.map(r => `<td>${cell(r.offer[k])}</td>`).join('')}</tr>`).join('')
+    + `<tr><td>estimates</td>${rows.map(r => `<td class="muted">${esc(r.total.estimates.join('; ') || 'none')}</td>`).join('')}</tr></tbody></table>`
+    : '<div class="empty">No live offers. Record one below (the job moves to "offer"), or move a job to "offer" on the Board.</div>';
+  const live = S.jobs.filter(j => !['rejected', 'withdrawn'].includes(j.status)), keep = $('#ofJob').value;
+  $('#ofJob').innerHTML = live.map(j => `<option value="${Number(j.id)}">#${Number(j.id)} ${esc(j.company)} - ${esc(j.title)} (${esc(j.status)})</option>`).join('');
+  if (live.some(j => String(j.id) === keep)) $('#ofJob').value = keep; else if (rows.length) $('#ofJob').value = String(rows[0].job_id);
+  fillOffer();
+  const ck = $('#ctrJob').value;
+  $('#ctrJob').innerHTML = rows.map(r => `<option value="${Number(r.job_id)}">#${Number(r.job_id)} ${esc(r.company)} - ${esc(r.title)}</option>`).join('');
+  if (rows.some(r => String(r.job_id) === ck)) $('#ctrJob').value = ck;
+  renderCite();
+}
+const OF_INPUT = { start_date: 'type="date"', deadline: 'type="date"', notes: 'class="grow" maxlength="2000"', bonus_pct: 'type="number" min="0" max="200" step="0.5"', retirement_match_pct: 'type="number" min="0" max="100" step="0.5"', vest_years: 'type="number" min="1" max="10"', cliff_months: 'type="number" min="0" max="60"' };
+function fillOffer() {
+  const id = Number($('#ofJob').value), o = (OFF.offers.find(r => r.job_id === id) || {}).offer || {};
+  $('#ofForm').innerHTML = OFF.fields.map(k => k === 'remote'
+    ? `<label class="fld">workplace<select id="of_remote"><option value="">-</option>${['onsite', 'hybrid', 'remote'].map(v => `<option ${o.remote === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`
+    : `<label class="fld${k === 'notes' ? ' grow' : ''}">${esc(k.replace(/_/g, ' '))}<input id="of_${esc(k)}" ${OF_INPUT[k] || 'type="number" min="0" step="1000" style="width:120px"'} value="${esc(o[k] ?? '')}"></label>`).join('');
+}
+async function saveOffer() {
+  const id = Number($('#ofJob').value); if (!id) return toast('pick a job first', 'err');
+  const body = Object.fromEntries(OFF.fields.map(k => [k, $('#of_' + k).value.trim()]));
+  if (!OFF.offers.some(o => o.job_id === id) && !Object.values(body).some(v => v)) return toast('fill in at least one field', 'err');
+  const r = await api(`/api/offers/${id}`, body);
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast('offer saved', 'ok'); await load(); loadInsights();
+}
+let CITE = [];  // [job_id:field, label]; checkboxes carry only an index
+function renderCite() {
+  const id = Number($('#ctrJob').value), names = { base: 'base', bonus_pct: 'target bonus %', sign_on: 'sign-on', equity_value_estimate: 'equity (estimate)', year1_total: 'year-1 total' };
+  CITE = OFF.offers.filter(r => r.job_id !== id).flatMap(r => OFF.cite.map(f => [f, f === 'year1_total' ? r.total.year1_total : r.offer[f]]).filter(([, v]) => v)
+    .map(([f, v]) => [`${r.job_id}:${f}`, `#${r.job_id} ${r.company}: ${names[f] || f} ${num(v)}${f === 'bonus_pct' ? '%' : ''}`]));
+  $('#ctrCite').innerHTML = CITE.map(([, l], i) => `<label class="muted"><input type="checkbox" id="cite${i}"> ${esc(l)}</label>`).join('')
+    || '<span class="muted">no other offer with figures to cite: record a competing offer first, or write your ask below</span>';
+}
+function draftCounter(btn) {
+  const id = Number($('#ctrJob').value); if (!id) return toast('record an offer first', 'err');
+  const cite = CITE.filter((c, i) => $('#cite' + i)?.checked).map(c => c[0]);
+  run('counter', { id, cite, ask: $('#ctrAsk').value, template: $('#ctrTpl').checked }, r => { show('ctrOut', mailText(r)); }, btn);
+}
+function activity(btn, fmt) {
+  run('activity', { from: $('#acFrom').value, to: $('#acTo').value, fmt }, r => {
+    if (r.path) toast((fmt === 'html' ? 'printable page opened in your browser: ' : 'CSV written: ') + r.path, 'ok');
+    const by = {}; r.rows.forEach(x => { const d = new Date(x.date + 'T00:00:00'); d.setDate(d.getDate() - (d.getDay() + 6) % 7); (by[d.toLocaleDateString('en-CA')] ||= []).push(x); });
+    $('#acOut').innerHTML = `<div class="muted">${esc(r.note)}</div>` + r.weeks.map(w => `<h4>Week of ${esc(w.week)}: ${Number(w.count)} activit${w.count === 1 ? 'y' : 'ies'}${r.minimum ? ` · minimum ${Number(r.minimum)} <span class="pill ${w.met ? 'ok' : ''}">${w.met ? 'met' : 'not met'}</span>` : ''}</h4>`
+      + ((by[w.week] || []).length ? `<table class="kw"><thead><tr><th>date</th><th>activity</th><th>employer</th><th>position</th><th>method</th><th>contact</th><th>result</th></tr></thead><tbody>`
+        + by[w.week].map(x => `<tr><td>${esc(x.date)}</td><td>${esc(x.activity.replace('_', ' '))}</td><td>${esc(x.employer)}</td><td>${esc(x.position)}</td><td>${esc(x.method)}</td><td>${esc(x.contact)}</td><td>${esc(x.result)}</td></tr>`).join('') + '</tbody></table>' : '<div class="muted">nothing recorded</div>')).join('');
+  }, btn);
 }
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });

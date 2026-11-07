@@ -10,21 +10,24 @@ one SQLite file. Nothing leaves your machine except the API calls you configure 
 | Config | `lodestar/config.py` | `~/.lodestar/` paths, `.env` loading, setting lookup (env > vault > default) | stdlib |
 | Secrets | `lodestar/vault.py` | OS keyring store for API keys, mail creds, site logins; name index only on disk | `keyring` |
 | AI | `lodestar/ai.py` | `chat()`, `ask()`, `ask_json()` over Anthropic + every OpenAI-compatible API; `council()` pools providers and synthesizes | urllib |
-| Data | `lodestar/db.py` | jobs, events, watches, seen-keys; status pipeline; stats; follow-up query; thread-local connections | sqlite3 |
-| Documents | `lodestar/resume.py` | master profile, per-job tailoring, cover letter, ATS gap JSON, review, Markdown to .docx | `python-docx` |
-| Inbox | `lodestar/email_monitor.py` | IMAP scan, keyword prefilter, AI classification, status upgrade rules, auto-created jobs, reply drafts | imaplib |
-| Web | `lodestar/web_monitor.py` | career-page diffs with keyword filter; six free job sources (Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse); AI fit ranking | urllib |
-| Interview | `lodestar/interview.py` | prep pack (questions, STAR answers, pitch, negotiation); mock-interview REPL | ai |
+| Data | `lodestar/db.py` | jobs (with validated tracker fields), events, watches, companies, contacts, interview rounds, offers, seen-keys; status pipeline; stats; funnel; thread-local connections | sqlite3 |
+| Documents | `lodestar/resume.py` | master profile, per-job tailoring (bullet by bullet), cover letter, gap JSON, review, salary parsing, Markdown to .docx / PDF | `python-docx` |
+| JD coverage | `lodestar/ats.py` | deterministic keyword coverage of a posting against your resume (`match`), over `data/skills.json`; no AI | stdlib |
+| Resume lint | `lodestar/lint.py` | offline resume checks and the saved-file audit (`resume lint`, `resume audit`) | stdlib |
+| Inbox | `lodestar/email_monitor.py` | IMAP scan, keyword prefilter, AI classification, sender trust (DKIM + job tie), status upgrade rules, interview rounds from trusted timed invites, contact touches, reply drafts | imaplib |
+| Web | `lodestar/web_monitor.py` | career-page diffs (robots.txt respected); six free job sources (Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse); Greenhouse / Lever / Ashby company boards; search filters, cross-source de-dup, stale signals, H-1B sponsor hints, weekly posting check; AI fit ranking | urllib |
+| Interview | `lodestar/interview.py` | interview rounds, question bank (`data/questions.json`), STAR stories, prep pack, mock interview with per-answer scoring | ai |
+| Contacts | `lodestar/contacts.py` | contacts CRM: people, job links with a role, LinkedIn connections import, warm paths, touches, referral asks | db |
 | Profile bank | `lodestar/profile.py` | saved resumes, pooled skills / languages / roles, LinkedIn import, `candidate_text()` for prompts | ai |
 | Apply | `lodestar/apply.py` | answer bank drafts, checklist, follow-up, thank-you, offer review, auto-track | ai, approvals |
 | Approvals | `lodestar/approvals.py` | the Inbox: propose, execute, reject; the only code that acts on Lodestar's initiative | db, settings |
 | Settings | `lodestar/settings.py` | tool switches (enabled / auto) and preferences in `settings.json` | stdlib |
 | Ideas | `lodestar/ideas.py` | idea crafting: diverge across providers, critique, rank, refine | ai |
-| Extras | `lodestar/extras.py` | outreach, .ics, digest, Obsidian export, backup, export, research, packet, autofill data | ai, db |
-| Loop | `lodestar/loop.py` | the monitor cycle behind `run`, `app` and `desktop` (email, watches, follow-ups, backups) | all |
+| Extras | `lodestar/extras.py` | outreach, .ics, digest, Obsidian export, backup, export (CSV formula-safe), research, packet, autofill data, insights, weekly goals and activity log | ai, db |
+| Loop | `lodestar/loop.py` | the monitor cycle behind `run`, `app` and `desktop` (email, watches, company boards, posting check, follow-ups, reminders, backups) and the Today agenda | all |
 | Desktop | `lodestar/desktop.py` | native window (Edge WebView2 via pywebview), browser fallback | pywebview |
 | Doctor | `lodestar/doctor.py` | install diagnostics (`lodestar doctor`, Setup > Diagnostics) | stdlib |
-| Comp | `lodestar/comp.py` | your market-rate table, quoted by gap, offer and prep | stdlib |
+| Comp | `lodestar/comp.py` | your market-rate table, quoted by gap, offer and prep; offer totals (vesting, cliff) and side-by-side compare | stdlib |
 | Inventory | `lodestar/inventory.py` | `lodestar features`: the generated FEATURES.md | argparse |
 | Support | `lodestar/log.py`, `lodestar/util.py` | rotating log file; safe URL fetches, source reading, alerts, SMTP sending | stdlib |
 | CLI | `lodestar/cli.py` | argparse front end, `chat` coach, `ui` launcher | all |
@@ -56,15 +59,24 @@ Data layout: see [SETUP.md, Where things live](SETUP.md#8-where-things-live).
 `desktop`). Every API call carries a per-launch token and the Host header must be loopback; see
 [AUTOMATION.md, Security model](AUTOMATION.md#security-model-of-the-local-ui).
 
-- **Board**: kanban by status, orange edge on anything quiet for `followup_days` (default 7), upcoming interviews,
-  add a job from a URL or pasted text. Click a card: timeline, job description, generated documents as tabs, status dropdown, notes, and one-click
-  gap / tailor / cover / prep / draft-reply with a council toggle.
+- **Board**: Today panel (due follow-ups, next actions, interviews, contacts to touch), kanban by status with drag
+  and drop, filter bar, sort and a Board / Table toggle, orange edge on anything quiet for `followup_days` (default
+  7), upcoming interviews, add a job from a URL or pasted text. Click a card: details form (tracker fields),
+  timeline, job description, JD coverage, people and warm paths, interview rounds, generated documents as tabs, status
+  dropdown, notes, and one-click gap / tailor / cover / prep / draft-reply with a council toggle.
 - **Inbox**: approve, edit or reject the actions Lodestar queued on its own.
-- **Search**: free-API search with keyword filter and AI ranking, "track" button saves a listing with its description.
-- **Monitor**: watches (URL or saved search), run watches, check email, email dry-run, live alert log.
+- **Search**: free-API search with filters (location / remote, minimum pay, posted within, seniority), keyword
+  filter, JD coverage, stale and sponsor chips, optional AI ranking; "track" saves a listing with its description;
+  "Save as watch" keeps the filters.
+- **Monitor**: watches (URL or saved search), watched companies (Greenhouse / Lever / Ashby boards), run watches,
+  check email, email dry-run, live alert log.
+- **Contacts**: sortable, filterable table of people with a contact drawer (fields, notes, next touch, linked jobs).
+- **Insights**: weekly series and rates, weekly goals, offers side by side with a counter-offer draft, activity log
+  export (CSV / printable HTML).
 - **Ideas**: craft, refine and track ideas across providers.
-- **Answers**: application-form answer bank; draft an answer for a job.
-- **Coach**: chat with profile and tracker context, council mode; mock interview for a tracked job, with dictation.
+- **Answers**: application-form answer bank and STAR stories; draft an answer for a job.
+- **Coach**: chat with profile and tracker context, council mode; mock interview for a tracked job, with dictation
+  and a score card per answer.
 - **Profile**: edit the master resume in place, AI review, import, Adjust, profile bank, LinkedIn import.
 - **Tools**: per-tool enabled / auto switches and preferences.
 - **Setup**: provider readiness and test, model list, local-only preset, keyring vault, market rates, bookmarklets,
@@ -94,9 +106,9 @@ document is produced (`--council`) and as a standalone `council "<question>"` co
 - `.gitignore` excludes every personal artifact (profile, database, applications, alerts, snapshots, vault index,
   `.env`) and every development artifact (graph outputs, caches, build dirs), so the repo can be shared safely.
 
-## 6. Current state (2026-11-06, pass 14)
+## 6. Current state (2026-11-06, pass 15)
 
-92 offline tests pass (`python -m unittest discover -s tests`). Live-verified: installer, desktop window (Edge
+185 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`). Live-verified: installer, desktop window (Edge
 WebView2), every UI route with token and Host checks, six free job sources, page watches, Obsidian export. Not yet
 exercised with real credentials: AI calls and SMTP sending. Pass-by-pass history is in [CHANGELOG.md](CHANGELOG.md).
 

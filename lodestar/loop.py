@@ -1,4 +1,5 @@
-"""The automation cycle: email -> watches -> follow-up cadence -> interview reminders -> sync/digest/backup.
+"""The automation cycle: email -> watches + companies -> weekly posting check -> follow-up cadence -> interview
+reminders -> sync/digest/backup.
 `lodestar run`, `app` and `desktop` all drive this. Every automatic action still goes through approvals."""
 import time
 from datetime import date, datetime, timedelta
@@ -12,7 +13,9 @@ CLOSED = ("accepted", "rejected", "withdrawn")
 
 def agenda(now: datetime | None = None) -> dict:
     """Today's list (Board panel, `lodestar today`, the daily toast): next actions due today or overdue, deadlines in
-    the next 3 days, follow-ups due (followup_days), interviews in the next 48 hours, and the Inbox size."""
+    the next 3 days, follow-ups due (followup_days), interviews in the next 48 hours, contacts whose next touch has
+    come (surfaced only, never drafted), and the Inbox size."""
+    from .contacts import due
     from .extras import upcoming_interviews
 
     now = now or datetime.now()
@@ -32,6 +35,7 @@ def agenda(now: datetime | None = None) -> dict:
         "followups": [item(j, when=j["updated_at"][:10]) for j in db.needs_followup()],
         "interviews": [{"id": i["job_id"], "company": i["company"], "title": i["title"], "when": f"{i['when']:%a %Y-%m-%d %H:%M}"}
                        for i in upcoming_interviews(2)],
+        "contacts": [{"id": c["id"], "name": c["name"], "company": c["company"] or "", "when": c["next_touch"]} for c in due(today)],
         "pending": len(db.list_pending("pending")),
     }
 
@@ -107,6 +111,7 @@ def _desktop(now: datetime | None = None) -> None:
     ag = agenda(now)
     counts = [(len(ag["actions"]), "next action(s) due"), (len(ag["deadlines"]), "deadline(s) within 3 days"),
               (len(ag["followups"]), "follow-up(s) due"), (len(ag["interviews"]), "interview(s) within 48 h"),
+              (len(ag["contacts"]), "contact(s) to get in touch with"),
               (ag["pending"], "waiting in the Inbox")]
     line = " · ".join(f"{n} {what}" for n, what in counts if n)
     if line:
@@ -149,6 +154,7 @@ def cycle(a) -> None:
     from . import web_monitor
 
     _step("watches", web_monitor.check_watches)
+    _step("posting check", web_monitor.recheck_postings)  # weekly: saved feed jobs whose posting vanished -> Inbox
     _step("follow-ups", lambda: _followups(a))
     _step("interview reminders", _reminders)
     _step("desktop notifications", _desktop)

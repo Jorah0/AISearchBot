@@ -3,7 +3,6 @@
 Long-running AI actions run in a thread and are polled via /api/tasks/<id> so the page never blocks.
 """
 import json
-import re
 import secrets
 import threading
 import traceback
@@ -160,11 +159,13 @@ def _act(action: str, p: dict):
             return {"found": email_monitor.check(int(p.get("days", 3)), dry=bool(p.get("dry")), provider=prov)}
         case "watch_run":
             return {"alerts": web_monitor.check_watches()}
-        case "search":
-            found = web_monitor.search(p["query"], p.get("keywords") or "")
+        case "search":  # filters: location (or 'remote'), min_salary, posted_within (days), seniority
+            from .contacts import with_warm
+
+            found = with_warm(web_monitor.with_coverage(web_monitor.search(p["query"], p.get("keywords") or "", **_filters(p))[:40]))
             if p.get("rank"):
                 found = web_monitor.rank(found, prov)
-            return {"results": found[:40]}
+            return {"results": found}
         case "chat":
             return {"reply": ai.chat(p["messages"], _coach_system(), prov)}
         case "mock":
@@ -174,6 +175,9 @@ def _act(action: str, p: dict):
             reply = ai.chat(msgs, interview.mock_system(job), prov)
             if msgs and str(msgs[-1].get("content", "")).strip().lower() == "done":  # the debrief: keep it with the job
                 return {"reply": reply, "path": str(interview.save_mock(job, [*msgs, {"role": "assistant", "content": reply}]))}
+            if len(msgs) >= 2 and msgs[-2].get("role") == "assistant" and msgs[-1].get("role") == "user":  # an answer
+                return {"reply": reply, "card": interview.score_answer(job, msgs[-2].get("content"), msgs[-1].get("content"),
+                                                                       p.get("seconds"), p.get("session"), prov)}
             return {"reply": reply}
         case "council":
             if p.get("messages"):  # coach chat in council mode: same profile, tracker and conversation as plain chat
@@ -182,6 +186,21 @@ def _act(action: str, p: dict):
             return ai.council(p["prompt"])
         case "outreach":
             return extras.outreach(job, p.get("person", ""), p.get("channel", "linkedin"), prov)
+        case "referral":  # {id, contact_id}: ask a contact for a referral; email -> Inbox (always reviewed), else a note
+            from .contacts import referral
+
+            if not job:
+                raise ValueError("pick a job")
+            return referral(job, int(p["contact_id"]), prov)
+        case "contacts_import":  # {name, data: base64}: LinkedIn export zip or Connections.csv
+            import base64
+
+            from .contacts import import_connections
+
+            raw = base64.b64decode(p.get("data") or "")
+            if not raw or len(raw) > 15_000_000:
+                raise ValueError("empty file or larger than 15 MB (a full LinkedIn archive is big: upload Connections.csv alone)")
+            return import_connections(raw, p.get("name") or "")
         case "ics":
             return {"path": str(extras.ics(job, extras.parse_when(p["when"]), int(p.get("minutes", 60)))), "docs": _docs(job)}
         case "digest":
@@ -206,8 +225,20 @@ def _act(action: str, p: dict):
             out = apply.offer(job, p.get("salary", ""), p.get("bonus", ""), p.get("equity", ""), p.get("benefits", ""),
                               p.get("deadline", ""), p.get("notes", ""), prov)
             return {"path": str(out), "text": out.read_text(encoding="utf-8"), "docs": _docs(job)}
+        case "counter":  # {id, cite: ['JOB_ID:field', ...], ask?, template?}: always waits in the Inbox
+            if not job or not isinstance(p.get("cite", []), list):
+                raise ValueError("pick the offer to counter; cite is a list of JOB_ID:field")
+            return apply.counter(job, p.get("cite") or [], str(p.get("ask") or ""), prov, bool(p.get("template")))
+        case "activity":  # {from, to, fmt?: csv|html}: the activity report; fmt also writes it to ~/.lodestar/exports
+            rep = extras.activity_report(p.get("from"), p.get("to"))
+            if p.get("fmt"):
+                out = extras.activity_export(p.get("from"), p.get("to"), str(p["fmt"]))
+                if out.suffix == ".html":  # a print page in the system browser, as resume PDF export falls back to
+                    webbrowser.open(out.as_uri())
+                rep["path"] = str(out)
+            return rep
         case "auto_track":
-            found = web_monitor.search(p["query"], p.get("keywords") or "")
+            found = web_monitor.search(p["query"], p.get("keywords") or "", **_filters(p))
             return {"results": apply.auto_track(found[:40], prov)}
         case "craft":
             from . import ideas
@@ -260,6 +291,26 @@ def _act(action: str, p: dict):
     raise ValueError(f"unknown action {action}")
 
 
+FILTER_KEYS = ("location", "min_salary", "posted_within", "seniority")
+
+
+def _filters(p: dict) -> dict:
+    """The search filters of a request, validated (web_monitor.clean_filters)."""
+    from .web_monitor import clean_filters
+
+    return clean_filters(**{k: p.get(k) for k in FILTER_KEYS})
+
+
+def _job_view(j, idx=None) -> dict:
+    """A tracked job for the board: its row plus a sponsor hint, the people you know there and, while it is still only
+    saved, stale signals. idx: contacts.warm_index(), built once per board."""
+    from .contacts import warm
+    from .web_monitor import ghost_signals, sponsor_hint
+
+    return dict(j) | {"ghost": ghost_signals(j) if j["status"] == "saved" else None, "sponsor": sponsor_hint(j["company"]),
+                      "warm": warm(j["company"], idx)}
+
+
 def start_task(action: str, params: dict) -> str:
     tid = uuid.uuid4().hex[:8]
     with TASK_LOCK:
@@ -310,11 +361,16 @@ def setup_status() -> dict:
 
 
 def state() -> dict:
+    from . import interview
+    from .contacts import ROLES, warm_index
+
+    idx = warm_index()
     return {
         "version": __version__,
         "setup": setup_status(),
         "loop": dict(loop.STATUS),
-        "jobs": [dict(j) for j in db.list_jobs()],
+        "jobs": [_job_view(j, idx) for j in db.list_jobs()],
+        "contact_roles": ROLES,
         "statuses": db.STATUSES,
         "stats": db.stats(),
         "followups": [j["id"] for j in db.needs_followup()],
@@ -326,11 +382,17 @@ def state() -> dict:
         "prefs": settings.load()["prefs"],
         "pref_choices": settings.CHOICES,
         "bases": _bases(),
-        "answers": [dict(r) for r in db.list_answers()],
+        "answers": [dict(r) for r in db.list_answers() if r["star"] is None],  # stories are listed apart
+        "stories": interview.stories(),
+        "competencies": interview.COMPETENCIES,
+        "round_kinds": interview.KINDS,
+        "round_outcomes": interview.OUTCOMES,
+        "mock_sessions": interview.sessions(),
         "ideas": [dict(r) | json.loads(r["body"]) for r in db.list_ideas()],
         "idea_statuses": db.IDEA_STATUSES,
         "providers": {n: (n in ai.available()) for n in ai.PROVIDERS},
-        "watches": [dict(w) for w in db.watches()],
+        "watches": [dict(w) | {"filters": db.watch_filters(w)} for w in db.watches()],
+        "companies": [dict(c) for c in db.companies()],
         "alerts": ALERTS.read_text(encoding="utf-8").splitlines()[-30:] if ALERTS.is_file() else [],
         "vault": [{"name": n, "user": u} for n, u in vault.names()],
         "comp": comp.load(),
@@ -428,8 +490,27 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/state":
                 self._json(state())
             elif path.startswith("/api/jobs/"):
+                from . import interview
+                from .contacts import job_people, warm
+
                 job = db.get_job(int(path.split("/")[3]))
-                self._json({"job": dict(job), "events": [dict(e) for e in db.events(job["id"])], "docs": _docs(job)})
+                self._json({"job": dict(job), "events": [dict(e) for e in db.events(job["id"])], "docs": _docs(job),
+                            "people": job_people(job["id"]), "warm": warm(job["company"]),
+                            "rounds": interview.rounds(job["id"]), "bank": interview.question_bank(job, False)[:30],
+                            "stress": interview.story_prompt(job)})
+            elif path == "/api/contacts":
+                from .contacts import ROLES, rows
+
+                self._json({"contacts": rows(), "roles": ROLES})
+            elif path == "/api/analytics":  # Insights tab: weekly series, response rates, funnel, variants, goals
+                self._json(extras.analytics() | {"goal_keys": settings.GOALS})
+            elif path == "/api/offers":  # live offers side by side; includes the private floor gap (this page only)
+                self._json(comp.compare() | {"fields": db.OFFER_FIELDS, "cite": list(apply.COUNTER_CITE)})
+            elif path.startswith("/api/contacts/"):
+                from .contacts import contact_events, contact_jobs, get
+
+                cid = int(path.split("/")[3])
+                self._json({"contact": dict(get(cid)), "jobs": contact_jobs(cid), "events": contact_events(cid)})
             elif path.startswith("/api/tasks/"):
                 self._json(TASKS.get(path.split("/")[3], {"status": "unknown"}))
             elif path == "/api/profile":
@@ -449,6 +530,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self._json({"error": "bad host"}, 421)
         if not self._authed():
+            n = self.headers.get("Content-Length") or ""
+            self.rfile.read(min(int(n), 1_000_000) if n.isdigit() else 0)  # drained: an unread body resets the socket on Windows
             return self._json({"error": "missing or wrong token; reload the Lodestar page"}, 403)
         try:
             p = self._body()
@@ -480,26 +563,92 @@ class Handler(BaseHTTPRequestHandler):
                     url = http_only(p["source"]) if not db.get_job(jid)["url"] else None  # a JD link is the posting link
                     db.update_job(jid, jd=read_source(p["source"], allow_files=False), **({"url": url} if url else {}))
                 elif op == "contact":  # the address follow-ups, thank-yous and replies are sent to
+                    from .contacts import EMAIL_RE, from_job_contact
+
                     email, name = str(p.get("email") or "").strip(), str(p.get("name") or "").strip()
-                    if email and not re.fullmatch(r"[^@\s<>,;]+@[^@\s<>,;]+\.[^@\s<>,;]+", email):
+                    if email and not EMAIL_RE.fullmatch(email):
                         raise ValueError(f"not an email address: {email[:80]}")
                     db.update_job(jid, contact_email=email or None, contact_name=name[:120])
+                    out["contact_id"] = from_job_contact(jid, name, email)  # also filed under Contacts (recruiter)
                 elif op == "fields":  # tracker details; db.set_fields whitelists and validates every key
                     db.set_fields(jid, **{str(k): v for k, v in p.items()})
                 elif op == "skip":  # {term}: JD coverage keyword "not mine" on/off; answers with the recomputed coverage
                     from .resume import toggle_skip
 
                     out["coverage"] = toggle_skip(db.get_job(jid), p.get("term"))
+                elif op == "rounds":  # {round?, kind, at, interviewers, notes, questions_asked, outcome}: validated
+                    from .interview import log_round
+
+                    out["round_id"] = log_round(jid, **{str(k): v for k, v in p.items()})
                 elif op == "delete":
                     db.delete_job(jid)
                 else:
                     raise ValueError(f"unknown job operation {op}")
                 self._json(out)
-            elif path == "/api/watches":
-                db.add_watch(p["url"] if not p.get("search") else f"search:{p['url']}", p.get("keywords", ""))
+            elif path == "/api/watches":  # a saved search keeps its filters; a page watch has none
+                url = str(p.get("url") or "").strip()
+                if not url:
+                    raise ValueError("a URL or a search query is required")
+                if p.get("search"):
+                    keep = not any(k in p for k in FILTER_KEYS)  # the Monitor form sends none: keep the saved filters
+                    db.add_watch(f"search:{url}", p.get("keywords", ""), None if keep else _filters(p))
+                elif not http_only(url):
+                    raise ValueError("a page watch needs an http(s) URL (tick 'is a search' for a query)")
+                else:
+                    db.add_watch(url, p.get("keywords", ""))
                 self._json({"ok": True})
             elif path.startswith("/api/watches/"):
                 db.remove_watch(int(parts[3]))
+                self._json({"ok": True})
+            elif path == "/api/companies":  # {source: careers URL or vendor:slug, name?, keywords?}
+                from .web_monitor import add_company
+
+                self._json(add_company(p.get("source", ""), p.get("name", ""), p.get("keywords", "")))
+            elif path == "/api/contacts":  # {name, email, ...}: contacts._clean whitelists and validates every key
+                from . import contacts
+
+                self._json({"id": contacts.add(**{str(k): v for k, v in p.items()})})
+            elif path.startswith("/api/contacts/") and len(parts) == 5:
+                from . import contacts
+
+                cid, op = int(parts[3]), parts[4]
+                if op == "edit":
+                    contacts.edit(cid, **{str(k): v for k, v in p.items()})
+                elif op == "delete":
+                    contacts.remove(cid)
+                elif op == "link":  # {job_id, role}
+                    contacts.link(cid, int(p["job_id"]), str(p.get("role") or "other"))
+                elif op == "unlink":
+                    contacts.unlink(cid, int(p["job_id"]))
+                else:
+                    raise ValueError(f"unknown contact operation {op}")
+                self._json({"ok": True})
+            elif path.startswith("/api/rounds/") and len(parts) == 5:
+                from . import interview
+
+                rid, op = int(parts[3]), parts[4]
+                if op == "edit":
+                    interview.edit_round(rid, **{str(k): v for k, v in p.items()})
+                elif op == "delete":
+                    interview.delete_round(rid)
+                else:
+                    raise ValueError(f"unknown round operation {op}")
+                self._json({"ok": True})
+            elif path == "/api/stories":  # {id?, title, situation, task, action, result, metrics, competencies} or {from_idea}
+                from . import interview
+
+                if p.get("from_idea"):
+                    sid = interview.story_from_idea(int(p["from_idea"]))
+                else:
+                    keys = {"title", "situation", "task", "action", "result", "metrics", "competencies"}
+                    if extra := set(p) - keys - {"id"}:
+                        raise ValueError(f"unknown story field {sorted(extra)[0]!r}")
+                    sid = interview.save_story(sid=int(p["id"]) if p.get("id") else None, **{k: p[k] for k in keys & set(p)})
+                self._json({"id": sid})
+            elif path.startswith("/api/offers/") and len(parts) == 4:  # {base, bonus_pct, ...}: db.set_offer validates every key
+                self._json({"ok": True, "set": db.set_offer(int(parts[3]), **{str(k): v for k, v in p.items()})})
+            elif path.startswith("/api/companies/") and len(parts) == 4:
+                db.remove_company(int(parts[3]))
                 self._json({"ok": True})
             elif path == "/api/profile":  # the old file is snapshotted to profile-history/ first
                 from .profile import write_master

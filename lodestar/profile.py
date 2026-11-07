@@ -402,15 +402,43 @@ def extract(text: str, provider: str | None = None, use_ai: bool | None = None) 
 
 
 # ----------------------------------------------------------------------------- LinkedIn
-def _li_rows(z: zipfile.ZipFile, files: dict, name: str, first_col: str) -> list[dict]:
-    """Rows of one export CSV. Some files open with a 'Notes:' preamble, so parsing starts at the header line."""
-    if name not in files:
-        return []
-    text = z.read(files[name]).decode("utf-8-sig", errors="replace")
+def _csv_rows(text: str, first_col: str) -> list[dict] | None:
+    """Rows of one export CSV, None without its header. Some files (Connections.csv) open with a 'Notes:' preamble, so
+    parsing starts at the header line."""
     m = re.search(rf'(?m)^"?{re.escape(first_col)}', text)
     if not m:
-        return []
+        return None
     return [{k.strip(): (v or "").strip() for k, v in r.items() if k} for r in csv.DictReader(io.StringIO(text[m.start():], newline=""))]
+
+
+def _li_rows(z: zipfile.ZipFile, files: dict, name: str, first_col: str) -> list[dict]:
+    if name not in files:
+        return []
+    return _csv_rows(z.read(files[name]).decode("utf-8-sig", errors="replace"), first_col) or []
+
+
+def linkedin_connections(data: bytes, filename: str = "") -> list[dict]:
+    """Opt-in: your connections from LinkedIn's "Download your data" zip, or its Connections.csv alone. Only
+    `lodestar contacts import` (and the Contacts tab) reads this; the profile import ignores connections.
+    -> [{name, linkedin_url, email, company, position, connected_on}] as written in the file (not validated here)."""
+    if data[:2] == b"PK" or filename.lower().endswith(".zip"):
+        try:
+            z = zipfile.ZipFile(io.BytesIO(data))
+        except zipfile.BadZipFile:
+            raise SystemExit("not a zip file: use LinkedIn's 'Download your data' archive or its Connections.csv") from None
+        files = {Path(n).name.lower(): n for n in z.namelist()}
+        if "connections.csv" not in files:
+            raise SystemExit(f"this zip has no Connections.csv: request 'Download your data' with Connections at {LINKEDIN_EXPORT_URL}")
+        if z.getinfo(files["connections.csv"]).file_size > 50_000_000:  # the user's own file, but never inflate a bomb
+            raise SystemExit("Connections.csv is larger than 50 MB")
+        data = z.read(files["connections.csv"])
+    rows = _csv_rows(data.decode("utf-8-sig", errors="replace"), "First Name")
+    if rows is None:
+        raise SystemExit("no 'First Name,Last Name,URL,Email Address,Company,Position,Connected On' header: "
+                         "is this LinkedIn's Connections.csv?")
+    return [{"name": f"{r.get('First Name', '')} {r.get('Last Name', '')}".strip(), "linkedin_url": r.get("URL", ""),
+             "email": r.get("Email Address", ""), "company": r.get("Company", ""), "position": r.get("Position", ""),
+             "connected_on": r.get("Connected On", "")} for r in rows]
 
 
 def linkedin_facts(data: bytes) -> dict:
@@ -714,6 +742,16 @@ def saved_text(rid: str) -> str:
 def preferences_text() -> str:
     """Just the Preferences section of the master profile (for private judgements: gap check, offer, ranking)."""
     return _preferences(master_text())
+
+
+def salary_floor() -> int | None:
+    """The 'Salary floor:' figure from Preferences as an annual number ('$150,000', '150k', 'EUR 90000'); None when
+    unset. Private: shown only in Lodestar's own views (offer compare), never in anything an employer reads."""
+    m = re.search(r"(?i)salary floor\s*:[ \t]*[^\d|\n]{0,12}?(\d[\d,]*(?:\.\d+)?)[ \t]*([kK])?", preferences_text())
+    if not m:
+        return None
+    n = float(m[1].replace(",", "")) * (1000 if m[2] else 1)
+    return int(n) if 1000 <= n <= 10_000_000 else None
 
 
 def summary_text() -> str:

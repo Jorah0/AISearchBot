@@ -21,7 +21,7 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 | `lodestar jobs add "Company" "Title" [--jd url\|file\|text] [--url] [--notes]` | Track a job; `--jd` URL is fetched and stored as text. |
 | `lodestar jobs list [--status S] [--sort match\|salary\|excitement\|deadline\|updated] [--remote onsite\|hybrid\|remote] [--min-salary N] [--tag T]` | Board as a table, with pay, match, excitement, workplace, deadline and tags on each line. `--min-salary` compares the top of the stated range. |
 | `lodestar jobs set ID key=value ...` | Tracker fields: `location`, `remote` (onsite/hybrid/remote), `salary_min`, `salary_max` (`120k` works), `currency` (3 letters), `source`, `posted_at`, `deadline`, `next_action_at` (YYYY-MM-DD), `excitement` (1-5), `tags` (comma list), `match_score` (0-100), `next_action`. An empty value clears; a bad value changes nothing. |
-| `lodestar today` | Today's agenda: next actions due or overdue, deadlines within 3 days, interviews within 48 h, follow-ups due, Inbox size. The Board shows the same as a Today panel. |
+| `lodestar today` | Today's agenda: next actions due or overdue, deadlines within 3 days, interviews within 48 h, follow-ups due, contacts whose next touch has come, Inbox size. The Board shows the same as a Today panel. |
 | `lodestar jobs show ID` | Fields + full event timeline. |
 | `lodestar jobs status ID saved\|applied\|screening\|interview\|offer\|accepted\|rejected\|withdrawn [--note]` | Move it. `applied` stamps `applied_at`. `accepted` proposes withdrawing your other open applications (Inbox). |
 | `lodestar jobs note ID "text"` / `jobs jd ID source` / `jobs rm ID` | Notes, replace description, delete. |
@@ -53,18 +53,24 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 
 | Command | What it does |
 |---|---|
-| `lodestar interview prep ID [--council]` | Prep pack: questions with model answers, STAR stories, gaps, questions to ask, pitch, negotiation. |
-| `lodestar interview mock ID` | Live mock interview, one question at a time, scored debrief on `done`; the transcript and debrief are saved to `mock_interview.md` (also from Coach > Mock interview, which can speak the questions aloud). |
-| `lodestar ics ID --when "YYYY-MM-DD HH:MM" [--minutes 60]` | Calendar file for the interview plus a prep reminder 2 days before. Email check creates this automatically when an interview mail carries a date. |
+| `lodestar interview prep ID [--council]` | Prep pack: questions with model answers, STAR stories, gaps, questions to ask, pitch, negotiation. Starts from the questions you logged for this company or similar titles and builds behavioural answers from your own stories. |
+| `lodestar interview mock ID` | Live mock interview, one question at a time, scored debrief on `done`; the transcript and debrief are saved to `mock_interview.md` (also from Coach > Mock interview, which can speak the questions aloud). Each answer gets a score card (below). |
+| `lodestar interview log ID [--round N] [--kind phone\|technical\|onsite\|panel\|final\|other] [--at "YYYY-MM-DD HH:MM"] [--interviewers] [--notes] [--outcome pending\|passed\|rejected\|unknown] [--questions-file F]` | Log an interview round; the questions file holds one question you were asked per line. Again with `--round N` updates that round. |
+| `lodestar interview rounds ID` | A job's rounds with kind, time, outcome, interviewers and the questions asked. |
+| `lodestar questions [ID]` | Your question bank: questions logged at this job's company first, then for similar titles, then about 30 bundled behavioural questions. Without an ID: every question you logged. |
+| `lodestar stories list\|show ID\|rm ID` | STAR story bank. |
+| `lodestar stories add --title T [--situation] [--task] [--action] [--result] [--metrics] [--tags conflict,ownership]` / `stories add --from-idea ID` | Save a story (title plus at least one STAR part; tags from leadership, conflict, failure, ambiguity, influence, ownership, customer, data-driven, teamwork, deadline). `--from-idea` turns an idea of the ideas `stories` topic into an incomplete story to finish. |
+| `lodestar ics ID --when "YYYY-MM-DD HH:MM" [--minutes 60]` | Calendar file for the interview plus a prep reminder 2 days before; also records the round. Email check creates this automatically when an interview mail carries a date and time. |
 
 ## Monitoring
 
 | Command | What it does |
 |---|---|
 | `lodestar email check [--days 3] [--dry]` | IMAP scan, AI classification, tracker updates, alerts. `--dry` changes nothing. |
-| `lodestar watch add URL [--keywords a,b]` | Alert when matching lines appear on a page. |
-| `lodestar watch search-add "query" [--keywords]` | Alert on new listings for a query. |
+| `lodestar watch add URL [--keywords a,b]` | Alert when matching lines appear on a page (skipped, with one alert, when the site's robots.txt disallows it). |
+| `lodestar watch search-add "query" [--keywords] [--location] [--min-salary] [--posted-within] [--seniority]` | Alert on new listings for a query, with saved search filters. |
 | `lodestar watch list` / `watch rm ID` / `watch run` | Manage and run watches. |
+| `lodestar companies add URL\|vendor:slug [--name] [--keywords]` / `companies list` / `companies rm ID` | Follow a company's public Greenhouse, Lever or Ashby board (see "Sourcing" below). |
 
 ## AI
 
@@ -90,18 +96,28 @@ page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, w
 | Route | Purpose |
 |---|---|
 | `GET /api/state` | jobs, stats, variants, watches, alerts, providers, vault names |
-| `GET /api/jobs/ID` | job, events, generated documents |
+| `GET /api/jobs/ID` | job, events, generated documents, linked people (`people`) and the contacts you know at the company (`warm`), interview `rounds`, the logged-question `bank` and `stress` (competencies the posting stresses, those with no story) |
+| `POST /api/jobs/ID/rounds` `{round?, kind, at, interviewers, notes, questions_asked, outcome}` | log a round (validated; an existing `round` number updates it) |
+| `POST /api/rounds/ID/edit\|delete` | edit a round (`""` clears) / delete it |
+| `POST /api/stories` `{id?, title, situation, task, action, result, metrics, competencies}` / `{from_idea}` | save or update a STAR story (unknown keys refused); remove one with `POST /api/answers/ID` |
+| `GET /api/contacts` / `GET /api/contacts/ID` | every contact with its linked jobs / one contact, its jobs and the timeline entries naming its email |
+| `POST /api/contacts` `{name, email?, phone?, linkedin_url?, company?, position?, how_met?, notes?, last_touch?, next_touch?}` | add a contact (whitelisted, validated; email and LinkedIn URL are unique) |
+| `POST /api/contacts/ID/edit\|delete\|link\|unlink` | edit fields (`""` clears) / remove / `{job_id, role}` link to a job (recruiter, hiring_manager, referrer, interviewer, other) / `{job_id}` unlink |
 | `POST /api/jobs` `{company,title,jd,url,notes,location?,posted_at?}` | add; source, workplace and pay are read from the notes and JD |
 | `POST /api/capture` `{title,url,desc}` | add from a browser page title (bookmarklet) |
-| `POST /api/jobs/ID/status|note|jd|contact|delete` | update (`contact` takes `{email, name}`) |
+| `POST /api/jobs/ID/status|note|jd|contact|delete` | update (`contact` takes `{email, name}` and also files the person under Contacts, linked as recruiter) |
 | `POST /api/jobs/ID/fields` `{deadline: "2026-12-01", tags: "a,b", ...}` | set tracker fields (same whitelist and validation as `jobs set`; `""` clears) |
 | `POST /api/jobs/ID/skip` `{term}` | JD coverage: mark a keyword "not mine" for this job, or unmark it; returns `{coverage}` |
-| `POST /api/watches` `{url,keywords,search}` / `POST /api/watches/ID` | add / remove |
+| `POST /api/watches` `{url,keywords,search,location?,min_salary?,posted_within?,seniority?}` / `POST /api/watches/ID` | add / remove (filters apply to a saved search; re-adding one without any filter key keeps its saved filters; a page watch needs an http(s) URL) |
+| `POST /api/companies` `{source,name?,keywords?}` / `POST /api/companies/ID` | watch a company's Greenhouse / Lever / Ashby board / stop |
 | `GET|POST /api/profile` | read / save the master resume |
 | `POST /api/vault` `{name,value,user}` / `{name,delete:true}` | store / remove a secret |
 | `POST /api/comp` `{op: set\|delete, title, city, low, high}` | edit your market-rate table |
 | `POST /api/open_folder` `{which: data\|exports\|backups\|applications\|log}` | reveal a folder in the file manager |
-| `POST /api/run/ACTION` then `GET /api/tasks/ID` | background actions: tailor, cover, gap, prep, review, reply, outreach, ics, email_check, watch_run, search, chat, council, digest, obsidian, providers_test, providers_local, models, export (`{fmt: json or csv}`), auto_track, mock (`{messages, id}`), packet, doctor (`{live}`), backup, match (`{id}`), lint (`{text}`), audit (`{id}`, or `{}` for the newest saved resume file) |
+| `GET /api/analytics` | Insights: per-week series, response rate by source and by match band, funnel, variants, weekly goals |
+| `GET /api/offers` | live offers side by side (totals, best per row, market range, gap to your private salary floor) |
+| `POST /api/offers/ID` `{base, bonus_pct, sign_on, equity_value_estimate, vest_years, cliff_months, retirement_match_pct, remote, start_date, deadline, notes}` | record or edit a structured offer (whitelisted, validated; `""` clears; the job moves to `offer`; all fields empty records nothing, and clearing every field removes the offer) |
+| `POST /api/run/ACTION` then `GET /api/tasks/ID` | background actions: tailor, cover, gap, prep, review, reply, outreach, ics, email_check, watch_run, search, chat, council, digest, obsidian, providers_test, providers_local, models, export (`{fmt: json or csv}`), auto_track, mock (`{messages, id, session?, seconds?}`; an answer returns a score `card`), packet, doctor (`{live}`), backup, match (`{id}`), lint (`{text}`), audit (`{id}`, or `{}` for the newest saved resume file), referral (`{id, contact_id}`), contacts_import (`{name, data: base64}`), counter (`{id, cite: ["JOB:field"], ask?, template?}`; always waits in the Inbox), activity (`{from, to, fmt?: csv\|html}`) |
 
 ## Automation and approvals (see AUTOMATION.md)
 
@@ -166,7 +182,7 @@ Log file: `~/.lodestar/lodestar.log` (rotating, 2 MB x 3) records every command,
 Search now covers six free sources: Remotive, Arbeitnow, RemoteOK, Hacker News "Who is hiring?" (current month),
 Jobicy, The Muse. Adding a job with a URL that is already tracked returns the existing card instead of a duplicate.
 The gap check records pay figures stated in the posting (`salary_in_posting`) and weighs them against your floor.
-The monitor loop reminds you of interviews within 48 hours (from the .ics files it wrote). The autofill bookmarklet
+The monitor loop reminds you of interviews within 48 hours (from interview rounds with a time; pass 15). The autofill bookmarklet
 tries Greenhouse, Lever, Workday, Ashby and SmartRecruiters field selectors before falling back to label matching.
 
 ## Desktop window
@@ -321,3 +337,158 @@ are single column with no tables, text boxes, headers or footers, and pass the f
 it in the system browser (also from the desktop window) to print to PDF. `POST /api/run/bullets {id, base?}`,
 `/api/run/bullets_apply {id, accept: [ids]}` and `/api/run/export_pdf {id}`; `GET /api/state` includes `bases` (saved
 resumes) and `pref_choices`.
+
+## Sourcing: company boards, search filters, sponsors, stale signals (pass 15)
+
+**Companies** (`lodestar companies add|list|rm`, Monitor > Companies, `POST /api/companies`): follow a company's own
+public job board. Give its careers or posting link (`boards.greenhouse.io/<slug>`, `job-boards.greenhouse.io/<slug>`,
+`jobs.lever.co/<slug>`, `jobs.ashbyhq.com/<slug>`) or `greenhouse:<slug>` / `lever:<slug>` / `ashby:<slug>`; `--name`
+sets the display name (default from the slug), `--keywords a,b` keeps only matching postings. Each monitor cycle reads
+the board's documented public JSON once (Greenhouse board API, Lever postings API, Ashby posting API). The first good
+read is a baseline: the roles already open are recorded with one summary alert ("WATCHING Acme: N open role(s)"), not
+alerted or judged one by one. After that, new postings are treated like saved-search hits: one alert each, AI judgement
+through `auto_track`, marked seen only once judged.
+**Workday, Taleo and iCIMS have no public feed**: Lodestar says so when given one of their links; add the careers page
+as a page watch instead. Only Greenhouse, Lever and Ashby are supported.
+
+**Page watches and robots.txt**: before fetching a watched page, Lodestar reads the site's robots.txt (once per host per
+cycle). When it disallows the page, the watch is skipped with a single alert and resumes if the rules change.
+
+**Search filters** (`jobs search` and `watch search-add` flags, the Search tab's filter row, saved with "Save as
+watch"): `--location TEXT` (a substring of the listing location) or `--location remote`, `--min-salary N` (top of the
+stated range, `120k` works, currency not converted), `--posted-within DAYS`, `--seniority
+intern|junior|mid|senior|staff|lead|manager` (read off the title; no marker counts as mid; "Product Manager" stays
+mid). A listing that does not state its salary, location or date is **kept** and marked `salary unknown` /
+`location unknown` / `date unknown`. Private dealbreakers, preferences `excluded_companies` and `excluded_title_words`
+(comma lists, Tools > Preferences), drop listings before anything else; they never leave your machine. The same posting
+on several boards (same company without Inc/LLC/GmbH..., same title, same location) is shown once with the richest
+description and every link. Each result shows JD coverage against your profile as an employer sees it (no salary floor,
+no Preferences) with the top matched and missing terms; skipped while the profile is still the template. AI ranking
+stays optional.
+
+**H-1B sponsor hint** (optional): download the export from the USCIS H-1B Employer Data Hub yourself, then
+`lodestar sponsors import FILE` (CSV or the hub's tab-separated UTF-16 file; columns Employer or Employer (Petitioner)
+Name, Fiscal Year, and every "... Approval" column: New Employment / Continuation / Change with Same Employer / New
+Concurrent / Change of Employer / Amended in the current export, Initial / Continuing in older ones; denials are
+ignored). Approvals are summed per employer and fiscal year; importing a
+year again replaces it. Search results and board cards then show "possible H-1B sponsor (N approvals)" on a loose name
+match: a hint, not a promise. `sponsors lookup NAME`, `sponsors clear`. Nothing is downloaded automatically.
+
+**Possibly stale**: search results and saved (not yet applied) board cards get a "possibly stale" chip with reasons
+when the signals add up to 30 or more: posted over 30 days ago (30), the same company + title + location first seen
+over 21 days ago under another link (30), a very short description or one naming no concrete skill, tool or
+qualification (20), and for a job from a Greenhouse / Lever / Ashby board, its posting gone from the live feed (60).
+`auto_track` leaves listings at 60 or more alone. Weekly, the monitor loop re-checks saved jobs that came from (or link
+to) one of those boards, one request per board; when a posting has disappeared it records it on the timeline and
+proposes moving the job to `withdrawn` with the note "posting removed". A saved link that names no posting (a
+board root) is never counted as removed; `/apply` and `/application` links and Greenhouse embed links (`token=`) are read
+as the posting they point to. That always waits in the Inbox (tool
+`posting_check`, switchable under Tools); Lodestar never changes the status itself.
+
+## Contacts and warm paths (pass 15)
+
+| Command | What it does |
+|---|---|
+| `lodestar contacts add "Name" [--email] [--phone] [--linkedin URL] [--company] [--position] [--how-met] [--notes] [--next-touch YYYY-MM-DD]` | Add a person by hand. Email and LinkedIn URL are unique. |
+| `lodestar contacts list [TEXT] [--due]` | Name A-Z with company, position, last / next touch and linked jobs; `TEXT` filters name, company, position, email. |
+| `lodestar contacts show ID` | Fields, linked jobs with roles, recent timeline entries mentioning their email. |
+| `lodestar contacts edit ID key=value ...` | `name`, `email`, `phone`, `linkedin_url`, `company`, `position`, `how_met`, `notes`, `last_touch`, `next_touch`. Empty clears; a bad value changes nothing. |
+| `lodestar contacts rm ID` | Remove a contact (linked jobs stay). |
+| `lodestar contacts import FILE` | Your LinkedIn "Download your data" `.zip` or the `Connections.csv` inside it (the "Notes:" preamble is skipped). De-duplicated by LinkedIn URL, then email, then name + company; a known contact only gains fields it lacks. No follow-up dates are set. |
+| `lodestar contacts due` | Contacts whose next touch has come and who have not been in touch since. Also on the Today list; nothing is drafted for them. |
+| `lodestar contacts link ID JOB [--role recruiter\|hiring_manager\|referrer\|interviewer\|other] [--remove]` | Link a contact to a job with a role (again to change it), or unlink. |
+
+**Contacts tab**: a sortable, filterable table (name, company, position, last touch, next touch, linked jobs; the sort
+is remembered), an Add form and an "Import LinkedIn connections" control. Clicking a name opens the contact drawer:
+edit fields and notes, set the next touch, "Touched today", link to a job with a role, unlink, and the recent timeline
+entries that mention their email.
+
+**Warm paths**: a contact whose company matches a job's (same name without Inc / LLC / GmbH..., or every distinctive
+word of the shorter name inside the longer, so "Amazon" matches "Amazon Web Services") shows as "you know N people
+here" on board cards, search results (`jobs search` prints "you know N here: ...") and in the job drawer's People
+section. A loose match: a hint, not a guarantee. From the drawer you can link them with a role or **Ask for referral**:
+an outreach draft through `extras.outreach`, addressed to the contact. With their email it goes to the Inbox and always
+waits for your review (tool `email_reply`, even on auto); without one you get a LinkedIn note to send yourself. The
+contact is linked as referrer unless they already have a role on the job.
+
+**Touches**: mail from a contact's exact address (any message the inbox scan reads) sets their last touch to the mail's
+date, and sending an approved email to their address sets it to today. Last touch only moves forward.
+
+**Job contact field**: the drawer's Admin > set contact and `lodestar jobs contact ID email --name` still set the job's
+own contact (the address replies and follow-ups go to) and now also file that person under Contacts, linked as
+recruiter. One-time on upgrade: every job's stored contact became a contact the same way.
+
+**Mail trust is unchanged**: the email monitor trusts only a job's own stored contact address and company domain. A
+contact, imported or typed, linked to a job or not, never makes mail trusted and never becomes a job's contact by
+itself.
+
+## Interview rounds, question bank, stories and mock scoring (pass 15)
+
+**Rounds**: each job keeps its interview rounds (number, kind, time, interviewers, notes, the questions you were asked,
+outcome) in the drawer's Interview rounds section or with `interview log` / `interview rounds`. Writing an .ics, an
+accepted interview slot and an interview email with a stated time from a trusted sender (DKIM-aligned, tied to the
+job by address or company domain) also record the round, and with the calendar tool on write the .ics as before. A
+mail with only a date (often a reply-by date) or from an unverified sender records no round, only an `interview_date`
+timeline note, so it never shows up as an interview in the activity log or Insights. Upcoming interviews, Today, reminders and clash checks read the rounds; calendar events from before
+rounds existed are imported once.
+
+**Question bank**: the questions you logged become a personal bank (`lodestar questions [ID]`, and a list in the
+drawer): this company first, then similar titles (every word of the shorter core title inside the longer), then a
+small bundled set of about 30 behavioural questions (`lodestar/data/questions.json`). Prep packs and mock interviews
+use the logged ones first, before inventing new questions.
+
+**Stories**: Answers > Stories is a guided form (situation, task, action, result, metrics, competency tags). Stories
+live in the answer bank (question `Story: <title>`, the STAR fields as JSON), so form answers can reuse them; they are
+listed apart from form answers. An idea of the ideas `stories` topic has **Save as story**. The job drawer reads the
+posting through a small keyword table and says which competencies it stresses and which have no story yet, as a
+prompt. Prep and mock interviews put your matching stories in front of the AI so coaching uses your real material.
+
+**Mock score card**: after each answer, one AI call scores situation, task, action and result (0-2 each), relevance and
+specificity (0-2), whether a number backs the result, one fix and a rewrite that only reorders your own facts.
+Computed offline, with or without a provider: word count, estimated speaking time (about 140 words a minute) against a
+60-120 second target, the most repeated words and the posting keywords you used; words per minute only when you
+dictated the answer (browser speech recognition; the whole listening time counts). No filler-word counts. Answers
+are saved per session (`mock_sessions` table) with averages; the Coach tab shows each card, a session summary and an
+inline STAR-average trend across sessions; `interview mock` prints the card. Without a provider the rubric is skipped
+and the offline half still shows.
+
+## Insights, weekly goals, offers and the activity log (pass 15)
+
+```powershell
+lodestar insights [--weeks 12] [--json]          # weekly series, response rates, funnel, variants, goals
+lodestar tools set weekly_goals contacts=5       # also tailored_applications, mock_sessions, applications; 0 clears
+lodestar offers                                  # = offers compare: live offers side by side
+lodestar offers set 7 base=150k bonus_pct=10 sign_on=20000 equity_value_estimate=200k vest_years=4 cliff_months=12
+lodestar offers counter 7 --cite 9:base 9:sign_on [--ask "a base of 170,000"] [--template]
+lodestar activity [--week 2026-11-04 | --from 2026-10-01 --to 2026-10-31] [--csv | --html]
+lodestar tools set activity_weekly_min 3         # the weekly count your claim asks for (default: none)
+```
+
+**Insights** (tab and `insights`): per ISO week, the applications you made (jobs entering `applied`: moved by you, or
+by the employer's confirmation mail; an auto-tracked save never counts), interview rounds held, offers, people you
+contacted (mail sent from the Inbox plus touches you record: a last-touch date or "Touched today") and mock sessions.
+Response and interview rate by source and by match-score band (<40, 40-59, 60-79, 80+, unscored) over applications
+that left `saved`; a group under 5 shows "not enough data yet". Conversion and median days come from the existing
+funnel, resume variants from the existing variant data. Small inline SVG bar charts, each bar with a `<title>`, and a
+table of the same numbers. No cover-letter or outreach A/B.
+
+**Weekly goals** (pref `weekly_goals`): none by default and no default application count. The Insights tab offers
+contacts and tailored applications first, then mock sessions and applications. Progress counts this week (Monday to
+today) from the same events; the Friday digest lists the goals you set.
+
+**Offers**: structured fields per job (`offers` table): base, target bonus %, sign-on, your estimate of the equity
+grant's value, vesting years, cliff months, retirement match %, workplace, start date, deadline, notes. `comp.total`
+gives year-1 cash and total, 4-year cash and total, equity per year (even monthly vesting after the cliff) and the
+match, and names every estimate behind them. The compare table marks the best value per row and shows your recorded
+market range (`comp`) and the gap to your private salary floor; the floor row is shown only in Lodestar's own views.
+Offer evaluation (`offer`, the drawer's Evaluate offer) now reads the structured rows. **Counter-offer**: tick the
+competing figures to cite (another live offer's base, bonus %, sign-on, equity estimate or year-1 total); the draft
+(AI, or a plain template) says "another offer" without the company name, uses only `candidate_text(private=False)`,
+never your floor, Preferences or offer notes, and always waits in the Inbox for review.
+
+**Activity log** (Insights tab and `activity`): what you did, by week, as date / activity (applied, contacted,
+followed up, interviewed) / employer / position / method / contact / result, counted only from your own actions: jobs
+moved to applied, mail actually sent from the Inbox (pending, rejected or failed items do not count, nor withdrawals),
+interview rounds up to today and touches you recorded. Each week shows its count against `activity_weekly_min` when
+set. Export as CSV (cells a spreadsheet would run as formulas are prefixed with `'`) or Markdown plus a printable HTML
+page in `~/.lodestar/exports`. It is a helper report: check your state's requirements; it makes no claim of compliance.

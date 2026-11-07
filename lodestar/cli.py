@@ -204,10 +204,7 @@ def cmd_jobs(a):
         for j in db.list_jobs(a.status, a.sort, a.remote, a.min_salary, a.tag):
             print(f"{_job_line(j)}  {_details(j)}".rstrip())
     elif op == "set":
-        pairs = [kv.partition("=") for kv in a.pairs]
-        if bad := [k for k, sep, _ in pairs if not sep or not k.strip()]:
-            raise SystemExit(f"use key=value (empty value clears), not: {' '.join(bad)}. Fields: {', '.join(db.FIELDS)}")
-        changed = db.set_fields(a.id, **{k.strip(): v for k, _, v in pairs})
+        changed = db.set_fields(a.id, **_kv(a.pairs, db.FIELDS))
         print(f"#{a.id} " + ", ".join(f"{k}={'' if v is None else v}" for k, v in changed.items()))
     elif op == "show":
         j = db.get_job(a.id)
@@ -228,8 +225,13 @@ def cmd_jobs(a):
         db.delete_job(a.id)
         print(f"deleted #{a.id}")
     elif op == "contact":
-        db.update_job(a.id, contact_email=a.email, contact_name=a.name or "")
-        print(f"#{a.id} contact = {a.name or ''} <{a.email}>")
+        from .contacts import EMAIL_RE, from_job_contact
+
+        if not EMAIL_RE.fullmatch(a.email.strip()):
+            raise SystemExit(f"not an email address: {a.email[:80]}")
+        db.update_job(a.id, contact_email=a.email.strip(), contact_name=a.name or "")
+        cid = from_job_contact(a.id, a.name or "", a.email)
+        print(f"#{a.id} contact = {a.name or ''} <{a.email.strip()}>  (contact #{cid}, linked as recruiter)")
     elif op == "checklist":
         from .apply import checklist
 
@@ -261,12 +263,15 @@ def cmd_jobs(a):
     elif op == "search":
         from . import web_monitor
 
-        found = web_monitor.search(a.query, a.keywords or "")
+        from .contacts import with_warm
+
+        found = with_warm(web_monitor.with_coverage(web_monitor.search(a.query, a.keywords or "", **_search_filters(a))[: a.limit]))
         if a.rank:
             found = web_monitor.rank(found, a.provider)
-        for i, j in enumerate(found[: a.limit]):
+        for i, j in enumerate(found):
             score = f"[{j['score']:>3}] " if "score" in j else ""
-            print(f"{i:>2}. {score}{j['title']} @ {j['company']} ({j['location'] or 'n/a'}) {j['salary']} <{j['source']}>\n    {j['url']}" + (f"\n    {j['why']}" if j.get("why") else ""))
+            print(f"{i:>2}. {score}{j['title']} @ {j['company']} ({j['location'] or 'n/a'}) {j['salary']} <{', '.join(j['sources'])}>\n    {j['url']}"
+                  + (f"\n    {j['why']}" if j.get("why") else "") + "".join(f"\n    {x}" for x in _listing_notes(j)))
         if a.save:
             for idx in a.save:
                 j = found[idx]
@@ -278,6 +283,121 @@ def cmd_jobs(a):
 
             for j in auto_track(found[: a.limit], a.provider):
                 print(f"fit {j['score']}: {j['title']} @ {j['company']} -> {j['proposal'].get('status')}")
+
+
+def _search_filters(a) -> dict:
+    from .web_monitor import clean_filters
+
+    return clean_filters(a.location, a.min_salary, a.posted_within, a.seniority)
+
+
+def _listing_notes(j) -> list[str]:
+    """The extra lines a search result carries: coverage, unknown fields, stale signals, sponsor hint, other links."""
+    from .web_monitor import GHOST_SHOW
+
+    out = []
+    if c := j.get("coverage"):
+        out.append(f"JD coverage {c['score']}%  matched: {', '.join(c['matched']) or '-'}  missing: {', '.join(c['missing']) or '-'}")
+    unknown = [k.split("_")[0] for k in ("salary_unknown", "location_unknown", "date_unknown") if j.get(k)]
+    if unknown:
+        out.append(f"unknown {', '.join(unknown)} (kept: the filter could not tell)")
+    if (g := j.get("ghost")) and g["score"] >= GHOST_SHOW:
+        out.append(f"possibly stale ({g['score']}): {'; '.join(g['reasons'])}")
+    if s := j.get("sponsor"):
+        out.append(f"possible H-1B sponsor ({s['approvals']} approvals in your USCIS data)")
+    if w := j.get("warm"):
+        out.append(f"you know {len(w)} here: " + ", ".join(p["name"] for p in w[:5]) + (" ..." if len(w) > 5 else ""))
+    out += [f"also at {u}" for u in j.get("urls", [])[1:]]
+    return out
+
+
+def cmd_companies(a):
+    from . import web_monitor
+
+    if a.op == "add":
+        c = web_monitor.add_company(a.source, a.name or "", a.keywords or "")
+        print(f"watching #{c['id']} {c['name']} ({c['vendor']}:{c['slug']}); the next monitor cycle records what is open, later postings alert")
+    elif a.op == "list":
+        for c in db.companies():
+            print(f"#{c['id']:<3} {c['name'][:28]:<28} {c['vendor'] + ':' + c['slug']:<36} kw={c['keywords'] or '-'} "
+                  f"last={c['last_seen'] or 'never'}" + (f"  ERROR {c['last_error']}" if c["last_error"] else ""))
+        if not db.companies():
+            print("none yet: lodestar companies add https://boards.greenhouse.io/<slug>")
+        print(web_monitor.NO_FEED_NOTE)
+    elif a.op == "rm":
+        db.remove_company(a.id)
+        print(f"removed #{a.id}")
+
+
+def _kv(pairs: list[str], fields) -> dict:
+    kv = [p.partition("=") for p in pairs]
+    if bad := [k for k, sep, _ in kv if not sep or not k.strip()]:
+        raise SystemExit(f"use key=value (empty value clears), not: {' '.join(bad)}. Fields: {', '.join(fields)}")
+    return {k.strip(): v for k, _, v in kv}
+
+
+def _contact_line(c) -> str:
+    touch = f"last {c['last_touch'] or '-'}  next {c['next_touch'] or '-'}"
+    return (f"#{c['id']:<4} {c['name'][:26]:<26} {(c['company'] or '')[:22]:<22} {(c['position'] or '')[:26]:<26} {touch}"
+            + (f"  jobs: {c['job_list']}" if c.get("job_list") else ""))
+
+
+def cmd_contacts(a):
+    from . import contacts
+
+    if a.op == "add":
+        cid = contacts.add(name=a.name, email=a.email, phone=a.phone, linkedin_url=a.linkedin, company=a.company,
+                           position=a.position, how_met=a.how_met, notes=a.notes, next_touch=a.next_touch)
+        print(f"added contact #{cid} {a.name}")
+    elif a.op == "list":
+        rows = contacts.rows(a.q or "", a.due)
+        for c in rows:
+            print(_contact_line(c))
+        print(f"{len(rows)} contact(s)" if rows else "no contacts yet: lodestar contacts add \"Name\" or lodestar contacts import <Connections.csv|zip>")
+    elif a.op == "show":
+        c = contacts.get(a.id)
+        _p({k: c[k] for k in c.keys()})
+        for j in contacts.contact_jobs(a.id):
+            print(f"  job #{j['id']:<4} {j['role']:<15} {j['status']:<10} {j['company']} - {j['title']}")
+        for e in contacts.contact_events(a.id, 15):
+            print(f"  {e['ts']}  #{e['job_id']} {e['kind']:<12} {e['detail'] or ''}")
+    elif a.op == "edit":
+        changed = contacts.edit(a.id, **_kv(a.pairs, contacts.FIELDS))
+        print(f"contact #{a.id} " + ", ".join(f"{k}={'' if v is None else v}" for k, v in changed.items()))
+    elif a.op == "rm":
+        contacts.remove(a.id)
+        print(f"removed contact #{a.id} (jobs stay; only the links went)")
+    elif a.op == "import":
+        n = contacts.import_connections(Path(a.file).read_bytes(), Path(a.file).name)
+        print(f"{n['rows']} row(s): {n['added']} added, {n['updated']} updated (blank fields filled), {n['skipped']} unchanged "
+              "or skipped. No follow-up dates were set: lodestar contacts edit ID next_touch=YYYY-MM-DD")
+    elif a.op == "due":
+        rows = contacts.due()
+        for c in rows:
+            print(f"#{c['id']:<4} due {c['next_touch']}  {c['name']}" + (f" ({c['company']})" if c["company"] else "")
+                  + (f"  last touch {c['last_touch']}" if c["last_touch"] else ""))
+        print(f"{len(rows)} contact(s) to get in touch with" if rows else "nobody due")
+    elif a.op == "link":
+        if a.remove:
+            contacts.unlink(a.id, a.job)
+            print(f"unlinked contact #{a.id} from job #{a.job}")
+        else:
+            contacts.link(a.id, a.job, a.role)
+            print(f"linked contact #{a.id} to job #{a.job} as {a.role}")
+
+
+def cmd_sponsors(a):
+    from . import web_monitor
+
+    if a.op == "import":
+        r = web_monitor.import_sponsors(Path(a.file).read_bytes())
+        print(f"loaded {r['approvals']:,} approvals for {r['employers']:,} employers ({r['rows']:,} employer-years). Search "
+              "results and board cards now show 'possible H-1B sponsor' as a hint (loose name match, not a promise).")
+    elif a.op == "lookup":
+        h = web_monitor.sponsor_hint(a.company)
+        print(f"possible H-1B sponsor: {h['name']} ({h['approvals']} approvals)" if h else "no match in your imported data")
+    elif a.op == "clear":
+        print(f"removed {db.clear_sponsors()} rows")
 
 
 def cmd_profile(a):
@@ -434,11 +554,15 @@ def cmd_watch(a):
         db.add_watch(a.url, a.keywords or "")
         print("watch added; first run takes a baseline snapshot")
     elif a.op == "search-add":
-        db.add_watch(f"search:{a.query}", a.keywords or "")
-        print(f"will alert on new listings for '{a.query}'")
+        f = _search_filters(a)
+        db.add_watch(f"search:{a.query}", a.keywords or "", f or None)  # no filter flags: keep the saved ones
+        f = db.watch_filters(next(w for w in db.watches() if w["url"] == f"search:{a.query}"))
+        print(f"will alert on new listings for '{a.query}'" + (f" ({', '.join(f'{k}={v}' for k, v in f.items())})" if f else ""))
     elif a.op == "list":
         for w in db.watches():
-            print(f"#{w['id']:<3} {w['url']:<60} kw={w['keywords'] or '-'} last={w['last_seen'] or 'never'}")
+            f = db.watch_filters(w)
+            print(f"#{w['id']:<3} {w['url']:<60} kw={w['keywords'] or '-'} last={w['last_seen'] or 'never'}"
+                  + (f" filters={','.join(f'{k}={v}' for k, v in f.items())}" if f else ""))
     elif a.op == "rm":
         db.remove_watch(a.id)
     elif a.op == "run":
@@ -452,8 +576,69 @@ def cmd_interview(a):
     job = db.get_job(a.id)
     if a.op == "prep":
         print(f"wrote {interview.prep(job, a.council, a.provider)}")
-    else:
+    elif a.op == "mock":
         interview.mock(job, a.provider)
+    elif a.op == "log":
+        f = {k: v for k, v in (("round", a.round), ("kind", a.kind), ("at", a.at), ("interviewers", a.interviewers),
+                               ("notes", a.notes), ("outcome", a.outcome)) if v is not None}
+        if a.questions_file:
+            f["questions_asked"] = Path(a.questions_file).read_text(encoding="utf-8")
+        r = interview.get_round(interview.log_round(job["id"], **f))
+        print(f"round {r['round']} of #{job['id']} {job['company']} saved ({r['kind']}, {r['at'] or 'no date'}, {r['outcome']}, "
+              f"{len((r['questions_asked'] or '').splitlines())} question(s))")
+    else:
+        rs = interview.rounds(job["id"])
+        print(f"#{job['id']} {job['company']} - {job['title']}: {len(rs) or 'no'} round(s)")
+        for r in rs:
+            print(f"  round {r['round']:<3} {r['kind']:<10} {r['at'] or 'no date':<17} {r['outcome']:<9} {r['interviewers'] or ''}")
+            for q in (r["questions_asked"] or "").splitlines():
+                print(f"      Q: {q}")
+            if r["notes"]:
+                print(f"      notes: {r['notes'][:300]}")
+
+
+def cmd_questions(a):
+    from . import interview
+
+    job = db.get_job(a.id) if a.id else None
+    rows = interview.question_bank(job)
+    if job:
+        print(f"Questions for #{job['id']} {job['company']} - {job['title']}: logged at this company, then similar titles, "
+              "then the bundled behavioural set")
+    last = None
+    for x in rows:
+        if x["source"] != last:
+            print(f"\n{x['source']}:")
+            last = x["source"]
+        print(f"  - {x['q']}" + (f"  ({x['where']})" if x["where"] else ""))
+
+
+def cmd_stories(a):
+    from . import interview
+
+    if a.op == "list":
+        rows = interview.stories()
+        print(f"{len(rows) or 'no'} stor{'y' if len(rows) == 1 else 'ies'}" + ("" if rows else
+              " yet: lodestar stories add --title ... --situation ... --action ... --result ..."))
+        for s in rows:
+            print(f"#{s['id']:<4} {s['title'][:60]:<60} {', '.join(s['competencies']) or 'untagged'}"
+                  + (f"  (missing: {', '.join(s['missing'])})" if s["missing"] else ""))
+    elif a.op == "show":
+        s = next((x for x in interview.stories() if x["id"] == a.id), None)
+        if not s:
+            raise SystemExit(f"no story #{a.id}")
+        print(f"#{s['id']} {s['title']}  [{', '.join(s['competencies']) or 'untagged'}]\n{interview.render_story(s)}")
+    elif a.op == "rm":
+        if not any(x["id"] == a.id for x in interview.stories()):
+            raise SystemExit(f"no story #{a.id}")
+        db.delete_answer(a.id)
+        print(f"removed story #{a.id}")
+    elif a.from_idea:
+        print(f"saved story #{interview.story_from_idea(a.from_idea)} from idea #{a.from_idea}: fill in the rest in the "
+              "Answers tab > Stories")
+    else:
+        sid = interview.save_story(a.title, a.situation, a.task, a.action, a.result, a.metrics, a.tags or "")
+        print(f"saved story #{sid}")
 
 
 def cmd_run(a):
@@ -647,6 +832,9 @@ def cmd_today(a):
         for i in ag[key]:
             extra = f"  {'OVERDUE ' if i.get('overdue') else ''}{i['what']}" if "what" in i else ""
             print(f"  #{i['id']:<4} {i['when']:<20} {i['company'][:24]} - {i['title'][:38]}{extra}")
+    print(f"Contacts to get in touch with: {len(ag['contacts']) or 'none'}")
+    for c in ag["contacts"]:
+        print(f"  contact #{c['id']:<4} {c['when']:<12} {c['name'][:30]}" + (f" ({c['company'][:30]})" if c["company"] else ""))
     print(f"Inbox: {ag['pending']} waiting" + ("  (lodestar inbox)" if ag["pending"] else ""))
 
 
@@ -725,7 +913,109 @@ def cmd_variants(a):
               f"response {v['response_rate']:.0%}  interview {v['interview_rate']:.0%}")
 
 
+def cmd_insights(a):
+    from . import extras
+
+    d = extras.analytics(a.weeks)
+    if a.json:
+        return _p(d)
+    keys = ("applications", "interviews", "offers", "contacts", "mock_sessions")
+    print(f"{'week':<9} {'from':<11}" + "".join(f"{k.replace('_', ' '):>14}" for k in keys))
+    for w in d["weeks"]:
+        print(f"{w['week']:<9} {w['start']:<11}" + "".join(f"{w[k]:>14}" for k in keys))
+
+    def rates(title, groups):
+        print(f"\n{title} (applications that left 'saved'; under {d['min_n']}: not enough data yet)")
+        for g in groups:
+            print(f"  {g['group']:<22} n={g['n']:<4} " + (f"response {g['response_rate']:.0%}  interview {g['interview_rate']:.0%}"
+                                                       if g["enough"] else "not enough data yet"))
+    rates("Response rate by source", d["by_source"])
+    rates("Response rate by match score", d["by_band"])
+    st = d["funnel"]["stages"]
+    print("\nFunnel: " + "  ".join(f"{s} {v['reached']}" + (f" -> {v['conversion']:.0%}" if v["conversion"] is not None else "")
+                                   + (f" ({v['median_days_to_next']}d)" if v["median_days_to_next"] is not None else "")
+                                   for s, v in st.items()))
+    for v in d["variants"]:
+        print(f"resume variant {v['variant']}: sent {v['applied']}, " + (f"interview {v['interview_rate']:.0%}" if v["applied"] >= d["min_n"]
+                                                                          else "not enough data yet"))
+    print("\nWeekly goals: " + ("  ".join(f"{g['label']} {g['done']}/{g['target']}" for g in d["goals"]) or
+                                "none set (lodestar tools set weekly_goals contacts=5; tailored_applications=N, mock_sessions=N, applications=N)"))
+
+
+def _offer_table(d: dict) -> str:
+    rows = d["offers"]
+    if not rows:
+        return "no live offers (jobs at status offer or accepted). Record one: lodestar offers set ID base=150000 bonus_pct=10"
+    w = 18
+    out = [f"{'':<18}" + "".join(f"{('#' + str(r['job_id']) + ' ' + r['company'])[:w - 1]:<{w}}" for r in rows)]
+    labels = {"base": "base", "bonus": "bonus (target)", "sign_on": "sign-on", "match": "retirement match",
+              "equity_year1": "equity year 1", "year1_cash": "year-1 cash", "year1_total": "year-1 total",
+              "four_year_total": "4-year total"}
+    for k, label in labels.items():
+        out.append(f"{label:<18}" + "".join(f"{(format(r['total'][k], ',') + (' *' if r['job_id'] in d['best'].get(k, []) else '')):<{w}}"
+                                            for r in rows))
+    mkt = [f"{r['market']['low']:,}-{r['market']['high']:,}" if r["market"] else "-" for r in rows]
+    out.append(f"{'market range':<18}" + "".join(f"{m:<{w}}" for m in mkt))
+    if d["floor"]:
+        out.append(f"{'vs your floor':<18}" + "".join(f"{(format(r['vs_floor'], '+,') if r['vs_floor'] is not None else '-'):<{w}}"
+                                                      for r in rows))
+    for k in ("remote", "start_date", "deadline"):
+        out.append(f"{k.replace('_', ' '):<18}" + "".join(f"{str(r['offer'].get(k) or '-'):<{w}}" for r in rows))
+    est = sorted({e for r in rows for e in r["total"]["estimates"]})
+    return "\n".join(out + ["* best in the row", *(["estimates: " + "; ".join(est)] if est else []),
+                            *(["the floor row is private: it is never put in anything sent to an employer"] if d["floor"] else [])])
+
+
+def cmd_offers(a):
+    from . import apply, comp
+
+    if a.op == "set":
+        changed = db.set_offer(a.id, **_kv(a.pairs, db.OFFER_FIELDS))
+        print(f"#{a.id} offer: " + ", ".join(f"{k}={'' if v is None else v}" for k, v in changed.items()))
+        print(f"(status: {db.get_job(a.id)['status']})")
+    elif a.op == "counter":
+        _print_mail(apply.counter(db.get_job(a.id), a.cite or [], a.ask or "", a.provider, a.template))
+    else:
+        print(_offer_table(comp.compare()))
+
+
+def cmd_activity(a):
+    from datetime import date, timedelta
+
+    from . import extras
+
+    if a.week and (getattr(a, "from") or a.to):
+        raise SystemExit("use --week, or --from / --to, not both")
+    if a.to and not getattr(a, "from"):
+        raise SystemExit("--to needs --from")
+    if getattr(a, "from"):
+        start, end = getattr(a, "from"), a.to or date.today().isoformat()
+    else:
+        start = extras.monday(extras._day(a.week) if a.week else date.today())
+        end = start + timedelta(days=6)
+    if a.csv or a.html:
+        print(f"wrote {extras.activity_export(start, end, 'csv' if a.csv else 'html')}")
+        return
+    rep = extras.activity_report(start, end)
+    print(f"Activity {rep['from']} to {rep['to']}. {rep['note']}")
+    for wk in rep["weeks"]:
+        need = f" / minimum {rep['minimum']} ({'met' if wk['met'] else 'not met'})" if rep["minimum"] else ""
+        print(f"\nweek of {wk['week']}: {wk['count']}{need}")
+        for r in rep["rows"]:
+            if extras.monday(extras._day(r["date"])).isoformat() == wk["week"]:
+                print(f"  {r['date']}  {r['activity']:<12} {r['employer'][:24]:<24} {r['position'][:28]:<28} {r['method']:<9} "
+                      f"{r['contact'][:30]:<30} {r['result']}")
+
+
 # ---------------------------------------------------------------- parser
+def filter_args(x) -> None:
+    """Search filters (web_monitor.refine); unknown salary / location / date pass and are marked."""
+    x.add_argument("--location", help="substring of the listing location, or 'remote'")
+    x.add_argument("--min-salary", help="top of the stated range at least this (120000 or 120k; currency not converted)")
+    x.add_argument("--posted-within", type=int, metavar="DAYS")
+    x.add_argument("--seniority", choices=["intern", "junior", "mid", "senior", "staff", "lead", "manager"], help="read off the title")
+
+
 def build() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="lodestar", description="AI job-search assistant")
     ap.add_argument("-p", "--provider", help=f"AI provider: {', '.join(ai.PROVIDERS)}")
@@ -787,6 +1077,7 @@ def build() -> argparse.ArgumentParser:
     x.add_argument("--rank", action="store_true", help="AI fit score vs your profile"); x.add_argument("--limit", type=int, default=25)
     x.add_argument("--save", type=int, nargs="*", help="result indexes to add to tracker")
     x.add_argument("--auto", action="store_true", help="AI-judge results and propose/track strong fits (tool: auto_track)")
+    filter_args(x)
     s.set_defaults(f=cmd_jobs)
 
     s = sub.add_parser("resume", help="tailor, gap-check, cover letter, review, lint, file audit, export")
@@ -849,16 +1140,76 @@ def build() -> argparse.ArgumentParser:
     v = s.add_subparsers(dest="op", required=True)
     x = v.add_parser("add"); x.add_argument("url"); x.add_argument("--keywords")
     x = v.add_parser("search-add"); x.add_argument("query"); x.add_argument("--keywords")
+    filter_args(x)
     v.add_parser("list")
     x = v.add_parser("rm"); x.add_argument("id", type=int)
     v.add_parser("run")
     s.set_defaults(f=cmd_watch)
 
-    s = sub.add_parser("interview", help="prep pack or live mock interview")
+    s = sub.add_parser("companies", help="watch companies' public job boards (Greenhouse, Lever, Ashby); new postings alert like saved searches")
+    v = s.add_subparsers(dest="op", required=True)
+    x = v.add_parser("add", help="careers or posting URL (boards.greenhouse.io/acme, jobs.lever.co/acme, jobs.ashbyhq.com/acme) "
+                                 "or vendor:slug. Workday, Taleo and iCIMS have no public feed")
+    x.add_argument("source"); x.add_argument("--name", help="display name (default: from the slug)"); x.add_argument("--keywords", help="comma list; only matching postings alert")
+    v.add_parser("list")
+    x = v.add_parser("rm"); x.add_argument("id", type=int)
+    s.set_defaults(f=cmd_companies)
+    s = sub.add_parser("contacts", help="contacts CRM: people, the jobs they are linked to, last / next touch, LinkedIn import")
+    v = s.add_subparsers(dest="op", required=True)
+    x = v.add_parser("add", help="add a person by hand"); x.add_argument("name")
+    for f in ("email", "phone", "linkedin", "company", "position", "how-met", "notes"):
+        x.add_argument(f"--{f}")
+    x.add_argument("--next-touch", metavar="YYYY-MM-DD", help="when to get in touch next (opt-in cadence)")
+    x = v.add_parser("list", help="name A-Z with company, position, last / next touch and linked jobs")
+    x.add_argument("q", nargs="?", help="filter: name, company, position or email")
+    x.add_argument("--due", action="store_true", help="only contacts whose next touch has come")
+    x = v.add_parser("show", help="fields, linked jobs, recent timeline entries mentioning their email"); x.add_argument("id", type=int)
+    x = v.add_parser("edit", help="fields: name, email, phone, linkedin_url, company, position, how_met, notes, last_touch, "
+                                  "next_touch (key=value; empty value clears)")
+    x.add_argument("id", type=int); x.add_argument("pairs", nargs="+", metavar="key=value")
+    x = v.add_parser("rm", help="remove a contact (linked jobs stay)"); x.add_argument("id", type=int)
+    x = v.add_parser("import", help="your LinkedIn 'Download your data' zip or its Connections.csv (de-duplicated; no follow-up dates set)")
+    x.add_argument("file")
+    v.add_parser("due", help="contacts whose next touch has come (also on the Today list; nothing is drafted for them)")
+    x = v.add_parser("link", help="link a contact to a job with a role (again to change the role)")
+    x.add_argument("id", type=int); x.add_argument("job", type=int)
+    x.add_argument("--role", choices=["recruiter", "hiring_manager", "referrer", "interviewer", "other"], default="other")
+    x.add_argument("--remove", action="store_true", help="unlink instead")
+    s.set_defaults(f=cmd_contacts)
+    s = sub.add_parser("sponsors", help="optional H-1B sponsor hints from the USCIS H-1B Employer Data Hub export you download")
+    v = s.add_subparsers(dest="op", required=True)
+    x = v.add_parser("import", help="load the hub's CSV export (a fiscal year imported again replaces that year)"); x.add_argument("file")
+    x = v.add_parser("lookup", help="check one employer name against your imported data"); x.add_argument("company")
+    v.add_parser("clear", help="remove all imported sponsor data")
+    s.set_defaults(f=cmd_sponsors)
+
+    from .interview import COMPETENCIES, KINDS, OUTCOMES
+
+    s = sub.add_parser("interview", help="prep pack, live mock interview with a score card per answer, interview rounds")
     v = s.add_subparsers(dest="op", required=True)
     x = v.add_parser("prep"); x.add_argument("id", type=int); x.add_argument("--council", action="store_true")
-    x = v.add_parser("mock"); x.add_argument("id", type=int)
+    x = v.add_parser("mock", help="one question at a time; each answer gets a score card (STAR rubric needs AI)"); x.add_argument("id", type=int)
+    x = v.add_parser("log", help="log an interview round (again with --round N to update that round)"); x.add_argument("id", type=int)
+    x.add_argument("--round", type=int, help="round number (default: the next one)")
+    x.add_argument("--kind", choices=KINDS); x.add_argument("--at", help='"YYYY-MM-DD HH:MM" (or just the date)')
+    x.add_argument("--interviewers"); x.add_argument("--notes"); x.add_argument("--outcome", choices=OUTCOMES)
+    x.add_argument("--questions-file", help="text file, one question you were asked per line")
+    x = v.add_parser("rounds", help="a job's rounds with the questions asked"); x.add_argument("id", type=int)
     s.set_defaults(f=cmd_interview)
+    s = sub.add_parser("questions", help="your question bank: logged at this company, then similar titles, then ~30 behavioural")
+    s.add_argument("id", type=int, nargs="?", help="job id (without: every question you logged)")
+    s.set_defaults(f=cmd_questions)
+    s = sub.add_parser("stories", help="STAR story bank tagged by competency (prep and mock interviews use it)")
+    v = s.add_subparsers(dest="op", required=True)
+    v.add_parser("list")
+    x = v.add_parser("show"); x.add_argument("id", type=int)
+    x = v.add_parser("rm"); x.add_argument("id", type=int)
+    x = v.add_parser("add", help="situation / task / action / result / metrics; or --from-idea ID (an ideas 'stories' idea)")
+    x.add_argument("--title"); x.add_argument("--from-idea", type=int)
+    for f in ("situation", "task", "action", "result", "metrics"):
+        x.add_argument(f"--{f}", default="")
+    x.add_argument("--tags", help=f"competencies, comma: {', '.join(COMPETENCIES)}")
+    s.set_defaults(f=cmd_stories)
 
     def loop_args(p):
         p.add_argument("--every", type=int, default=30, help="minutes")
@@ -907,6 +1258,26 @@ def build() -> argparse.ArgumentParser:
     s.add_argument("op", choices=["install", "remove"]); s.add_argument("--every", type=int, default=30)
     s.set_defaults(f=cmd_schedule)
     sub.add_parser("variants", help="which tailored-resume variant gets responses").set_defaults(f=cmd_variants)
+    s = sub.add_parser("insights", help="weekly activity, response rate by source and match score, funnel, variants, weekly goals")
+    s.add_argument("--weeks", type=int, default=12); s.add_argument("--json", action="store_true"); s.set_defaults(f=cmd_insights)
+    s = sub.add_parser("offers", help="live offers side by side (default: compare); set structured fields; draft a counter-offer")
+    v = s.add_subparsers(dest="op")
+    v.add_parser("compare", help="year-1 / 4-year totals, best per row, market range, gap to your private salary floor")
+    x = v.add_parser("set", help="fields: " + ", ".join(db.OFFER_FIELDS) + " (key=value; 150k ok; empty clears)")
+    x.add_argument("id", type=int); x.add_argument("pairs", nargs="+")
+    x = v.add_parser("counter", help="draft a counter-offer citing competing figures; always waits in the Inbox")
+    x.add_argument("id", type=int)
+    x.add_argument("--cite", nargs="+", metavar="JOB:FIELD", help="competing figures, e.g. 7:base 7:sign_on (fields: base, "
+                                                                   "bonus_pct, sign_on, equity_value_estimate, year1_total)")
+    x.add_argument("--ask", help="what you ask for, e.g. 'a base of 170,000'")
+    x.add_argument("--template", action="store_true", help="plain offline template instead of AI")
+    s.set_defaults(f=cmd_offers, op=None)
+    s = sub.add_parser("activity", help="your job-search activity log by week (helper report for unemployment claims)")
+    s.add_argument("--week", metavar="YYYY-MM-DD", help="the week (Monday-Sunday) containing this date; default this week")
+    s.add_argument("--from", metavar="YYYY-MM-DD"); s.add_argument("--to", metavar="YYYY-MM-DD")
+    s.add_argument("--csv", action="store_true", help="write a CSV to ~/.lodestar/exports")
+    s.add_argument("--html", action="store_true", help="write Markdown + a printable HTML page (print to PDF) to ~/.lodestar/exports")
+    s.set_defaults(f=cmd_activity)
     s = sub.add_parser("comp", help="your market-rate table, used by gap checks and offer evaluation")
     v = s.add_subparsers(dest="op", required=True)
     v.add_parser("list")
@@ -921,7 +1292,11 @@ def build() -> argparse.ArgumentParser:
         x = v.add_parser(op); x.add_argument("name")
     x = v.add_parser("set", help="preference: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, "
                                      "weekly_target (applications/week, used by idea crafting), provider, council_providers, "
-                                     "council_judge, signature, desktop_notifications, models (provider=model; also written by self-healing model selection)")
+                                     "council_judge, signature, desktop_notifications, resume_style, excluded_companies and "
+                                     "excluded_title_words (private search dealbreakers, comma lists), models (provider=model; also "
+                                     "written by self-healing model selection), weekly_goals (goal=number: contacts, "
+                                     "tailored_applications, mock_sessions, applications; 0 clears), activity_weekly_min "
+                                     "(activities a week your unemployment claim asks for)")
     x.add_argument("name"); x.add_argument("value")
     s.set_defaults(f=cmd_tools)
     s = sub.add_parser("inbox", help="actions waiting for your approval")

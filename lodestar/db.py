@@ -26,29 +26,58 @@ CREATE TABLE IF NOT EXISTS ideas(id INTEGER PRIMARY KEY, topic TEXT, title TEXT,
   updated_at TEXT DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS answers(id INTEGER PRIMARY KEY, question TEXT UNIQUE, answer TEXT, tags TEXT,
   updated_at TEXT DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS companies(id INTEGER PRIMARY KEY, vendor TEXT NOT NULL, slug TEXT NOT NULL, name TEXT,
+  keywords TEXT, last_seen TEXT, last_error TEXT, UNIQUE(vendor, slug));
+CREATE TABLE IF NOT EXISTS postings(key TEXT PRIMARY KEY, url TEXT, first_seen TEXT DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS sponsors(key TEXT, year TEXT, name TEXT, approvals INTEGER, PRIMARY KEY(key, year));
+CREATE TABLE IF NOT EXISTS contacts(id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT, phone TEXT, linkedin_url TEXT,
+  company TEXT, position TEXT, how_met TEXT, source TEXT, last_touch TEXT, next_touch TEXT, notes TEXT,
+  created_at TEXT DEFAULT (datetime('now')));
+CREATE UNIQUE INDEX IF NOT EXISTS contacts_email ON contacts(email) WHERE email IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS contacts_linkedin ON contacts(linkedin_url) WHERE linkedin_url IS NOT NULL;
+CREATE TABLE IF NOT EXISTS job_contacts(job_id INTEGER NOT NULL, contact_id INTEGER NOT NULL, role TEXT NOT NULL DEFAULT 'other',
+  UNIQUE(job_id, contact_id));
+CREATE TABLE IF NOT EXISTS interviews(id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, round INTEGER, kind TEXT DEFAULT 'other',
+  at TEXT, interviewers TEXT, notes TEXT, questions_asked TEXT, outcome TEXT DEFAULT 'pending', ics TEXT,
+  created_at TEXT DEFAULT (datetime('now')));
+CREATE INDEX IF NOT EXISTS interviews_job ON interviews(job_id);
+CREATE TABLE IF NOT EXISTS mock_sessions(id INTEGER PRIMARY KEY, job_id INTEGER, ts TEXT DEFAULT (datetime('now')), answers TEXT,
+  averages TEXT);
+CREATE TABLE IF NOT EXISTS offers(job_id INTEGER PRIMARY KEY, base INTEGER, bonus_pct REAL, sign_on INTEGER,
+  equity_value_estimate INTEGER, vest_years INTEGER, cliff_months INTEGER, retirement_match_pct REAL, remote TEXT,
+  start_date TEXT, deadline TEXT, notes TEXT, updated_at TEXT DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS touches(contact_id INTEGER NOT NULL, day TEXT NOT NULL, UNIQUE(contact_id, day));  -- touches you record (contacts._log_touch)
 """
 MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "TEXT",  # ponytail: additive only
               # tracker fields (pass 15); every user write goes through set_fields
               "location": "TEXT", "remote": "TEXT", "salary_min": "INTEGER", "salary_max": "INTEGER", "currency": "TEXT",
               "source": "TEXT", "posted_at": "TEXT", "deadline": "TEXT", "excitement": "INTEGER", "tags": "TEXT",
               "match_score": "INTEGER", "next_action": "TEXT", "next_action_at": "TEXT",
-              "ats_skip": "TEXT"}  # JSON list: keywords marked "not mine" for JD coverage (toggle_ats_skip)
+              "ats_skip": "TEXT",  # JSON list: keywords marked "not mine" for JD coverage (toggle_ats_skip)
+              "ats_feed": "TEXT"}  # 'greenhouse:acme' when tracked from a public job-board feed (code-set, not a user field)
+WATCH_MIGRATIONS = {"filters": "TEXT"}  # JSON search filters of a saved search (web_monitor.clean_filters)
+ANSWER_MIGRATIONS = {"star": "TEXT"}  # JSON STAR fields when the row is a story (interview.save_story); NULL = a form answer
 BACKFILL_KEY = "backfill:fields-v1"
+CONTACTS_KEY = "backfill:contacts-v1"
+ATS_FEED_RE = re.compile(r"(greenhouse|lever|ashby):[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 
 
 def connect(path=None) -> sqlite3.Connection:
     c = sqlite3.connect(path or DB_PATH)
     c.row_factory = sqlite3.Row
     c.executescript(SCHEMA)
-    have = {r["name"] for r in c.execute("PRAGMA table_info(jobs)")}
-    for col, typ in MIGRATIONS.items():
-        if col not in have:
+    for table, cols in (("jobs", MIGRATIONS), ("watches", WATCH_MIGRATIONS), ("answers", ANSWER_MIGRATIONS)):
+        have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
+        for col, typ in cols.items():
+            if col in have:
+                continue
             try:
-                c.execute(f"ALTER TABLE jobs ADD COLUMN {col} {typ}")
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
             except sqlite3.OperationalError as e:  # another thread/process added it between our check and ALTER
                 if "duplicate column" not in str(e).lower():
                     raise
     backfill(c)
+    contacts_from_jobs(c)
     return c
 
 
@@ -65,6 +94,45 @@ def backfill(c: sqlite3.Connection) -> int:
             n += 1
     c.execute("INSERT OR IGNORE INTO seen(key) VALUES(?)", (BACKFILL_KEY,))
     c.commit()
+    return n
+
+
+def contacts_from_jobs(c: sqlite3.Connection) -> int:
+    """One-time: each job's stored contact (contact_email / contact_name) becomes a contact linked to it as recruiter,
+    one contact per address (else per name + company). The job columns stay as they are: they alone drive mail trust."""
+    if c.execute("SELECT 1 FROM seen WHERE key=?", (CONTACTS_KEY,)).fetchone():
+        return 0
+    if c.in_transaction:
+        c.commit()
+    c.execute("BEGIN IMMEDIATE")  # first connections after an upgrade (loop + request threads) race: one runs it, once
+    try:
+        n = _contacts_from_jobs(c)
+    except BaseException:
+        c.rollback()
+        raise
+    c.commit()
+    return n
+
+
+def _contacts_from_jobs(c: sqlite3.Connection) -> int:
+    if c.execute("SELECT 1 FROM seen WHERE key=?", (CONTACTS_KEY,)).fetchone():  # another connection got here first
+        return 0
+    n = 0
+    for j in c.execute("SELECT id, company, contact_email, contact_name FROM jobs WHERE COALESCE(contact_email, '') != '' "
+                       "OR COALESCE(contact_name, '') != '' ORDER BY id").fetchall():
+        email = (j["contact_email"] or "").strip().lower() or None
+        name = (j["contact_name"] or "").strip()[:120] or (email or "").split("@")[0] or "contact"
+        row = (c.execute("SELECT id FROM contacts WHERE email=?", (email,)).fetchone() if email else
+               c.execute("SELECT id FROM contacts WHERE email IS NULL AND lower(name)=? AND lower(COALESCE(company,''))=?",
+                         (name.lower(), (j["company"] or "").lower())).fetchone())
+        if not row:
+            cid = c.execute("INSERT INTO contacts(name, email, company, source) VALUES(?,?,?,?)",
+                            (name, email, j["company"], f"job #{j['id']}")).lastrowid
+            n += 1
+        else:
+            cid = row["id"]
+        c.execute("INSERT OR IGNORE INTO job_contacts(job_id, contact_id, role) VALUES(?,?,'recruiter')", (j["id"], cid))
+    c.execute("INSERT OR IGNORE INTO seen(key) VALUES(?)", (CONTACTS_KEY,))
     return n
 
 
@@ -110,6 +178,16 @@ def tag_list(tags) -> list[str]:
     return [t.strip() for t in (tags or "").split(",") if t.strip()]
 
 
+def valid_date(k: str, s: str) -> str:
+    try:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+            raise ValueError
+        datetime.strptime(s, "%Y-%m-%d")
+    except ValueError:
+        raise SystemExit(f"{k} must be a date, YYYY-MM-DD: {s[:40]}") from None
+    return s
+
+
 def _clean(k: str, v):
     """One user-settable field, validated. Empty clears (None)."""
     if k not in FIELDS:
@@ -127,13 +205,7 @@ def _clean(k: str, v):
             raise SystemExit(f"{k} must be between {lo} and {hi}")
         return n
     if k in _DATE:
-        try:
-            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
-                raise ValueError
-            datetime.strptime(s, "%Y-%m-%d")
-        except ValueError:
-            raise SystemExit(f"{k} must be a date, YYYY-MM-DD: {s[:40]}") from None
-        return s
+        return valid_date(k, s)
     if k == "remote":
         if s.lower() not in REMOTE:
             raise SystemExit(f"remote must be one of {', '.join(REMOTE)}")
@@ -199,10 +271,14 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def add_job(company, title, url=None, jd=None, notes=None, **fields) -> int:
+def add_job(company, title, url=None, jd=None, notes=None, ats_feed=None, **fields) -> int:
     """fields: tracker fields the caller knows (a listing's location, posted_at). Source, remote and pay are derived
-    from the notes and JD; a field given explicitly wins."""
+    from the notes and JD; a field given explicitly wins. ats_feed: the public job-board feed it came from."""
     given = {k: v for k, v in ((k, _clean(k, v)) for k, v in fields.items()) if v is not None}  # validated before insert
+    if ats_feed:
+        if not ATS_FEED_RE.fullmatch(str(ats_feed)):
+            raise SystemExit(f"ats_feed must look like greenhouse:slug, lever:slug or ashby:slug: {str(ats_feed)[:60]}")
+        given["ats_feed"] = str(ats_feed)
     if url:  # the same posting captured or searched twice is one card, not two
         dup = con().execute("SELECT id FROM jobs WHERE url=? AND status NOT IN ('rejected','withdrawn')", (url,)).fetchone()
         if dup:
@@ -285,6 +361,10 @@ def set_status(job_id: int, status: str, detail: str = "") -> None:
 def delete_job(job_id: int) -> None:
     con().execute("DELETE FROM pending WHERE job_id=? AND status='pending'", (job_id,))  # nothing may act for a gone job
     con().execute("DELETE FROM events WHERE job_id=?", (job_id,))
+    con().execute("DELETE FROM job_contacts WHERE job_id=?", (job_id,))  # the people stay; only the link goes
+    con().execute("DELETE FROM interviews WHERE job_id=?", (job_id,))
+    con().execute("DELETE FROM mock_sessions WHERE job_id=?", (job_id,))
+    con().execute("DELETE FROM offers WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM jobs WHERE id=?", (job_id,))
     con().commit()
 
@@ -367,9 +447,22 @@ def needs_followup(days: int | None = None):
 
 
 # --- watches & dedupe -------------------------------------------------------
-def add_watch(url: str, keywords: str = "") -> None:
-    con().execute("INSERT OR REPLACE INTO watches(url,keywords) VALUES(?,?)", (url, keywords))
+def add_watch(url: str, keywords: str = "", filters: dict | None = None) -> None:
+    """filters: a saved search's filters, already validated (web_monitor.clean_filters); None keeps the ones it has
+    (re-adding a saved search without filter fields never silently drops them), {} clears them."""
+    if filters is None:
+        old = con().execute("SELECT filters FROM watches WHERE url=?", (url,)).fetchone()
+        filters = watch_filters(old) if old else {}
+    con().execute("INSERT OR REPLACE INTO watches(url,keywords,filters) VALUES(?,?,?)",
+                  (url, keywords, json.dumps(filters) if filters else None))
     con().commit()
+
+
+def watch_filters(w) -> dict:
+    try:
+        return json.loads(w["filters"] or "{}")
+    except (ValueError, TypeError):
+        return {}
 
 
 def watches():
@@ -393,6 +486,57 @@ def seen(key: str) -> bool:
 def mark_seen(key: str) -> None:
     con().execute("INSERT OR IGNORE INTO seen(key) VALUES(?)", (key,))
     con().commit()
+
+
+# --- watched companies (public job-board feeds), repost memory, H-1B sponsor data ------------------------------------
+def add_company(vendor: str, slug: str, name: str, keywords: str = "") -> int:
+    """Validated by the caller (web_monitor.add_company). Adding one again updates its name and keywords."""
+    con().execute("INSERT INTO companies(vendor,slug,name,keywords) VALUES(?,?,?,?) ON CONFLICT(vendor,slug) "
+                  "DO UPDATE SET name=excluded.name, keywords=excluded.keywords", (vendor, slug, name, keywords))
+    con().commit()
+    return con().execute("SELECT id FROM companies WHERE vendor=? AND slug=?", (vendor, slug)).fetchone()["id"]
+
+
+def companies():
+    return con().execute("SELECT * FROM companies ORDER BY id").fetchall()
+
+
+def remove_company(cid: int) -> None:
+    con().execute("DELETE FROM companies WHERE id=?", (cid,))
+    con().commit()
+
+
+def update_company(cid: int, error: str = "") -> None:
+    con().execute("UPDATE companies SET last_seen=datetime('now'), last_error=? WHERE id=?", (error or None, cid))
+    con().commit()
+
+
+def posting(key: str):
+    """First sighting of a company+title+location: {url, first_seen} or None (web_monitor.ghost_signals)."""
+    return con().execute("SELECT url, first_seen FROM postings WHERE key=?", (key,)).fetchone()
+
+
+def note_posting(key: str, url: str) -> None:
+    con().execute("INSERT OR IGNORE INTO postings(key,url) VALUES(?,?)", (key, url))
+    con().commit()
+
+
+def save_sponsors(rows: dict) -> None:
+    """rows: {(key, year): (name, approvals)}. A fiscal year imported again replaces that year; other years stay."""
+    con().executemany("INSERT OR REPLACE INTO sponsors(key,year,name,approvals) VALUES(?,?,?,?)",
+                      [(k, y, n, a) for (k, y), (n, a) in rows.items()])
+    con().commit()
+
+
+def sponsor(key: str):
+    return con().execute("SELECT MAX(name) name, SUM(approvals) approvals, COUNT(*) years FROM sponsors WHERE key=? "
+                         "GROUP BY key", (key,)).fetchone()
+
+
+def clear_sponsors() -> int:
+    n = con().execute("DELETE FROM sponsors").rowcount
+    con().commit()
+    return n
 
 
 # --- approvals inbox --------------------------------------------------------
@@ -507,6 +651,64 @@ def update_idea(iid: int, **fields) -> None:
 def delete_idea(iid: int) -> None:
     con().execute("DELETE FROM ideas WHERE id=?", (iid,))
     con().commit()
+
+
+# --- offers (structured terms; comp.total does the money) ----------------------
+_OFFER_NUM = {"base": (0, 10_000_000), "sign_on": (0, 10_000_000), "equity_value_estimate": (0, 100_000_000),
+              "vest_years": (1, 10), "cliff_months": (0, 60), "bonus_pct": (0, 200), "retirement_match_pct": (0, 100)}
+_OFFER_PCT = ("bonus_pct", "retirement_match_pct")  # may have decimals; the rest are whole numbers
+OFFER_FIELDS = (*_OFFER_NUM, "remote", "start_date", "deadline", "notes")
+
+
+def _offer_val(k: str, v):
+    if k not in OFFER_FIELDS:
+        raise SystemExit(f"unknown offer field '{k}'. Fields: {', '.join(OFFER_FIELDS)}")
+    s = "" if v is None else str(v).strip()
+    if not s:
+        return None
+    if k in _OFFER_NUM:
+        lo, hi = _OFFER_NUM[k]
+        t = s.replace(",", "").rstrip("%")
+        try:
+            n = float(t[:-1]) * 1000 if t[-1:] in "kK" and k not in _OFFER_PCT else float(t)
+        except ValueError:
+            raise SystemExit(f"{k} must be a number: {s[:40]}") from None
+        if not lo <= n <= hi:
+            raise SystemExit(f"{k} must be between {lo} and {hi}")
+        return round(n, 2) if k in _OFFER_PCT else int(round(n))
+    if k == "remote":
+        if s.lower() not in REMOTE:
+            raise SystemExit(f"remote must be one of {', '.join(REMOTE)}")
+        return s.lower()
+    if k in ("start_date", "deadline"):
+        return valid_date(k, s)
+    if len(s) > 2000:
+        raise SystemExit("notes is longer than 2000 characters")
+    return s
+
+
+def set_offer(job_id: int, **fields) -> dict:
+    """Set whitelisted offer fields (OFFER_FIELDS); all validated first, so a bad value changes nothing. Empty clears.
+    A job not yet at 'offer' moves there: recording an offer is your own action. All-empty records nothing (and an
+    offer whose every field is cleared is removed; the job's status is yours to change)."""
+    clean = {k: _offer_val(k, v) for k, v in fields.items()}
+    job = get_job(job_id)
+    real = any(v is not None for v in clean.values())
+    if real:
+        con().execute("INSERT INTO offers(job_id) VALUES(?) ON CONFLICT(job_id) DO NOTHING", (job_id,))
+    if clean:
+        con().execute(f"UPDATE offers SET {', '.join(k + '=?' for k in clean)}, updated_at=? WHERE job_id=?",
+                      (*clean.values(), _now(), job_id))
+        con().execute(f"DELETE FROM offers WHERE job_id=? AND {' AND '.join(k + ' IS NULL' for k in OFFER_FIELDS)}", (job_id,))
+        con().commit()
+    if real and STATUSES.index(job["status"]) < STATUSES.index("offer"):
+        set_status(job_id, "offer", "(offer recorded)")
+    return clean
+
+
+def get_offer(job_id: int) -> dict | None:
+    row = con().execute("SELECT * FROM offers WHERE job_id=?", (job_id,)).fetchone()
+    return dict(row) if row else None
 
 
 # --- funnel -------------------------------------------------------------------

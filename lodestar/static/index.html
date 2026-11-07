@@ -16,11 +16,13 @@
 <nav aria-label="Sections">
   <button data-tab="board" class="on"><span class="ico" aria-hidden="true">▦</span>Board</button>
   <button data-tab="inbox"><span class="ico" aria-hidden="true">✓</span>Inbox<span class="badge zero" id="inboxN" aria-label="pending approvals">0</span></button>
+  <button data-tab="contacts"><span class="ico" aria-hidden="true">☏</span>Contacts</button>
   <button data-tab="search"><span class="ico" aria-hidden="true">⌕</span>Search</button>
   <button data-tab="monitor"><span class="ico" aria-hidden="true">◉</span>Monitor</button>
   <button data-tab="ideas"><span class="ico" aria-hidden="true">✦</span>Ideas</button>
   <button data-tab="answers"><span class="ico" aria-hidden="true">≡</span>Answers</button>
   <button data-tab="coach"><span class="ico" aria-hidden="true">☺</span>Coach</button>
+  <button data-tab="insights"><span class="ico" aria-hidden="true">▥</span>Insights</button>
   <button data-tab="profile"><span class="ico" aria-hidden="true">☰</span>Profile</button>
   <span class="sep"></span>
   <button data-tab="tools"><span class="ico" aria-hidden="true">⚙</span>Tools</button>
@@ -68,12 +70,34 @@
   <div class="list muted" id="decidedList"></div>
 </section>
 
+<section id="contacts">
+  <h2>Contacts</h2>
+  <p class="sub">The people in your search. Link them to jobs with a role; "you know N people here" shows on board cards, search results and the job drawer, where you can ask for a referral. Set a next touch and they come up on the Today list. Contacts never make mail trusted: only a job's own contact address does.</p>
+  <div class="panel"><div class="row" style="margin:0">
+    <input id="ctName" placeholder="name" aria-label="Contact name" style="width:170px"><input id="ctEmail" placeholder="email (optional)" aria-label="Contact email" style="width:200px">
+    <input id="ctCo" placeholder="company" aria-label="Contact company" style="width:150px"><input id="ctPos" placeholder="position" aria-label="Contact position" style="width:150px">
+    <button class="b" onclick="addContact()">Add contact</button></div>
+    <div class="row"><input type="file" id="ctFile" accept=".zip,.csv" aria-label="LinkedIn export or Connections.csv"><button class="b ghost" onclick="importContacts(this)">Import LinkedIn connections</button>
+      <span class="muted">your LinkedIn "Download your data" .zip, or the Connections.csv inside it. Duplicates are merged (LinkedIn URL, then email, then name + company); no follow-up dates are set.</span></div></div>
+  <div class="row filters" role="search" aria-label="Filter contacts">
+    <input id="ctQ" type="search" placeholder="filter: name, company, position, email" aria-label="Filter contacts" style="width:260px" oninput="renderContacts()">
+    <label class="muted"><input type="checkbox" id="ctDue" onchange="renderContacts()"> next touch due</label><span class="muted" id="ctN"></span></div>
+  <div id="ctTable"></div>
+</section>
+
 <section id="search">
   <h2>Search</h2>
   <div class="row"><input id="sQ" placeholder='query, e.g. "python backend"' style="width:260px"><input id="sK" placeholder="must-have keywords (comma)" style="width:220px">
     <label class="muted"><input type="checkbox" id="sRank"> AI rank vs my profile</label><button class="b" onclick="doSearch(this)">Search free job APIs</button>
-    <button class="b ghost" title="AI-judge the results; strong fits go to the Inbox (tool: auto_track)" onclick="run('auto_track',{query:$('#sQ').value,keywords:$('#sK').value},r=>toast(r.results.length+' strong fit(s) proposed (Inbox, or tracked if auto_track is auto)','ok'),this)">Auto-track strong fits</button>
-    <span class="muted">Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse. No keys needed. The capture bookmarklet (Setup) covers LinkedIn and Indeed.</span></div>
+    <button class="b ghost" title="AI-judge the results; strong fits go to the Inbox (tool: auto_track). Listings that look stale are skipped." onclick="run('auto_track',searchParams(),r=>toast(r.results.length+' strong fit(s) proposed (Inbox, or tracked if auto_track is auto)','ok'),this)">Auto-track strong fits</button>
+    <button class="b ghost" title="alert on new listings for this query and these filters (Monitor > Watches)" onclick="saveSearch()">Save as watch</button></div>
+  <div class="row filters" aria-label="Search filters">
+    <input id="sLoc" placeholder="location, or remote" aria-label="Location filter" style="width:160px">
+    <input id="sSal" type="number" min="0" step="1000" placeholder="min salary" aria-label="Minimum salary" style="width:110px">
+    <input id="sDays" type="number" min="1" max="3650" placeholder="posted within (days)" aria-label="Posted within days" style="width:150px">
+    <select id="sLevel" aria-label="Seniority"><option value="">any seniority</option><option>intern</option><option>junior</option><option>mid</option><option>senior</option><option>staff</option><option>lead</option><option>manager</option></select>
+    <span class="muted">Listings that do not state a salary, location or date are kept and marked "unknown". Your private dealbreakers (Tools &gt; Preferences: excluded_companies, excluded_title_words) are dropped first.</span></div>
+  <div class="muted">Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse. No keys needed. The same posting found on several boards is shown once with every link. The capture bookmarklet (Setup) covers LinkedIn and Indeed; Monitor &gt; Companies follows a company's own Greenhouse, Lever or Ashby board.</div>
   <div class="panel" id="sRes"><div class="empty">No results yet.</div></div>
 </section>
 
@@ -89,6 +113,10 @@
         <button class="b ghost" onclick="run('obsidian',{},r=>toast('vault notes written to '+r.path,'ok'),this)">Export tracker to Obsidian</button></div>
       <pre id="aOut" style="display:none"></pre></div>
     <div class="panel"><h3>Alerts</h3><pre id="alerts"></pre></div>
+    <div class="panel"><h3>Companies</h3>
+      <p class="muted">Follow a company's public job board. Paste its careers or job link (boards.greenhouse.io/…, jobs.lever.co/…, jobs.ashbyhq.com/…) or type greenhouse:slug, lever:slug or ashby:slug. Each monitor cycle reads the board once; new postings alert and go through the same AI judgement as saved searches. <b>Workday, Taleo and iCIMS have no public feed</b>: add their careers page under Watches instead.</p>
+      <div class="row"><input id="cSrc" class="grow" placeholder="https://boards.greenhouse.io/acme or lever:acme" aria-label="Company board link"><input id="cName" placeholder="name (optional)" aria-label="Company name" style="width:140px"><input id="cKw" placeholder="keywords (comma)" aria-label="Company keywords" style="width:140px"><button class="b" onclick="addCompany()">Add</button></div>
+      <div id="coList"></div></div>
   </div>
 </section>
 
@@ -110,6 +138,19 @@
   <div class="panel"><h3>Answer bank</h3>
     <div class="row"><input id="bQ" class="grow" placeholder="question"><input id="bA" class="grow" placeholder="answer"><input id="bT" placeholder="tags (comma)" style="width:140px"><button class="b ghost" onclick="api('/api/answers',{question:$('#bQ').value,answer:$('#bA').value,tags:$('#bT').value}).then(load)">Save</button></div>
     <div id="bank"></div></div>
+  <div class="panel" id="storyPanel"><h3>Stories (STAR)</h3>
+    <p class="muted">Your real stories, tagged by competency. Interview prep and mock interviews build behavioural answers from these instead of inventing them; the job drawer tells you when a posting stresses a competency no story covers yet.</p>
+    <input type="hidden" id="stId">
+    <div class="row"><input id="stTitle" class="grow" maxlength="120" placeholder="title, e.g. Rescued the billing migration" aria-label="Story title"></div>
+    <div class="grid2">
+      <label class="fld">Situation: where, when, what was at stake<textarea id="stSituation" maxlength="4000"></textarea></label>
+      <label class="fld">Task: what you had to achieve<textarea id="stTask" maxlength="4000"></textarea></label>
+      <label class="fld">Action: what you did (I, not we)<textarea id="stAction" maxlength="4000"></textarea></label>
+      <label class="fld">Result: what changed<textarea id="stResult" maxlength="4000"></textarea></label></div>
+    <div class="row"><input id="stMetrics" class="grow" maxlength="500" placeholder="metrics: numbers that prove the result (optional)" aria-label="Story metrics"></div>
+    <div class="row" id="stComps" role="group" aria-label="Competencies"></div>
+    <div class="row"><button class="b" onclick="saveStory()">Save story</button><button class="b ghost" onclick="clearStory()">New story</button><span class="muted" id="stHint"></span></div>
+    <div id="storyList"></div></div>
 </section>
 
 <section id="coach">
@@ -117,7 +158,42 @@
   <div class="panel">
     <div class="row" style="margin-top:0"><select id="cMode" onchange="resetChat()"><option value="coach">Career coach</option><option value="mock">Mock interview for…</option></select><select id="cJob" onchange="resetChat()" style="display:none"></select><span class="muted" id="cHint">Coach sees your profile and tracker. Mock interview asks one question at a time; type "done" for a scored debrief.</span></div>
     <div class="chat" id="chat"><div class="msg ai">Ask me anything about your search. I can see your profile and tracker.</div></div>
+    <div class="mock-sum muted" id="mockSum" style="display:none"></div>
     <div class="row"><input id="cIn" class="grow" placeholder="e.g. Which of my applications should I follow up on first?" onkeydown="if(event.key==='Enter')sendChat()"><button class="b ghost" id="cMic" onclick="dictate()" aria-label="Dictate" title="Dictate (browser speech recognition)">🎤</button><button class="b" id="cGo" onclick="sendChat()">Send</button><label class="muted" id="cSpeakL" style="display:none"><input type="checkbox" id="cSpeak" onchange="if(!this.checked)window.speechSynthesis?.cancel()"> speak replies</label><label class="muted"><input type="checkbox" id="cCouncil"> council (all providers)</label></div></div>
+  <div class="panel" id="mockTrend" style="display:none"><h3>Mock interview trend</h3><div id="trendSvg"></div>
+    <p class="muted">STAR average (0-2) per scored session, oldest left. Each answer in a mock interview gets a card: the STAR rubric needs an AI provider; word count, estimated speaking time (~140 words a minute against a 60-120 second target), repeated words and the posting's keywords you used are computed offline. Words per minute appear only when you dictate the answer.</p></div>
+</section>
+
+<section id="insights">
+  <h2>Insights</h2>
+  <p class="sub">What you did each week, what is working, your offers side by side, and an activity log. Counted from your own actions only: jobs moved to applied, mail sent from the Inbox, interview rounds and the contact touches you record. Auto-tracked saves and Inbox items you did not send never count.</p>
+  <div class="panel"><h3>Weekly goals</h3>
+    <p class="muted">None are set until you choose. Reaching people and tailoring each application usually pay off more than a raw application count, so those come first.</p>
+    <div class="row" id="goalForm"></div><div id="goalBars"></div></div>
+  <div class="panel"><h3>Each week</h3><div id="insWeeks" class="ins-grid"></div>
+    <details><summary class="muted">as a table</summary><div id="insWeeksTable"></div></details></div>
+  <div class="grid2">
+    <div class="panel"><h3>Response rate by source</h3><div id="insSource"></div></div>
+    <div class="panel"><h3>Does tailoring pay off? Response rate by match score</h3><div id="insBand"></div></div></div>
+  <div class="panel"><h3>Funnel and resume variants</h3><div id="insFunnel"></div></div>
+  <div class="panel" id="offerPanel"><h3>Offers</h3>
+    <p class="muted">Live offers (status offer or accepted) side by side. Bonus, match and equity are estimates (target bonus, a match you contribute enough to get, equity at your own estimate with no growth, vesting monthly after the cliff). The salary-floor row is private: it is shown here only and never goes into anything sent to an employer.</p>
+    <div id="offerTable"></div>
+    <details><summary class="muted">Record or edit an offer</summary><div class="row"><select id="ofJob" aria-label="Job the offer is for" onchange="fillOffer()"></select></div><div class="row" id="ofForm"></div>
+      <div class="row"><button class="b sm" onclick="saveOffer()">Save offer</button><span class="muted">a job not yet at "offer" moves there; an empty field clears it</span></div></details>
+    <details><summary class="muted">Draft a counter-offer</summary>
+      <div class="row"><label class="muted">counter <select id="ctrJob" aria-label="Offer to counter" onchange="renderCite()"></select></label></div>
+      <div class="row" id="ctrCite" role="group" aria-label="Competing figures to cite"></div>
+      <div class="row"><input id="ctrAsk" class="grow" maxlength="300" placeholder="what you ask for (optional), e.g. a base of 170,000" aria-label="Your ask">
+        <label class="muted"><input type="checkbox" id="ctrTpl"> plain template, no AI</label><button class="b" onclick="draftCounter(this)">Draft counter-offer</button></div>
+      <div class="muted">The draft cites only the figures you tick, says "another offer" without naming the company, and always waits in the Inbox for your review.</div>
+      <pre id="ctrOut" style="display:none"></pre></details></div>
+  <div class="panel"><h3>Activity log</h3>
+    <p class="muted">A helper report for unemployment claims built from what Lodestar recorded; check your state's requirements. It makes no claim of compliance.</p>
+    <div class="row"><label class="fld">from<input id="acFrom" type="date"></label><label class="fld">to<input id="acTo" type="date"></label>
+      <label class="fld">weekly minimum<input id="acMin" type="number" min="0" max="100" style="width:90px" onchange="setPref('activity_weekly_min',this.value||0)"></label>
+      <button class="b" onclick="activity(this)">Show</button><button class="b ghost" onclick="activity(this,'csv')">Export CSV</button><button class="b ghost" onclick="activity(this,'html')">Printable page</button></div>
+    <div id="acOut"></div></div>
 </section>
 
 <section id="profile">
@@ -203,7 +279,7 @@
 </section>
 </main>
 
-<div id="drawer" role="dialog" aria-modal="true" aria-label="Job details"></div>
+<div id="drawer" role="dialog" aria-modal="true" aria-label="Details"></div>
 <div id="toast" role="status" aria-live="polite"></div>
 <script>window.LODESTAR_TOKEN = "__TOKEN__"; window.LODESTAR_CAPTURE = "__CAPTURE__";</script>
 <script src="/static/app.js"></script>

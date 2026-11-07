@@ -57,6 +57,9 @@ def _send(p: dict) -> str:
     try:  # the mail is out; bookkeeping failures must not turn a sent item into an "error"
         if p.get("purpose") in ("followup", "thanks") and p.get("job_id"):  # the checklist counts these as done
             db.add_event(p["job_id"], p["purpose"], f"sent to {p['to']}")
+        from .contacts import touch
+
+        touch(p["to"])  # a contact with exactly this address: last_touch = today
         if p.get("chosen_time") and p.get("job_id") and settings.enabled("calendar"):
             from .extras import conflicts, ics, parse_when
 
@@ -81,7 +84,7 @@ def _status(p: dict) -> str:
 
 
 def _add_job(p: dict) -> str:
-    jid = db.add_job(p["company"], p["title"], p.get("url"), p.get("jd"), p.get("notes"),
+    jid = db.add_job(p["company"], p["title"], p.get("url"), p.get("jd"), p.get("notes"), p.get("ats_feed"),
                      **{k: p[k] for k in ("location", "posted_at") if p.get(k)})  # validated: an edited bad date fails here
     if p.get("contact_email"):
         db.update_job(jid, contact_email=p["contact_email"], contact_name=p.get("contact_name", ""))

@@ -27,6 +27,8 @@ TOOLS = {
     "obsidian_sync": ("Mirror the tracker into Obsidian after each monitor cycle", False, True),
     "digest": ("Email the weekly digest at the end of the week", False, True),
     "backup": ("Nightly zip of your data folder into ~/.lodestar/backups (keeps 7)", True, True),
+    "posting_check": ("Weekly: re-check saved jobs from Greenhouse / Lever / Ashby feeds and propose withdrawing ones "
+                      "whose posting was removed (always waits in the Inbox)", True, False),
 }
 PREFS = {
     "name": "",
@@ -42,8 +44,31 @@ PREFS = {
     "signature": "",
     "desktop_notifications": False,  # OS toasts from the monitor loop: daily agenda, interview in 2 h, deadline tomorrow
     "resume_style": "classic",  # .docx / PDF look (resume.STYLES); a template.docx beside profile.md overrides it
+    # private dealbreakers (comma lists): search results and watch hits drop these before ranking; never sent anywhere
+    "excluded_companies": "",
+    "excluded_title_words": "",
+    "weekly_goals": {},  # goal=number per week (GOALS); none by default, and no default application count
+    "activity_weekly_min": 0,  # activity log: activities a week your unemployment claim asks for (0 = none set)
 }
 CHOICES = {"resume_style": ("classic", "modern", "compact")}  # prefs limited to a fixed set of values
+GOALS = ("contacts", "tailored_applications", "mock_sessions", "applications")  # quality first, raw volume last
+
+
+def _goals(value: dict) -> dict:
+    """weekly_goals, validated: known goals only, whole numbers 0-1000; 0 or empty removes a goal."""
+    out = {}
+    for k, v in value.items():
+        if k not in GOALS:
+            raise SystemExit(f"unknown weekly goal '{k}'. Goals: {', '.join(GOALS)}")
+        try:
+            n = int(str(v).strip() or 0)
+        except ValueError:
+            raise SystemExit(f"weekly goal {k} must be a whole number: {str(v)[:40]}") from None
+        if not 0 <= n <= 1000:
+            raise SystemExit(f"weekly goal {k} must be between 0 and 1000")
+        if n:
+            out[k] = n
+    return out
 
 
 def load() -> dict:
@@ -99,15 +124,21 @@ def set_pref(key: str, value) -> None:
             if not isinstance(value, dict):  # one entry at a time: "provider=model" (empty model = back to the default)
                 k, sep, v = str(value).partition("=")
                 if not sep or not k.strip():
-                    raise SystemExit(f"{key} takes provider=model, e.g. openai=gpt-5")
+                    raise SystemExit(f"{key} takes " + ("goal=number, e.g. contacts=5" if key == "weekly_goals"
+                                                        else "provider=model, e.g. openai=gpt-5"))
                 value = {**data["prefs"].get(key, {}), k.strip(): v.strip()}
-            data["prefs"][key] = dict(value)
+            data["prefs"][key] = _goals(value) if key == "weekly_goals" else dict(value)
             save(data)
             return
         if isinstance(cur, bool):
             value = str(value).lower() in ("1", "true", "yes", "on")
         elif isinstance(cur, int):
-            value = int(value)
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                raise SystemExit(f"{key} must be a whole number") from None
+            if key == "activity_weekly_min" and not 0 <= value <= 100:
+                raise SystemExit("activity_weekly_min must be between 0 and 100")
         data["prefs"][key] = value
         save(data)
 

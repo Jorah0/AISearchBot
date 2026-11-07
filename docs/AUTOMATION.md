@@ -41,6 +41,7 @@ lodestar tools set signature "Sean"
 | `calendar` | write .ics files for interview dates found in mail | on, auto |
 | `obsidian_sync` | mirror the tracker into your vault after each monitor cycle | off |
 | `digest` | email the weekly digest on Fridays | off |
+| `posting_check` | weekly: re-check saved jobs from Greenhouse / Lever / Ashby boards; propose `withdrawn` ("posting removed") for ones whose posting vanished. Always waits in the inbox, even on auto | on, manual |
 
 ## The inbox
 
@@ -54,19 +55,35 @@ lodestar reject 12 --reason "already replied"
 
 In the UI the Inbox tab shows each item with the email fields editable before **Approve & send**.
 
+A counter-offer (`lodestar offers counter`, Insights > Offers) is always proposed with review, even when
+`email_reply` is on auto, and never contains your salary floor, Preferences or offer notes.
+
+Insights, weekly goals and the activity log count only what you did: an approved and sent item counts, a
+pending, rejected or failed one does not, and nothing the loop adds on its own (an auto-tracked save) is an
+application.
+
 Executors are the only code that sends mail, changes status, or adds jobs on lodestar's initiative, and they all live in
 `lodestar/approvals.py`, so the rule cannot be bypassed by a new feature by accident.
 
 ## What a full automatic cycle does (`lodestar run` / `lodestar app`)
 
 1. Email check: classify new mail, propose or apply status changes, capture the sender as the job's contact, write
-   .ics for dated interviews, draft replies for confirmations / assessments / interviews / offers.
-2. Watches: diff career pages; new listings from saved searches are AI-judged and strong fits proposed.
+   .ics for interviews with a stated time from a trusted sender (each also recorded as an interview round; a date
+   without a time, often a reply-by date, or an unverified sender records only a timeline note), draft replies for
+   confirmations / assessments / interviews / offers.
+2. Watches: diff career pages (only where robots.txt allows; a disallowed page is skipped with one alert); new
+   listings from saved searches (with their saved filters) and from watched companies' Greenhouse / Lever / Ashby
+   boards (one request per company; a newly watched board's open roles are a baseline with one summary alert) are
+   alerted once, AI-judged, and strong fits proposed. Listings that look stale
+   are not proposed. Weekly, saved jobs from those boards are re-checked and a removed posting is proposed for
+   `withdrawn` (tool `posting_check`, always via the inbox).
 3. Follow-ups: nudge about quiet applications; draft a follow-up when a contact is known (a plain template when no
    AI provider is configured, still proposed through the inbox).
    Desktop notifications, if you turned them on (pref `desktop_notifications`): the day's agenda once, an interview
    within 2 hours, a deadline tomorrow; each fires once (recorded in the `seen` table).
-4. Optional Obsidian sync and Friday digest.
+   Contacts whose next touch has come are listed on Today and in the daily agenda; the loop never drafts anything for
+   them. Mail from a contact's exact address, and approved mail sent to it, update that contact's last touch.
+4. Optional Obsidian sync and Friday digest (with your weekly goals' progress when you set any).
 5. Print how many actions are waiting in the inbox.
 
 Sending mail needs `IMAP_USER` / `IMAP_PASS` (SMTP uses the same login). Without them, approvals of email items fail
@@ -78,6 +95,10 @@ Replies and follow-ups need a human address. lodestar records the sender of the 
 a job as its contact. Set one yourself in the job drawer (Admin > set contact) or with
 `lodestar jobs contact ID email --name "Jane Doe"`. With a contact, Draft reply and email outreach are proposed for
 sending through the Inbox like follow-ups; the checklist counts a follow-up or thank-you as done only once it is sent.
+Setting a job's contact also files the person under Contacts (linked as recruiter). The reverse never happens: a
+contact (LinkedIn import or typed in, linked to the job or not) is never made a job's contact and plays no part in
+deciding whether mail is trusted. Ask for referral (job drawer > People) proposes an email to the contact's own
+address, always reviewed in the Inbox.
 
 ## Security model of the local UI
 
@@ -113,6 +134,6 @@ sending through the Inbox like follow-ups; the checklist counts a follow-up or t
 
 - `followup`: nudge at every `followup_days`; after three nudges the loop proposes `withdrawn` ("ghosted") instead of
   nudging forever. A proposal, so it waits in the inbox unless the tool is auto.
-- Interview replies see your booked interviews (from the .ics files) and are told never to accept or propose a time
+- Interview replies see your booked interviews (interview rounds with a time) and are told never to accept or propose a time
   within 90 minutes of one; approving a reply that still clashes sends the mail but skips the calendar file and says so.
 - `council_judge`: when on and two or more providers are allowed, the second provider audits the synthesis.

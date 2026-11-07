@@ -481,18 +481,25 @@ def salary_mentions(text: str) -> list[str]:
 
 
 _CURRENCY = {"$": "USD", "€": "EUR", "£": "GBP"}
+_PERIOD = re.compile(r"(?:\bper[\s-]*|/\s*|\ban?\s+)(?:month|mo|week|wk|day|hour|hr)\b|\b(?:monthly|weekly|daily|hourly)\b", re.I)
+_YEARLY = re.compile(r"\b(?:year|yr|annual|annually|annum|p\.?a)\b", re.I)
 
 
 def parse_salary(text: str) -> dict:
     """The first stated annual pay figure as {salary_min, salary_max, currency}; {} when there is none. Figures under
-    1,000 (hourly rates, '50-70') are not annual pay and are skipped rather than guessed at."""
+    1,000 (hourly rates, '50-70') and figures stated per month / week / day / hour ('EUR 5000-7000 (per-month-salary)',
+    '€5K – €7K per month') are not annual pay and are skipped rather than guessed at."""
     for m in salary_mentions(text):
+        i = (text or "").find(m)
+        w = m + (text[i + len(m): i + len(m) + 25] if i >= 0 else "")  # the figure and what follows it
+        p, y = _PERIOD.search(w), _YEARLY.search(w)
+        if p and not (y and y.start() < p.start()):
+            continue
         pairs = [(float(n.replace(",", "")), k) for n, k in re.findall(r"(\d[\d,]*(?:\.\d+)?)\s?([kK])?", m)]
         k_any = any(k for _, k in pairs)  # '$120-150k': the k covers both ends of the range
         nums = [int(n * (1000 if k or (k_any and n < 1000) else 1)) for n, k in pairs]
         nums = [n for n in nums if 1000 <= n <= 10_000_000][:2]
-        if nums:
-            i = (text or "").find(m)  # a code just around the figure: 'CAD $90k', '90-110k EUR'
+        if nums:  # a code just around the figure: 'CAD $90k', '90-110k EUR'
             ctx = text[max(0, i - 5): i + len(m) + 5] if i >= 0 else m
             code = re.search(r"\b(USD|EUR|GBP|CAD|AUD|CHF|INR|SEK|NOK|DKK|PLN)\b", ctx)
             cur = code.group(1) if code else next((c for s, c in _CURRENCY.items() if s in m), None)  # 'CAD $90k' is CAD

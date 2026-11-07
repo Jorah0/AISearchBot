@@ -454,7 +454,8 @@ class Hardening(unittest.TestCase):
         db.add_job("Acme", "Eng")
         out = extras.export_data("json", Path(os.environ["LODESTAR_HOME"]) / "exp")
         data = _json.loads(out.read_text(encoding="utf-8"))
-        self.assertEqual(sorted(data), ["answers", "events", "ideas", "jobs", "pending"])
+        self.assertEqual(sorted(data), ["answers", "contacts", "events", "ideas", "interviews", "job_contacts", "jobs",
+                                        "mock_sessions", "offers", "pending", "touches"])
         self.assertEqual(data["jobs"][0]["company"], "Acme")
         web.TASKS.clear()
         real_act, web._act = web._act, lambda action, p: {"ok": True}

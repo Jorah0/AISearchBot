@@ -152,6 +152,8 @@ def _scan(host: str, user: str, pw: str, days: int, limit: int, dry: bool, provi
                 _, raw = box.uid("fetch", uid, "(RFC822)")
                 msg = email.message_from_bytes(raw[0][1])
                 subject, sender, body = _hdr(msg, "Subject"), _hdr(msg, "From"), _body(msg)
+                if not dry:
+                    _touch(sender, _hdr(msg, "Date"))
                 if looks_relevant(subject, sender, body):
                     try:
                         info = classify(subject, sender, body, provider)
@@ -180,6 +182,23 @@ def _scan(host: str, user: str, pw: str, days: int, limit: int, dry: bool, provi
         except Exception:
             pass
     return found
+
+
+def _touch(sender: str, date_hdr: str) -> None:
+    """Any mail from a contact's exact address sets their last_touch (contacts.touch). Bookkeeping only: it decides
+    nothing about trust and a failure here never costs the message its scan."""
+    from email.utils import parsedate_to_datetime
+
+    from .contacts import touch
+
+    try:
+        try:
+            day = parsedate_to_datetime(date_hdr).date().isoformat()
+        except (TypeError, ValueError, IndexError):
+            day = None
+        touch(parseaddr(sender)[1], day)
+    except Exception as e:
+        print(f"  contact touch skipped: {e}")
 
 
 def _apply(info: dict, dry: bool) -> None:
@@ -216,17 +235,24 @@ def _apply(info: dict, dry: bool) -> None:
                               {"job_id": job["id"], "status": new, "note": f"(email: {info['subject'][:60]})"},
                               f"move #{job['id']} {job['company']} to {new} ({info['category']} email)", job["id"],
                               force_pending=not info.get("trusted", False))  # unauthenticated mail never moves a job unreviewed
-        if info["category"] == "interview" and info.get("deadline") and settings.enabled("calendar"):
+        if info["category"] == "interview" and info.get("deadline"):
             d = str(info["deadline"]).strip()
-            try:  # calendar file + prep reminder; a bad date must not break the scan (parse_when raises SystemExit)
+            try:  # an interview round, plus calendar file + prep reminder; a bad date must not break the scan
                 from .extras import ics, parse_when
+                from .interview import booked
 
-                when = parse_when(d)
-                if ":" in d:
-                    notify(f"CALENDAR: wrote {ics(job, when)}")
-                else:  # a bare date is often a reply-by date: an .ics at 00:00 would count as a booked interview
-                    db.add_event(job["id"], "interview_date", f"{d} (no time stated; the .ics is written when a slot is accepted)")
-                    notify(f"INTERVIEW DATE {d} for #{job['id']} {job['company']}: no time stated, no .ics written")
+                when = parse_when(d)  # parse_when raises SystemExit
+                # only a stated time from trusted mail is an interview: a bare date is often a reply-by date, and a round
+                # counts as "interviewed" in the activity log and Insights, so forged or name-matched mail never adds one
+                if ":" in d and info["trusted"]:
+                    if settings.enabled("calendar"):
+                        notify(f"CALENDAR: wrote {ics(job, when)}")  # ics() records the round too
+                    else:
+                        booked(job["id"], f"{when:%Y-%m-%d %H:%M}", note=f"from email: {info['subject'][:80]}")
+                else:
+                    why = "unverified sender" if ":" in d else "no time stated"
+                    db.add_event(job["id"], "interview_date", f"{d} ({why}; no round recorded until a slot is accepted or you log it)")
+                    notify(f"INTERVIEW DATE {d} for #{job['id']} {job['company']}: {why}, no round recorded")
             except (Exception, SystemExit) as e:
                 db.add_event(job["id"], "calendar", f"could not parse date {info['deadline']!r}: {e}")
     elif info["category"] in ("recruiter_outreach", "interview", "offer") and info.get("company"):
