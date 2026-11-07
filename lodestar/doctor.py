@@ -51,17 +51,37 @@ def checks() -> list[tuple[str, str, str]]:
     avail = ai.available()
     out.append(("ok" if avail else "fail", "AI providers", ", ".join(f"{n} ({ai.model_for(n)})" for n in avail) or
                 "none configured: lodestar vault set ANTHROPIC_API_KEY (or another provider key)"))
-    mail = bool(setting("IMAP_USER") and setting("IMAP_PASS"))
-    out.append(("ok" if mail else "warn", "email monitor", "IMAP credentials present" if mail else "not configured (optional): vault set IMAP_USER / IMAP_PASS"))
+    from .util import mail_settings
+
+    c = mail_settings()
+    mail = bool(c["user"] and setting("IMAP_PASS"))
+    out.append(("ok" if mail else "warn", "email", f"{c['user']} ({c['preset'] or 'no preset'}): IMAP {c['imap_host']}:"
+                f"{c['imap_port']}, SMTP {c['smtp_host']}:{c['smtp_port']} {c['smtp_mode']}" if mail else
+                "not connected (optional): Setup > Connect email, or lodestar email connect"))
     old = Path.home() / ".jobbot"
     if old.exists():
         out.append(("warn", "legacy folder", f"{old} still exists; safe to delete once ~/.lodestar has your data"))
     return out
 
 
+def live_mail() -> list[tuple[str, str, str]]:
+    """One IMAP and one SMTP login (mailconn.test) when a mailbox is connected; nothing otherwise."""
+    from . import mailconn
+
+    if not mailconn.status()["configured"]:
+        return []
+    try:
+        r = mailconn.test()
+    except (Exception, SystemExit) as e:
+        return [("fail", "live mail", str(e)[:160])]
+    return [("ok" if r[k]["ok"] else "fail", f"live {k.upper()} login",
+             r[k]["detail"] + ("" if r[k]["ok"] or not r["hint"] else " | " + r["hint"])) for k in ("imap", "smtp")]
+
+
 def report(live: bool = False) -> int:
     rows = checks()
     if live:
+        rows += live_mail()
         for n in ai.available():
             try:
                 ai.ask("Reply with the single word OK.", provider=n)

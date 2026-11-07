@@ -40,7 +40,7 @@ FIELDS = {  # list kinds -> allowed fields; the first field(s) of KEYS identify 
     "experience": ("title", "company", "location", "start", "end", "bullets"),
     "education": ("school", "degree", "field", "start", "end"),
     "certifications": ("name", "issuer", "date", "url"),
-    "projects": ("name", "description", "url"),
+    "projects": ("name", "description", "url", "bullets"),
 }
 KEYS = {"skills": ("name",), "languages": ("name",), "experience": ("company", "title"), "education": ("school", "degree"),
         "certifications": ("name",), "projects": ("name",)}
@@ -295,7 +295,8 @@ def extract_heuristic(text: str) -> dict:
         words = [w.strip().lstrip("# ") for w in pipe.split("|")]
         plain = [w for w in words if w and not re.search(r"[@/]", w) and not _phone(w) and "linkedin" not in w.lower()]
         if pipe != lines[0] and _namelike(first):
-            c["name"], rest = first, plain
+            # the master-profile layout repeats the name: '# Dana' then 'Dana | Austin, TX | ...'
+            c["name"], rest = first, plain[1:] if plain and plain[0].casefold() == first.casefold() else plain
         else:
             c["name"], rest = (plain[0] if plain and not re.search(r"\d", plain[0]) else ""), plain[1:]
         c["location"] = rest[0] if rest else ""
@@ -341,12 +342,12 @@ def extract_heuristic(text: str) -> dict:
         elif sec == "certifications":
             facts["certifications"].append({"name": item})
         elif sec == "projects":
-            if line.startswith("#"):
+            if line.startswith("#"):  # '### name - one line, link' (the template's form)
                 title, _, rest = line.lstrip("# ").partition(" - ")
-                cur = {"name": title.strip(), "description": rest.strip()}
+                cur = {"name": title.strip(), "description": rest.strip(), "bullets": []}
                 facts["projects"].append(cur)
-            elif cur is not None:
-                cur["description"] = (cur["description"] + " " + item).strip()
+            elif cur is not None:  # bullets stay a list, as experience keeps them
+                cur["bullets"].append(item)
     facts["summary"] = " ".join(s for s in summary if not s.startswith("Two or three sentences"))
     return facts
 
@@ -411,9 +412,14 @@ def _csv_rows(text: str, first_col: str) -> list[dict] | None:
     return [{k.strip(): (v or "").strip() for k, v in r.items() if k} for r in csv.DictReader(io.StringIO(text[m.start():], newline=""))]
 
 
+LI_MAX_BYTES = 50_000_000  # one CSV of a LinkedIn export, inflated (the Connections import uses the same cap)
+
+
 def _li_rows(z: zipfile.ZipFile, files: dict, name: str, first_col: str) -> list[dict]:
     if name not in files:
         return []
+    if z.getinfo(files[name]).file_size > LI_MAX_BYTES:  # the user's own file, but never inflate a zip bomb into memory
+        raise SystemExit(f"{Path(files[name]).name} in this zip is larger than {LI_MAX_BYTES // 1_000_000} MB")
     return _csv_rows(z.read(files[name]).decode("utf-8-sig", errors="replace"), first_col) or []
 
 
@@ -429,7 +435,7 @@ def linkedin_connections(data: bytes, filename: str = "") -> list[dict]:
         files = {Path(n).name.lower(): n for n in z.namelist()}
         if "connections.csv" not in files:
             raise SystemExit(f"this zip has no Connections.csv: request 'Download your data' with Connections at {LINKEDIN_EXPORT_URL}")
-        if z.getinfo(files["connections.csv"]).file_size > 50_000_000:  # the user's own file, but never inflate a bomb
+        if z.getinfo(files["connections.csv"]).file_size > LI_MAX_BYTES:  # the user's own file, but never inflate a bomb
             raise SystemExit("Connections.csv is larger than 50 MB")
         data = z.read(files["connections.csv"])
     rows = _csv_rows(data.decode("utf-8-sig", errors="replace"), "First Name")
@@ -588,14 +594,20 @@ def set_contact(field: str, value: str) -> dict:
 
 
 # ----------------------------------------------------------------------------- rendering + prompts
-PREFS_HEAD_RE = re.compile(r"(?mi)^(#{1,6})[ \t]*preferences\b")  # any level, any case: lint treats them all as private
+# A private section starts at any line that names 'preference' as a heading: '#'s of any level ('## Job Preferences'),
+# a bold-only line ('**My preferences**') or a standalone label ('Preferences:'). Any case.
+PREFS_HEAD_RE = re.compile(r"(?mi)^[ \t]*(?:(#{1,6})[ \t]*[^\n]*preference[^\n]*|(?:\*\*|__)[^\n]*preference[^\n]*?(?:\*\*|__):?"
+                           r"|(?=[a-z])[^\n#*:]{0,60}preference[^\n#*:]{0,40}:)[ \t]*$")
+# where a bold / label section ends: the next heading, bold-only line or standalone label line
+_BLOCK_RE = re.compile(r"(?mi)^[ \t]*(?:#{1,6}[ \t]|(?:\*\*|__)[^\n]+(?:\*\*|__):?[ \t]*$|[a-z][^\n#*:]{0,100}:[ \t]*$)")
 
 
 def _prefs_span(text: str) -> tuple[int, int] | None:
-    """The first Preferences section: its heading up to the next section (# or ##) or a heading of its own level."""
+    """The first Preferences section: a '#' heading up to the next section (# or ##) or a heading of its own level; a
+    bold or label heading up to the next heading, bold-only or label line."""
     if not (m := PREFS_HEAD_RE.search(text)):
         return None
-    end = re.compile(rf"(?m)^#{{1,{max(len(m[1]), 2)}}}[ \t]").search(text, m.end())
+    end = (re.compile(rf"(?m)^#{{1,{max(len(m[1]), 2)}}}[ \t]") if m[1] else _BLOCK_RE).search(text, m.end())
     return m.start(), end.start() if end else len(text)
 
 
@@ -603,6 +615,25 @@ def drop_preferences(text: str) -> str:
     """Text without any Preferences section (salary floor, deal-breakers): for anything an employer reads."""
     while s := _prefs_span(text):
         text = text[:s[0]] + text[s[1]:]
+    return text
+
+
+PAY_LINE_RE = re.compile(r"(?i)salary|compensation|\bpay\b|floor|minimum|expect")
+
+
+def employer_safe(text: str) -> str:
+    """drop_preferences, then the last guard for anything an employer reads: text that still names the salary floor
+    (the words, or the floor's figure on a line about pay) is refused, never sent.
+    ponytail: the figure check reads '150,000' / '150000' / '150k' on lines naming pay; '$150 thousand' slips past"""
+    text = drop_preferences(text)
+    bad = re.search(r"(?i)salary floor", text)
+    if not bad and (floor := salary_floor()):
+        figs = rf"\b{floor}\b" + (rf"|\b{floor // 1000}k\b" if floor % 1000 == 0 else "")
+        bad = any(PAY_LINE_RE.search(ln) and re.search(figs, re.sub(r"(?<=\d),(?=\d{3})", "", ln), re.I)
+                  for ln in text.splitlines())
+    if bad:
+        raise SystemExit("your salary floor appears outside the Preferences section of your profile, so it would reach an "
+                         "employer: keep it under a '## Preferences' heading (that section never goes to an employer)")
     return text
 
 
@@ -633,8 +664,10 @@ def render_markdown(bank: dict, master: str | None = None) -> str:
             out += [f"- {b}" for b in e.get("bullets") or []]
     if bank.get("projects"):
         out += ["", "## Projects"]
-        for p in bank["projects"]:
-            out += ["", f"### {p['name']}{' - ' + p['url'] if p.get('url') else ''}"] + ([f"- {p['description']}"] if p.get("description") else [])
+        for p in bank["projects"]:  # the template's '### name - one line, link', then its bullets
+            desc, url = p.get("description") or "", p.get("url") or ""
+            line = ", ".join(x for x in (desc, "" if url in desc else url) if x)  # an imported link is often in the line already
+            out += ["", f"### {p['name']}{' - ' + line if line else ''}"] + [f"- {b}" for b in p.get("bullets") or []]
     if bank.get("education"):
         out += ["", "## Education"]
         for e in bank["education"]:
@@ -716,7 +749,7 @@ def candidate_text(limit: int | None = None, strict: bool = True, private: bool 
     extra = extras_text(master)
     text = master.rstrip() + ("\n\n" + extra if extra else "")
     if not private:
-        text = drop_preferences(text)
+        text = employer_safe(text)
     return brief(text, limit) if limit else text
 
 

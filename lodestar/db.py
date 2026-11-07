@@ -46,7 +46,14 @@ CREATE TABLE IF NOT EXISTS mock_sessions(id INTEGER PRIMARY KEY, job_id INTEGER,
 CREATE TABLE IF NOT EXISTS offers(job_id INTEGER PRIMARY KEY, base INTEGER, bonus_pct REAL, sign_on INTEGER,
   equity_value_estimate INTEGER, vest_years INTEGER, cliff_months INTEGER, retirement_match_pct REAL, remote TEXT,
   start_date TEXT, deadline TEXT, notes TEXT, updated_at TEXT DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value INTEGER);  -- 'jobs_max_id': ids are never handed out twice
 CREATE TABLE IF NOT EXISTS touches(contact_id INTEGER NOT NULL, day TEXT NOT NULL, UNIQUE(contact_id, day));  -- touches you record (contacts._log_touch)
+CREATE TABLE IF NOT EXISTS mail(id INTEGER PRIMARY KEY, message_id TEXT NOT NULL UNIQUE, in_reply_to TEXT, refs TEXT,
+  job_id INTEGER, direction TEXT NOT NULL CHECK(direction IN ('in','out')), from_addr TEXT, to_addr TEXT, subject TEXT,
+  sent_at TEXT, category TEXT, summary TEXT, snippet TEXT, trusted INTEGER NOT NULL DEFAULT 0,
+  linked_by TEXT CHECK(linked_by IN ('auto','thread','user')), company TEXT, title TEXT,
+  created_at TEXT DEFAULT (datetime('now')));  -- relevant mail scanned + every mail sent; job_id NULL = unmatched
+CREATE INDEX IF NOT EXISTS mail_job ON mail(job_id);
 """
 MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "TEXT",  # ponytail: additive only
               # tracker fields (pass 15); every user write goes through set_fields
@@ -55,7 +62,8 @@ MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "T
               "match_score": "INTEGER", "next_action": "TEXT", "next_action_at": "TEXT",
               "ats_skip": "TEXT",  # JSON list: keywords marked "not mine" for JD coverage (toggle_ats_skip)
               "ats_feed": "TEXT"}  # 'greenhouse:acme' when tracked from a public job-board feed (code-set, not a user field)
-WATCH_MIGRATIONS = {"filters": "TEXT"}  # JSON search filters of a saved search (web_monitor.clean_filters)
+WATCH_MIGRATIONS = {"filters": "TEXT",  # JSON search filters of a saved search (web_monitor.clean_filters)
+                    "last_error": "TEXT"}  # what the last run could not read (shown on the watch); NULL after a clean run
 ANSWER_MIGRATIONS = {"star": "TEXT"}  # JSON STAR fields when the row is a story (interview.save_story); NULL = a form answer
 BACKFILL_KEY = "backfill:fields-v1"
 CONTACTS_KEY = "backfill:contacts-v1"
@@ -267,6 +275,23 @@ def con() -> sqlite3.Connection:
     return c
 
 
+def release(close: bool = True) -> None:
+    """Roll back whatever a failed write left open on this thread's connection (an INSERT that hit a UNIQUE index keeps
+    its implicit transaction, and with it the database write lock, until rollback), and close it when the thread is
+    done: request and task threads end here. A thread-local connection is otherwise freed only by the cyclic GC, so
+    an open transaction on it would lock every other writer ('database is locked') until a collection happens."""
+    c = getattr(_local, "con", None)
+    if c is None:
+        return
+    try:
+        if c.in_transaction:
+            c.rollback()
+    finally:
+        if close:
+            _local.con = None
+            c.close()
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -290,12 +315,29 @@ def add_job(company, title, url=None, jd=None, notes=None, ats_feed=None, **fiel
     extra = {k: v for k, v in derived.items() if v is not None} | given
     if extra.get("salary_min", 0) > extra.get("salary_max", 10**9):
         raise SystemExit("salary_min is above salary_max")
-    cur = con().execute("INSERT INTO jobs(company,title,url,jd,notes) VALUES(?,?,?,?,?)", (company, title, url, jd, notes))
-    if extra:
-        con().execute(f"UPDATE jobs SET {', '.join(k + '=?' for k in extra)} WHERE id=?", (*extra.values(), cur.lastrowid))
-    con().commit()
-    add_event(cur.lastrowid, "created", f"{company} - {title}")
-    return cur.lastrowid
+    c = con()
+    if c.in_transaction:
+        c.commit()
+    c.execute("BEGIN IMMEDIATE")  # the next id is read and taken in one step, even with the loop adding jobs too
+    try:
+        # never reuse a deleted job's id: what delete_job leaves behind (sent mail and decided Inbox items, ideas, the
+        # applications/<id>-... folder) would attach to the new job. Leftover references count for databases from
+        # before the high-water mark existed.
+        jid = 1 + max(c.execute("SELECT MAX(COALESCE((SELECT MAX(id) FROM jobs), 0), COALESCE((SELECT MAX(job_id) FROM "
+                                "pending), 0), COALESCE((SELECT MAX(job_id) FROM ideas), 0), COALESCE((SELECT MAX(job_id) "
+                                "FROM mail), 0), COALESCE((SELECT value FROM meta WHERE key='jobs_max_id'), 0))"
+                                ).fetchone()[0], 0)
+        c.execute("INSERT INTO jobs(id,company,title,url,jd,notes) VALUES(?,?,?,?,?,?)", (jid, company, title, url, jd, notes))
+        c.execute("INSERT INTO meta(key, value) VALUES('jobs_max_id', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                  (jid,))
+        if extra:
+            c.execute(f"UPDATE jobs SET {', '.join(k + '=?' for k in extra)} WHERE id=?", (*extra.values(), jid))
+        c.commit()
+    except BaseException:
+        c.rollback()
+        raise
+    add_event(jid, "created", f"{company} - {title}")
+    return jid
 
 
 def get_job(job_id: int) -> sqlite3.Row:
@@ -345,7 +387,13 @@ def update_job(job_id: int, touch: bool = True, **fields) -> None:
 def set_status(job_id: int, status: str, detail: str = "") -> None:
     if status not in STATUSES:
         raise SystemExit(f"status must be one of {STATUSES}")
-    extra = {"applied_at": _now()[:10]} if status == "applied" else {}
+    get_job(job_id)  # 'no job #N': a typo never writes an orphan timeline event the funnel would count
+    # applied_at is the day you applied where you are: an evening application must not be dated tomorrow (UTC)
+    extra = {"applied_at": datetime.now().strftime("%Y-%m-%d")} if status == "applied" else {}
+    # status proposals waiting in the Inbox were made against the old status: close them (the one running now is not
+    # 'pending', so an approved proposal never closes itself)
+    con().execute("UPDATE pending SET status='rejected', decided_at=?, result=? WHERE job_id=? AND kind='set_status' "
+                  "AND status='pending'", (_now(), f"stale: the job moved to {status} before this was decided", job_id))
     update_job(job_id, status=status, **extra)
     add_event(job_id, "status", f"{status} {detail}".strip())
     if status == "accepted":  # a hire: offer to close the other live applications, always through the Inbox
@@ -359,12 +407,14 @@ def set_status(job_id: int, status: str, detail: str = "") -> None:
 
 
 def delete_job(job_id: int) -> None:
+    get_job(job_id)  # 'no job #N' instead of reporting a delete that did nothing
     con().execute("DELETE FROM pending WHERE job_id=? AND status='pending'", (job_id,))  # nothing may act for a gone job
     con().execute("DELETE FROM events WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM job_contacts WHERE job_id=?", (job_id,))  # the people stay; only the link goes
     con().execute("DELETE FROM interviews WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM mock_sessions WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM offers WHERE job_id=?", (job_id,))
+    con().execute("DELETE FROM mail WHERE job_id=?", (job_id,))  # a reply to its sent mail then reads as unmatched
     con().execute("DELETE FROM jobs WHERE id=?", (job_id,))
     con().commit()
 
@@ -407,12 +457,24 @@ def find_job_by_company(name: str):
     return None
 
 
+def applied_ids() -> set[int]:
+    """Jobs you actually applied to: applied_at set, or a status of applied or later (now or in the timeline). A saved
+    job you withdraw, or one closed as rejected before you applied, is not an application."""
+    ids = {r["id"] for r in con().execute(f"SELECT id FROM jobs WHERE applied_at IS NOT NULL OR status IN "
+                                          f"({','.join('?' * len(STAGE_ORDER))})", STAGE_ORDER)}
+    ids |= {e["job_id"] for e in con().execute("SELECT job_id, detail FROM events WHERE kind='status'")
+            if (e["detail"] or "").split(" ")[0] in STAGE_ORDER}
+    return ids
+
+
 def stats() -> dict:
     rows = con().execute("SELECT status, COUNT(*) n FROM jobs GROUP BY status").fetchall()
     counts = {s: 0 for s in STATUSES} | {r["status"]: r["n"] for r in rows}
-    applied = sum(counts[s] for s in STATUSES if s != "saved")
-    positive = sum(counts[s] for s in POSITIVE)
-    responded = positive + counts["rejected"]
+    done = applied_ids()
+    mine = [j["status"] for j in con().execute("SELECT id, status FROM jobs").fetchall() if j["id"] in done]
+    applied = len(mine)
+    positive = sum(s in POSITIVE for s in mine)
+    responded = positive + mine.count("rejected")
     return {
         "counts": counts,
         "applied_total": applied,
@@ -423,13 +485,14 @@ def stats() -> dict:
 
 def variant_stats() -> list[dict]:
     """Outcomes per resume variant (hash of the tailored resume), best interview rate first."""
-    rows = con().execute(
-        "SELECT resume_hash h, COUNT(*) n, SUM(status IN ('screening','interview','offer','accepted')) pos, "
-        "SUM(status='rejected') neg FROM jobs WHERE resume_hash IS NOT NULL AND status != 'saved' GROUP BY resume_hash"
-    ).fetchall()
-    out = [{"variant": r["h"], "applied": r["n"], "positive": r["pos"], "rejected": r["neg"],
-            "response_rate": round((r["pos"] + r["neg"]) / r["n"], 2), "interview_rate": round(r["pos"] / r["n"], 2)}
-           for r in rows]
+    done, groups = applied_ids(), {}
+    for j in con().execute("SELECT id, resume_hash, status FROM jobs WHERE resume_hash IS NOT NULL").fetchall():
+        if j["id"] in done:
+            g = groups.setdefault(j["resume_hash"], [0, 0, 0])
+            g[0], g[1], g[2] = g[0] + 1, g[1] + (j["status"] in POSITIVE), g[2] + (j["status"] == "rejected")
+    out = [{"variant": h, "applied": n, "positive": pos, "rejected": neg,
+            "response_rate": round((pos + neg) / n, 2), "interview_rate": round(pos / n, 2)}
+           for h, (n, pos, neg) in groups.items()]
     return sorted(out, key=lambda v: -v["interview_rate"])
 
 
@@ -439,10 +502,13 @@ def needs_followup(days: int | None = None):
 
         days = int(settings.pref("followup_days") or 7)
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    # a round booked today or later is the next step already: no nudge, no follow-up mail, no 'ghosted' close-out.
+    # Round times are local, so today is the local date.
     return con().execute(
         "SELECT j.* FROM jobs j WHERE j.status IN ('applied','screening','interview') "
-        "AND (SELECT MAX(ts) FROM events e WHERE e.job_id=j.id) < ? ORDER BY updated_at",
-        (cutoff,),
+        "AND (SELECT MAX(ts) FROM events e WHERE e.job_id=j.id) < ? "
+        "AND NOT EXISTS (SELECT 1 FROM interviews i WHERE i.job_id=j.id AND i.at >= ?) ORDER BY updated_at",
+        (cutoff, datetime.now().strftime("%Y-%m-%d")),
     ).fetchall()
 
 
@@ -470,12 +536,22 @@ def watches():
 
 
 def remove_watch(wid: int) -> None:
-    con().execute("DELETE FROM watches WHERE id=?", (wid,))
+    n = con().execute("DELETE FROM watches WHERE id=?", (wid,)).rowcount
+    con().commit()
+    if not n:
+        raise SystemExit(f"no watch #{wid}")
+
+
+def update_watch(wid: int, last_hash: str, error: str = "") -> None:
+    """A run that read its source: last_seen moves on. error: what part of it failed (some job boards unreachable)."""
+    con().execute("UPDATE watches SET last_hash=?, last_seen=datetime('now'), last_error=? WHERE id=?",
+                  (last_hash, error[:300] or None, wid))
     con().commit()
 
 
-def update_watch(wid: int, last_hash: str) -> None:
-    con().execute("UPDATE watches SET last_hash=?, last_seen=datetime('now') WHERE id=?", (last_hash, wid))
+def watch_failed(wid: int, error: str) -> None:
+    """Nothing could be read: last_seen stays at the last good run and the error shows on the watch."""
+    con().execute("UPDATE watches SET last_error=? WHERE id=?", (error[:300], wid))
     con().commit()
 
 
@@ -502,8 +578,10 @@ def companies():
 
 
 def remove_company(cid: int) -> None:
-    con().execute("DELETE FROM companies WHERE id=?", (cid,))
+    n = con().execute("DELETE FROM companies WHERE id=?", (cid,)).rowcount
     con().commit()
+    if not n:
+        raise SystemExit(f"no watched company #{cid}")
 
 
 def update_company(cid: int, error: str = "") -> None:
@@ -584,6 +662,20 @@ def claim_pending(pid: int) -> bool:
     return cur.rowcount == 1
 
 
+def requeue_pending(pid: int, payload: str, result: str) -> None:
+    """A claimed item that failed before acting goes back to the Inbox, edits kept, with the reason in `result`."""
+    con().execute("UPDATE pending SET status='pending', payload=?, result=?, decided_at=NULL WHERE id=? AND status='running'",
+                  (payload, result, pid))
+    con().commit()
+
+
+def edit_pending(pid: int, payload: str) -> bool:
+    """A new payload for an item still pending (an approve that claimed it first wins: False)."""
+    cur = con().execute("UPDATE pending SET payload=? WHERE id=? AND status='pending'", (payload, pid))
+    con().commit()
+    return cur.rowcount == 1
+
+
 def decide_pending(pid: int, status: str, result: str = "") -> None:
     con().execute("UPDATE pending SET status=?, result=?, decided_at=? WHERE id=?", (status, result, _now(), pid))
     con().commit()
@@ -591,6 +683,8 @@ def decide_pending(pid: int, status: str, result: str = "") -> None:
 
 # --- answer bank ------------------------------------------------------------
 def save_answer(question: str, answer: str, tags: str = "") -> None:
+    if not str(question or "").strip() or not str(answer or "").strip():
+        raise SystemExit("an answer needs both a question and an answer")
     con().execute("INSERT INTO answers(question,answer,tags,updated_at) VALUES(?,?,?,?) "
                   "ON CONFLICT(question) DO UPDATE SET answer=excluded.answer, tags=excluded.tags, updated_at=excluded.updated_at",
                   (question.strip(), answer, tags, _now()))
@@ -650,6 +744,73 @@ def update_idea(iid: int, **fields) -> None:
 
 def delete_idea(iid: int) -> None:
     con().execute("DELETE FROM ideas WHERE id=?", (iid,))
+    con().commit()
+
+
+# --- mail (email_monitor records relevant mail it scans, approvals._send what it sends) -----------------------
+MAIL_COLS = ("message_id", "in_reply_to", "refs", "job_id", "direction", "from_addr", "to_addr", "subject", "sent_at",
+             "category", "summary", "snippet", "trusted", "linked_by", "company", "title")
+
+
+def add_mail(**fields) -> None:
+    """Deduped by Message-ID: the first record of a message wins (a rescan never relinks it)."""
+    f = {k: fields.get(k) for k in MAIL_COLS} | {"trusted": int(bool(fields.get("trusted"))),
+                                                 "snippet": (fields.get("snippet") or "")[:1500]}
+    con().execute(f"INSERT OR IGNORE INTO mail({','.join(f)}) VALUES({','.join('?' * len(f))})", tuple(f.values()))
+    con().commit()
+
+
+def get_mail(mid: int) -> sqlite3.Row:
+    row = con().execute("SELECT * FROM mail WHERE id=?", (mid,)).fetchone()
+    if not row:
+        raise SystemExit(f"no mail #{mid}")
+    return row
+
+
+def list_mail(job_id: int | None = None, unmatched: bool = False, limit: int = 200):
+    """A job's mail both ways, or incoming mail no job claims; newest first."""
+    q, args = "SELECT * FROM mail", ()
+    if job_id is not None:
+        q, args = q + " WHERE job_id=?", (job_id,)
+    elif unmatched:
+        q += " WHERE job_id IS NULL AND direction='in'"
+    return con().execute(q + " ORDER BY COALESCE(sent_at, created_at) DESC, id DESC LIMIT ?", (*args, limit)).fetchall()
+
+
+def thread_mail(ids: list[str]):
+    """The newest mail Lodestar sent, for a job, whose Message-ID is among a reply's In-Reply-To / References."""
+    ids = ids[-50:]  # References lists the thread oldest first; a forged header with thousands of ids stays bounded
+    if not ids:
+        return None
+    return con().execute(f"SELECT * FROM mail WHERE direction='out' AND job_id IS NOT NULL AND message_id IN "
+                         f"({','.join('?' * len(ids))}) ORDER BY id DESC LIMIT 1", tuple(ids)).fetchone()
+
+
+def mail_by_message_id(message_id: str):
+    return con().execute("SELECT * FROM mail WHERE message_id=?", ((message_id or "").strip(),)).fetchone()
+
+
+def link_mail(mid: int, job_id: int) -> None:
+    """Your own link: files the mail under the job. It never sets the job's contact or makes the sender trusted.
+    A pending 'track this company' proposal made from the same mail is closed: the mail has its job now."""
+    m, _ = get_mail(mid), get_job(job_id)
+    con().execute("UPDATE mail SET job_id=?, linked_by='user' WHERE id=?", (job_id, mid))
+    con().execute("UPDATE pending SET status='rejected', result=?, decided_at=? WHERE kind='add_job' AND status='pending' "
+                  "AND json_extract(payload, '$.message_id')=?", (f"mail filed under job #{job_id}", _now(), m["message_id"]))
+    con().commit()
+
+
+def unlink_mail(mid: int) -> None:
+    if get_mail(mid)["linked_by"] != "user":
+        raise SystemExit(f"mail #{mid} was not linked by you; only your own links can be undone")
+    con().execute("UPDATE mail SET job_id=NULL, linked_by=NULL WHERE id=?", (mid,))
+    con().commit()
+
+
+def dismiss_mail(mid: int) -> None:
+    if get_mail(mid)["job_id"] is not None:
+        raise SystemExit(f"mail #{mid} belongs to a job; unlink it first")
+    con().execute("DELETE FROM mail WHERE id=?", (mid,))  # the seen table keeps the scan from bringing it back
     con().commit()
 
 
@@ -718,7 +879,8 @@ STAGE_ORDER = ["applied", "screening", "interview", "offer", "accepted"]
 def funnel() -> dict:
     """Stage conversion, median days to the next stage, where rejections happen, and outcomes by source."""
     first: dict[int, dict[str, str]] = {}
-    for e in con().execute("SELECT job_id, ts, detail FROM events WHERE kind='status' ORDER BY ts").fetchall():
+    for e in con().execute("SELECT job_id, ts, detail FROM events WHERE kind='status' AND job_id IN (SELECT id FROM jobs) "
+                           "ORDER BY ts").fetchall():
         st = (e["detail"] or "").split(" ")[0]
         first.setdefault(e["job_id"], {}).setdefault(st, e["ts"])
 
@@ -727,12 +889,13 @@ def funnel() -> dict:
 
     stages = {}
     for i, st in enumerate(STAGE_ORDER):
-        nxt = STAGE_ORDER[i + 1] if i + 1 < len(STAGE_ORDER) else None
-        reached = [j for j in first.values() if st in j]
-        advanced = [j for j in reached if nxt and nxt in j]
-        durs = sorted(days(j[st], j[nxt]) for j in advanced)
+        later = STAGE_ORDER[i + 1:]
+        # a job at a later stage has passed this one, logged or not (applied -> interview skips screening)
+        reached = [j for j in first.values() if any(s in j for s in STAGE_ORDER[i:])]
+        advanced = [j for j in reached if any(s in j for s in later)]
+        durs = sorted(days(j[st], min(j[s] for s in later if s in j)) for j in advanced if st in j)
         stages[st] = {"reached": len(reached), "advanced": len(advanced),
-                      "conversion": round(len(advanced) / len(reached), 2) if reached and nxt else None,
+                      "conversion": round(len(advanced) / len(reached), 2) if reached and later else None,
                       "median_days_to_next": round(durs[len(durs) // 2], 1) if durs else None}
     rejected_from: dict[str, int] = {}
     for j in first.values():

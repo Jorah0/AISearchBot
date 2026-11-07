@@ -8,6 +8,15 @@ const safeUrl = u => /^https?:\/\//i.test(u || '') ? u : '';
 const api = (p, body) => fetch(p, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', 'X-Lodestar-Token': TOKEN }, body: body ? JSON.stringify(body) : undefined }).then(r => r.json());
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const opt = (list, sel) => list.map(s => `<option ${s === sel ? 'selected' : ''}>${s}</option>`).join('');
+// stored timestamps are UTC ('YYYY-MM-DD HH:MM:SS', SQLite datetime('now')); show them in this computer's time zone.
+// n: how many characters to keep (10 = the date, 16 = date and minutes). Dates and local times (interview rounds) pass
+// through untouched: only call this on stored UTC times.
+function localTs(s, n = 19) {
+  const m = /^(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d(?::\d\d)?)/.exec(s || ''); if (!m) return String(s ?? '').slice(0, n);
+  const d = new Date(`${m[1]}T${m[2]}Z`); if (isNaN(d)) return String(s).slice(0, n);
+  const p = x => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`.slice(0, n);
+}
 function toast(m, kind = '') { const t = $('#toast'); t.textContent = m; t.className = kind; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 4500); }
 function show(id, text) { const e = $('#' + id); e.style.display = 'block'; e.textContent = typeof text === 'string' ? text : JSON.stringify(text, null, 2); }
 function mailText(r) {
@@ -24,6 +33,7 @@ function go(tab) {
   if (tab !== 'board' || CT) closeDrawer();
   if (tab === 'contacts') loadContacts();
   if (tab === 'insights') loadInsights();
+  if (tab === 'setup') loadEmail();
 }
 
 /* ---- background tasks ---- */
@@ -107,7 +117,7 @@ function card(j) {
     aria-label="${esc(`#${j.id} ${j.company} - ${j.title}, ${j.status}`)}" ondragstart="event.dataTransfer.setData('text/plain','${j.id}');event.dataTransfer.effectAllowed='move'"
     onclick="openJob(${j.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openJob(${j.id})}">
     <div class="co">${esc(j.company)}</div><div class="ti">${esc(j.title)}</div>${chips ? `<div class="chips">${chips}</div>` : ''}
-    <div class="meta"><span>#${j.id}</span><span>${esc(j.updated_at.slice(0, 10))}</span></div></div>`;
+    <div class="meta"><span>#${j.id}</span><span>${esc(localTs(j.updated_at, 10))}</span></div></div>`;
 }
 function dragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; e.currentTarget.classList.add('drop'); }
 function dropJob(e, status) { e.preventDefault(); e.currentTarget.classList.remove('drop'); const id = Number(e.dataTransfer.getData('text/plain')); if (id) moveJob(id, status); }
@@ -130,8 +140,11 @@ function renderToday() {
     ...t.deadlines.map(i => item(i, i.days === 0 ? 'deadline today' : `deadline in ${i.days}d`, 'due')),
     ...t.interviews.map(i => item(i, 'interview ' + i.when)), ...t.followups.map(i => item(i, 'follow up')),
     ...(t.contacts || []).map(c => `<button class="b ghost sm" onclick="openContact(${Number(c.id)})">get in touch (due ${esc(c.when)}) · ${esc(c.name)}${c.company ? ' (' + esc(c.company) + ')' : ''}</button>`)];
-  el.style.display = parts.length || t.pending ? '' : 'none';
-  el.innerHTML = `<h3>Today</h3><div class="row">${parts.join('')}${t.pending ? `<button class="b sm" onclick="go('inbox')">${t.pending} waiting in the Inbox</button>` : ''}</div>`;
+  const em = (t.emails || []).map((s, i) => `<div class="row"><span class="chip ${s.priority === 1 ? 'due' : ''}">${esc(dueText(s.due))}</span><span>${esc(s.reason)} · #${Number(s.job_id)} ${esc(s.company)}${s.to ? ' → ' + esc(s.to) : ''}</span>
+    <button class="b ghost sm" onclick="suggestDraft(${i},this)">Draft options</button><button class="b ghost sm" onclick="suggestDismiss(${i})">Dismiss for now</button></div>`);
+  el.style.display = parts.length || em.length || t.pending ? '' : 'none';
+  el.innerHTML = `<h3>Today</h3><div class="row">${parts.join('')}${t.pending ? `<button class="b sm" onclick="go('inbox')">${t.pending} waiting in the Inbox</button>` : ''}</div>`
+    + (em.length ? `<h4>Suggested emails</h4>${em.join('')}` : '');
 }
 let SEL = new Set();  // table checkboxes; survives the 60 s refresh
 const COLS = [['id', '#'], ['company', 'Company'], ['title', 'Title'], ['status', 'Status'], ['salary', 'Salary'], ['match_score', 'Match'], ['excitement', 'Excitement'], ['deadline', 'Deadline'], ['location', 'Location'], ['updated_at', 'Last activity']];
@@ -142,7 +155,7 @@ function renderTable(jobs) {
     + COLS.map(([k, l]) => `<th aria-sort="${sortAttr(k)}"><button class="th" onclick="sortBy('${k}')">${l}${V.key === k ? (V.dir > 0 ? ' ▲' : ' ▼') : ''}</button></th>`).join('') + '</tr></thead><tbody>'
     + jobs.map(j => `<tr class="${S.followups.includes(j.id) ? 'late' : ''}"><td><input type="checkbox" aria-label="select #${j.id}" ${SEL.has(j.id) ? 'checked' : ''} onchange="selOne(${j.id},this.checked)"></td>
       <td>${j.id}</td><td><a href="#" onclick="openJob(${j.id});return false">${esc(j.company)}</a></td><td>${esc(j.title)}</td><td>${esc(j.status)}</td><td>${esc(salaryText(j))}</td>
-      <td>${esc(j.match_score ?? '')}</td><td>${stars(j)}</td><td>${deadlineChip(j)}</td><td>${esc(where(j))}</td><td>${esc(j.updated_at.slice(0, 10))}</td></tr>`).join('')
+      <td>${esc(j.match_score ?? '')}</td><td>${stars(j)}</td><td>${deadlineChip(j)}</td><td>${esc(where(j))}</td><td>${esc(localTs(j.updated_at, 10))}</td></tr>`).join('')
     + '</tbody></table>' + (jobs.length ? '' : '<div class="empty">No jobs match these filters.</div>');
   renderBulk();
 }
@@ -193,7 +206,7 @@ function renderOnboard() {
   const s = S.setup, todo = [];
   if (!s.profile_ready) todo.push(`<b>1.</b> Fill in your master resume <button class="b sm" onclick="go('profile')">Profile</button> or import one there`);
   if (!s.provider_ready) todo.push(`<b>2.</b> Store an AI key <button class="b sm" onclick="go('setup')">Setup</button> (the vault keeps it in the OS keyring)`);
-  if (!s.email_ready) todo.push(`<b>3.</b> Optional: connect your inbox (IMAP_USER / IMAP_PASS in Setup) so replies are classified and drafted`);
+  if (!s.email_ready) todo.push(`<b>3.</b> Optional: <button class="b sm" onclick="go('setup');$('#emailCard').scrollIntoView()">Connect email</button> so replies are classified and drafted`);
   const el = $('#onboard');
   el.style.display = todo.length ? '' : 'none';
   el.innerHTML = todo.length ? `<h3>Getting started</h3><div class="row" style="gap:18px">${todo.map(t => `<span>${t}</span>`).join('')}</div>` : '';
@@ -207,11 +220,27 @@ function renderLoop() {
 }
 
 /* ---- job drawer ---- */
-function closeDrawer() { $('#drawer').classList.remove('open'); cur = CT = null; $$('.card.sel').forEach(c => c.classList.remove('sel')); }
+let OPENER = null;  // what had focus when the drawer opened: focus returns there when it closes
+function openDrawer(label) {
+  const d = $('#drawer');
+  if (!d.classList.contains('open')) OPENER = document.activeElement;
+  d.setAttribute('aria-label', label); d.inert = false; d.setAttribute('aria-modal', 'true'); d.classList.add('open');
+  $('#drawer .close')?.focus();
+}
+function closeDrawer() {
+  const d = $('#drawer'), id = cur && cur.job.id, wasOpen = d.classList.contains('open');
+  const inside = d.contains(document.activeElement) || document.activeElement === document.body;
+  d.classList.remove('open'); d.inert = true; d.removeAttribute('aria-modal');  // closed: no focus, no screen reader
+  cur = CT = null; $$('.card.sel').forEach(c => c.classList.remove('sel'));
+  if (wasOpen && inside) {  // the board re-renders every minute: fall back to the job's card when the opener is gone
+    const back = OPENER && OPENER.isConnected ? OPENER : id && $(`.card[data-id="${Number(id)}"]`);
+    back?.focus();
+  }
+  if (wasOpen) OPENER = null;
+}
 async function openJob(id) {
   const d = await api('/api/jobs/' + id); if (d.error) return toast(d.error, 'err');
   cur = d; CT = null; const j = d.job, docs = Object.keys(d.docs);
-  $('#drawer').setAttribute('aria-label', 'Job details');
   $$('.card').forEach(c => c.classList.toggle('sel', c.dataset.id === String(id)));
   $('#drawer').innerHTML = `
     <div class="head"><b>${esc(j.company)}</b><span class="muted">${esc(j.title)} · #${j.id}</span>
@@ -233,6 +262,7 @@ ${roundsGroup(d)}
       <button class="b" onclick="jobRun('tailor',{docx:true,base:baseOpt()},this)">Tailor resume (+docx)</button>
       <button class="b" onclick="tailorBullets(this)">Tailor by bullet</button>
       <button class="b" onclick="jobRun('cover',{docx:true,tone:$('#jTone').value,words:$('#jWords').value},this)">Cover letter (+docx)</button>
+      <button class="b ghost" onclick="draftOptions('cover',{id:${j.id},tone:$('#jTone').value,words:$('#jWords').value},'jOpts',this)" title="up to 3 letters from one AI call; Use this opens one in the editor">Cover options</button>
       <input id="jTone" placeholder="tone: confident, warm, specific" style="width:190px"><input id="jWords" type="number" min="100" max="800" placeholder="words (300)" style="width:100px">
       <button class="b ghost" onclick="jobRun('prep',{},this)">Interview prep</button>
       <button class="b ghost" onclick="jobRun('research',{},this)">Company research</button>
@@ -247,7 +277,12 @@ ${roundsGroup(d)}
       <div class="row"><input id="jIntent" class="grow" placeholder="reply intent, e.g. accept interview, propose Tue/Wed afternoons"><button class="b ghost" onclick="jobRun('reply',{intent:$('#jIntent').value},this)">Draft reply</button></div>
       <div class="row"><input id="jPerson" class="grow" placeholder="outreach to: Name, title (optional)"><select id="jChannel"><option value="linkedin">LinkedIn note</option><option value="email">Email</option></select><button class="b ghost" onclick="jobRun('outreach',{person:$('#jPerson').value,channel:$('#jChannel').value},this)">Draft outreach</button></div>
       <div class="row"><button class="b ghost" onclick="jobRun('followup',{template:$('#jTpl').checked},this)">Follow-up email</button><input id="jInt" placeholder="interviewer" style="width:140px"><input id="jTnotes" class="grow" placeholder="something specific from the interview"><button class="b ghost" onclick="jobRun('thanks',{interviewer:$('#jInt').value,notes:$('#jTnotes').value,template:$('#jTpl').checked},this)">Thank-you note</button></div>
-      <div class="row"><button class="b ghost" onclick="jobRun('withdraw',{template:$('#jTpl').checked},this)">Withdrawal email</button><label class="muted"><input type="checkbox" id="jTpl" ${Object.values(S.providers).some(Boolean) ? '' : 'checked disabled'}> plain template, no AI (follow-up, thank-you, withdrawal; used automatically without a provider)</label></div></div>
+      <div class="row"><button class="b ghost" onclick="jobRun('withdraw',{template:$('#jTpl').checked},this)">Withdrawal email</button><label class="muted"><input type="checkbox" id="jTpl" ${Object.values(S.providers).some(Boolean) ? '' : 'checked disabled'}> plain template, no AI (follow-up, thank-you, withdrawal; used automatically without a provider)</label></div>
+      <div class="row"><label class="muted">options for <select id="jOk"><option value="followup">follow-up</option><option value="thanks">thank-you (interviewer, notes above)</option><option value="withdraw">withdrawal</option><option value="outreach">outreach email (person above)</option><option value="checkin">offer check-in</option></select></label>
+        <button class="b ghost" onclick="commOptions(this)" title="up to 3 drafts from one AI call, one recommended; the one you use waits in the Inbox for review">Options</button></div>
+      <div id="jOpts"></div></div>
+
+${mailGroup(d)}
 
     <div class="group"><h4>Schedule and decide</h4>
       <div class="row"><input id="jWhen" placeholder="interview: YYYY-MM-DD HH:MM" style="width:200px"><input id="jMin" type="number" min="5" placeholder="minutes (60)" style="width:110px"><button class="b ghost" onclick="jobRun('ics',{when:$('#jWhen').value,minutes:$('#jMin').value||60},this)">Calendar .ics</button></div>
@@ -264,15 +299,16 @@ ${roundsGroup(d)}
     <div class="row"><button class="b ghost sm" onclick="editDoc()">Edit document</button><input id="dAdj" class="grow" placeholder="adjust this document with AI: shorter / warmer / lead with X"><button class="b ghost sm" onclick="adjustDoc(this)">Adjust</button><button class="b ghost sm" onclick="reviewDoc(this)">Review</button></div>
     <textarea id="docEdit" style="display:none; min-height:260px"></textarea><button class="b sm" id="docSave" style="display:none" onclick="saveDoc()">Save document</button>
     <div class="out"><h4 class="muted">AI output</h4><pre id="jOut">(run an action above)</pre></div>`;
-  $('#drawer').classList.add('open');
+  openDrawer('Job details');
   renderCoverage(savedCoverage(d));
   renderBullets(savedBullets(d), false);
   showDoc('timeline', $('#docTabs button'));
-  $('#drawer .close')?.focus();
 }
 function showDoc(n, btn) {
   $$('#docTabs button').forEach(b => b.classList.remove('on')); if (btn) btn.classList.add('on');
-  $('#docView').textContent = n === 'timeline' ? cur.events.map(e => `${e.ts}  ${e.kind.padEnd(16)} ${e.detail || ''}`).join('\n')
+  const ed = $('#docEdit');  // an open editor belongs to its own tab: hidden elsewhere, back (edits kept) on return
+  if (ed) { const mine = ed.dataset.open === '1' && ed.dataset.name === n; ed.style.display = $('#docSave').style.display = mine ? '' : 'none'; }
+  $('#docView').textContent = n === 'timeline' ? cur.events.map(e => `${localTs(e.ts)}  ${e.kind.padEnd(16)} ${e.detail || ''}`).join('\n')
     : n === 'description' ? (cur.job.jd || '(no job description on file; set one in Admin)') : cur.docs[n];
 }
 const DETAILS = ['location', 'remote', 'salary_min', 'salary_max', 'currency', 'excitement', 'match_score', 'deadline', 'posted_at', 'source', 'tags', 'next_action', 'next_action_at'];
@@ -395,7 +431,7 @@ const warmChip = w => w && w.length ? `<span class="chip warm" title="${esc(peop
 function peopleGroup(d) {
   const linked = new Set(d.people.map(p => p.id)), others = d.warm.filter(p => !linked.has(p.id)), id = d.job.id;
   const who = p => `<a href="#" onclick="openContact(${Number(p.id)});return false">${esc(p.name)}</a>${p.position ? ` <span class="muted">${esc(p.position)}</span>` : ''}`;
-  const ask = p => `<button class="b ghost sm" title="draft a referral ask: an email into the Inbox (always reviewed) when they have an address, else a LinkedIn note" onclick="jobRun('referral',{contact_id:${Number(p.id)}},this)">Ask for referral</button>`;
+  const ask = p => `<button class="b ghost sm" title="draft a referral ask: an email into the Inbox (always reviewed) when they have an address, else a LinkedIn note" onclick="jobRun('referral',{contact_id:${Number(p.id)}},this)">Ask for referral</button><button class="b ghost sm" title="up to 3 referral asks, one recommended (shown under Communicate)" onclick="draftOptions('referral',{id:${id},contact_id:${Number(p.id)}},'jOpts',this)">options</button>`;
   return `<div class="group"><h4>People</h4>
     ${d.people.map(p => `<div class="row">${who(p)}<span class="pill">${esc(p.role.replace('_', ' '))}</span>${p.email ? `<span class="muted">${esc(p.email)}</span>` : ''}${ask(p)}
       <button class="b ghost sm" onclick="contactOp(${Number(p.id)},'unlink',{job_id:${id}})">unlink</button></div>`).join('') || '<div class="muted">nobody linked to this job yet</div>'}
@@ -449,12 +485,11 @@ async function openContact(id) {
   const d = await api('/api/contacts/' + id); if (d.error) return toast(d.error, 'err');
   cur = null; CT = d; const c = d.contact, today = new Date().toLocaleDateString('en-CA');
   $$('.card.sel').forEach(x => x.classList.remove('sel'));
-  $('#drawer').setAttribute('aria-label', 'Contact details');
   $('#drawer').innerHTML = `
     <div class="head"><b>${esc(c.name)}</b><span class="muted">${esc([c.position, c.company].filter(Boolean).join(' at '))} · contact #${Number(c.id)}</span>
       ${safeUrl(c.linkedin_url) ? `<a href="${esc(c.linkedin_url)}" target="_blank" rel="noopener">LinkedIn ↗</a>` : ''}
       <button class="b ghost sm close" onclick="closeDrawer()" aria-label="Close contact details">✕</button></div>
-    <div class="muted">source: ${esc(c.source || 'manual')} · added ${esc((c.created_at || '').slice(0, 10))}</div>
+    <div class="muted">source: ${esc(c.source || 'manual')} · added ${esc(localTs(c.created_at, 10))}</div>
     <div class="group"><h4>Details</h4>
       <div class="row">${CT_FIELDS.map(([k, l]) => `<label class="fld">${l}<input id="c_${k}" value="${esc(c[k] ?? '')}" style="width:${k === 'linkedin_url' || k === 'how_met' ? 260 : 170}px"></label>`).join('')}</div>
       <label class="fld">notes<textarea id="c_notes" style="min-height:90px">${esc(c.notes || '')}</textarea></label>
@@ -470,9 +505,8 @@ async function openContact(id) {
       <div class="row"><select id="cJobSel" aria-label="Job to link">${S.jobs.map(j => `<option value="${Number(j.id)}">#${Number(j.id)} ${esc(j.company)} - ${esc(j.title)}</option>`).join('')}</select>
         <select id="cRoleSel" aria-label="Role">${roleOpt()}</select><button class="b ghost sm" onclick="if($('#cJobSel').value)contactOp(${Number(c.id)},'link',{job_id:$('#cJobSel').value,role:$('#cRoleSel').value})">link to job</button></div></div>
     <div class="group"><h4>Recent activity with ${esc(c.email || 'them')}</h4>
-      ${c.email ? (d.events.map(e => `<div class="muted">${esc(e.ts)} · #${Number(e.job_id)} ${esc(e.company || '')} · ${esc(e.kind)}: ${esc(e.detail)}</div>`).join('') || '<div class="muted">no timeline entries mention this address yet</div>') : '<div class="muted">add an email address to see mail sent to them</div>'}</div>`;
-  $('#drawer').classList.add('open');
-  $('#drawer .close')?.focus();
+      ${c.email ? (d.events.map(e => `<div class="muted">${esc(localTs(e.ts))} · #${Number(e.job_id)} ${esc(e.company || '')} · ${esc(e.kind)}: ${esc(e.detail)}</div>`).join('') || '<div class="muted">no timeline entries mention this address yet</div>') : '<div class="muted">add an email address to see mail sent to them</div>'}</div>`;
+  openDrawer('Contact details');
 }
 function saveContact() {  // every field is sent; an empty one clears it (the server validates each)
   const body = Object.fromEntries([...CT_FIELDS.map(([k]) => k), 'notes', 'last_touch', 'next_touch'].map(k => [k, $('#c_' + k).value]));
@@ -578,15 +612,18 @@ function renderInbox() {
   const focused = fe && { id: fe.id, s: fe.selectionStart, e: fe.selectionEnd, top: fe.scrollTop };  // keep the caret where it was
   $('#inboxList').innerHTML = S.pending.map(r => {
     const p = r.payload, mail = r.kind === 'send_email';
-    return `<div class="item"><div class="hd"><b>#${r.id}</b><span class="pill">${r.tool}</span><span class="pill">${r.kind}</span>${esc(r.summary)}<span class="muted">${r.ts.slice(0, 16)}</span></div>
+    return `<div class="item"><div class="hd"><b>#${r.id}</b><span class="pill">${r.tool}</span><span class="pill">${r.kind}</span>${p.unverified ? '<span class="pill warn" title="the mail this answers was not authenticated or not tied to the job: check the address before you send; sending it moves no job">unverified sender</span>' : ''}${esc(r.summary)}<span class="muted">${esc(localTs(r.ts, 16))}</span></div>
       ${mail ? `<div class="row"><input id="to${r.id}" value="${esc(p.to)}" style="width:260px"><input id="sub${r.id}" class="grow" value="${esc(p.subject)}"></div><textarea id="body${r.id}">${esc(p.body)}</textarea>${'chosen_time' in p ? `<div class="row"><input id="ct${r.id}" value="${esc(p.chosen_time || '')}" placeholder="YYYY-MM-DD HH:MM" style="width:170px"><span class="muted">interview slot this reply accepts; an .ics is written on send. Empty = no .ics.</span></div>` : ''}`
         : `<textarea id="js${r.id}" spellcheck="false" style="font-family:monospace">${esc(JSON.stringify(p, null, 2))}</textarea>`}
-      <div class="row"><button class="b" onclick="decide(${r.id},'approve',${mail})">Approve${mail ? ' and send' : ''}</button><button class="b ghost" onclick="decide(${r.id},'reject',false)">Reject</button></div></div>`;
+      ${mail ? `<div class="row"><button class="b ghost sm" onclick="draftOptions('pending',{pending_id:${r.id}},'p${r.id}',this)" title="up to 3 alternatives (one AI call); Use this changes only the subject and body">Options</button>${HOWS.map(([k, l]) => `<button class="b ghost sm" onclick="rewritePending(${r.id},'${k}',this)">${l}</button>`).join('')}<button class="b ghost sm" onclick="rewritePending(${r.id},'',this)">custom…</button></div>${optsHtml('p' + r.id)}` : ''}
+      ${r.result ? `<div class="row"><span class="pill warn">${esc(r.result)}</span></div>` : ''}
+      <div class="row"><button class="b" onclick="decide(${r.id},'approve',${mail})">${mail && r.result ? 'Retry send' : 'Approve' + (mail ? ' and send' : '')}</button><button class="b ghost" onclick="decide(${r.id},'reject',false)">Reject</button></div></div>`;
   }).join('') || '<div class="empty">Inbox empty. Automatic actions appear here when a tool is enabled but not set to auto.</div>';
   for (const [id, v] of Object.entries(edited)) { const e = document.getElementById(id); if (e) e.value = v; }
   const back = focused && document.getElementById(focused.id);
   if (back) { back.focus(); try { back.setSelectionRange(focused.s, focused.e); } catch (_) { /* not a text field */ } back.scrollTop = focused.top; }
   $('#decidedList').innerHTML = S.decided.map(r => `<div>#${r.id} <b>${r.status}</b> ${esc(r.summary)} <span class="muted">${esc((r.result || '').slice(0, 140))}</span></div>`).join('') || '<div class="muted">nothing decided yet</div>';
+  renderUnmatched();
 }
 async function decide(id, op, mail) {
   let body = op === 'approve' && mail ? { edits: { to: $('#to' + id).value, subject: $('#sub' + id).value, body: $('#body' + id).value } } : {};
@@ -596,6 +633,115 @@ async function decide(id, op, mail) {
   const ct = $('#ct' + id); if (body.edits && ct) body.edits.chosen_time = ct.value.trim() || null;
   const r = await api(`/api/approvals/${id}/${op}`, body);
   toast(r.error ? 'error: ' + r.error : op === 'approve' ? `#${id} ${r.status}: ${r.result || ''}` : `#${id} rejected`, r.error ? 'err' : 'ok'); load();
+}
+
+/* ---- mail: Unmatched mail (Inbox) and the drawer's Mail group. Subjects, senders, snippets are attacker-controlled:
+   every one goes through esc, and markup carries only the numeric mail id (MAILS keeps the rows) ---- */
+const MAILS = {};
+/* mail-render */
+function mailItem(m, actions) {
+  const id = Number(m.id), out = m.direction === 'out';
+  return `<div class="item" id="mail${id}"><div class="hd"><b>${out ? '→ to ' + esc(m.to_addr) : esc(m.from_addr)}</b>
+    <span class="chip">${esc(m.category || 'mail')}</span>${out ? '' : m.trusted ? '<span class="pill ok" title="DKIM/DMARC-aligned and tied to the job by address or company domain">trusted</span>' : '<span class="pill warn" title="not authenticated, or not tied to this company: Lodestar never acts on it unreviewed">unverified</span>'}
+    <span class="muted">${esc(localTs(m.sent_at || m.created_at, 16))}${m.linked_by ? ' · linked by ' + esc(m.linked_by) : ''}</span></div>
+    <details><summary>${esc(m.subject || '(no subject)')}</summary>${m.summary ? `<div class="muted">${esc(m.summary)}</div>` : ''}<pre>${esc(m.snippet || '')}</pre></details>
+    ${actions ? `<div class="row">${actions}</div>` : ''}</div>`;
+}
+/* /mail-render */
+function renderUnmatched() {
+  const el = $('#mailList'); if (!el) return;
+  const jobs = S.jobs.map(j => `<option value="${Number(j.id)}">#${Number(j.id)} ${esc(j.company)} - ${esc(j.title)}</option>`).join('');
+  el.innerHTML = S.mail_unmatched.map(m => { MAILS[m.id] = m; const id = Number(m.id);
+    return mailItem(m, `<select id="ml${id}" aria-label="job to file this mail under">${jobs}</select>
+      <button class="b ghost sm" onclick="mailOp(${id},'link',{job_id:Number($('#ml${id}').value)})" ${jobs ? '' : 'disabled'}>Link to job</button>
+      <button class="b ghost sm" onclick="trackMail(${id})">Track as new job</button>
+      <button class="b ghost sm" onclick="mailOp(${id},'dismiss')">Dismiss</button>`);
+  }).join('') || '<div class="muted">no unmatched mail: relevant mail no job claims appears here</div>';
+}
+function mailGroup(d) {
+  return `<div class="group"><h4>Mail</h4>${(d.mail || []).map(m => { MAILS[m.id] = m; const id = Number(m.id);
+    return mailItem(m, (m.linked_by === 'user' ? `<button class="b ghost sm" onclick="mailOp(${id},'unlink')">Unlink</button>` : '')
+      + (m.direction === 'in' ? `<button class="b ghost sm" onclick="replyMail(${id},this)" title="up to 3 reply drafts, one recommended; the one you use goes to the Inbox for review">Reply with options</button>` : ''));
+  }).join('') || '<div class="muted">no mail on file for this job yet (scanned replies and mail Lodestar sends show here)</div>'}</div>`;
+}
+async function mailOp(id, op, body) {
+  const r = await api(`/api/mail/${id}/${op}`, body || {});
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast(op === 'track' ? `tracking job #${r.id}` : `mail #${id}: ${op} done`, 'ok'); await load();
+  if (op === 'track') openJob(r.id); else if (cur && $('#drawer').classList.contains('open')) openJob(cur.job.id);
+}
+function trackMail(id) {
+  const m = MAILS[id], company = prompt('Company for the new job', m.company || ''); if (company === null) return;
+  const title = prompt('Role', m.title || ''); if (title === null) return;
+  mailOp(id, 'track', { company, title });
+}
+function replyMail(id, btn) { if (cur) draftOptions('reply', { id: cur.job.id, mail_id: Number(id) }, 'jOpts', btn); }
+
+/* ---- draft options (lodestar/drafts.py): up to 3 from one AI call, one recommended. Option text stays in OPTS; markup
+   carries only indexes. 'Use this' never changes who a mail goes to: the server takes the recipient from the job, the
+   mail being answered or the contact, and a pending item keeps everything but its subject and body ---- */
+let OPTS = { list: [], kind: '', ctx: {}, target: '' };
+const HOWS = [['shorter', 'shorter'], ['warmer', 'warmer'], ['formal', 'more formal'], ['direct', 'more direct']];
+function draftOptions(kind, ctx, target, btn) {
+  run('draft_options', { kind, ...ctx }, r => { OPTS = { list: r.options, kind, ctx, target }; renderOpts(); $('#' + target)?.scrollIntoView({ block: 'nearest' }); }, btn);
+}
+function optsHtml(target) {
+  if (OPTS.target !== target || !OPTS.list.length) return '';
+  return `<div class="opts">` + OPTS.list.map((o, i) => `<div class="item opt${o.recommended ? ' rec' : ''}">
+    <div class="hd"><b>${esc(o.label)}</b>${o.tone ? `<span class="chip">${esc(o.tone)}</span>` : ''}${o.recommended ? `<span class="pill ok">recommended</span><span class="muted">${esc(o.why)}</span>` : ''}</div>
+    ${o.subject ? `<div><b>Subject:</b> ${esc(o.subject)}</div>` : ''}<pre>${esc(o.body)}</pre>
+    <div class="row"><button class="b sm" onclick="useOpt(${i},this)">Use this</button>${HOWS.map(([k, l]) => `<button class="b ghost sm" onclick="rewriteOpt(${i},'${k}',this)">${l}</button>`).join('')}<button class="b ghost sm" onclick="rewriteOpt(${i},'',this)">custom…</button></div></div>`).join('')
+    + `<div class="row"><button class="b ghost sm" onclick="closeOpts()">close options</button></div></div>`;
+}
+function renderOpts() { if (OPTS.target.startsWith('p')) renderInbox(); else { const el = $('#' + OPTS.target); if (el) el.innerHTML = optsHtml(OPTS.target); } }
+function closeOpts() { const t = OPTS.target; OPTS = { list: [], kind: '', ctx: {}, target: '' }; if (t.startsWith('p')) renderInbox(); else if ($('#' + t)) $('#' + t).innerHTML = ''; }
+function pendingSet(id, d) {  // the item's fields take the saved text as their own, so the refresh does not restore the old edits
+  [['sub', d.subject], ['body', d.body]].forEach(([k, v]) => { const e = $(`#${k}${id}`); if (e && v != null) e.value = e.defaultValue = v; });
+}
+async function useOpt(i, btn) {
+  const o = OPTS.list[i], t = OPTS.target; if (!o) return;
+  if (t.startsWith('p')) {  // a pending Inbox email: only subject and body change, it stays pending
+    const id = Number(t.slice(1)), r = await api(`/api/approvals/${id}/edit`, { subject: o.subject, body: o.body });
+    if (r.error) return toast('error: ' + r.error, 'err');
+    pendingSet(id, r.payload); closeOpts(); toast(`inbox #${id} updated; still waiting for your approval`, 'ok'); return load();
+  }
+  if (t === 'aOpts') { $('#bQ').value = OPTS.ctx.question || ''; $('#bA').value = o.body; closeOpts(); return toast('filled in under Answer bank: edit it, then Save', 'ok'); }
+  if (OPTS.kind === 'cover') { openEditor('cover_letter.md', o.body); closeOpts(); return toast('the letter is in the editor: review, then Save document', 'ok'); }
+  run('draft_use', { kind: OPTS.kind, ...OPTS.ctx, subject: o.subject, body: o.body }, r => {
+    const txt = mailText(r); closeOpts();
+    if (t === 'ctrOpts') show('ctrOut', txt); else if (cur) openJob(cur.job.id).then(() => { $('#jOut').textContent = txt; });
+  }, btn);
+}
+function rewriteOpt(i, how, btn) {
+  const o = OPTS.list[i]; if (!o) return;
+  if (!how && !(how = (prompt('How should it change? e.g. mention my portfolio link, drop the second paragraph') || '').trim())) return;
+  run('draft_rewrite', { kind: OPTS.kind, subject: o.subject, body: o.body, how }, r => { o.body = r.body; if (r.subject != null) o.subject = r.subject; renderOpts(); }, btn);
+}
+function rewritePending(id, how, btn) {  // rewrite chips on an Inbox email: the current text (your edits included), saved in place
+  if (!how && !(how = (prompt('How should this email change?') || '').trim())) return;
+  run('draft_rewrite', { kind: 'email', subject: $('#sub' + id).value, body: $('#body' + id).value, how }, async r => {
+    const s = await api(`/api/approvals/${id}/edit`, { subject: r.subject, body: r.body });
+    if (s.error) return toast('error: ' + s.error, 'err');
+    pendingSet(id, s.payload); toast(`inbox #${id} rewritten; still waiting for your approval`, 'ok'); load();
+  }, btn);
+}
+function commOptions(btn) {  // the drawer's Communicate group: options for the chosen kind, from the fields already there
+  const kind = $('#jOk').value, ctx = { id: cur.job.id };
+  if (kind === 'thanks') Object.assign(ctx, { interviewer: $('#jInt').value, notes: $('#jTnotes').value });
+  if (kind === 'outreach') ctx.person = $('#jPerson').value;
+  draftOptions(kind, ctx, 'jOpts', btn);
+}
+const dueText = d => { const n = daysTo(d); return n < 0 ? `overdue since ${d}` : n === 0 ? 'due today' : `due in ${n}d`; };
+function suggestDraft(i, btn) {
+  const s = (S.today.emails || [])[i]; if (!s) return;
+  const ctx = { id: s.job_id }; if (s.mail_id) ctx.mail_id = s.mail_id; if (s.contact_id) ctx.contact_id = s.contact_id;
+  openJob(s.job_id).then(() => draftOptions(s.kind, ctx, 'jOpts', btn));
+}
+async function suggestDismiss(i) {
+  const s = (S.today.emails || [])[i]; if (!s) return;
+  const r = await api('/api/suggest/dismiss', { job_id: s.job_id, kind: s.kind });
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast('dismissed for 3 days', 'ok'); load();
 }
 
 /* ---- search ---- */
@@ -619,8 +765,11 @@ function listingHtml(j, i) {
 function doSearch(btn) {
   $('#sRes').innerHTML = '<div class="muted">searching…</div>';
   run('search', { ...searchParams(), rank: $('#sRank').checked }, r => {
-    RESULTS = r.results || [];
-    $('#sRes').innerHTML = `<div class="list">` + (RESULTS.map(listingHtml).join('') || '<div class="empty">nothing found</div>') + '</div>';
+    RESULTS = r.results || []; const errs = r.errors || [];
+    const none = errs.length && !RESULTS.length && errs.filter(e => !e.startsWith('AI rank')).length >= (r.boards || Infinity)
+      ? 'No job board could be reached, so nothing was checked. Check your connection and try again.' : 'nothing found';
+    $('#sRes').innerHTML = (errs.length ? `<div class="warnbox" role="alert">${errs.map(e => 'could not ' + (e.startsWith('AI rank') ? 'rank: ' + esc(e.slice(9)) : 'read ' + esc(e))).join('<br>')}</div>` : '')
+      + `<div class="list">` + (RESULTS.map(listingHtml).join('') || `<div class="empty">${esc(none)}</div>`) + '</div>';
   }, btn);
 }
 async function saveSearch() {
@@ -638,8 +787,8 @@ async function saveListing(i) {
 /* ---- monitor ---- */
 function renderMonitor() {
   const filt = f => Object.entries(f || {}).map(([k, v]) => k + '=' + v).join(', ');
-  $('#wList').innerHTML = `<div class="list">` + (S.watches.map(w => `<div>${esc(w.url)} <span class="muted">kw=${esc(w.keywords || '-')}${filt(w.filters) ? ' · ' + esc(filt(w.filters)) : ''} · last ${esc(w.last_seen || 'never')}</span> <button class="b ghost sm" onclick="api('/api/watches/${w.id}',{}).then(load)">remove</button></div>`).join('') || '<div class="empty">No watches yet. Add a careers page URL or a saved search.</div>') + '</div>';
-  $('#coList').innerHTML = `<div class="list">` + (S.companies.map(c => `<div><b>${esc(c.name)}</b> <span class="pill">${esc(c.vendor)}:${esc(c.slug)}</span><span class="muted">kw=${esc(c.keywords || '-')} · last ${esc(c.last_seen || 'never')}</span>${c.last_error ? ` <span class="chip stale" title="${esc(c.last_error)}">last read failed</span>` : ''} <button class="b ghost sm" onclick="api('/api/companies/${c.id}',{}).then(load)">remove</button></div>`).join('') || '<div class="empty">No companies yet.</div>') + '</div>';
+  $('#wList').innerHTML = `<div class="list">` + (S.watches.map(w => `<div>${esc(w.url)} <span class="muted">kw=${esc(w.keywords || '-')}${filt(w.filters) ? ' · ' + esc(filt(w.filters)) : ''} · last ${esc(w.last_seen ? localTs(w.last_seen, 16) : 'never')}</span>${w.last_error ? ` <span class="chip stale" title="${esc(w.last_error)}">last run failed</span> <span class="muted">${esc(w.last_error.slice(0, 160))}</span>` : ''} <button class="b ghost sm" onclick="api('/api/watches/${w.id}',{}).then(load)">remove</button></div>`).join('') || '<div class="empty">No watches yet. Add a careers page URL or a saved search.</div>') + '</div>';
+  $('#coList').innerHTML = `<div class="list">` + (S.companies.map(c => `<div><b>${esc(c.name)}</b> <span class="pill">${esc(c.vendor)}:${esc(c.slug)}</span><span class="muted">kw=${esc(c.keywords || '-')} · last ${esc(c.last_seen ? localTs(c.last_seen, 16) : 'never')}</span>${c.last_error ? ` <span class="chip stale" title="${esc(c.last_error)}">last read failed</span>` : ''} <button class="b ghost sm" onclick="api('/api/companies/${c.id}',{}).then(load)">remove</button></div>`).join('') || '<div class="empty">No companies yet.</div>') + '</div>';
   $('#alerts').textContent = S.alerts.join('\n') || '(no alerts yet)';
 }
 async function addWatch() {
@@ -660,6 +809,14 @@ function renderAnswers() {
   $('#aJob').innerHTML = S.jobs.map(j => `<option value="${j.id}">#${j.id} ${esc(j.company)} - ${esc(j.title)}</option>`).join('');
   if (keep && S.jobs.some(j => String(j.id) === keep)) $('#aJob').value = keep;
 }
+async function saveAnswer(btn) {
+  const question = $('#bQ').value.trim(), answer = $('#bA').value.trim();
+  if (!question || !answer) return toast('type both a question and an answer', 'err');
+  btn.disabled = true; const r = await api('/api/answers', { question, answer, tags: $('#bT').value }); btn.disabled = false;
+  if (r.error) return toast('error: ' + r.error, 'err');
+  ['#bQ', '#bA', '#bT'].forEach(s => { $(s).value = ''; }); toast('answer saved', 'ok'); load();
+}
+function answerOptions(btn) { draftOptions('answer', { id: $('#aJob').value, question: $('#aQ').value }, 'aOpts', btn); }
 function askAnswer(btn) { run('answer', { id: $('#aJob').value, question: $('#aQ').value }, r => show('aOut2', r.answer + '\n\n[reused: ' + (r.reused.join(' | ') || 'none') + ']  [save -> ' + r.proposal.status + ']'), btn); }
 
 /* ---- ideas ---- */
@@ -668,12 +825,12 @@ function renderIdeas() {
   const keep = $('#iJob').value;
   $('#iJob').innerHTML = '<option value="">(no job focus)</option>' + S.jobs.map(j => `<option value="${j.id}">#${j.id} ${esc(j.company)} - ${esc(j.title)}</option>`).join('');
   if (S.jobs.some(j => String(j.id) === keep)) $('#iJob').value = keep;
-  $('#ideaList').innerHTML = S.ideas.map(i => `<div class="panel"><div class="row" style="margin-top:0"><b>${esc(i.title)}</b><span class="pill">${i.topic}</span><span class="pill">score ${i.score}</span><span class="muted">impact ${i.impact ?? '?'} · effort ${i.effort ?? '?'} · fit ${i.fit ?? '?'} · ${esc(i.time || '')}</span>
-      <select onchange="api('/api/ideas/${i.id}/status',{status:this.value}).then(load)">${opt(S.idea_statuses, i.status)}</select><button class="b ghost sm" onclick="api('/api/ideas/${i.id}/delete',{}).then(load)">remove</button></div>
+  $('#ideaList').innerHTML = S.ideas.map(i => { const id = Number(i.id); return `<div class="panel"><div class="row" style="margin-top:0"><b>${esc(i.title)}</b><span class="pill">${esc(i.topic)}</span><span class="pill">score ${esc(i.score)}</span><span class="muted">impact ${esc(i.impact ?? '?')} · effort ${esc(i.effort ?? '?')} · fit ${esc(i.fit ?? '?')} · ${esc(i.time || '')}</span>
+      <select onchange="api('/api/ideas/${id}/status',{status:this.value}).then(load)">${opt(S.idea_statuses, i.status)}</select><button class="b ghost sm" onclick="api('/api/ideas/${id}/delete',{}).then(load)">remove</button></div>
       <div>${esc(i.idea || '')}</div><div class="muted">why: ${esc(i.why_it_works || '')}</div>
-      <ol class="muted">${(i.plan || []).map(s => `<li>${esc(s)}</li>`).join('')}</ol><div class="muted">metric: ${esc(i.metric || '')}</div>
-      ${i.topic === 'stories' ? `<div class="row"><button class="b ghost sm" title="becomes a STAR story (Answers > Stories) with this title and sketch; you fill in the rest" onclick="storyFromIdea(${Number(i.id)})">Save as story</button></div>` : ''}
-      <div class="row"><input id="rf${i.id}" class="grow" placeholder="feedback: make it cheaper / focus on X / too vague"><button class="b ghost sm" onclick="run('refine',{idea_id:${i.id},feedback:$('#rf${i.id}').value},r=>toast('refined: '+r.idea.title,'ok'),this)">Refine</button></div></div>`).join('')
+      <ol class="muted">${(Array.isArray(i.plan) ? i.plan : []).map(s => `<li>${esc(s)}</li>`).join('')}</ol><div class="muted">metric: ${esc(i.metric || '')}</div>
+      ${i.topic === 'stories' ? `<div class="row"><button class="b ghost sm" title="becomes a STAR story (Answers > Stories) with this title and sketch; you fill in the rest" onclick="storyFromIdea(${id})">Save as story</button></div>` : ''}
+      <div class="row"><input id="rf${id}" class="grow" placeholder="feedback: make it cheaper / focus on X / too vague"><button class="b ghost sm" onclick="run('refine',{idea_id:${id},feedback:$('#rf${id}').value},r=>toast('refined: '+r.idea.title,'ok'),this)">Refine</button></div></div>`; }).join('')
     || '<div class="empty">No ideas yet. Pick a topic and craft.</div>';
 }
 function craft(btn) {
@@ -718,6 +875,65 @@ async function compOp(body) {
 async function delVault(i) {  // names stay in JS; markup carries only an index
   const v = S.vault[i]; if (!v || !confirm(`Remove ${v.name} from the OS keyring?`)) return;
   const r = await api('/api/vault', { name: v.name, delete: true }); toast(r.error || 'removed ' + v.name, r.error ? 'err' : 'ok'); load();
+}
+/* ---- connect email (the password goes in once and never comes back from the server) ---- */
+let EM = null;  // {status, presets} from /api/email/status
+const EF = { imap_host: '#eImapHost', imap_port: '#eImapPort', smtp_host: '#eSmtpHost', smtp_port: '#eSmtpPort', smtp_mode: '#eSmtpMode', smtp_user: '#eSmtpUser' };
+async function loadEmail() {
+  const r = await api('/api/email/status'); if (r.error) return toast('error: ' + r.error, 'err');
+  EM = r; const s = r.status;
+  if (!$('#eProv').options.length) $('#eProv').innerHTML = Object.entries(r.presets).map(([k, p]) => `<option value="${esc(k)}">${esc(p.label)}${p.unsupported ? ' (not supported)' : ''}</option>`).join('');
+  if (s.user && !$('#eUser').value) $('#eUser').value = s.user;
+  $('#eProv').value = r.presets[s.preset] ? s.preset : (s.configured ? 'custom' : 'gmail');
+  emailPreset(s); emailLine();
+}
+function emailPreset(s) {  // s: the stored connection when it uses this preset, else the preset's own servers
+  const k = $('#eProv').value, p = EM.presets[k] || {}, v = s && (s.preset === k || (!s.preset && s.configured)) ? s : p, off = !!p.unsupported;
+  Object.entries(EF).forEach(([f, sel]) => { $(sel).value = f === 'smtp_user' && v.smtp_user === v.user ? '' : (v[f] ?? (f === 'smtp_mode' ? 'ssl' : '')); });
+  ['#ePass', '#eConnect', '#eSend'].forEach(x => { $(x).disabled = off; });  // the address stays editable: a typo must not lock it
+  $('#emailCard').style.opacity = off ? '.6' : '';
+  $('#eAdv').open = k === 'custom';
+  const help = safeUrl(p.help);
+  $('#eHelp').innerHTML = off ? `<b>Not supported:</b> ${esc(p.unsupported)}`
+    : `${esc(p.steps || '')} ${help ? `<a href="${esc(help)}" target="_blank" rel="noopener">Open the app password page</a>` : ''}`;
+}
+function emailGuess() {
+  const dom = $('#eUser').value.trim().toLowerCase().split('@')[1] || '';
+  const k = Object.keys(EM.presets).find(n => (EM.presets[n].domains || []).includes(dom));
+  if (k && k !== $('#eProv').value) { $('#eProv').value = k; emailPreset(); }
+}
+function emailLine(test, err) {
+  const s = EM.status, ok = b => `<span class="pill ${b ? 'ok' : ''}">${b ? 'ok' : 'failed'}</span>`;
+  const failed = test && !(test.imap.ok && test.smtp.ok);  // a stored password the server refused is not a connection
+  let h = failed ? `Saved, but sign-in failed for <b>${esc(s.user)}</b> (${esc(s.label || s.preset || 'custom')}): Lodestar cannot read or send mail until the test passes`
+    : s.configured ? `Connected as <b>${esc(s.user)}</b> (${esc(s.label || s.preset || 'custom')}) · IMAP ${esc(s.imap_host)}:${esc(s.imap_port)} · SMTP ${esc(s.smtp_host)}:${esc(s.smtp_port)} ${esc(s.smtp_mode)}`
+    : `Not connected${s.user ? ' (address ' + esc(s.user) + ' saved, no app password)' : ''}`;
+  if (s.shadowed && s.shadowed.length) h += `<div class="muted">${esc(s.shadowed.join(', '))} set in the environment or .env override these settings</div>`;
+  if (test) h += `<div>IMAP ${ok(test.imap.ok)} ${esc(test.imap.detail)}</div><div>SMTP ${ok(test.smtp.ok)} ${esc(test.smtp.detail)}</div>${test.hint ? `<div><b>What to do:</b> ${esc(test.hint)}</div>` : ''}`;
+  if (err) h += `<div style="color:var(--bad)">${esc(err)}</div>`;
+  $('#eStatus').innerHTML = h;
+}
+async function emailConnect(btn) {
+  const body = { preset: $('#eProv').value, user: $('#eUser').value.trim(), password: $('#ePass').value };
+  Object.entries(EF).forEach(([f, sel]) => { body[f] = $(sel).value.trim(); });
+  btn.disabled = true; $('#eStatus').textContent = 'connecting and testing…';
+  try {
+    const r = await api('/api/email/connect', body); if (r.error) return emailLine(null, r.error);
+    $('#ePass').value = ''; EM.status = r;
+    if (!r.configured) return emailLine(null, 'enter the app password to finish connecting');
+    const t = await api('/api/email/test', {}); emailLine(t.error ? null : t, t.error);
+    load();
+  } finally { btn.disabled = false; }
+}
+async function emailSend(btn) {
+  btn.disabled = true;
+  try { const r = await api('/api/email/test_send', {}); if (r.error) return emailLine(null, r.error); toast('test email sent to ' + r.to + ': check that inbox', 'ok'); emailLine(); }
+  finally { btn.disabled = false; }
+}
+async function emailDisconnect() {
+  if (!confirm('Remove the stored app password? Lodestar stops reading and sending mail until you connect again.')) return;
+  const r = await api('/api/email/disconnect', {}); if (r.error) return emailLine(null, r.error);
+  EM.status = r; emailLine(); toast('email disconnected', 'ok'); load();
 }
 async function setVault() { const r = await api('/api/vault', { name: $('#vName').value, user: $('#vUser').value, value: $('#vVal').value }); toast(r.error || 'stored', r.error ? 'err' : 'ok'); $('#vVal').value = ''; load(); }
 
@@ -773,21 +989,25 @@ function rebuildMaster(btn) {
     (dirty ? '\n\nThe editor has UNSAVED changes; they are not in any snapshot and will be lost. Save first to keep them.' : ''))) return;
   run('profile_rebuild', {}, r => { $('#pText').value = PROFILE_LOADED = r.text; renderBank(r); toast('master rebuilt from the bank', 'ok'); }, btn);
 }
+const editable = n => (S.doc_names || []).includes(n);  // coverage.json, gap.json, bullets.json are computed, not edited
+function openEditor(n, text) { const ed = $('#docEdit'); ed.value = text; ed.dataset.name = n; ed.dataset.open = '1'; ed.style.display = $('#docSave').style.display = ''; }
 function editDoc() {
   const n = $('#docTabs button.on')?.textContent; if (!n || n === 'timeline' || n === 'description') return toast('pick a document tab first', 'err');
-  $('#docEdit').value = cur.docs[n] || ''; $('#docEdit').style.display = ''; $('#docSave').style.display = ''; $('#docEdit').dataset.name = n;
+  if (!editable(n)) return toast(`${n} is computed by Lodestar and cannot be edited; re-run the action that makes it`, 'err');
+  openEditor(n, cur.docs[n] || '');
 }
 async function saveDoc() {
   const n = $('#docEdit').dataset.name; const r = await api('/api/docs/' + cur.job.id, { name: n, text: $('#docEdit').value });
   if (r.error) return toast(r.error, 'err');
-  cur.docs = r.docs; $('#docEdit').style.display = 'none'; $('#docSave').style.display = 'none'; showDoc(n, $('#docTabs button.on')); toast('saved ' + n, 'ok');
+  cur.docs = r.docs; $('#docEdit').dataset.open = ''; showDoc(n, $('#docTabs button.on')); toast('saved ' + n, 'ok');
 }
 function adjustDoc(btn) {
   const n = $('#docTabs button.on')?.textContent, ins = $('#dAdj').value.trim();
   if (!n || n === 'timeline' || n === 'description') return toast('pick a document tab first', 'err');
+  if (!editable(n)) return toast(`${n} is computed by Lodestar and cannot be adjusted`, 'err');
   if (!ins) return toast('type an instruction first', 'err');
   const kind = n.includes('cover') ? 'cover letter' : n.includes('resume') ? 'resume' : 'document';
-  run('adjust', { text: cur.docs[n], instruction: ins, kind }, r => { $('#docEdit').value = r.text; $('#docEdit').style.display = ''; $('#docSave').style.display = ''; $('#docEdit').dataset.name = n; toast('adjusted; review, then Save document', 'ok'); }, btn);
+  run('adjust', { text: cur.docs[n], instruction: ins, kind }, r => { openEditor(n, r.text); toast('adjusted; review, then Save document', 'ok'); }, btn);
 }
 function reviewDoc(btn) {  // reviews the open document, unsaved edits included; result goes to AI output, nothing is saved
   const n = $('#docTabs button.on')?.textContent;
@@ -872,7 +1092,7 @@ function renderTrend() {
   $('#trendSvg').innerHTML = `<svg class="trend" viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="${esc(`STAR average per mock session: ${n} session(s), latest ${last} of 2`)}">`
     + [0, 1, 2].map(v => `<line x1="${P}" x2="${W - P}" y1="${y(v)}" y2="${y(v)}" class="gl"/><text x="4" y="${y(v) + 4}">${v}</text>`).join('')
     + `<polyline points="${pts.map((s, i) => x(i).toFixed(1) + ',' + y(s.averages.star).toFixed(1)).join(' ')}" class="pl"/>`
-    + pts.map((s, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(s.averages.star).toFixed(1)}" r="4"><title>${esc(`${(s.ts || '').slice(0, 16)} · #${s.job_id} ${s.company || ''} · STAR ${s.averages.star}/2 over ${s.averages.scored} answer(s)`)}</title></circle>`).join('') + '</svg>';
+    + pts.map((s, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(s.averages.star).toFixed(1)}" r="4"><title>${esc(`${localTs(s.ts, 16)} · #${s.job_id} ${s.company || ''} · STAR ${s.averages.star}/2 over ${s.averages.scored} answer(s)`)}</title></circle>`).join('') + '</svg>';
 }
 
 /* ---- insights, weekly goals, offers, activity log (extras.analytics, comp.compare, extras.activity_report) ---- */
@@ -963,6 +1183,10 @@ function renderCite() {
     .map(([f, v]) => [`${r.job_id}:${f}`, `#${r.job_id} ${r.company}: ${names[f] || f} ${num(v)}${f === 'bonus_pct' ? '%' : ''}`]));
   $('#ctrCite').innerHTML = CITE.map(([, l], i) => `<label class="muted"><input type="checkbox" id="cite${i}"> ${esc(l)}</label>`).join('')
     || '<span class="muted">no other offer with figures to cite: record a competing offer first, or write your ask below</span>';
+}
+function counterOptions(btn) {
+  const id = Number($('#ctrJob').value); if (!id) return toast('record an offer first', 'err');
+  draftOptions('counter', { id, cite: CITE.filter((c, i) => $('#cite' + i)?.checked).map(c => c[0]), ask: $('#ctrAsk').value }, 'ctrOpts', btn);
 }
 function draftCounter(btn) {
   const id = Number($('#ctrJob').value); if (!id) return toast('record an offer first', 'err');

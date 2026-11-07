@@ -116,6 +116,27 @@ def coverage(job, text: str | None = None, save: bool = True) -> dict:
     return cov
 
 
+def rescore(job_id: int) -> None:
+    """The JD or resume.md changed by hand: a stored JD coverage (card match %, match sort, coverage.json, Insights'
+    match bands) is recomputed, never left judging the old text. Nothing stored yet: nothing is made here. When it can
+    no longer be computed (JD cleared, template profile) the old score is dropped rather than kept."""
+    job = db.get_job(job_id)
+    stored = APPS_DIR / app_dir(job).name / "coverage.json"
+    if job["match_score"] is None and not stored.is_file():
+        return
+    try:
+        coverage(job)
+    except SystemExit:
+        db.update_job(job_id, touch=False, match_score=None)
+        stored.unlink(missing_ok=True)
+
+
+def set_jd(job_id: int, jd: str, **fields) -> None:
+    """Replace a job's description (fields: e.g. the posting url) and re-score its coverage: the one JD save path."""
+    db.update_job(job_id, jd=jd, **fields)
+    rescore(job_id)
+
+
 def _gap_keywords(cov: dict) -> dict:
     return {"match_score": cov["score"], "coverage": cov,
             "missing_keywords": [k["term"] for k in cov["keywords"] if not k["matched"] and not k["skipped"]],
@@ -139,7 +160,7 @@ def _source(base: str | None = None) -> str:
 
     text = profile.saved_text(base).rstrip()
     extra = profile.extras_text(text)
-    return profile.drop_preferences(text + ("\n\n" + extra if extra else ""))
+    return profile.employer_safe(text + ("\n\n" + extra if extra else ""))
 
 
 def _save_resume(job, text: str, before: int, note: str = "") -> tuple[Path, int]:
@@ -234,12 +255,9 @@ def _employer_copy(text: str) -> str:
     """A finished resume from tailoring source text: no "On file" prompt section, and the master's '# Master Resume'
     title becomes the candidate's name (from the contact line). It is copied out verbatim, so Preferences are stripped
     again here, and a salary floor still present stops the build."""
-    from .profile import drop_preferences
+    from .profile import employer_safe
 
-    text = drop_preferences(ONFILE_RE.sub("", text))
-    if re.search(r"(?i)salary floor", text):
-        raise SystemExit("the resume text still names your salary floor: move it under a '## Preferences' heading in "
-                         "your profile (that section never goes to an employer), then tailor again")
+    text = employer_safe(ONFILE_RE.sub("", text))
     contact = next((ln for ln in text.splitlines() if "@" in ln and "|" in ln), "")
     name = contact.split("|")[0].strip().lstrip("# ") if contact else ""
     return re.sub(r"\A\s*# Master Resume[^\n]*", f"# {name}" if name and "@" not in name else "", text).strip() + "\n"
@@ -395,8 +413,6 @@ def cover_letter(job, use_council: bool = False, provider: str | None = None, to
                  words: int = 300) -> Path:
     """A complete, send-ready letter: contact block, date, addressee, greeting, 3-4 paragraphs, sign-off.
     Uses the tailored resume, the gap check and the research pack when they exist."""
-    from datetime import datetime
-
     d = app_dir(job)
     research = (d / "research.md").read_text(encoding="utf-8")[:2500] if (d / "research.md").is_file() else ""
     gapj = json.loads((d / "gap.json").read_text(encoding="utf-8")) if (d / "gap.json").is_file() else {}
@@ -419,11 +435,18 @@ RESEARCH NOTES:
 CANDIDATE (tailored resume if available, else master profile):
 {_current_resume(job)}"""
     body = (ai.council(prompt, SYSTEM)["synthesis"] if use_council else ai.ask(prompt, SYSTEM, provider)).strip()
-    letter = "\n".join([contact_line(), datetime.now().strftime("%B %d, %Y"), "", addressee, job["company"], "",
-                        f"Dear {addressee},", "", body, "", "Sincerely,", candidate_name()])
-    out = write_doc(d / "cover_letter.md", letter)
+    out = write_doc(d / "cover_letter.md", letter(job, body))
     db.add_event(job["id"], "cover_letter", str(out))
     return out
+
+
+def letter(job, body: str) -> str:
+    """A letter body wrapped in the contact block, date, addressee, greeting and sign-off (cover_letter, drafts)."""
+    from datetime import datetime
+
+    addressee = job["contact_name"] or "Hiring Manager"
+    return "\n".join([contact_line(), datetime.now().strftime("%B %d, %Y"), "", addressee, job["company"], "",
+                      f"Dear {addressee},", "", body.strip(), "", "Sincerely,", candidate_name()])
 
 
 def adjust_text(text: str, instruction: str, kind: str = "document", provider: str | None = None) -> str:

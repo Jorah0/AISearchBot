@@ -71,10 +71,13 @@ def check_watches() -> list[str]:
     alerts, robots = [], {}
     for w in db.watches():
         if w["url"].startswith("search:"):
-            q = w["url"][7:]
-            new = search(q, keywords=w["keywords"] or "", only_new=True, mark=False, **db.watch_filters(w))
+            q, errs = w["url"][7:], []
+            new = search(q, keywords=w["keywords"] or "", only_new=True, mark=False, errors=errs, **db.watch_filters(w))
             alerts += _hits(q, new)
-            db.update_watch(w["id"], "")
+            if len(errs) >= len(SOURCES):  # not one board answered: this was no run, whatever the empty result says
+                db.watch_failed(w["id"], "no job board could be reached: " + "; ".join(errs))
+            else:
+                db.update_watch(w["id"], "", "; ".join(f"unreachable {e}" for e in errs))
             continue
         if not _robots_ok(w["url"], robots):
             msg = f"SKIPPED watch #{w['id']} {w['url']}: the site's robots.txt does not allow automated fetching of this page"
@@ -83,11 +86,13 @@ def check_watches() -> list[str]:
             else:  # alert once; the watch stays so it resumes if the site changes its rules
                 notify(msg)
                 db.mark_seen(f"robots:{w['url']}")
+            db.watch_failed(w["id"], "skipped: the site's robots.txt does not allow automated fetching of this page")
             continue
         try:
             text = strip_html(fetch(w["url"]))
         except Exception as e:
             print(f"  watch #{w['id']} fetch failed: {e}")
+            db.watch_failed(w["id"], f"fetch failed: {e}")
             continue
         h = hashlib.sha256(text.encode()).hexdigest()
         snap = SNAPSHOTS / f"{w['id']}.txt"
@@ -418,11 +423,13 @@ SOURCES = {"remotive": _remotive, "arbeitnow": _arbeitnow, "remoteok": _remoteok
 
 
 def search(query: str, keywords: str = "", only_new: bool = False, sources=None, mark: bool | None = None,
-           **filters) -> list[dict]:
+           errors: list | None = None, **filters) -> list[dict]:
     """Listings from the free job APIs: keyword filter, your private dealbreakers, cross-source de-dup, then the
     search filters (location / remote, min_salary, posted_within days, seniority; see refine), each annotated with
     stale signals and a sponsor hint. only_new skips listings seen before; `mark` (default: only_new) records the
-    results as seen. A manual search never marks, so it cannot use up listings a watch has not judged yet."""
+    results as seen. A manual search never marks, so it cannot use up listings a watch has not judged yet.
+    errors: gets one 'source: problem' line per board that could not be read, so callers can tell 'nothing new' from
+    'nothing checked'."""
     mark = only_new if mark is None else mark
     raw = []
     for name in (sources or SOURCES):
@@ -430,6 +437,8 @@ def search(query: str, keywords: str = "", only_new: bool = False, sources=None,
             raw += SOURCES[name](query)
         except Exception as e:
             print(f"  {name}: {e}")
+            if errors is not None:
+                errors.append(f"{name}: {str(e)[:160]}")
     out = [j for j in refine(dedupe([j for j in raw if j["url"]]), keywords=keywords, **filters) if not (only_new and _seen(j))]
     if mark:
         for j in out:
@@ -708,7 +717,10 @@ def rank(listings: list[dict], provider: str | None = None, chunk: int = 15) -> 
 
     if not listings:
         return listings
+    if not ai.available():  # never a silent 'no fits': unranked results must not read as judged and rejected
+        raise SystemExit("AI ranking needs an AI provider: store a key in Setup > Vault, or click 'Local only (Ollama)'")
     prof = candidate_text(6000)
+    errors = []
     for start in range(0, len(listings), chunk):
         part = listings[start:start + chunk]
         brief = "\n".join(f"[{i}] {j['title']} @ {j['company']} ({j['location']}) :: {j['desc'][:600]}" for i, j in enumerate(part))
@@ -726,9 +738,12 @@ LISTINGS:
             )
         except (Exception, SystemExit) as e:
             print(f"  rank chunk {start // chunk + 1}: {e}")
+            errors.append(str(e))
             continue
         for d in data if isinstance(data, list) else []:
             if isinstance(d, dict) and isinstance(d.get("i"), int) and 0 <= d["i"] < len(part):
                 part[d["i"]] |= {"score": d.get("score", 0), "why": d.get("why", "")}
+    if errors and not any("score" in j for j in listings):  # every batch failed (e.g. the model was rejected): say so
+        raise SystemExit(f"AI ranking failed: {errors[0][:300]}")
     listings.sort(key=lambda j: -j.get("score", 0))
     return listings

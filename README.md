@@ -36,12 +36,13 @@ Everything lives in `~/.lodestar/` (override with `LODESTAR_HOME`).
    ```
    Supported: anthropic, openai, gemini, groq, openrouter, mistral, ollama (set `OLLAMA_MODEL`).
    Override models with `<PROVIDER>_MODEL`, pick a default with `LODESTAR_PROVIDER`.
-3. **Email monitor** (Gmail: enable IMAP, create an App Password):
+3. **Connect your email** (optional; Gmail, Yahoo, iCloud, Fastmail, Zoho, AOL or a custom server, with an app
+   password): Setup > Connect email in the app, or
    ```powershell
-   lodestar vault set IMAP_USER
-   lodestar vault set IMAP_PASS
+   lodestar email connect --user you@example.com    # prompts for the app password, hidden; then tests the login
+   lodestar email test-send                         # a test email to yourself
    ```
-   Other mail hosts: set `IMAP_HOST` in `.env` (see `.env.example`).
+   Outlook / Microsoft 365 is not supported (Microsoft allows only OAuth sign-in). See docs/COMMANDS.md.
 4. **Check the install:** `lodestar doctor` (add `--live` for one real call per provider).
 
 ## Daily use
@@ -128,7 +129,7 @@ Env vars and a `.env` file override the vault for any setting.
 
 ## How the pieces fit
 
-Module map (26 modules, what each does): [docs/RUNDOWN.md, section 1](docs/RUNDOWN.md#1-what-it-is-made-of).
+Module map (28 modules, what each does): [docs/RUNDOWN.md, section 1](docs/RUNDOWN.md#1-what-it-is-made-of).
 
 Tests (offline): `python -m unittest discover -s tests -v`
 
@@ -154,6 +155,9 @@ lodestar ui            # http://127.0.0.1:8765 (localhost only); --port N, --no-
 Today list and board by status (drag and drop, filters, table view), job detail with tracker fields, JD coverage and
 one-click gap / tailor / cover / prep, free-API search with filters and AI ranking (six free sources: Remotive,
 Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse) plus watched Greenhouse / Lever / Ashby company boards,
-watches and email checks, approvals inbox, contacts with warm paths, interview rounds and a question bank, insights
-with weekly goals, offer comparison and an activity log, idea crafting, answer bank and STAR stories, profile editor
-and bank, coach chat with a scored mock interview (dictation), tool switches, provider and vault setup. Full walkthrough and roadmap: [docs/RUNDOWN.md](docs/RUNDOWN.md).
+watches and email checks, approvals inbox with unmatched mail (link, track, dismiss), mail filed per job (threaded
+replies, trusted / unverified), AI draft options with one recommended and rewrite chips (drawer, Inbox, Answers,
+Offers) and suggested emails on Today, contacts with warm paths, interview rounds and a question bank, insights with
+weekly goals, offer comparison and an activity log, idea crafting, answer bank and STAR stories, profile editor and
+bank, coach chat with a scored mock interview (dictation), tool switches, Connect email (provider presets, login test,
+test send), provider and vault setup. Full walkthrough and roadmap: [docs/RUNDOWN.md](docs/RUNDOWN.md).

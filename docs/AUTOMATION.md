@@ -83,10 +83,13 @@ Executors are the only code that sends mail, changes status, or adds jobs on lod
    within 2 hours, a deadline tomorrow; each fires once (recorded in the `seen` table).
    Contacts whose next touch has come are listed on Today and in the daily agenda; the loop never drafts anything for
    them. Mail from a contact's exact address, and approved mail sent to it, update that contact's last touch.
+   Suggested emails (thank-you after a round, follow-up, unanswered recruiter mail, offer check-in, referral ask) are
+   computed from the tracker with no AI call, listed on Today and counted in the daily agenda; nothing is drafted until
+   you click Draft options.
 4. Optional Obsidian sync and Friday digest (with your weekly goals' progress when you set any).
 5. Print how many actions are waiting in the inbox.
 
-Sending mail needs `IMAP_USER` / `IMAP_PASS` (SMTP uses the same login). Without them, approvals of email items fail
+Sending mail needs a connected mailbox (Setup > Connect email, or `lodestar email connect`). Without one, approvals of email items fail
 with a clear error and the draft stays visible so you can copy it.
 
 ## Contact capture
@@ -108,9 +111,32 @@ address, always reviewed in the Inbox.
   bookmarklets receive when you drag them from the Setup tab. The capture token persists across restarts; delete
   `~/.lodestar/capture.token` to revoke it and re-drag.
 - Mail that failed classification (provider outage) is left unread for the next run instead of being skipped.
-- A message is matched to a job by the stored contact address, then the sender's company domain
-  (`careers.acme.com` -> Acme), then the company name the classifier read. Only contact or domain matches act without
-  review. Free-mail senders (gmail.com, outlook.com, ...) count only when they are the exact stored contact.
+- A message is matched to a job by something Lodestar already holds for it: the stored contact address (or its
+  corporate domain), our own thread (below), or the full registrable domain of the job's posting URL when that URL is
+  on the company's own site (`careers.acme.com/jobs/1` vouches for `acme.com` and its subdomains). Those are strong
+  ties, and only they act without review. A domain that merely names the company (`acme.xyz`, `acme.co.uk` for a job
+  whose site is `acme.com`), a thread reply from someone else, or the company name the classifier read is a weak tie:
+  the mail is filed under the job, but it never becomes the contact, never books an interview round, and its status
+  moves and replies wait in the Inbox. Job-board URLs (greenhouse.io, linkedin.com) and ATS feed slugs vouch for no
+  domain. Free-mail senders (gmail.com, outlook.com, ...) count only when they are the exact stored contact.
+- Mail is linked to jobs. Every relevant scanned message (anything not classified `other`) and every message Lodestar
+  sends is kept in the `mail` table, deduplicated by Message-ID, and shown in the job drawer's Mail group (both
+  directions, trusted / unverified). A reply whose `In-Reply-To` or `References` names a Message-ID Lodestar sent is
+  filed under that job (`thread`). The thread counts as a strong tie only when the sender is the address Lodestar
+  sent to, or shares its corporate (non-free-mail) domain, **and** the mail Lodestar sent went to someone already
+  trusted (it answered trusted mail, or it went to the job's stored contact), **and** the job is not rejected or
+  withdrawn. A reply you approved to an unverified sender (a mail you linked by hand or tracked as a new job) vouches
+  for nobody, so that sender's answer stays unverified. A threaded reply on a closed job is filed, never trusted: no
+  round, no reply drafted. Trust still needs aligned DKIM/DMARC and agreement with the stored contact. Anyone can copy
+  a Message-ID, so a reply from another domain is filed under the job but stays unverified and never acts unreviewed.
+- A reply Lodestar drafts to unverified mail is marked "unverified sender" on its Inbox card, and approving it sends
+  the mail only: it never moves the job (an offer reply's status-on-send is dropped).
+- Relevant mail no job claims is listed under Inbox > Unmatched mail (`lodestar mail list --unmatched`). Link to job
+  files it (it never sets the contact or makes the sender trusted); Track as new job adds the job at once, since it is
+  your click, without a contact (mail about a company you do not track yet is never trusted); Dismiss drops it. The
+  "track this company" proposal the same mail raised in the Inbox is tied to it by Message-ID: tracking or linking the
+  mail closes the proposal, and approving the proposal files the mail under the new job, so you never get two jobs.
+  Deleting a job deletes its mail records too. Exports include the mail table (CSV formula cells neutralised).
 - `council_providers` limits which providers ever receive your profile. `backup` keeps the last 7 nightly zips.
 
 ### After the ECC and security reviews (2026-11-04)
@@ -120,9 +146,10 @@ address, always reviewed in the Inbox.
 - The server refuses any request whose `Host` header is not this loopback address (DNS-rebinding defence) and any
   POST that is not `application/json`.
 - Actions triggered by inbound mail (status moves, replies) run automatically only when the message carries
-  `Authentication-Results: dkim=pass` aligned with the sender **and** is tied to the job by contact address or company
-  domain (see above); otherwise they wait in the inbox even if the tool is set to auto. Free-mail or unauthenticated
-  recruiter outreach waits in the inbox instead of creating a job.
+  `Authentication-Results: dkim=pass` aligned with the sender **and** is strongly tied to the job (contact, thread or
+  the company site Lodestar holds; see above); otherwise they wait in the inbox even if the tool is set to auto.
+  Recruiter outreach about a company you do not track yet always waits in the inbox instead of creating a job
+  (pass 16 review: `acme.xyz` can claim to be Acme as easily as `acme.com`), and its sender is never the contact.
 - Approving an item claims it atomically: a double-click or a CLI/UI race cannot send twice. Rejecting a decided item
   is a no-op, so the record of a sent mail is never overwritten.
 - `council_providers` is a hard boundary: synthesis and the default provider come from the list, and a list that
@@ -137,3 +164,22 @@ address, always reviewed in the Inbox.
 - Interview replies see your booked interviews (interview rounds with a time) and are told never to accept or propose a time
   within 90 minutes of one; approving a reply that still clashes sends the mail but skips the calendar file and says so.
 - `council_judge`: when on and two or more providers are allowed, the second provider audits the synthesis.
+
+### Draft options and suggested emails (pass 16)
+
+- One AI call per set of options (up to 3), whatever the kind; suggestions cost none. Usage is recorded in
+  `usage.jsonl` like every other call.
+- Exactly one option is recommended, with a one-line reason tied to the situation. Without a provider, follow-up,
+  thank-you, withdrawal, offer check-in and counter-offer options are the offline template; other kinds say they need
+  a provider, and so do rewrites.
+- Picking an option never sends anything: mail is proposed through `approvals.propose` with review (it waits in the
+  Inbox even when the tool is on auto), to the recipient Lodestar already knows (the job's contact, the sender of the
+  mail being answered, the contact you ask for a referral). The page cannot choose the recipient.
+- On a pending Inbox email, Options and rewrite chips replace only the subject and body; recipient, In-Reply-To, job,
+  chosen time and status-on-send stay as proposed, and the item stays pending (`POST /api/approvals/ID/edit`, or
+  `lodestar draft rewrite --pending ID`). A decided item cannot be edited.
+- Prompts carry `candidate_text(private=False)` (no Preferences, no salary floor); a reply's original mail (sender,
+  subject, text) and a pending draft go in fenced as untrusted data. Every option, rewrite, pick and pending edit passes
+  the salary-floor guard (`profile.employer_safe`): a draft naming the floor is dropped or refused, never proposed.
+- Mail trust is unchanged: replying to a mail does not make its sender trusted or the job's contact.
+- "Dismiss for now" snoozes a suggestion for 3 days through the `seen` table (`suggest:JOB:KIND`).

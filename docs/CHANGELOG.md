@@ -1,5 +1,70 @@
 # Changelog (development passes, newest first)
 
+## Pass 16 (2026-11-07): audit fixes, email connection, mail linking, AI options
+
+- Connect email (Setup > Connect email, `lodestar email connect|test|test-send|status|disconnect`): pick Gmail,
+  Yahoo, iCloud, Fastmail, Zoho, AOL or a custom server, paste an app password, and Lodestar logs in to IMAP and SMTP
+  to check both (it sends nothing) and explains a failure in plain steps (app password and 2-Step Verification, IMAP
+  turned off, wrong host, timeout, port or mode). "Send me a test email" only ever writes to your own address.
+  Outlook / Hotmail is refused with the reason (Microsoft allows only OAuth sign-in). The password stays in the OS
+  keyring and is never returned. Sent mail now carries `Date` and `Message-ID`; doctor shows the mail servers and
+  `--live` logs in once each. `.env.example` no longer sets `IMAP_HOST` (it silently overrode a connected provider)
+  and backups leave `.env` out.
+- Mail linked to jobs: every relevant scanned message and everything Lodestar sends is kept per job (deduped by
+  Message-ID) and shown in the job drawer's Mail section, both ways, trusted or unverified. Replies in a thread Lodestar
+  started are filed under the right job. Mail no job claims is listed under Inbox > Unmatched mail: Link to job, Track
+  as new job, or Dismiss (`lodestar mail list|link|unlink|dismiss`). Deleting a job deletes its mail; exports include
+  it.
+- AI draft options: Options buttons in the drawer (follow-up, thank-you, withdrawal, offer check-in, outreach,
+  referral, counter-offer, cover letter, reply to a mail), on each Inbox email, in Answers and Offers give up to 3
+  drafts from one AI call, one recommended with a reason, plus rewrite chips (shorter, warmer, formal, direct, your
+  own words). Picking one never sends anything: it waits in the Inbox for review, to the recipient Lodestar already
+  knows. Every draft passes the salary-floor guard. Today lists suggested emails (thank-you after a round, follow-up,
+  unanswered recruiter mail, offer check-in, referral ask) without an AI call; Dismiss for now hides one for 3 days.
+  CLI: `--options` / `--pick N` on followup, thanks, withdraw, outreach and `offers counter`; `lodestar draft options`,
+  `draft rewrite`, `suggest`.
+- Audit fixes (security): lookalike sender domains (globex-hiring.com, globex.attacker.net) no longer tie mail to a
+  company; any heading spelling of Preferences stays private, and employer-facing text that still names the salary
+  floor is refused; idea cards can no longer inject markup; the research pack and scheduling replies no longer leak
+  the floor or name your other interviews; calendar files escape company names; oversized LinkedIn zips are refused
+  before reading; page fetches pin the checked address (no DNS-rebinding to a private address), cap size and total
+  time; mail sockets time out.
+- Audit fixes (data and tracker): a duplicate contact or story no longer leaves the database locked; a status proposal
+  never moves a job that moved since (it closes as stale), and changing a status by hand closes waiting ones; job ids
+  are never reused; withdrawn jobs leave Today, clash checks and the activity log; concurrent calendar imports store one
+  round; a failed send keeps your edited draft for a retry; a booked round stops follow-up nudges; one person touched
+  and mailed counts once; a new or cleared JD rescores the match; unknown ids say "no job #N"; the funnel counts a
+  skipped stage as passed; withdrawing a saved job is not an application; blank answers are refused; applied dates use
+  your local day.
+- Audit fixes (sources and UI): search says which boards could not be reached instead of "nothing found", and
+  watches show "last run failed"; AI ranking without a provider says so; a research pack built from no source says it
+  is unverified recall and lists what it read; provider tests and council keep going past one rejected model; a missing
+  CLI file is one clear line; profile import keeps the name out of location and project bullets as bullets; the closed
+  drawer is inert and focus returns; narrow windows keep the top-bar actions; only editable documents offer Edit;
+  stored UTC times show in local time.
+- Review fixes (mail trust): a domain that only names the company under another suffix (globex.xyz, stripe.xyz) is
+  now a weak tie: the mail is filed under the job, but it never becomes the contact, never books a round, and its status
+  moves and replies wait for you. A strong tie needs something Lodestar already holds: the stored contact, our own
+  thread, or the company site of the job's posting URL (`careers.globex.com` vouches for `globex.com`). Behaviour
+  change: recruiter outreach about a company you do not track yet always waits in the Inbox (it no longer creates the
+  job on its own) and its sender is not made the contact; mail from the company's domain moves a job unreviewed only
+  when the job has a contact or a posting URL on that domain.
+- Review fixes (threads): a reply in our thread is trusted only when our mail went to someone already trusted (it
+  answered trusted mail, or went to the job's stored contact). Replying to a mail you linked by hand no longer makes
+  its sender trusted one message later. A threaded reply on a rejected or withdrawn job is filed but never trusted: no
+  round, no calendar file, no reply accepting a slot.
+- Review fixes (Inbox and Setup): a reply to unverified mail shows "unverified sender" on its Inbox card, and
+  approving it sends the mail only (an offer reply no longer moves the job). The "track this company" proposal and the
+  same message under Unmatched mail are tied together: tracking or linking the mail closes the proposal, and approving
+  the proposal files the mail, so you never get two copies of a job. Changing the mail address or servers without
+  typing a password removes the stored one, so one provider's app password is never sent to another server. A test
+  whose sign-in failed reads "Saved, but sign-in failed" instead of "Connected as". Picking Outlook no longer locks the
+  address field. The Answers answer box is multi-line, so "Use this" keeps paragraph breaks.
+- Tests: 287 in total (102 new this pass) (`tests/test_pass16_audit_a.py`, `test_pass16_audit_b.py`, `test_pass16_email.py`,
+  `test_pass16_mail.py`, `test_pass16_drafts.py`, `test_pass16_review.py`); mail servers, keyring and AI are faked, so
+  no real IMAP, SMTP or AI call has been made yet. Older trust tests now give the job a posting URL or contact (the new
+  rule) and expect untracked-company outreach to wait.
+
 ## Pass 15 (2026-11-06): best-in-class gaps
 
 - Review fixes (batch 2): an interview mail with only a date (often a reply-by date) or from an unverified sender no

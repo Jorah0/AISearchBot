@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import __version__, ai, apply, approvals, comp, db, extras, log, loop, settings, vault
+from . import __version__, ai, apply, approvals, comp, db, extras, log, loop, mailconn, settings, vault
 from .config import ALERTS, PROFILE
 
 STATIC = Path(__file__).parent / "static"
@@ -162,10 +162,15 @@ def _act(action: str, p: dict):
         case "search":  # filters: location (or 'remote'), min_salary, posted_within (days), seniority
             from .contacts import with_warm
 
-            found = with_warm(web_monitor.with_coverage(web_monitor.search(p["query"], p.get("keywords") or "", **_filters(p))[:40]))
-            if p.get("rank"):
-                found = web_monitor.rank(found, prov)
-            return {"results": found}
+            errs: list[str] = []  # boards that could not be read: 'nothing found' must not hide 'nothing checked'
+            found = with_warm(web_monitor.with_coverage(web_monitor.search(p["query"], p.get("keywords") or "", errors=errs,
+                                                                           **_filters(p))[:40]))
+            if p.get("rank") and found:
+                try:
+                    found = web_monitor.rank(found, prov)
+                except SystemExit as e:  # no provider / rejected model: the listings still show, unranked, with why
+                    errs.append(f"AI rank: {e}")
+            return {"results": found, "errors": errs, "boards": len(web_monitor.SOURCES)}
         case "chat":
             return {"reply": ai.chat(p["messages"], _coach_system(), prov)}
         case "mock":
@@ -186,6 +191,18 @@ def _act(action: str, p: dict):
             return ai.council(p["prompt"])
         case "outreach":
             return extras.outreach(job, p.get("person", ""), p.get("channel", "linkedin"), prov)
+        case "draft_options":  # {kind, id?, mail_id?, pending_id?, contact_id?, ...}: up to 3 options from one AI call
+            from . import drafts
+
+            return {"options": drafts.options(p.get("kind", ""), _draft_ctx(p), int(p.get("n") or 3), prov)}
+        case "draft_rewrite":  # {kind, subject?, body, how}: preset (shorter / warmer / formal / direct) or your words
+            from . import drafts
+
+            return drafts.rewrite(p.get("body", ""), p.get("how", ""), p.get("kind") or "email", p.get("subject"), prov)
+        case "draft_use":  # {kind, ...context, subject, body}: proposed for review (recipient from the server, not here)
+            from . import drafts
+
+            return drafts.use(p.get("kind", ""), _draft_ctx(p), {"subject": p.get("subject"), "body": p.get("body")})
         case "referral":  # {id, contact_id}: ask a contact for a referral; email -> Inbox (always reviewed), else a note
             from .contacts import referral
 
@@ -238,8 +255,11 @@ def _act(action: str, p: dict):
                 rep["path"] = str(out)
             return rep
         case "auto_track":
-            found = web_monitor.search(p["query"], p.get("keywords") or "", **_filters(p))
-            return {"results": apply.auto_track(found[:40], prov)}
+            errs = []
+            found = web_monitor.search(p["query"], p.get("keywords") or "", errors=errs, **_filters(p))
+            if not found and len(errs) >= len(web_monitor.SOURCES):
+                raise SystemExit("no job board could be reached, so nothing was judged: " + "; ".join(errs)[:400])
+            return {"results": apply.auto_track(found[:40], prov), "errors": errs}
         case "craft":
             from . import ideas
 
@@ -265,6 +285,9 @@ def _act(action: str, p: dict):
                         rows.append({"status": "ok", "what": f"live call {n}", "detail": ai.model_for(n)})
                     except BaseException as e:
                         rows.append({"status": "fail", "what": f"live call {n}", "detail": str(e)[:160]})
+                from .doctor import live_mail
+
+                rows += [{"status": s, "what": w, "detail": d} for s, w, d in live_mail()]
             return {"rows": rows}
         case "backup":
             return {"path": str(extras.backup())}
@@ -274,21 +297,36 @@ def _act(action: str, p: dict):
             return {"text": ai.local_preset()}
         case "models":  # the ids each configured provider offers, to pin one under Tools > Preferences > models
             ms: dict[str, list[str] | str] = {}
-            for n in ai.available():
+            for n in _configured():
                 try:
                     ms[n] = ai.list_models(n)
-                except Exception as e:
+                except (Exception, SystemExit) as e:  # a rejected model is SystemExit: one bad provider never hides the rest
                     ms[n] = f"FAIL {e}"
             return ms
         case "providers_test":
             res: dict[str, str] = {}
-            for n in ai.available():
+            for n in _configured():
                 try:
                     res[n] = ai.ask("Reply with the single word OK.", provider=n).strip()[:40]
-                except Exception as e:
+                except (Exception, SystemExit) as e:
                     res[n] = f"FAIL {e}"
             return res
     raise ValueError(f"unknown action {action}")
+
+
+DRAFT_CTX = ("mail_id", "pending_id", "contact_id", "interviewer", "notes", "person", "cite", "ask", "question", "tone", "words")
+
+
+def _draft_ctx(p: dict) -> dict:
+    """The context keys draft options read, from a request (drafts.options / use whitelist what they use)."""
+    return {"job": p.get("id") or None} | {k: p[k] for k in DRAFT_CTX if p.get(k) not in (None, "", [])}
+
+
+def _configured() -> list[str]:
+    if not (names := ai.available()):
+        raise SystemExit("no AI provider configured: store a key such as ANTHROPIC_API_KEY in Setup > Vault, or click "
+                         "'Local only (Ollama)'")
+    return names
 
 
 FILTER_KEYS = ("location", "min_salary", "posted_within", "seniority")
@@ -324,6 +362,8 @@ def start_task(action: str, params: dict) -> str:
         except BaseException as e:  # SystemExit from helpers carries the user-facing message
             log.get("tasks").exception("%s failed", action)
             TASKS[tid] = {"status": "error", "action": action, "error": str(e) or traceback.format_exc()[-400:]}
+        finally:
+            db.release()  # a failed write must not keep the database locked after the task thread is gone
 
     threading.Thread(target=run, daemon=True).start()
     return tid
@@ -348,20 +388,19 @@ def split_title(page_title: str) -> tuple[str, str]:
 # ----------------------------------------------------------------------------- state
 def setup_status() -> dict:
     """What a new user still has to do before the AI features work."""
-    from .config import setting
-
     from .profile import is_template, master_text
 
     text = master_text()
     return {
         "profile_ready": not is_template(text),  # same rule prompts use; a short real profile counts
         "provider_ready": bool(ai.available()),
-        "email_ready": bool(setting("IMAP_USER") and setting("IMAP_PASS")),
+        "email_ready": mailconn.status()["verified"],  # saved AND a Connect & test sign-in passed
     }
 
 
 def state() -> dict:
     from . import interview
+    from .ideas import merged as ideas_merged
     from .contacts import ROLES, warm_index
 
     idx = warm_index()
@@ -372,12 +411,14 @@ def state() -> dict:
         "jobs": [_job_view(j, idx) for j in db.list_jobs()],
         "contact_roles": ROLES,
         "statuses": db.STATUSES,
+        "doc_names": sorted(DOC_NAMES),  # the drawer offers Edit / Adjust for these only
         "stats": db.stats(),
         "followups": [j["id"] for j in db.needs_followup()],
         "variants": db.variant_stats(),
         "funnel": db.funnel(),
         "pending": [dict(r) | {"payload": json.loads(r["payload"])} for r in db.list_pending("pending")],
         "decided": [dict(r) for r in db.list_pending(None, 15) if r["status"] != "pending"],
+        "mail_unmatched": [dict(r) for r in db.list_mail(unmatched=True, limit=50)],  # Inbox: Unmatched mail
         "tools": settings.table(),
         "prefs": settings.load()["prefs"],
         "pref_choices": settings.CHOICES,
@@ -388,7 +429,7 @@ def state() -> dict:
         "round_kinds": interview.KINDS,
         "round_outcomes": interview.OUTCOMES,
         "mock_sessions": interview.sessions(),
-        "ideas": [dict(r) | json.loads(r["body"]) for r in db.list_ideas()],
+        "ideas": [ideas_merged(r) for r in db.list_ideas()],
         "idea_statuses": db.IDEA_STATUSES,
         "providers": {n: (n in ai.available()) for n in ai.PROVIDERS},
         "watches": [dict(w) | {"filters": db.watch_filters(w)} for w in db.watches()],
@@ -408,6 +449,12 @@ def state() -> dict:
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *a):  # terminal stays quiet; the rotating log keeps the access line, minus any token
         log.get("web").info(fmt, *[str(x).split("?t=")[0] for x in a])
+
+    def finish(self):
+        try:
+            super().finish()
+        finally:  # one thread per request: roll back what a failed write left open and close its connection
+            db.release()
 
     def _public(self) -> bool:
         return urlparse(self.path).path in PUBLIC
@@ -497,7 +544,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"job": dict(job), "events": [dict(e) for e in db.events(job["id"])], "docs": _docs(job),
                             "people": job_people(job["id"]), "warm": warm(job["company"]),
                             "rounds": interview.rounds(job["id"]), "bank": interview.question_bank(job, False)[:30],
-                            "stress": interview.story_prompt(job)})
+                            "stress": interview.story_prompt(job), "mail": [dict(r) for r in db.list_mail(job["id"])]})
+            elif path == "/api/mail":  # ?job=ID (that job's mail, both ways) or ?unmatched=1
+                from urllib.parse import parse_qs
+
+                q = parse_qs(urlparse(self.path).query)
+                job = q.get("job", [""])[0]
+                self._json({"mail": [dict(r) for r in db.list_mail(int(job) if job else None, bool(q.get("unmatched")))]})
             elif path == "/api/contacts":
                 from .contacts import ROLES, rows
 
@@ -517,6 +570,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"text": PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else ""})
             elif path == "/api/profile/bank":
                 self._json(_bank_view())
+            elif path == "/api/email/status":  # connection and presets; never the password
+                from . import mailconn
+
+                self._json({"status": mailconn.status(), "presets": mailconn.PRESETS})
             elif path == "/api/autofill":  # the autofill bookmarklet reads this; it never submits a form
                 # CORS-open to the page you are on: send only the fields it types, not the private answer bank
                 self._json({k: v for k, v in extras.autofill_data().items() if k != "answers"})
@@ -558,10 +615,11 @@ class Handler(BaseHTTPRequestHandler):
                     db.update_job(jid, notes=((j["notes"] or "") + "\n" + p["text"]).strip())
                     db.add_event(jid, "note", p["text"])
                 elif op == "jd":
+                    from .resume import set_jd
                     from .util import read_source
 
                     url = http_only(p["source"]) if not db.get_job(jid)["url"] else None  # a JD link is the posting link
-                    db.update_job(jid, jd=read_source(p["source"], allow_files=False), **({"url": url} if url else {}))
+                    set_jd(jid, read_source(p["source"], allow_files=False), **({"url": url} if url else {}))
                 elif op == "contact":  # the address follow-ups, thank-yous and replies are sent to
                     from .contacts import EMAIL_RE, from_job_contact
 
@@ -705,7 +763,10 @@ class Handler(BaseHTTPRequestHandler):
                 if name == "resume.md":
                     from .extras import resume_hash
 
+                    from .resume import rescore
+
                     db.update_job(job["id"], resume_hash=resume_hash(p.get("text") or ""))
+                    rescore(job["id"])  # the match % follows the resume you just saved
                 if (app_dir(job) / name).with_suffix(".docx").is_file():  # the .docx is what gets uploaded: keep it current
                     from .resume import export_docx
 
@@ -714,7 +775,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "docs": _docs(job)})
             elif path.startswith("/api/approvals/") and len(parts) == 5:
                 pid, op = int(parts[3]), parts[4]
-                self._json(approvals.approve(pid, p.get("edits")) if op == "approve" else (approvals.reject(pid, p.get("reason", "")) or {"ok": True}))
+                if op == "approve":
+                    self._json(approvals.approve(pid, p.get("edits")))
+                elif op == "edit":  # {subject?, body?}: only those two change; the item stays pending
+                    self._json(approvals.edit(pid, p.get("subject"), p.get("body")))
+                elif op == "reject":
+                    approvals.reject(pid, p.get("reason", ""))
+                    self._json({"ok": True})
+                else:
+                    raise ValueError(f"unknown inbox operation {op}")
+            elif path == "/api/suggest/dismiss":  # {job_id, kind}: Today's suggested email snoozed for 3 days
+                from .drafts import snooze
+
+                snooze(int(p["job_id"]), str(p.get("kind") or ""))
+                self._json({"ok": True})
             elif path == "/api/tools":
                 self._json(settings.set_tool(p["tool"], p.get("enabled"), p.get("auto")))
             elif path == "/api/prefs":
@@ -745,6 +819,36 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     vault.set(p["name"], p["value"], p.get("user"))
                 self._json({"ok": True})
+            elif path.startswith("/api/email/") and len(parts) == 4:  # connect | test | test_send | disconnect
+                from . import mailconn
+
+                op = parts[3]
+                if op == "connect":  # {preset, user, password?, imap_host?, imap_port?, smtp_host?, smtp_port?, smtp_mode?, smtp_user?}
+                    keys = {k: p[k] for k in mailconn.KEYS if p.get(k) not in (None, "")}
+                    self._json(mailconn.connect(p.get("preset", ""), p.get("user", ""), p.get("password") or None, **keys))
+                elif op == "test":
+                    self._json(mailconn.test())
+                elif op == "test_send":
+                    self._json(mailconn.test_send(p.get("to")))
+                elif op == "disconnect":
+                    self._json(mailconn.disconnect())
+                else:
+                    self._json({"error": "not found"}, 404)
+            elif path.startswith("/api/mail/") and len(parts) == 5:  # link {job_id} | unlink | dismiss | track {company?, title?}
+                mid, op, out = int(parts[3]), parts[4], {"ok": True}
+                if op == "link":  # your own link: never sets the job's contact, never makes the sender trusted
+                    db.link_mail(mid, int(p["job_id"]))
+                elif op == "unlink":
+                    db.unlink_mail(mid)
+                elif op == "dismiss":
+                    db.dismiss_mail(mid)
+                elif op == "track":
+                    from .email_monitor import track_mail
+
+                    out["id"] = track_mail(mid, str(p.get("company") or ""), str(p.get("title") or ""))
+                else:
+                    raise ValueError(f"unknown mail operation {op}")
+                self._json(out)
             elif path.startswith("/api/run/"):
                 self._json({"task": start_task(parts[3], p)})
             else:

@@ -74,16 +74,19 @@ lodestar providers --test
 
 ## 3. Email monitoring (optional)
 
-Gmail: Google Account, Security, 2-Step Verification, App passwords, create one named "lodestar".
+Create an **app password** with your provider (Gmail: turn on 2-Step Verification, then
+https://myaccount.google.com/apppasswords), then use Setup > **Connect email** in the app, or:
 
 ```powershell
-lodestar vault set IMAP_USER     # your address
-lodestar vault set IMAP_PASS     # the app password
+lodestar email connect --user you@example.com    # preset guessed from the address; app password prompted, hidden
+lodestar email test-send                         # a test email to yourself
 lodestar email check --days 7 --dry
 ```
 
-Other providers: set `IMAP_HOST` in `.env`. To be emailed about alerts and digests, set `LODESTAR_NOTIFY_EMAIL`
-(uses the same account over SMTP; `SMTP_HOST` defaults to smtp.gmail.com).
+Presets: Gmail, Yahoo, iCloud (SMTP starttls on 587), Fastmail, Zoho, AOL, or Custom with your own hosts and ports.
+Outlook, Hotmail and Microsoft 365 are not supported: Microsoft accepts only OAuth sign-in for IMAP and SMTP. The
+provider table is in [COMMANDS.md](COMMANDS.md#connect-your-email). To be emailed about alerts and digests, set
+`LODESTAR_NOTIFY_EMAIL` (sent from the connected mailbox).
 
 ## 4. Automation
 

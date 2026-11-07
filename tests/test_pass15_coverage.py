@@ -285,9 +285,8 @@ class Audit(unittest.TestCase):
         r = lint.audit(scanned, "Jane-Doe-Resume.pdf")
         rules = {i["rule"] for i in r["issues"]}
         self.assertTrue({"images", "size"} <= rules, rules)
-        try:
-            import pypdf  # noqa: F401
-        except ImportError:  # optional: the text checks are skipped with a note, the rest still run
+        import importlib.util
+        if importlib.util.find_spec("pypdf") is None:  # optional: the text checks are skipped with a note, the rest still run
             self.assertIn("skipped", r["note"])
         else:
             from pypdf import PdfWriter

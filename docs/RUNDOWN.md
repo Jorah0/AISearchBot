@@ -10,11 +10,13 @@ one SQLite file. Nothing leaves your machine except the API calls you configure 
 | Config | `lodestar/config.py` | `~/.lodestar/` paths, `.env` loading, setting lookup (env > vault > default) | stdlib |
 | Secrets | `lodestar/vault.py` | OS keyring store for API keys, mail creds, site logins; name index only on disk | `keyring` |
 | AI | `lodestar/ai.py` | `chat()`, `ask()`, `ask_json()` over Anthropic + every OpenAI-compatible API; `council()` pools providers and synthesizes | urllib |
-| Data | `lodestar/db.py` | jobs (with validated tracker fields), events, watches, companies, contacts, interview rounds, offers, seen-keys; status pipeline; stats; funnel; thread-local connections | sqlite3 |
+| Data | `lodestar/db.py` | jobs (with validated tracker fields), events, watches, companies, contacts, interview rounds, offers, mail (deduped by Message-ID), seen-keys; status pipeline; stats; funnel; thread-local connections | sqlite3 |
 | Documents | `lodestar/resume.py` | master profile, per-job tailoring (bullet by bullet), cover letter, gap JSON, review, salary parsing, Markdown to .docx / PDF | `python-docx` |
 | JD coverage | `lodestar/ats.py` | deterministic keyword coverage of a posting against your resume (`match`), over `data/skills.json`; no AI | stdlib |
 | Resume lint | `lodestar/lint.py` | offline resume checks and the saved-file audit (`resume lint`, `resume audit`) | stdlib |
-| Inbox | `lodestar/email_monitor.py` | IMAP scan, keyword prefilter, AI classification, sender trust (DKIM + job tie), status upgrade rules, interview rounds from trusted timed invites, contact touches, reply drafts | imaplib |
+| Inbox | `lodestar/email_monitor.py` | IMAP scan, keyword prefilter, AI classification, sender trust (DKIM + a strong job tie: contact, vouched thread, or the company site held for the job), status upgrade rules, interview rounds from trusted timed invites, contact touches, reply drafts, mail recording and thread linking, Track as new job | imaplib |
+| Mail connection | `lodestar/mailconn.py` | provider presets (Gmail, Yahoo, iCloud, Fastmail, Zoho, AOL, custom; Outlook refused: OAuth only), stored connection, IMAP + SMTP login test with plain hints, test send to yourself | imaplib, smtplib |
+| Drafts | `lodestar/drafts.py` | AI draft options (one call, one recommended), rewrites, picking an option (always proposed for review), suggested emails from the tracker (no AI) | ai, approvals |
 | Web | `lodestar/web_monitor.py` | career-page diffs (robots.txt respected); six free job sources (Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse); Greenhouse / Lever / Ashby company boards; search filters, cross-source de-dup, stale signals, H-1B sponsor hints, weekly posting check; AI fit ranking | urllib |
 | Interview | `lodestar/interview.py` | interview rounds, question bank (`data/questions.json`), STAR stories, prep pack, mock interview with per-answer scoring | ai |
 | Contacts | `lodestar/contacts.py` | contacts CRM: people, job links with a role, LinkedIn connections import, warm paths, touches, referral asks | db |
@@ -106,11 +108,11 @@ document is produced (`--council`) and as a standalone `council "<question>"` co
 - `.gitignore` excludes every personal artifact (profile, database, applications, alerts, snapshots, vault index,
   `.env`) and every development artifact (graph outputs, caches, build dirs), so the repo can be shared safely.
 
-## 6. Current state (2026-11-06, pass 15)
+## 6. Current state (2026-11-07, pass 16)
 
-185 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`). Live-verified: installer, desktop window (Edge
+287 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`). Live-verified: installer, desktop window (Edge
 WebView2), every UI route with token and Host checks, six free job sources, page watches, Obsidian export. Not yet
-exercised with real credentials: AI calls and SMTP sending. Pass-by-pass history is in [CHANGELOG.md](CHANGELOG.md).
+exercised with real credentials: AI calls, IMAP login and SMTP sending (Connect email is tested against faked servers only). Pass-by-pass history is in [CHANGELOG.md](CHANGELOG.md).
 
 ## 7. Roadmap (shipped)
 

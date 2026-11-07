@@ -14,7 +14,8 @@ CLOSED = ("accepted", "rejected", "withdrawn")
 def agenda(now: datetime | None = None) -> dict:
     """Today's list (Board panel, `lodestar today`, the daily toast): next actions due today or overdue, deadlines in
     the next 3 days, follow-ups due (followup_days), interviews in the next 48 hours, contacts whose next touch has
-    come (surfaced only, never drafted), and the Inbox size."""
+    come (surfaced only, never drafted), suggested emails (drafts.suggest_emails: nothing drafted until you ask), and
+    the Inbox size."""
     from .contacts import due
     from .extras import upcoming_interviews
 
@@ -36,8 +37,20 @@ def agenda(now: datetime | None = None) -> dict:
         "interviews": [{"id": i["job_id"], "company": i["company"], "title": i["title"], "when": f"{i['when']:%a %Y-%m-%d %H:%M}"}
                        for i in upcoming_interviews(2)],
         "contacts": [{"id": c["id"], "name": c["name"], "company": c["company"] or "", "when": c["next_touch"]} for c in due(today)],
+        "emails": _suggested(now),
         "pending": len(db.list_pending("pending")),
     }
+
+
+def _suggested(now: datetime) -> list[dict]:
+    """Suggested emails for the agenda; a fault there costs only this list, never the Today panel or the page."""
+    from .drafts import suggest_emails
+
+    try:
+        return suggest_emails(now)
+    except (Exception, SystemExit) as e:
+        log.get("loop").warning("suggested emails failed: %s", e)
+        return []
 
 
 def followup_step(job) -> str:
@@ -56,6 +69,7 @@ def _step(name: str, fn) -> None:
     try:
         fn()
     except (Exception, SystemExit) as e:
+        db.release(close=False)  # a write that failed half-way must not keep the database locked for the UI
         STATUS["last_error"] = f"{time.strftime('%H:%M')} {name}: {e}"
         print(f"{name} skipped: {e}")
         log.get("loop").warning("%s failed: %s", name, e)
@@ -111,7 +125,7 @@ def _desktop(now: datetime | None = None) -> None:
     ag = agenda(now)
     counts = [(len(ag["actions"]), "next action(s) due"), (len(ag["deadlines"]), "deadline(s) within 3 days"),
               (len(ag["followups"]), "follow-up(s) due"), (len(ag["interviews"]), "interview(s) within 48 h"),
-              (len(ag["contacts"]), "contact(s) to get in touch with"),
+              (len(ag["contacts"]), "contact(s) to get in touch with"), (len(ag["emails"]), "suggested email(s)"),
               (ag["pending"], "waiting in the Inbox")]
     line = " · ".join(f"{n} {what}" for n, what in counts if n)
     if line:

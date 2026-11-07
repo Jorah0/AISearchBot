@@ -151,10 +151,26 @@ def rounds(job_id: int) -> list[dict]:
     return [dict(r) for r in db.con().execute("SELECT * FROM interviews WHERE job_id=? ORDER BY round, at", (job_id,))]
 
 
-def booked(job_id: int, at: str, ics: str | None = None, note: str = "") -> int:
+def booked(job_id: int, at: str, ics: str | None = None, note: str = "", once: bool = False) -> int | None:
     """A scheduled interview from the calendar paths (.ics written, interview email): the job's round at that time, else
-    its date-only round of that day (which gains the time), else a new round. A re-scanned mail adds nothing."""
+    its date-only round of that day (which gains the time), else a new round. A re-scanned mail adds nothing.
+    once: the .ics import (sync_ics): a calendar file another thread or process imported meanwhile is skipped (None)."""
     c = db.con()
+    if c.in_transaction:
+        c.commit()
+    c.execute("BEGIN IMMEDIATE")  # check-then-insert as one step: the loop, a page poll and `run --once` race here
+    try:
+        rid = _booked(c, job_id, at, ics, note, once)
+    except BaseException:
+        c.rollback()
+        raise
+    c.commit()
+    return rid
+
+
+def _booked(c, job_id: int, at: str, ics: str | None, note: str, once: bool) -> int | None:
+    if once and ics and c.execute("SELECT 1 FROM seen WHERE key=?", ("ics:" + ics,)).fetchone():
+        return None
     if len(at) > 10:
         row = c.execute("SELECT id, at FROM interviews WHERE job_id=? AND at IN (?, ?) ORDER BY length(at) DESC",
                         (job_id, at, at[:10])).fetchone()
@@ -172,7 +188,6 @@ def booked(job_id: int, at: str, ics: str | None = None, note: str = "") -> int:
                         (job_id, _next_round(job_id), at, ics, note[:500] or None)).lastrowid
     if ics:
         c.execute("INSERT OR IGNORE INTO seen(key) VALUES(?)", ("ics:" + ics,))
-    c.commit()
     return rid
 
 
@@ -184,8 +199,8 @@ def sync_ics() -> int:
     n = 0
     for e in rows:
         if m := ICS_RE.search(e["detail"] or ""):
-            booked(e["job_id"], f"{datetime.strptime(m.group(1), '%Y%m%d-%H%M'):%Y-%m-%d %H:%M}", e["detail"])
-            n += 1
+            if booked(e["job_id"], f"{datetime.strptime(m.group(1), '%Y%m%d-%H%M'):%Y-%m-%d %H:%M}", e["detail"], once=True):
+                n += 1
     return n
 
 
@@ -296,6 +311,7 @@ def save_story(title, situation="", task="", action="", result="", metrics="", c
         else:
             sid = db.con().execute("INSERT INTO answers(question, answer, tags, star) VALUES(?,?,?,?)", args).lastrowid
     except sqlite3.IntegrityError:
+        db.con().rollback()  # or the failed write's transaction keeps the database write-locked
         raise SystemExit(f"another story or saved answer is already called {args[0]!r}") from None
     db.con().commit()
     return sid

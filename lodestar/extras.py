@@ -56,14 +56,24 @@ def parse_when(s: str) -> datetime:
     raise SystemExit(f"could not parse date '{s}' (use YYYY-MM-DD HH:MM)")
 
 
+def ics_text(s) -> str:
+    """An RFC 5545 TEXT value: backslash, ';' and ',' escaped, line breaks as an escaped n, other control characters
+    dropped. Company and title come from feeds and mail, so a raw newline would let them add their own events, URLs or
+    alarms to the calendar file."""
+    s = str(s or "").replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+    s = re.sub(r"\r\n?|\n", r"\\n", s)
+    return re.sub(r"[\x00-\x1f\x7f]", "", s)
+
+
 def ics(job, when: datetime, minutes: int = 60, title: str | None = None, reminder_days: int = 2) -> Path:
     """Write an .ics with the interview and a prep reminder N days before. Double-click imports into any calendar."""
     def ev(start, mins, summary, desc):
         end = start + timedelta(minutes=mins)
         return "\n".join([
             "BEGIN:VEVENT", f"UID:{uuid.uuid4()}@lodestar", f"DTSTAMP:{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}",
-            f"DTSTART:{start:%Y%m%dT%H%M%S}", f"DTEND:{end:%Y%m%dT%H%M%S}", f"SUMMARY:{summary}",
-            f"DESCRIPTION:{desc}", "BEGIN:VALARM", "TRIGGER:-PT30M", "ACTION:DISPLAY", f"DESCRIPTION:{summary}",
+            f"DTSTART:{start:%Y%m%dT%H%M%S}", f"DTEND:{end:%Y%m%dT%H%M%S}", f"SUMMARY:{ics_text(summary)}",
+            f"DESCRIPTION:{ics_text(desc)}", "BEGIN:VALARM", "TRIGGER:-PT30M", "ACTION:DISPLAY",
+            f"DESCRIPTION:{ics_text(summary)}",
             "END:VALARM", "END:VEVENT"])
 
     summary = title or f"Interview: {job['company']} - {job['title']}"
@@ -107,7 +117,7 @@ def digest(days: int = 7, send: bool = False, provider: str | None = None) -> st
             text += "\n\n## Coach's plan for next week\n" + ai.ask(
                 "Given this job-search digest, write 5 concrete actions for next week, most impactful first, one line each.\n\n"
                 + text, provider=provider)
-        except Exception as e:  # the digest is still useful without the AI paragraph
+        except (Exception, SystemExit) as e:  # the digest is still useful without the AI paragraph (rejected model: SystemExit)
             text += f"\n\n(coach unavailable: {e})"
     if send:
         notify(text)
@@ -212,13 +222,18 @@ SOURCES:
 {corpus[:16000]}
 
 CANDIDATE SUMMARY:
-{candidate_text(1500)}""",
+{candidate_text(1500, private=False)}""",  # research.md feeds the cover-letter prompt: no salary floor or private prefs
         provider=provider,
     )
     out = _job_dir(job)
     out.mkdir(parents=True, exist_ok=True)
     from .resume import write_doc
 
+    # what was read is written down, not left to the model: with nothing fetched the whole pack is unverified recall
+    if not sources:
+        text = (f"> **No public source could be fetched** (job page, company site, Wikipedia, web search). Everything below "
+                f"is the model's own recall of {job['company']}: treat all of it as unverified.\n\n{text}")
+    text = text.rstrip() + "\n\n## Sources read\n" + ("\n".join(f"- {u}" for u, _ in sources) or "- none") + "\n"
     write_doc(out / "research.md", text)
     db.add_event(job["id"], "research", f"{len(sources)} source(s)")
     return out / "research.md"
@@ -266,7 +281,8 @@ def backup(out_dir: Path | None = None, keep: int = 7) -> Path:
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z, tempfile.TemporaryDirectory() as tmp:
         for p in HOME.rglob("*"):
             rel = p.relative_to(HOME)
-            if not p.is_file() or set(rel.parts) & skip or p.name.startswith("lodestar.log") or p.suffix in (".lock", ".tmp"):
+            if (not p.is_file() or set(rel.parts) & skip or p.name.startswith("lodestar.log") or p.suffix in (".lock", ".tmp")
+                    or p.name == ".env"):  # .env may hold keys or IMAP_PASS in clear text; secrets stay out of zips
                 continue
             if p.suffix == ".db":  # SQLite online backup: a consistent snapshot even while the loop is writing
                 snap = Path(tmp) / p.name
@@ -291,8 +307,8 @@ def csv_cell(v):
 
 
 def export_data(fmt: str = "json", out_dir: Path | None = None) -> Path:
-    """Dump jobs, events, answers, ideas, pending, contacts, interview rounds, mock sessions, offers and contact
-    touches as JSON (one file) or CSV (one file per table)."""
+    """Dump jobs, events, answers, ideas, pending, contacts, interview rounds, mock sessions, offers, contact
+    touches and linked mail as JSON (one file) or CSV (one file per table)."""
     import csv
     import json as _json
 
@@ -305,7 +321,8 @@ def export_data(fmt: str = "json", out_dir: Path | None = None) -> Path:
               "interviews": db.con().execute("SELECT * FROM interviews ORDER BY id").fetchall(),
               "mock_sessions": db.con().execute("SELECT * FROM mock_sessions ORDER BY id").fetchall(),
               "offers": db.con().execute("SELECT * FROM offers ORDER BY job_id").fetchall(),
-              "touches": db.con().execute("SELECT * FROM touches ORDER BY day").fetchall()}
+              "touches": db.con().execute("SELECT * FROM touches ORDER BY day").fetchall(),
+              "mail": db.con().execute("SELECT * FROM mail ORDER BY id").fetchall()}  # subjects/snippets: csv_cell
     out_dir = out_dir or HOME / "exports"
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = f"{datetime.now():%Y%m%d-%H%M}"
@@ -331,8 +348,10 @@ def upcoming_interviews(days: int = 2) -> list[dict]:
 
     sync_ics()
     now = datetime.now()
+    # a withdrawn or rejected job's rounds are off: no Today entry, reminder, toast, clash or busy slot
     rows = db.con().execute("SELECT i.id, i.job_id, i.at, i.ics, j.company, j.title FROM interviews i JOIN jobs j ON j.id=i.job_id "
-                            "WHERE length(i.at)=16 AND i.at BETWEEN ? AND ? ORDER BY i.at",
+                            "WHERE length(i.at)=16 AND i.at BETWEEN ? AND ? AND j.status NOT IN ('rejected','withdrawn') "
+                            "ORDER BY i.at",
                             (f"{now:%Y-%m-%d %H:%M}", f"{now + timedelta(days=days):%Y-%m-%d %H:%M}")).fetchall()
     out = []
     for r in rows:
@@ -465,8 +484,12 @@ def activity_log(start, end) -> list[dict]:
             continue
         add(_local(p["decided_at"]), "followed_up" if pay.get("purpose") in ("followup", "thanks") else "contacted",
             p["company"], p["title"], "email", pay.get("to"), "sent", p["id"])
+    # a closed (withdrawn / rejected) job's rounds after it closed never took place; earlier ones keep their history.
+    # ponytail: round times are local, event times UTC; a round within hours of the close can land on either side
     for r in db.con().execute("SELECT i.at, i.kind, i.interviewers, i.outcome, j.id, j.company, j.title FROM interviews i "
-                              "JOIN jobs j ON j.id=i.job_id WHERE COALESCE(i.at, '') != ''").fetchall():
+                              "JOIN jobs j ON j.id=i.job_id WHERE COALESCE(i.at, '') != '' AND NOT (j.status IN "
+                              "('rejected','withdrawn') AND i.at > COALESCE((SELECT MAX(e.ts) FROM events e WHERE "
+                              "e.job_id=j.id AND e.kind='status'), j.updated_at))").fetchall():
         add(date.fromisoformat(r["at"][:10]), "interviewed", r["company"], r["title"],
             {"onsite": "in person", "phone": "phone"}.get(r["kind"], "online"), r["interviewers"], r["outcome"], r["id"])
     for t in db.con().execute("SELECT t.day, c.name, c.email, c.company, c.position FROM touches t JOIN contacts c ON "
@@ -528,6 +551,13 @@ def activity_export(start, end, fmt: str = "csv", out_dir: Path | None = None) -
     return export_html(md)
 
 
+def _who(contact: str) -> str:
+    """One person, however an activity row names them: a touch says 'Jane Doe jane@x.com', a sent mail the bare
+    address. The address when there is one, else the lowercased name."""
+    m = re.search(r"[\w.+'-]+@[\w-]+(?:\.[\w-]+)+", contact or "")
+    return (m.group(0) if m else " ".join((contact or "").split())).lower()
+
+
 def goal_progress(today: date | None = None) -> list[dict]:
     """This week's progress (Monday to today) on each weekly goal you set (pref weekly_goals); [] when none is set."""
     from . import settings
@@ -540,7 +570,7 @@ def goal_progress(today: date | None = None) -> list[dict]:
     applied = [r for r in week if r["activity"] == "applied"]
     done = {"applications": len(applied),
             "tailored_applications": sum(1 for r in applied if db.get_job(r["job_id"])["resume_hash"]),
-            "contacts": len({r["contact"].lower() for r in week if r["activity"] in ("contacted", "followed_up") and r["contact"]}),
+            "contacts": len({_who(r["contact"]) for r in week if r["activity"] in ("contacted", "followed_up") and r["contact"]}),
             "mock_sessions": sum(1 for s in db.con().execute("SELECT ts FROM mock_sessions").fetchall()
                                  if monday(today) <= _local(s["ts"]) <= today)}
     return [{"goal": k, "label": k.replace("_", " "), "target": int(goals[k]), "done": done[k]} for k in settings.GOALS if goals.get(k)]
@@ -554,10 +584,12 @@ def _band(score) -> str:
 
 
 def _rates(key, order=()) -> list[dict]:
-    """Response and interview rate per group over jobs that left 'saved' (as db.stats counts them); n < MIN_N: no rate."""
+    """Response and interview rate per group over the jobs you applied to (db.applied_ids, as db.stats counts them);
+    n < MIN_N: no rate."""
     groups: dict[str, list[int]] = {k: [0, 0, 0] for k in order}
+    done = db.applied_ids()
     for j in db.list_jobs():
-        if j["status"] != "saved":
+        if j["id"] in done:
             g = groups.setdefault(key(j), [0, 0, 0])
             pos = j["status"] in db.POSITIVE
             g[0], g[1], g[2] = g[0] + 1, g[1] + (pos or j["status"] == "rejected"), g[2] + pos
@@ -592,7 +624,7 @@ def analytics(weeks: int = 12, today: date | None = None) -> dict:
         elif r["activity"] == "interviewed":
             bump(d, "interviews")
         elif r["contact"]:
-            bump(d, "contacts", r["contact"].lower())
+            bump(d, "contacts", _who(r["contact"]))
     for d, _ in _first_status("offer"):
         bump(d, "offers")
     for s in db.con().execute("SELECT ts FROM mock_sessions").fetchall():

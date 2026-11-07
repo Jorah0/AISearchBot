@@ -49,6 +49,7 @@ def _write(sql: str, args) -> int:
     try:
         cur = db.con().execute(sql, args)
     except sqlite3.IntegrityError:
+        db.con().rollback()  # or the failed INSERT's transaction keeps the database write-locked
         raise SystemExit("another contact already has this email address or LinkedIn URL") from None
     db.con().commit()
     return cur.lastrowid or 0

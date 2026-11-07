@@ -1,4 +1,5 @@
 """Small helpers: HTTP fetch, HTML to text, JSON extraction, notifications."""
+import http.client
 import json
 import re
 import smtplib
@@ -10,14 +11,13 @@ from html.parser import HTMLParser
 from .config import ALERTS, setting
 
 UA = "Mozilla/5.0 (compatible; lodestar/0.1; +https://github.com/)"
+MAIL_TIMEOUT = 60  # seconds per IMAP/SMTP socket operation: a server that accepts and goes quiet must not hang the loop
 
 
 def _check_url(url: str) -> None:
     """SSRF guard: http(s) only, and the host must not resolve to loopback, link-local, or private ranges.
     Set LODESTAR_ALLOW_PRIVATE_URLS=1 to watch an intranet careers page on purpose."""
-    import ipaddress
     import os
-    import socket
     from urllib.parse import urlparse
 
     u = urlparse(url)
@@ -25,14 +25,71 @@ def _check_url(url: str) -> None:
         raise ValueError(f"only http(s) URLs can be fetched: {url[:80]}")
     if os.environ.get("LODESTAR_ALLOW_PRIVATE_URLS") == "1":
         return
+    _public_addrs(u.hostname, u.port or (443 if u.scheme == "https" else 80))
+
+
+def _public_addrs(host: str, port: int) -> list:
+    """getaddrinfo for host, refusing the lot when any address is loopback, private, link-local or otherwise not public."""
+    import ipaddress
+    import socket
+
     try:
-        infos = socket.getaddrinfo(u.hostname, u.port or (443 if u.scheme == "https" else 80), proto=socket.IPPROTO_TCP)
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
     except socket.gaierror as e:
-        raise ValueError(f"cannot resolve {u.hostname}: {e}") from None
+        raise ValueError(f"cannot resolve {host}: {e}") from None
     for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
+        ip = ipaddress.ip_address(info[4][0].split("%")[0])
         if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
-            raise ValueError(f"refusing to fetch a non-public address for {u.hostname} ({ip})")
+            raise ValueError(f"refusing to fetch a non-public address for {host} ({ip})")
+    return infos
+
+
+def _pinned_connect(address, timeout=None, source_address=None, **_):
+    """http.client's connect, but to an address that passed the public-address check in this same lookup: a DNS name
+    that answers a public IP for the check and 127.0.0.1 for the connect (rebinding) never reaches the second.
+    TLS still verifies the certificate and sends SNI for the host name (http.client wraps this socket with it).
+    ponytail: with a proxy configured the proxy resolves the name, so only the URL check applies then"""
+    import os
+    import socket
+
+    if os.environ.get("LODESTAR_ALLOW_PRIVATE_URLS") == "1" or urllib.request.getproxies():
+        return socket.create_connection(address, timeout, source_address)
+    err = None
+    for family, kind, proto, _, sa in _public_addrs(*address):
+        s = socket.socket(family, kind, proto)
+        try:
+            if timeout is not None and timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+                s.settimeout(timeout)
+            if source_address:
+                s.bind(source_address)
+            s.connect(sa)
+            return s
+        except OSError as e:
+            err = e
+            s.close()
+    raise err or OSError(f"cannot connect to {address[0]}")
+
+
+class _PinnedHTTP(http.client.HTTPConnection):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._create_connection = _pinned_connect
+
+
+class _PinnedHTTPS(http.client.HTTPSConnection):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._create_connection = _pinned_connect
+
+
+class _PinnedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_PinnedHTTP, req)
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_PinnedHTTPS, req, context=self._context)
 
 
 class _SafeRedirect(urllib.request.HTTPRedirectHandler):
@@ -41,14 +98,28 @@ class _SafeRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-_opener = urllib.request.build_opener(_SafeRedirect)
+_opener = urllib.request.build_opener(_SafeRedirect, _PinnedHTTPHandler, _PinnedHTTPSHandler)
+FETCH_MAX_BYTES = 25_000_000  # a big Greenhouse feed with content=true runs a few MB; nothing we read needs more
 
 
-def fetch(url: str, timeout: int = 25, headers: dict | None = None) -> str:
+def fetch(url: str, timeout: int = 25, headers: dict | None = None, max_bytes: int | None = None) -> str:
+    """GET url as text. timeout bounds each socket wait, and the whole read must finish within 4x timeout, so a server
+    that trickles a byte at a time cannot hold the loop; more than max_bytes (FETCH_MAX_BYTES) is refused."""
+    import time
+
     _check_url(url)
+    cap = max_bytes or FETCH_MAX_BYTES
+    deadline = time.monotonic() + timeout * 4
     req = urllib.request.Request(url, headers={"User-Agent": UA, **(headers or {})})
     with _opener.open(req, timeout=timeout) as r:
-        return r.read().decode(r.headers.get_content_charset() or "utf-8", errors="replace")
+        buf = bytearray()
+        while chunk := r.read(65536):
+            buf += chunk
+            if len(buf) > cap:
+                raise ValueError(f"response from {url[:80]} is larger than {cap // 1_000_000} MB")
+            if time.monotonic() > deadline:
+                raise ValueError(f"response from {url[:80]} took longer than {timeout * 4} s")
+        return buf.decode(r.headers.get_content_charset() or "utf-8", errors="replace")
 
 
 def fetch_json(url: str, **kw):
@@ -207,16 +278,44 @@ class run_lock:
         self.path.unlink(missing_ok=True)
 
 
-def send_email(to: str, subject: str, body: str, in_reply_to: str | None = None) -> None:
-    """Send as the IMAP account over SMTP (Gmail app password works). The only outbound-mail path in lodestar."""
-    user, pw = setting("IMAP_USER"), setting("IMAP_PASS")
-    if not (user and pw):
-        raise RuntimeError("sending needs IMAP_USER + IMAP_PASS (SMTP uses the same login): lodestar vault set IMAP_PASS")
+def mail_settings() -> dict:
+    """The connected mailbox (mailconn.connect stores it; Gmail servers when nothing is set). Never the password."""
+    user = setting("IMAP_USER") or ""
+    mode = (setting("SMTP_MODE") or "ssl").lower()
+    return {"preset": setting("EMAIL_PRESET") or "", "user": user,
+            "imap_host": setting("IMAP_HOST", "imap.gmail.com"), "imap_port": int(setting("IMAP_PORT") or 993),
+            "smtp_host": setting("SMTP_HOST", "smtp.gmail.com"),
+            "smtp_port": int(setting("SMTP_PORT") or (587 if mode == "starttls" else 465)),
+            "smtp_mode": mode, "smtp_user": setting("SMTP_USER") or user}
+
+
+def smtp_open(host: str, port: int, mode: str):
+    """Certificate-verified SMTP: implicit TLS (ssl, port 465) or STARTTLS (port 587), with the mail socket timeout."""
+    if mode != "starttls":
+        return smtplib.SMTP_SSL(host, port, context=tls_context(), timeout=MAIL_TIMEOUT)
+    s = smtplib.SMTP(host, port, timeout=MAIL_TIMEOUT)
+    try:
+        s.starttls(context=tls_context())  # raises SMTPNotSupportedError rather than falling back to plain text
+    except BaseException:
+        s.close()
+        raise
+    return s
+
+
+def send_email(to: str, subject: str, body: str, in_reply_to: str | None = None) -> str:
+    """Send as the connected account over SMTP and return the Message-ID. The only outbound-mail path in lodestar."""
+    from email.utils import formatdate, make_msgid
+
+    c, pw = mail_settings(), setting("IMAP_PASS")
+    if not (c["user"] and pw):
+        raise RuntimeError("sending needs a connected mailbox: Setup > Connect email, or lodestar email connect")
     m = EmailMessage()
-    m["Subject"], m["From"], m["To"] = subject, user, to
+    m["Subject"], m["From"], m["To"] = subject, c["user"], to
+    m["Date"], m["Message-ID"] = formatdate(localtime=True), make_msgid(domain=c["user"].rpartition("@")[2] or None)
     if in_reply_to:
         m["In-Reply-To"] = m["References"] = in_reply_to
     m.set_content(body)
-    with smtplib.SMTP_SSL(setting("SMTP_HOST", "smtp.gmail.com"), 465, context=tls_context()) as s:
-        s.login(user, pw)
+    with smtp_open(c["smtp_host"], c["smtp_port"], c["smtp_mode"]) as s:
+        s.login(c["smtp_user"], pw)
         s.send_message(m)
+    return m["Message-ID"]

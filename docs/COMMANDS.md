@@ -21,7 +21,7 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 | `lodestar jobs add "Company" "Title" [--jd url\|file\|text] [--url] [--notes]` | Track a job; `--jd` URL is fetched and stored as text. |
 | `lodestar jobs list [--status S] [--sort match\|salary\|excitement\|deadline\|updated] [--remote onsite\|hybrid\|remote] [--min-salary N] [--tag T]` | Board as a table, with pay, match, excitement, workplace, deadline and tags on each line. `--min-salary` compares the top of the stated range. |
 | `lodestar jobs set ID key=value ...` | Tracker fields: `location`, `remote` (onsite/hybrid/remote), `salary_min`, `salary_max` (`120k` works), `currency` (3 letters), `source`, `posted_at`, `deadline`, `next_action_at` (YYYY-MM-DD), `excitement` (1-5), `tags` (comma list), `match_score` (0-100), `next_action`. An empty value clears; a bad value changes nothing. |
-| `lodestar today` | Today's agenda: next actions due or overdue, deadlines within 3 days, interviews within 48 h, follow-ups due, contacts whose next touch has come, Inbox size. The Board shows the same as a Today panel. |
+| `lodestar today` | Today's agenda: next actions due or overdue, deadlines within 3 days, interviews within 48 h, follow-ups due, contacts whose next touch has come, suggested emails, Inbox size. The Board shows the same as a Today panel. |
 | `lodestar jobs show ID` | Fields + full event timeline. |
 | `lodestar jobs status ID saved\|applied\|screening\|interview\|offer\|accepted\|rejected\|withdrawn [--note]` | Move it. `applied` stamps `applied_at`. `accepted` proposes withdrawing your other open applications (Inbox). |
 | `lodestar jobs note ID "text"` / `jobs jd ID source` / `jobs rm ID` | Notes, replace description, delete. |
@@ -62,11 +62,45 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 | `lodestar stories add --title T [--situation] [--task] [--action] [--result] [--metrics] [--tags conflict,ownership]` / `stories add --from-idea ID` | Save a story (title plus at least one STAR part; tags from leadership, conflict, failure, ambiguity, influence, ownership, customer, data-driven, teamwork, deadline). `--from-idea` turns an idea of the ideas `stories` topic into an incomplete story to finish. |
 | `lodestar ics ID --when "YYYY-MM-DD HH:MM" [--minutes 60]` | Calendar file for the interview plus a prep reminder 2 days before; also records the round. Email check creates this automatically when an interview mail carries a date and time. |
 
+## Connect your email
+
+Lodestar reads hiring replies over IMAP and sends only mail you approve over SMTP, as your own address. Use an **app
+password**, never your normal password; it is stored in the OS keyring only and no command, API route, log, export or
+backup returns it. In the app: Setup > **Connect email** (provider, address, app password, Advanced servers for Custom).
+
+| Provider | IMAP | SMTP | App password |
+|---|---|---|---|
+| Gmail | imap.gmail.com:993 | smtp.gmail.com:465 ssl | needs 2-Step Verification; https://myaccount.google.com/apppasswords |
+| Yahoo | imap.mail.yahoo.com:993 | smtp.mail.yahoo.com:465 ssl | Account Security > Generate app password |
+| iCloud | imap.mail.me.com:993 | smtp.mail.me.com:587 starttls | Apple Account > Sign-In and Security > App-Specific Passwords |
+| Fastmail | imap.fastmail.com:993 | smtp.fastmail.com:465 ssl | Settings > Privacy & Security > App passwords |
+| Zoho | imap.zoho.com:993 | smtp.zoho.com:465 ssl | turn on IMAP access; Accounts > Security > App Passwords (org/EU accounts: Custom) |
+| AOL | imap.aol.com:993 | smtp.aol.com:465 ssl | Account Security > Generate app password |
+| Outlook, Hotmail, Live, Microsoft 365 | not supported | | Microsoft accepts only OAuth sign-in for IMAP/SMTP; forward job mail to a supported mailbox |
+| Custom | your host:port | your host:port, ssl (465) or starttls (587) | whatever your provider issues |
+
+| Command | What it does |
+|---|---|
+| `lodestar email connect [--preset P] [--user U] [--imap-host] [--imap-port] [--smtp-host] [--smtp-port] [--smtp-mode ssl\|starttls] [--smtp-user]` | Store the connection, prompt for the app password (hidden; Enter keeps the stored one, but only when the address and servers are unchanged: a new address, IMAP/SMTP host or SMTP login drops it, so one account's password never goes to another server), then test. The preset is guessed from the address when omitted. |
+| `lodestar email test` | Log in to IMAP (INBOX read-only, counts the last 7 days) and SMTP (sends nothing); a failure comes with a plain hint (app password / 2-Step Verification, wrong host, timeout, TLS port or mode, IMAP turned off). |
+| `lodestar email test-send` | Send a short test email to your own connected address (never anyone else). |
+| `lodestar email status` | Connected address, preset and servers (never the password); lists env vars that override the stored values. |
+| `lodestar email disconnect` | Remove the stored app password (servers stay filled in). |
+
+Settings: `EMAIL_PRESET`, `IMAP_USER`, `IMAP_HOST`, `IMAP_PORT`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_MODE`, `SMTP_USER`
+(defaults to `IMAP_USER`) and the secret `IMAP_PASS`, all in the keyring vault. A value in the environment or `.env`
+wins. Every outgoing message carries a `Message-ID` and `Date`. `lodestar doctor` shows the servers; `--live` also logs
+in once to each.
+
 ## Monitoring
 
 | Command | What it does |
 |---|---|
 | `lodestar email check [--days 3] [--dry]` | IMAP scan, AI classification, tracker updates, alerts. `--dry` changes nothing. |
+| `lodestar mail list [--job ID \| --unmatched]` | Mail Lodestar recorded, newest first: every relevant scanned message and everything it sent. `--job` shows one job's mail both ways; `--unmatched` the incoming mail no job claims. Each line says trusted / unverified and how it was linked (auto, thread, user). |
+| `lodestar mail link MAIL_ID JOB_ID` | File a message under a job. Your link never sets the job's contact and never makes the sender trusted (nor does a reply you send to it). A pending "track this company" Inbox item raised by the same mail is closed. |
+| `lodestar mail unlink MAIL_ID` | Undo a link you made (automatic and thread links stay). |
+| `lodestar mail dismiss MAIL_ID` | Drop an unmatched message from the list (a scan never brings it back). |
 | `lodestar watch add URL [--keywords a,b]` | Alert when matching lines appear on a page (skipped, with one alert, when the site's robots.txt disallows it). |
 | `lodestar watch search-add "query" [--keywords] [--location] [--min-salary] [--posted-within] [--seniority]` | Alert on new listings for a query, with saved search filters. |
 | `lodestar watch list` / `watch rm ID` / `watch run` | Manage and run watches. |
@@ -112,6 +146,13 @@ page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, w
 | `POST /api/companies` `{source,name?,keywords?}` / `POST /api/companies/ID` | watch a company's Greenhouse / Lever / Ashby board / stop |
 | `GET|POST /api/profile` | read / save the master resume |
 | `POST /api/vault` `{name,value,user}` / `{name,delete:true}` | store / remove a secret |
+| `GET /api/email/status` | `{status, presets}`: connected?, preset, address, servers, env overrides (never the password) |
+| `POST /api/email/connect` `{preset, user, password?, imap_host?, imap_port?, smtp_host?, smtp_port?, smtp_mode?, smtp_user?}` | store the connection (the password only when given; changing the address, a host or the SMTP login without one removes the stored password); returns the status (`configured: false` until a password is entered) |
+| `POST /api/email/test` | IMAP and SMTP login check: `{imap: {ok, detail}, smtp: {ok, detail}, hint}` |
+| `POST /api/email/test_send` | a test email to your own address; any other `to` is refused |
+| `POST /api/email/disconnect` | remove the stored app password |
+| `GET /api/mail?job=ID` / `?unmatched=1` | recorded mail: one job's, both ways, or incoming mail no job claims (`GET /api/state` carries `mail_unmatched`, `GET /api/jobs/ID` carries `mail`) |
+| `POST /api/mail/ID/link\|unlink\|dismiss\|track` | `{job_id}` file under a job (never sets the contact or trust) / undo your own link / drop unmatched mail / `{company?, title?}` add a job from it, without a contact (closes the Inbox's "track" proposal raised by the same mail; `link` does too) |
 | `POST /api/comp` `{op: set\|delete, title, city, low, high}` | edit your market-rate table |
 | `POST /api/open_folder` `{which: data\|exports\|backups\|applications\|log}` | reveal a folder in the file manager |
 | `GET /api/analytics` | Insights: per-week series, response rate by source and by match band, funnel, variants, weekly goals |
@@ -492,3 +533,36 @@ moved to applied, mail actually sent from the Inbox (pending, rejected or failed
 interview rounds up to today and touches you recorded. Each week shows its count against `activity_weekly_min` when
 set. Export as CSV (cells a spreadsheet would run as formulas are prefixed with `'`) or Markdown plus a printable HTML
 page in `~/.lodestar/exports`. It is a helper report: check your state's requirements; it makes no claim of compliance.
+
+## Draft options, rewrites and suggested emails (pass 16)
+
+| Command | What it does |
+|---|---|
+| `lodestar followup ID --options` | Up to 3 numbered drafts from one AI call, one marked RECOMMENDED with a one-line reason. Nothing is proposed yet; the options are kept in `~/.lodestar/draft_options.json`. Without an AI provider: the plain template as the one option. |
+| `lodestar followup ID --pick N` | Use option N of the options just printed (no second AI call): proposed in the Inbox and always waiting for your review, even when the tool is on auto. `--options --pick N` does both at once. |
+| `lodestar thanks ID [--interviewer] [--notes] --options` / `--pick N` | Same for a thank-you note. |
+| `lodestar withdraw ID --options` / `--pick N` | Same for a withdrawal email (sending it moves the job to `withdrawn`). |
+| `lodestar outreach ID [--person "Name, title"] --options` / `--pick N` | Same for an outreach email to the job's contact. |
+| `lodestar offers counter ID [--cite JOB:FIELD ...] [--ask ...] --options` / `--pick N` | Same for a counter-offer (only the figures you cite and your ask; never your floor). |
+| `lodestar draft options KIND [JOB] [--mail ID] [--pending ID] [--contact ID] [--interviewer] [--notes] [--person] [--cite ...] [--ask] [--question] [--pick N]` | Options for any kind: `reply` (`--mail`: a mail filed under a job), `followup`, `thanks`, `withdraw`, `checkin` (before an offer deadline), `outreach`, `referral` (`--contact`), `counter`, `cover` (the pick is written to `cover_letter.md`), `answer` (`--question`; the pick is proposed for the answer bank), `pending` (`--pending`: alternatives for an Inbox email; the pick replaces only its subject and body). |
+| `lodestar draft rewrite --pending ID --how shorter\|warmer\|formal\|direct\|"your words"` | Rewrite an Inbox email in place: subject and body only; recipient, In-Reply-To and job stay, and it stays pending. `--file FILE` prints a rewritten text file instead. Needs an AI provider. |
+| `lodestar suggest [--dismiss JOB KIND]` | Suggested emails for today, from the tracker alone (no AI call): thank-you within 24 h after an interview round, follow-up when an application is quiet for `followup_days` (the cadence the loop uses), reply to an unanswered recruiter / interview / offer / assessment mail filed under the job, check-in before an offer deadline (next 3 days), referral ask when you know someone at a saved / applied job's company. Never for rejected or withdrawn jobs or a job with an email already waiting in the Inbox. `--dismiss` hides one for 3 days. |
+
+Every option and rewrite is screened by the salary-floor guard: one that names your floor (or carries your
+Preferences) is dropped before you see it, and a pick or edit that names it is refused. Prompts carry your profile
+without Preferences only; mail you received goes in fenced as untrusted data.
+
+In the app: the job drawer's Communicate group has **Options** (follow-up, thank-you, withdrawal, outreach, offer
+check-in), Documents has **Cover options**, each person under People has **options** for a referral ask, and each mail
+under Mail has **Reply with options**. Answers has **Options** (Use this fills the Answer bank form) and Insights >
+Offers has **Options** beside the counter-offer. Each opens up to 3 cards (label, tone, recommended badge and why,
+subject, body) with **Use this** and rewrite chips (shorter, warmer, more formal, more direct, custom). Every pending
+email in the Inbox has **Options** and the same chips; they change its subject and body in place and it stays
+pending. Today lists **Suggested emails** (reason, due chip) with **Draft options** and **Dismiss for now** (3 days).
+
+Web API: `POST /api/run/draft_options {kind, id?, mail_id?, pending_id?, contact_id?, interviewer?, notes?, person?,
+cite?, ask?, question?, tone?, words?, n?}` -> `{options}`; `POST /api/run/draft_rewrite {kind, subject?, body, how}`
+-> `{subject?, body}`; `POST /api/run/draft_use {kind, ...the same context, subject, body}` -> `{draft, proposal}`
+(the recipient comes from the job, the mail being answered or the contact, never from the request);
+`POST /api/approvals/ID/edit {subject?, body?}` (pending emails only; it stays pending);
+`POST /api/suggest/dismiss {job_id, kind}`. `GET /api/state` carries `today.emails`. All behind the page token.

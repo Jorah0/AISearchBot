@@ -244,11 +244,12 @@ def council(prompt: str, system: str | None = None, providers: list[str] | None 
     if len(names) < 2:
         answer = ask(prompt, system, provider=names[0] if names else None)
         return {"answers": {names[0] if names else "default": answer}, "synthesis": answer}
-    answers = {}
+    answers, ok = {}, []
     for n in names:
         try:
             answers[n] = ask(prompt, system, provider=n)
-        except Exception as e:  # one dead provider should not sink the council
+            ok.append(n)
+        except (Exception, SystemExit) as e:  # one dead provider (or rejected model: SystemExit) should not sink the council
             answers[n] = f"(error: {e})"
     merged = "\n\n".join(f"### Answer from {n}\n{a}" for n, a in answers.items())
     synthesis = ask(
@@ -256,7 +257,7 @@ def council(prompt: str, system: str | None = None, providers: list[str] | None 
         "Produce one final answer that combines the strongest elements, drops weak or contradictory points, "
         "and is better than any single answer. Output only the final answer.",
         system,
-        provider=names[0],  # synthesis sees every answer, so it must stay inside the allowlist
+        provider=(ok or names)[0],  # inside the allowlist (synthesis sees every answer), and a provider that answered
     )
     from . import settings
 

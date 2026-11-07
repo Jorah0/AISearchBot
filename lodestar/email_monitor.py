@@ -1,20 +1,18 @@
 """IMAP inbox monitor: finds hiring-related mail, classifies it with AI, updates the tracker, alerts you.
 
-Gmail: enable IMAP and create an App Password (Google Account -> Security -> App passwords), then
-    lodestar vault set IMAP_USER   (your address)
-    lodestar vault set IMAP_PASS   (the app password)
-Other providers: also set IMAP_HOST (default imap.gmail.com).
+Connect a mailbox first: Setup > Connect email, or `lodestar email connect` (mailconn.py: presets, app password).
 """
 import email
 import imaplib
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.header import decode_header, make_header
 from email.utils import parseaddr
+from urllib.parse import urlparse
 
 from . import ai, approvals, db, settings
 from .config import setting
-from .util import notify, strip_html
+from .util import MAIL_TIMEOUT, notify, strip_html
 
 NOREPLY = re.compile(r"no-?reply|donotreply|do-?not-?reply|notifications?@|mailer-daemon|jobs-noreply", re.I)
 
@@ -41,23 +39,106 @@ FREEMAIL = {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.c
             "mail.com", "yandex.com", "zohomail.com", "fastmail.com", "hey.com"}  # ponytail: common ones; extend as met
 
 
+# ponytail: the common two-part public suffixes, not the full Public Suffix List; a domain under an unlisted one
+# (e.g. acme.co.za) reads its label as 'co' and so never names a company: it fails closed, not open
+TWO_PART_SUFFIXES = {"co.uk", "org.uk", "ac.uk", "gov.uk", "ltd.uk", "plc.uk", "me.uk", "com.au", "net.au", "org.au",
+                     "co.nz", "org.nz", "co.jp", "ne.jp", "or.jp", "co.in", "net.in", "org.in", "com.br", "com.mx",
+                     "com.ar", "com.cn", "com.hk", "com.sg", "com.tw", "com.tr", "co.kr", "co.il", "co.id", "com.my",
+                     "com.ph", "co.th", "co.za", "com.ua", "com.pl", "com.es", "com.co", "com.pe", "com.vn", "com.sa"}
+
+
+def registrable(dom: str) -> str:
+    """The domain its owner registered, label plus public suffix: careers.globex.com -> globex.com, a.globex.co.uk ->
+    globex.co.uk ('' for a bare name)."""
+    parts = [p for p in (dom or "").lower().strip(".").split(".") if p]
+    n = 3 if len(parts) >= 3 and ".".join(parts[-2:]) in TWO_PART_SUFFIXES else 2
+    return ".".join(parts[-n:]) if len(parts) >= n else ""
+
+
+def org_label(dom: str) -> str:
+    """The label a domain's owner registered, hyphens dropped: careers.globex.com / globex.co.uk -> 'globex'. Only
+    this label can name a company: globex.attacker.net -> 'attacker', globex-hiring.com -> 'globexhiring'."""
+    return registrable(dom).split(".")[0].replace("-", "")
+
+
+def names_company(dom: str, company: str) -> bool:
+    """True when a domain's registrable label is the company's name squeezed together, with or without legal / generic
+    words: 'Globex Corporation' -> globex.com, 'Acme Robotics' -> acmerobotics.com. The suffix is ignored, so
+    globex.xyz names Globex as well: on its own this only files mail under a job (a weak tie), it never trusts it."""
+    label = org_label(dom)
+    words = re.findall(r"[a-z0-9]+", (company or "").lower())
+    core = [w for w in words if w not in db._GENERIC]
+    return len(label) >= 3 and label in {"".join(words), "".join(core)}
+
+
+CLOSED = ("rejected", "withdrawn")
+
+
+def _site(job) -> str:
+    """The registrable domain of the job's own posting URL when that URL is on the company's site (its label names
+    the company); a job-board URL (greenhouse.io, linkedin.com) names no company and gives ''."""
+    host = urlparse(job["url"] or "").hostname or ""
+    return registrable(host) if names_company(host, job["company"]) else ""
+
+
 def _match(info: dict):
-    """(job, strong). Strong = the sender is tied to the job by its stored contact address/domain or by a company
-    domain that names the company. Weak = only the company name the classifier read out of the text matched,
-    which any third party (agency, newsletter, phisher) can write."""
+    """(job, strong). Strong = the sender is tied to the job by something Lodestar already holds for it: the stored
+    contact address/domain, our own thread (_thread), or the full registrable domain (label + suffix) of the job's
+    posting URL on the company site. Weak = a domain whose label merely names the company (globex.xyz for Globex:
+    anyone can register one), a thread reply from someone else, or the company name the classifier read out of the
+    text. A weak tie files the mail under the job; trust, the contact, rounds and unreviewed actions need a strong one.
+    ponytail: an ATS feed slug (greenhouse:globex) carries no suffix, so it cannot vouch for a sender domain."""
     addr = (info.get("sender_email") or "").lower()
     dom = _domain(addr)
     corporate = bool(dom) and dom not in FREEMAIL
-    for j in db.list_jobs():
+    thread = _thread(info)
+    if thread and thread[1]:
+        info["linked_by"] = "thread"
+        return thread
+    live = [j for j in db.list_jobs() if j["status"] not in CLOSED]
+    for j in live:
         known = (j["contact_email"] or "").lower()
-        if j["status"] not in ("rejected", "withdrawn") and known and (
-                known == addr or (corporate and _domain(known) == dom)):
+        if known and (known == addr or (corporate and _domain(known) == dom)):
             return j, True
-    if corporate:
-        j = db.find_job_by_company(" ".join(dom.split(".")[:-1]))  # careers.acme.com -> "careers acme" -> Acme
-        if j:
-            return j, True
+    reg = registrable(dom) if corporate else ""
+    j = reg and next((j for j in live if _site(j) == reg), None)
+    if j:
+        return j, True
+    if thread:  # a reply in our thread from someone else, or on a closed job: filed under that job, weakly
+        info["linked_by"] = "thread"
+        return thread
+    j = corporate and next((j for j in live if names_company(dom, j["company"])), None)
+    if j:
+        return j, False
     return db.find_job_by_company(info.get("company") or ""), False
+
+
+MSGID = re.compile(r"<[^<>\s]+>")
+
+
+def _thread(info: dict):
+    """(job, strong) when the message replies to mail Lodestar sent for a job, else None. Anyone can copy a Message-ID
+    into In-Reply-To, so the thread is a strong tie only when the sender is the address we sent to, or shares its
+    corporate (non-free-mail) domain, AND our mail went to someone Lodestar already trusted (_vouched), AND the job
+    is still open. Trust still needs DKIM/DMARC alignment and agreement with the stored contact."""
+    sent = db.thread_mail(MSGID.findall(f"{info.get('in_reply_to') or ''} {info.get('refs') or ''}"))
+    job = sent and db.con().execute("SELECT * FROM jobs WHERE id=?", (sent["job_id"],)).fetchone()
+    if not job:
+        return None
+    addr, to = (info.get("sender_email") or "").lower(), parseaddr(sent["to_addr"] or "")[1].lower()
+    dom = _domain(addr)
+    ours = bool(addr) and (addr == to or (bool(dom) and dom not in FREEMAIL and _domain(to) == dom))
+    return job, ours and job["status"] not in CLOSED and _vouched(sent, to, job)
+
+
+def _vouched(sent, to: str, job) -> bool:
+    """Our sent mail vouches for its recipient only when it answered trusted mail or, not being a reply, went to the
+    job's stored contact. A reply you approved to an unverified sender (linked by hand, tracked as a new job) vouches
+    for nobody: manual links never make a sender trusted, not even one thread later."""
+    src = sent["in_reply_to"] and db.mail_by_message_id(sent["in_reply_to"])
+    if src and src["direction"] == "in":
+        return bool(src["trusted"])
+    return bool(to) and to == (job["contact_email"] or "").lower()
 
 
 def mail_authenticated(auth_headers: list[str], sender_email: str) -> bool:
@@ -125,17 +206,17 @@ def check(days: int = 3, limit: int = 100, dry: bool = False, provider: str | No
         raise SystemExit("tool email_classify is off (lodestar tools enable email_classify)")
     host, user, pw = setting("IMAP_HOST", "imap.gmail.com"), setting("IMAP_USER"), setting("IMAP_PASS")
     if not (user and pw):
-        raise SystemExit("Set IMAP_USER and IMAP_PASS (Gmail: App Password). e.g.  lodestar vault set IMAP_PASS")
+        raise SystemExit("email is not connected: Setup > Connect email, or lodestar email connect")
     from .util import run_lock
 
     with run_lock("email"):  # two overlapping scans would classify, propose and reply to the same message twice
-        return _scan(host, user, pw, days, limit, dry, provider)
+        return _scan(host, user, pw, days, limit, dry, provider, int(setting("IMAP_PORT") or 993))
 
 
-def _scan(host: str, user: str, pw: str, days: int, limit: int, dry: bool, provider: str | None) -> list[dict]:
+def _scan(host: str, user: str, pw: str, days: int, limit: int, dry: bool, provider: str | None, port: int = 993) -> list[dict]:
     from .util import tls_context
 
-    box = imaplib.IMAP4_SSL(host, ssl_context=tls_context())
+    box = imaplib.IMAP4_SSL(host, port=port, ssl_context=tls_context(), timeout=MAIL_TIMEOUT)  # a silent server must not hang the loop
     box.login(user, pw)
     box.select("INBOX", readonly=True)
     since = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
@@ -164,8 +245,9 @@ def _scan(host: str, user: str, pw: str, days: int, limit: int, dry: bool, provi
                         info = {"category": "other", "summary": f"classify failed: {e}", "company": "", "title": ""}
                         print(f"  classify failed for '{subject[:50]}': {e} (will retry)")
                     name, addr = parseaddr(sender)
-                    info |= {"subject": subject, "from": sender, "date": _hdr(msg, "Date"),
+                    info |= {"subject": subject, "from": sender, "date": _hdr(msg, "Date"), "to": _hdr(msg, "To"),
                              "message_id": _hdr(msg, "Message-ID"), "sender_email": addr, "sender_name": name,
+                             "in_reply_to": _hdr(msg, "In-Reply-To"), "refs": _hdr(msg, "References"),
                              "body": body[:3500],
                              "dkim_pass": mail_authenticated(msg.get_all("Authentication-Results") or [], addr)}
                     if info.get("category") != "other":
@@ -216,10 +298,10 @@ def _apply(info: dict, dry: bool) -> None:
     known = ((job["contact_email"] if job else "") or "").lower()
     free = _domain(sender_email) in FREEMAIL
     same = known == sender_email.lower() if free else _domain(known) == _domain(sender_email)
-    # trusted = DMARC/DKIM-aligned AND tied to this job by address or company domain (a name match is not enough)
-    # AND consistent with the stored contact. A brand-new job from mail is trusted only from a company domain.
-    info["trusted"] = bool(info.get("dkim_pass")) and (
-        (strong and (not known or same)) if job else not free)
+    # trusted = DMARC/DKIM-aligned AND strongly tied to this job (_match: something Lodestar already holds, never a
+    # domain that merely names the company) AND consistent with the stored contact. Mail about a job you do not track
+    # yet is never trusted: nothing ties it to anything, and globex.xyz can claim to be Globex as well as globex.com.
+    info["trusted"] = bool(info.get("dkim_pass")) and bool(job) and strong and (not known or same)
     if job:
         if human and not job["contact_email"] and info["trusted"]:  # forged or merely name-matched senders never become the contact
             db.update_job(job["id"], contact_email=sender_email, contact_name=info.get("sender_name") or "")
@@ -256,17 +338,66 @@ def _apply(info: dict, dry: bool) -> None:
             except (Exception, SystemExit) as e:
                 db.add_event(job["id"], "calendar", f"could not parse date {info['deadline']!r}: {e}")
     elif info["category"] in ("recruiter_outreach", "interview", "offer") and info.get("company"):
+        # never trusted (above), so it waits for you and its sender never becomes the contact (as in track_mail).
+        # message_id ties it to the Unmatched-mail row: approving files that mail; tracking or linking it closes this.
         r = approvals.propose("email_classify", "add_job",
                               {"company": info["company"], "title": info.get("title") or "Unknown role",
-                               "notes": f"from email: {info['subject']}",
-                               "contact_email": sender_email if human and info.get("dkim_pass") else "",
-                               "contact_name": info.get("sender_name") or ""},
+                               "notes": f"from email: {info['subject']}", "message_id": _mid(info)},
                               f"track {info['company']} - {info.get('title') or 'Unknown role'} ({info['category']} email)",
-                              force_pending=not info["trusted"])  # forged / free-mail outreach waits for you
+                              force_pending=not info["trusted"])
         if r.get("status") == "done":
             job = db.find_job_by_company(info["company"])
-    if human and job:
+    _record(info, job)
+    if human and job and job["status"] not in CLOSED:  # never draft a reply (accepting a slot) for a closed application
         _maybe_reply(info, job)
+
+
+def _mid(info: dict) -> str:
+    """The message's Message-ID, or a stable stand-in when it has none (the mail table's key)."""
+    import hashlib
+
+    return (info.get("message_id") or "").strip() or "<lodestar-%s>" % hashlib.sha1(
+        f"{info.get('from')}|{info.get('date')}|{info.get('subject')}".encode()).hexdigest()[:24]
+
+
+def _record(info: dict, job) -> None:
+    """File the message in the mail table (deduped by Message-ID); no job = Unmatched mail in the Inbox. Bookkeeping:
+    a failure here never costs the message its scan (a retry would repeat the events and proposals above)."""
+    from email.utils import parsedate_to_datetime
+
+    try:
+        try:
+            sent = parsedate_to_datetime(info.get("date") or "").astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        except (TypeError, ValueError, IndexError):
+            sent = None
+        db.add_mail(message_id=_mid(info), in_reply_to=(info.get("in_reply_to") or "")[:1000] or None,
+                    refs=(info.get("refs") or "")[:4000] or None, job_id=job["id"] if job else None, direction="in",
+                    from_addr=info.get("sender_email") or info.get("from"), to_addr=info.get("to"),
+                    subject=info.get("subject"), sent_at=sent, category=info.get("category"),
+                    summary=str(info.get("summary") or "")[:500], snippet=info.get("body"), trusted=info.get("trusted"),
+                    linked_by=(info.get("linked_by") or "auto") if job else None,
+                    company=str(info.get("company") or "")[:200], title=str(info.get("title") or "")[:200])
+    except Exception as e:
+        print(f"  mail record skipped: {e}")
+
+
+def track_mail(mail_id: int, company: str = "", title: str = "") -> int:
+    """'Track as new job' on an unmatched mail: your own click, so the job is added directly (no Inbox step). The
+    sender becomes the contact only when the mail was trusted and its domain names the company (the rule _apply
+    uses for a job created from mail); a company you type that the domain does not name gets no contact."""
+    m = db.get_mail(mail_id)
+    if m["job_id"] is not None:
+        raise SystemExit(f"mail #{mail_id} is already filed under job #{m['job_id']}")
+    company, title = (company or m["company"] or "").strip(), (title or m["title"] or "").strip() or "Unknown role"
+    if not company:
+        raise SystemExit("name the company for the new job")
+    jid = db.add_job(company, title, notes=f"from email: {m['subject'] or ''}\n{m['summary'] or ''}".strip())
+    addr = m["from_addr"] or ""
+    if (m["trusted"] and "@" in addr and not NOREPLY.search(addr) and _domain(addr) not in FREEMAIL
+            and names_company(_domain(addr), company)):
+        db.update_job(jid, contact_email=addr)
+    db.link_mail(mail_id, jid)
+    return jid
 
 
 REPLY_GUIDE = {
@@ -291,7 +422,8 @@ def _maybe_reply(info: dict, job) -> None:
     from .extras import upcoming_interviews
     from .resume import candidate_text
 
-    busy = ", ".join(f"{it['when']:%Y-%m-%d %H:%M} ({it['company']})" for it in upcoming_interviews(45)) or "none"
+    # times only: this reply goes to an employer, who must never learn which other companies you talk to
+    busy = ", ".join(f"{it['when']:%Y-%m-%d %H:%M}" for it in upcoming_interviews(45)) or "none"
 
     guide = REPLY_GUIDE.get(cat) or (
         f"Candidate availability: {settings.pref('availability')}. If the email proposes specific times, accept the first "
@@ -302,7 +434,8 @@ def _maybe_reply(info: dict, job) -> None:
         draft = ai.ask_json(
             f"""Draft a reply from the candidate to this email. {guide}
 Tone: professional, warm, concise (under 130 words). Subject: 'Re: <original subject>'.{_sig()}
-Already-booked interviews (never accept or propose a time within 90 minutes of these): {busy}
+Busy times (never accept or propose a time within 90 minutes of these): {busy}
+Never mention other interviews, other employers or why a time is busy.
 Return JSON only: {{"subject": "...", "body": "...", "chosen_time": "YYYY-MM-DD HH:MM or null"}}
 Times mentioned in the email (pre-extracted): {parse_times(info.get('body', ''))}
 
@@ -322,7 +455,9 @@ CANDIDATE (for name and signature only):
     payload = {"to": info["sender_email"], "subject": draft.get("subject") or f"Re: {info['subject']}",
                "body": draft.get("body", ""), "in_reply_to": info.get("message_id") or None, "job_id": job["id"],
                "chosen_time": ct}
-    if cat == "offer":
+    if not info.get("trusted"):
+        payload["unverified"] = True  # the Inbox card says so, and approving the reply moves nothing (approvals.propose)
+    elif cat == "offer":
         payload["new_status"] = "offer"
     who = info.get("sender_name") or info["sender_email"]
     r = approvals.propose(tool, "send_email", payload,

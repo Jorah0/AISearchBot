@@ -24,6 +24,36 @@ TOPICS = {
     "custom": "whatever the user asks for",
 }
 
+IDEA_KEYS = ("title", "idea", "why_it_works", "effort", "impact", "fit", "first_step", "plan", "metric", "time", "source",
+             "history")
+_NUM = {"effort": (1, 5, 3), "impact": (1, 5, 3), "fit": (0, 100, 50)}  # (lo, hi, default)
+
+
+def clean(i: dict) -> dict:
+    """A model's idea, kept to the known keys with numbers that are numbers: the reply is untrusted text (a JD in the
+    prompt can steer it), so it never carries an id, topic, score or markup-bearing field of its own."""
+    out = {k: i[k] for k in IDEA_KEYS if k in i}
+    for k, (lo, hi, dflt) in _NUM.items():
+        try:
+            out[k] = min(max(float(out.get(k, dflt)), lo), hi)
+        except (TypeError, ValueError):
+            out[k] = dflt
+    for k in ("title", "idea", "why_it_works", "first_step", "metric", "time", "source"):
+        if k in out:
+            out[k] = str(out[k])[:2000]
+    out["plan"] = [str(x)[:500] for x in out.get("plan", [])][:12] if isinstance(out.get("plan"), list) else []
+    return out
+
+
+def merged(r) -> dict:
+    """A saved idea for display: its JSON body under the row, so the row's id / topic / score / status always win."""
+    try:
+        body = json.loads(r["body"] or "{}")
+    except ValueError:
+        body = {}
+    return (clean(body) if isinstance(body, dict) else {}) | dict(r)
+
+
 IDEA_SCHEMA = ('[{"title": "short name", "idea": "2-4 sentences", "why_it_works": "evidence or reasoning", '
                '"effort": 1-5, "impact": 1-5, "first_step": "one concrete action"}]')
 
@@ -66,11 +96,13 @@ def craft(topic: str, extra: str = "", job=None, role: str = "", n: int = 8, use
     ask = (f"Propose {n} distinct, specific ideas for {brief}. {extra}\nGround every idea in the data below; "
            f"reject generic advice. Return JSON only: {IDEA_SCHEMA}\n\n{ctx}")
     pools: list[dict] = []
+    errors: list[str] = []
     providers = ai.council_providers() if use_council else [provider or ai.default_provider()]
     for p in providers[:4]:
         try:
             pools += [i | {"source": p} for i in ai.ask_json(ask, provider=p) if isinstance(i, dict)]
-        except Exception as e:
+        except (Exception, SystemExit) as e:  # a rejected model is SystemExit: the other providers still get asked
+            errors.append(f"{p}: {e}")
             print(f"  {p}: {e}")
     if len(providers) == 1:  # single provider: a critic pass stands in for the second opinion
         try:
@@ -78,10 +110,11 @@ def craft(topic: str, extra: str = "", job=None, role: str = "", n: int = 8, use
                 f"Here are draft ideas:\n{json.dumps(pools)[:6000]}\n\nFind what is weak, obvious, or wrong, then add 4 "
                 f"better ideas the drafts missed. Return JSON only (the new ideas): {IDEA_SCHEMA}\n\n{ctx[:4000]}",
                 provider=provider) if isinstance(i, dict)]
-        except Exception as e:
+        except (Exception, SystemExit) as e:
             print(f"  critic pass skipped: {e}")
     if not pools:
-        raise SystemExit("no provider produced ideas (check `lodestar providers --test`)")
+        raise SystemExit("no provider produced ideas (check `lodestar providers --test`)"
+                         + (": " + "; ".join(errors)[:400] if errors else ""))
     final = ai.ask_json(
         f"""You are converging a brainstorm on {brief}. Candidate ideas (from several sources, may overlap):
 {json.dumps(pools)[:12000]}
@@ -92,16 +125,17 @@ Merge duplicates, drop weak or generic ones, keep the best {n}. For each return 
 Order by (impact * fit) / effort, best first. Fit = how well it matches THIS candidate's data below.
 
 {ctx[:5000]}""",
-        provider=provider or providers[0],
-    )
+        provider=provider or next((p for p in providers if any(i["source"] == p for i in pools)), providers[0]),
+    )  # converge with a provider that just worked, not one whose model was rejected
     out = []
     for i in (final if isinstance(final, list) else [final])[:n]:
         if not isinstance(i, dict) or not i.get("title"):
             continue
+        i = clean(i)
         score = round(float(i.get("impact", 3)) * float(i.get("fit", 50)) / max(float(i.get("effort", 3)), 1), 1)
         iid = db.add_idea(topic, str(i["title"]), json.dumps(i), score, job["id"] if job else None,
                           ",".join(filter(None, [role, job["company"] if job else ""])))
-        out.append({"id": iid, "topic": topic, "score": score, "status": "new", **i})
+        out.append(i | {"id": iid, "topic": topic, "score": score, "status": "new"})
     return out
 
 
@@ -120,14 +154,15 @@ CONTEXT:
         provider=provider,
     )
     if isinstance(new, list):
-        new = new[0]
+        new = new[0] if new else {}
+    new = clean(new if isinstance(new, dict) else {})
     new["history"] = body.get("history", []) + [{"at": datetime.now().isoformat(timespec="minutes"), "feedback": feedback}]
     db.update_idea(idea_id, title=str(new.get("title", row["title"])), body=json.dumps(new))
-    return {"id": idea_id, "topic": row["topic"], "score": row["score"], "status": row["status"], **new}
+    return new | {"id": idea_id, "topic": row["topic"], "score": row["score"], "status": row["status"]}
 
 
 def rows() -> list[dict]:
-    return [dict(r) | json.loads(r["body"]) for r in db.list_ideas()]
+    return [merged(r) for r in db.list_ideas()]
 
 
 def render(idea: dict) -> str:

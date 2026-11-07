@@ -56,7 +56,7 @@ class Email(unittest.TestCase):
     def test_relevance_and_apply(self):
         self.assertTrue(email_monitor.looks_relevant("Next steps for your application", "hr@foo.com", ""))
         self.assertFalse(email_monitor.looks_relevant("Your weekly digest", "news@foo.com", "deals deals"))
-        jid = db.add_job("Globex", "Data Engineer")
+        jid = db.add_job("Globex", "Data Engineer", "https://globex.com/jobs/relevance")
         db.set_status(jid, "applied")
         info = {"category": "interview", "company": "Globex", "summary": "invite", "action": "reply", "subject": "Interview",
                 "from": "x@globex.com", "sender_email": "x@globex.com", "dkim_pass": True}  # authenticated company mail may move a job under the auto default
@@ -65,11 +65,13 @@ class Email(unittest.TestCase):
         # a later "application received" must not downgrade
         email_monitor._apply(info | {"category": "application_received"}, dry=False)
         self.assertEqual(db.get_job(jid)["status"], "interview")
-        # unknown company recruiter outreach from an authenticated company domain auto-creates a job
+        # outreach about a company you do not track waits for you: nothing Lodestar holds ties initech.com to Initech
+        # (initech.xyz could say the same), so the job is proposed, not created (pass 16 review)
         before = len(db.list_jobs())
         email_monitor._apply({"category": "recruiter_outreach", "company": "Initech", "title": "SRE", "summary": "hi", "action": None,
                               "subject": "Opportunity", "from": "r@initech.com", "sender_email": "r@initech.com", "dkim_pass": True}, dry=False)
-        self.assertEqual(len(db.list_jobs()), before + 1)
+        self.assertEqual(len(db.list_jobs()), before)
+        self.assertTrue(any(r["kind"] == "add_job" and "Initech" in r["summary"] for r in db.list_pending()))
 
 
 class Ai(unittest.TestCase):
@@ -208,7 +210,7 @@ class Automation(unittest.TestCase):
     def test_email_flow_proposes_status_contact_and_reply(self):
         from lodestar import email_monitor, settings
         settings.set_tool("email_classify", auto=False)
-        jid = db.add_job("Globex", "Data Engineer")
+        jid = db.add_job("Globex", "Data Engineer", "https://www.globex.com/careers/flow")  # the company site ties globex.com mail
         db.set_status(jid, "applied")
         email_monitor.ai.ask_json = lambda *a, **k: {"subject": "Re: Interview", "body": "Tuesday works.", "chosen_time": "2026-11-10 10:00"}
         info = {"category": "interview", "company": "Globex", "summary": "invite", "action": "reply", "subject": "Interview",
@@ -337,7 +339,7 @@ class Hardening(unittest.TestCase):
     def test_unauthenticated_mail_never_auto_executes(self):
         from lodestar import email_monitor, settings
         settings.set_tool("email_classify", auto=True)
-        jid = db.add_job("Globex", "Data Engineer")
+        jid = db.add_job("Globex", "Data Engineer", "https://globex.com/jobs/hardening")
         db.set_status(jid, "applied")
         email_monitor.ai.ask_json = lambda *a, **k: {"subject": "Re", "body": "ok", "chosen_time": None}
         base = {"category": "interview", "company": "Globex", "summary": "s", "action": "", "subject": "Interview",
@@ -389,6 +391,7 @@ class Hardening(unittest.TestCase):
                 raw = (b"From: Jane <jane@acme.com>\r\nSubject: Interview invitation\r\nMessage-ID: <x@acme>\r\n"
                        b"Content-Type: text/plain\r\n\r\nWe would like to interview you.")
                 return "OK", [(b"7", raw)]
+        orig_imap, orig_setting = email_monitor.imaplib.IMAP4_SSL, email_monitor.setting
         email_monitor.imaplib.IMAP4_SSL = lambda host, **kw: Box()
         email_monitor.setting = lambda k, d=None: {"IMAP_USER": "me@x.com", "IMAP_PASS": "p"}.get(k, d)
 
@@ -406,11 +409,16 @@ class Hardening(unittest.TestCase):
             self.assertEqual(seen, ["email:me@x.com:7"])   # succeeded -> marked seen
         finally:
             email_monitor.classify, db.mark_seen = orig_classify, orig_seen
+            email_monitor.imaplib.IMAP4_SSL, email_monitor.setting = orig_imap, orig_setting
 
     def test_scheduler_uses_this_interpreter(self):
         from lodestar import extras
+        real = extras.platform.system
         extras.platform.system = lambda: "Linux"
-        line = extras.schedule("install", 15)
+        try:
+            line = extras.schedule("install", 15)
+        finally:
+            extras.platform.system = real
         self.assertIn(sys.executable, line)
         self.assertIn("-m lodestar run --once", line)
         self.assertIn("*/15", line)
@@ -455,7 +463,7 @@ class Hardening(unittest.TestCase):
         out = extras.export_data("json", Path(os.environ["LODESTAR_HOME"]) / "exp")
         data = _json.loads(out.read_text(encoding="utf-8"))
         self.assertEqual(sorted(data), ["answers", "contacts", "events", "ideas", "interviews", "job_contacts", "jobs",
-                                        "mock_sessions", "offers", "pending", "touches"])
+                                        "mail", "mock_sessions", "offers", "pending", "touches"])
         self.assertEqual(data["jobs"][0]["company"], "Acme")
         web.TASKS.clear()
         real_act, web._act = web._act, lambda action, p: {"ok": True}
@@ -1212,7 +1220,7 @@ class ProfileReviewFixes(unittest.TestCase):
         self.assertIn("has not filled in a profile", profile.candidate_text(strict=False))
 
     def test_new_listing_alerts_once_while_judging_keeps_failing(self):
-        from lodestar import apply, settings, util, web_monitor
+        from lodestar import apply, settings, web_monitor
         db._local.con = db.connect(":memory:")
         settings.PATH.unlink(missing_ok=True)
         web_monitor.SOURCES = {"fake": lambda q: [web_monitor._listing("Dev", "Co", "https://j/9", desc="x")]}
@@ -1262,7 +1270,7 @@ class OpenFaultFixes(unittest.TestCase):
     def test_free_mail_and_name_only_matches_never_auto_act(self):
         from lodestar import email_monitor as em, settings
         settings.set_tool("email_classify", auto=True)
-        jid = db.add_job("Globex", "Data Engineer"); db.set_status(jid, "applied")
+        jid = db.add_job("Globex", "Data Engineer", "https://globex.com/jobs/freemail"); db.set_status(jid, "applied")
         real = em.ai.ask_json
         em.ai.ask_json = lambda *a, **k: {"subject": "Re", "body": "ok", "chosen_time": None}
         base = {"category": "interview", "company": "Globex", "summary": "s", "action": "", "subject": "Interview",
@@ -1526,7 +1534,7 @@ class ContactSending(unittest.TestCase):
     def test_accepted_proposes_withdrawing_the_rest(self):
         from lodestar import settings
         settings.set_tool("followup", auto=True)  # still waits: withdrawing applications is always reviewed
-        a, b, s = db.add_job("Acme", "Eng"), db.add_job("Hooli", "Eng"), db.add_job("Saved", "Eng")
+        a, b, _ = db.add_job("Acme", "Eng"), db.add_job("Hooli", "Eng"), db.add_job("Saved", "Eng")
         for jid, path in ((b, ["applied"]), (a, ["applied", "interview", "offer", "accepted"])):
             for st in path:
                 db.set_status(jid, st)

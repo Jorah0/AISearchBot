@@ -105,7 +105,7 @@ def cmd_init(a):
     print(f"Lodestar (lodestar) home: {HOME}\n")
     print(f"1. Edit your master resume:   {PROFILE}")
     print("2. Add an AI key:             lodestar vault set ANTHROPIC_API_KEY   (or OPENAI_API_KEY, GEMINI_API_KEY, GROQ_API_KEY ...)")
-    print("3. Optional email monitor:    lodestar vault set IMAP_USER ; lodestar vault set IMAP_PASS")
+    print("3. Optional email:            lodestar email connect   (Gmail, Yahoo, iCloud, Fastmail, Zoho, AOL or custom)")
     print("4. Track a job:               lodestar jobs add \"Acme\" \"Backend Engineer\" --jd https://acme.com/jobs/123")
     print("5. Tailor + check fit:        lodestar resume tailor 1 ; lodestar resume gap 1 ; lodestar resume cover 1")
     print("6. Automate:                  lodestar run --every 30")
@@ -118,7 +118,7 @@ def cmd_providers(a):
             try:
                 ms = ai.list_models(n)
                 print(f"{n} ({len(ms)}): " + ", ".join(ms[:40]) + (" ..." if len(ms) > 40 else ""))
-            except Exception as e:
+            except (Exception, SystemExit) as e:  # one provider's rejected key or model never hides the others
                 print(f"{n}: {e}")
         return
     if a.op == "local":
@@ -219,7 +219,9 @@ def cmd_jobs(a):
         db.update_job(a.id, notes=((j["notes"] or "") + "\n" + a.text).strip())
         db.add_event(a.id, "note", a.text)
     elif op == "jd":
-        db.update_job(a.id, jd=read_source(a.source), **({"url": a.source} if a.source.startswith("http") else {}))
+        from .resume import set_jd
+
+        set_jd(a.id, read_source(a.source), **({"url": a.source} if a.source.startswith("http") else {}))
         print(f"#{a.id} JD updated")
     elif op == "rm":
         db.delete_job(a.id)
@@ -265,7 +267,12 @@ def cmd_jobs(a):
 
         from .contacts import with_warm
 
-        found = with_warm(web_monitor.with_coverage(web_monitor.search(a.query, a.keywords or "", **_search_filters(a))[: a.limit]))
+        errs: list[str] = []
+        found = with_warm(web_monitor.with_coverage(web_monitor.search(a.query, a.keywords or "", errors=errs,
+                                                                       **_search_filters(a))[: a.limit]))
+        if errs:
+            print(("no job board could be reached, nothing was checked: " if len(errs) >= len(web_monitor.SOURCES)
+                   else "could not read: ") + "; ".join(errs), file=sys.stderr)
         if a.rank:
             found = web_monitor.rank(found, a.provider)
         for i, j in enumerate(found):
@@ -537,14 +544,68 @@ def cmd_match(a):
     print(_coverage_text(cov))
 
 
-def cmd_email(a):
-    from . import email_monitor
+def _mail_test_text(r: dict) -> str:
+    lines = [f"{k.upper():<5} {'ok  ' if r[k]['ok'] else 'FAIL'} {r[k]['detail']}" for k in ("imap", "smtp")]
+    return "\n".join(lines + ([f"hint: {r['hint']}"] if r["hint"] else []))
 
-    if a.op == "check":
+
+def cmd_email(a):
+    from . import email_monitor, mailconn
+
+    if a.op == "connect":
+        user = (a.user or input("email address: ")).strip()
+        preset = a.preset or mailconn.guess(user) or "custom"
+        p = mailconn.PRESETS[preset]
+        if p.get("unsupported"):
+            raise SystemExit(f"{p['label']}: {p['unsupported']}")
+        print(f"{p['label']}: {p.get('steps', '')}" + (f"\n  {p['help']}" if p.get("help") else ""))
+        keys = {k: getattr(a, k) for k in mailconn.KEYS if getattr(a, k, None)}
+        pw = getpass.getpass("app password (not shown; Enter keeps the stored one): ")
+        st = mailconn.connect(preset, user, pw or None, **keys)
+        print(f"stored {st['user']} ({st['label']}): IMAP {st['imap_host']}:{st['imap_port']}, "
+              f"SMTP {st['smtp_host']}:{st['smtp_port']} {st['smtp_mode']}")
+        if st["shadowed"]:
+            print(f"note: {', '.join(st['shadowed'])} set in the environment / .env win over these values")
+        if st["configured"]:
+            print(_mail_test_text(mailconn.test()))
+    elif a.op == "test":
+        print(_mail_test_text(mailconn.test()))
+    elif a.op == "test-send":
+        r = mailconn.test_send()
+        print(f"test email sent to {r['to']} ({r['message_id']}); check that inbox")
+    elif a.op == "status":
+        st = mailconn.status()
+        print(f"{'connected' if st['configured'] else 'not connected'}: {st['user'] or '(no address)'} ({st['label'] or 'no preset'})"
+              f"\n  IMAP {st['imap_host']}:{st['imap_port']}  SMTP {st['smtp_host']}:{st['smtp_port']} {st['smtp_mode']}"
+              f" as {st['smtp_user'] or '-'}" + (f"\n  overridden by env: {', '.join(st['shadowed'])}" if st["shadowed"] else ""))
+    elif a.op == "disconnect":
+        mailconn.disconnect()
+        print("app password removed from the keyring (server settings kept)")
+    elif a.op == "check":
         found = email_monitor.check(a.days, dry=a.dry, provider=a.provider)
         print(f"\n{len(found)} relevant email(s)")
     elif a.op == "reply":
         _print_mail(email_monitor.draft_reply(db.get_job(a.id), a.intent, a.provider))
+
+
+def cmd_mail(a):
+    if a.op == "list":
+        rows = db.list_mail(a.job, a.unmatched)
+        for m in rows:
+            who = f"from {m['from_addr']}" if m["direction"] == "in" else f"to {m['to_addr']}"
+            where = f"job #{m['job_id']} ({m['linked_by']})" if m["job_id"] else "unmatched"
+            print(f"#{m['id']:<5} {(m['sent_at'] or m['created_at'] or '')[:16]}  {m['direction']:<3} {m['category'] or '-':<20} "
+                  f"{'trusted' if m['trusted'] else 'unverified':<10} {where:<18} {who}: {m['subject'] or ''}")
+        print(f"{len(rows)} message(s)" if rows else "no mail recorded yet (lodestar email check records relevant mail)")
+    elif a.op == "link":
+        db.link_mail(a.id, a.job)
+        print(f"mail #{a.id} filed under job #{a.job} (the job's contact and trust are unchanged)")
+    elif a.op == "unlink":
+        db.unlink_mail(a.id)
+        print(f"mail #{a.id} unlinked (back under unmatched mail)")
+    elif a.op == "dismiss":
+        db.dismiss_mail(a.id)
+        print(f"mail #{a.id} dismissed")
 
 
 def cmd_watch(a):
@@ -699,6 +760,8 @@ def cmd_desktop(a):
 def cmd_outreach(a):
     from . import extras
 
+    if a.options or a.pick:  # options are emails to the job's contact
+        return _draft("outreach", {"job": a.id, "person": a.person or ""}, a)
     r = extras.outreach(db.get_job(a.id), a.person or "", a.channel, a.provider)
     print(r["text"]) if "text" in r else _print_mail(r)
 
@@ -804,21 +867,93 @@ def _print_mail(r: dict) -> None:
     print(f"Subject: {r['draft'].get('subject', '')}\n\n{r['draft'].get('body', '')}\n\n-> {r['proposal']}")
 
 
+DRAFTS_LAST = HOME / "draft_options.json"  # the options --options printed, so --pick N reuses them without an AI call
+
+
+def _draft(kind: str, ctx: dict, a) -> None:
+    """--options: print up to 3 numbered options (one AI call) and keep them; --pick N: use option N of the kept ones
+    (proposed for review in the Inbox, or written into the pending item). Both: generate, then pick."""
+    from . import drafts
+
+    key = {"kind": kind, "ctx": ctx}
+    if getattr(a, "options", False):
+        opts = drafts.options(kind, ctx, provider=a.provider)
+        DRAFTS_LAST.write_text(json.dumps(key | {"options": opts}), encoding="utf-8")
+        for i, o in enumerate(opts, 1):
+            print(f"[{i}] {o['label']} ({o['tone']})" + (f"  RECOMMENDED: {o['why']}" if o["recommended"] else ""))
+            print((f"Subject: {o['subject']}\n" if o.get("subject") else "") + o["body"] + "\n")
+        if not a.pick:
+            print("pick one: the same command with --pick N (nothing is proposed until you do)")
+    if a.pick:
+        saved = json.loads(DRAFTS_LAST.read_text(encoding="utf-8")) if DRAFTS_LAST.is_file() else {}
+        if {k: saved.get(k) for k in key} != key:
+            raise SystemExit("no kept options for this draft: run the same command with --options first")
+        if not 1 <= a.pick <= len(saved["options"]):
+            raise SystemExit(f"--pick takes 1 to {len(saved['options'])}")
+        r = drafts.use(kind, ctx, saved["options"][a.pick - 1])
+        if "draft" in r:
+            _print_mail(r)
+        elif "payload" in r:
+            print(f"inbox #{r['id']} updated; still waiting for your approval (lodestar inbox -v)")
+        else:
+            print(f"wrote {r['path']}" if "path" in r else f"{r['answer']}\n\n[save -> {r['proposal'].get('status')}]")
+
+
+def cmd_draft(a):
+    from . import approvals, drafts
+
+    if a.op == "options":
+        ctx = {"job": a.id, **{k: v for k, v in (("mail_id", a.mail), ("pending_id", a.pending), ("contact_id", a.contact),
+                                                 ("interviewer", a.interviewer), ("notes", a.notes), ("person", a.person),
+                                                 ("cite", a.cite), ("ask", a.ask), ("question", a.question)) if v}}
+        a.options = a.options or not a.pick  # bare `draft options` prints them
+        return _draft(a.kind, ctx, a)
+    if a.pending:  # rewrite: an Inbox email is changed in place (subject and body only) and stays pending
+        p = json.loads(db.get_pending(a.pending)["payload"])
+        r = drafts.rewrite(p.get("body", ""), a.how, "email", p.get("subject", ""), a.provider)
+        approvals.edit(a.pending, r.get("subject"), r["body"])
+        print(f"Subject: {r.get('subject', '')}\n\n{r['body']}\n\n-> inbox #{a.pending} updated; still waiting for your approval")
+    elif a.file:
+        print(drafts.rewrite(Path(a.file).read_text(encoding="utf-8"), a.how, "email", None, a.provider)["body"])
+    else:
+        raise SystemExit("rewrite what: --pending ID (an Inbox email) or --file FILE")
+
+
+def cmd_suggest(a):
+    from .drafts import snooze, suggest_emails
+
+    if a.dismiss:
+        snooze(int(a.dismiss[0]), a.dismiss[1])
+        return print(f"#{a.dismiss[0]} {a.dismiss[1]}: dismissed for 3 days")
+    rows = suggest_emails()
+    print(f"Suggested emails: {len(rows) or 'none'}  (no AI used)")
+    for s in rows:
+        extra = f" --mail {s['mail_id']}" if s.get("mail_id") else f" --contact {s['contact_id']}" if s.get("contact_id") else ""
+        print(f"  [{s['priority']}] due {s['due']}  #{s['job_id']:<4} {s['company'][:24]:<24} {s['kind']:<9} {s['reason']}"
+              f"  -> {s['to'] or '(no address yet)'}\n      lodestar draft options {s['kind']} {s['job_id']}{extra}")
+
+
 def cmd_followup(a):
     from . import apply
 
+    if a.options or a.pick:
+        return _draft("followup", {"job": a.id}, a)
     _print_mail(apply.followup(db.get_job(a.id), a.provider, a.template))
 
 
 def cmd_thanks(a):
     from . import apply
 
+    if a.options or a.pick:
+        return _draft("thanks", {"job": a.id, "interviewer": a.interviewer or "", "notes": a.notes or ""}, a)
     _print_mail(apply.thanks(db.get_job(a.id), a.interviewer or "", a.notes or "", a.provider, a.template))
 
 
 def cmd_withdraw(a):
     from . import apply
 
+    if a.options or a.pick:
+        return _draft("withdraw", {"job": a.id}, a)
     _print_mail(apply.withdraw(db.get_job(a.id), a.provider, a.template))
 
 
@@ -835,6 +970,9 @@ def cmd_today(a):
     print(f"Contacts to get in touch with: {len(ag['contacts']) or 'none'}")
     for c in ag["contacts"]:
         print(f"  contact #{c['id']:<4} {c['when']:<12} {c['name'][:30]}" + (f" ({c['company'][:30]})" if c["company"] else ""))
+    print(f"Suggested emails: {len(ag['emails']) or 'none'}" + ("  (lodestar suggest)" if ag["emails"] else ""))
+    for s in ag["emails"]:
+        print(f"  #{s['job_id']:<4} due {s['due']:<11} {s['kind']:<9} {s['company'][:24]} - {s['reason'][:60]}")
     print(f"Inbox: {ag['pending']} waiting" + ("  (lodestar inbox)" if ag["pending"] else ""))
 
 
@@ -864,7 +1002,7 @@ def cmd_ideas(a):
             print("no ideas yet: lodestar ideas craft strategy")
     elif a.op == "show":
         r = db.get_idea(a.id)
-        print(ideas.render(dict(r) | json.loads(r["body"])))
+        print(ideas.render(ideas.merged(r)))
     elif a.op == "refine":
         print(ideas.render(ideas.refine(a.id, a.feedback, a.provider)))
     elif a.op == "status":
@@ -974,6 +1112,8 @@ def cmd_offers(a):
         print(f"#{a.id} offer: " + ", ".join(f"{k}={'' if v is None else v}" for k, v in changed.items()))
         print(f"(status: {db.get_job(a.id)['status']})")
     elif a.op == "counter":
+        if a.options or a.pick:
+            return _draft("counter", {"job": a.id, "cite": a.cite or [], "ask": a.ask or ""}, a)
         _print_mail(apply.counter(db.get_job(a.id), a.cite or [], a.ask or "", a.provider, a.template))
     else:
         print(_offer_table(comp.compare()))
@@ -1130,11 +1270,34 @@ def build() -> argparse.ArgumentParser:
     v.add_parser("rebuild", help="regenerate profile.md from the bank (snapshots the old one)")
     s.set_defaults(f=cmd_profile)
 
-    s = sub.add_parser("email", help="IMAP monitor: classify replies, update tracker")
+    s = sub.add_parser("email", help="connect your mailbox; IMAP monitor: classify replies, update tracker")
     v = s.add_subparsers(dest="op", required=True)
+    x = v.add_parser("connect", help="store address, servers and app password (prompted, never echoed), then test")
+    from .mailconn import PRESETS
+
+    x.add_argument("--preset", choices=list(PRESETS),
+                   help="default: guessed from the address, else custom")
+    x.add_argument("--user", help="your email address")
+    for k in ("imap_host", "imap_port", "smtp_host", "smtp_port", "smtp_user"):
+        x.add_argument("--" + k.replace("_", "-"), dest=k)
+    x.add_argument("--smtp-mode", dest="smtp_mode", choices=["ssl", "starttls"])
+    v.add_parser("test", help="log in to IMAP and SMTP (sends nothing)")
+    v.add_parser("test-send", help="send a short test email to your own address")
+    v.add_parser("status", help="connected address and servers (never the password)")
+    v.add_parser("disconnect", help="remove the stored app password")
     x = v.add_parser("check"); x.add_argument("--days", type=int, default=3); x.add_argument("--dry", action="store_true", help="report only, change nothing")
     x = v.add_parser("reply"); x.add_argument("id", type=int); x.add_argument("--intent", required=True, help="e.g. 'accept interview, propose Tue/Wed afternoons'")
     s.set_defaults(f=cmd_email)
+
+    s = sub.add_parser("mail", help="mail Lodestar recorded: relevant scanned mail and everything it sent, by job")
+    v = s.add_subparsers(dest="op", required=True)
+    x = v.add_parser("list", help="newest first: all, one job's (both ways), or incoming mail no job claims")
+    g = x.add_mutually_exclusive_group(); g.add_argument("--job", type=int); g.add_argument("--unmatched", action="store_true")
+    x = v.add_parser("link", help="file a message under a job (never sets the contact or trusts the sender)")
+    x.add_argument("id", type=int); x.add_argument("job", type=int)
+    x = v.add_parser("unlink", help="undo a link you made"); x.add_argument("id", type=int)
+    x = v.add_parser("dismiss", help="drop an unmatched message from the list"); x.add_argument("id", type=int)
+    s.set_defaults(f=cmd_mail)
 
     s = sub.add_parser("watch", help="career-page change alerts + saved job searches")
     v = s.add_subparsers(dest="op", required=True)
@@ -1211,6 +1374,10 @@ def build() -> argparse.ArgumentParser:
     x.add_argument("--tags", help=f"competencies, comma: {', '.join(COMPETENCIES)}")
     s.set_defaults(f=cmd_stories)
 
+    def option_args(p):
+        p.add_argument("--options", action="store_true", help="print up to 3 numbered options (one AI call; offline: the template)")
+        p.add_argument("--pick", type=int, metavar="N", help="use option N of the last --options (proposed for review in the Inbox)")
+
     def loop_args(p):
         p.add_argument("--every", type=int, default=30, help="minutes")
         p.add_argument("--days", type=int, default=2, help="email lookback")
@@ -1241,6 +1408,7 @@ def build() -> argparse.ArgumentParser:
 
     s = sub.add_parser("outreach", help="draft a LinkedIn note or email to a recruiter / hiring manager")
     s.add_argument("id", type=int); s.add_argument("--person", help='"Name, title"'); s.add_argument("--channel", choices=["linkedin", "email"], default="linkedin")
+    option_args(s)
     s.set_defaults(f=cmd_outreach)
     s = sub.add_parser("digest", help="weekly summary: moves, follow-ups, alerts, coach plan")
     s.add_argument("--days", type=int, default=7); s.add_argument("--send", action="store_true", help="also email it (LODESTAR_NOTIFY_EMAIL)")
@@ -1271,6 +1439,7 @@ def build() -> argparse.ArgumentParser:
                                                                    "bonus_pct, sign_on, equity_value_estimate, year1_total)")
     x.add_argument("--ask", help="what you ask for, e.g. 'a base of 170,000'")
     x.add_argument("--template", action="store_true", help="plain offline template instead of AI")
+    option_args(x)
     s.set_defaults(f=cmd_offers, op=None)
     s = sub.add_parser("activity", help="your job-search activity log by week (helper report for unemployment claims)")
     s.add_argument("--week", metavar="YYYY-MM-DD", help="the week (Monday-Sunday) containing this date; default this week")
@@ -1317,13 +1486,30 @@ def build() -> argparse.ArgumentParser:
     s.set_defaults(f=cmd_answers)
     tpl = "plain offline template instead of AI (also the fallback when no provider is configured)"
     s = sub.add_parser("followup", help="draft a follow-up email (sent via inbox if a contact is known)")
-    s.add_argument("id", type=int); s.add_argument("--template", action="store_true", help=tpl); s.set_defaults(f=cmd_followup)
+    s.add_argument("id", type=int); s.add_argument("--template", action="store_true", help=tpl); option_args(s); s.set_defaults(f=cmd_followup)
     s = sub.add_parser("thanks", help="draft a post-interview thank-you note")
     s.add_argument("id", type=int); s.add_argument("--interviewer"); s.add_argument("--notes", help="something specific from the conversation")
-    s.add_argument("--template", action="store_true", help=tpl)
+    s.add_argument("--template", action="store_true", help=tpl); option_args(s)
     s.set_defaults(f=cmd_thanks)
     s = sub.add_parser("withdraw", help="draft a withdrawal email; sending it from the inbox marks the job withdrawn")
-    s.add_argument("id", type=int); s.add_argument("--template", action="store_true", help=tpl); s.set_defaults(f=cmd_withdraw)
+    s.add_argument("id", type=int); s.add_argument("--template", action="store_true", help=tpl); option_args(s); s.set_defaults(f=cmd_withdraw)
+    from .drafts import KINDS
+
+    s = sub.add_parser("draft", help="draft options (up to 3 from one AI call, one recommended) and rewrites")
+    v = s.add_subparsers(dest="op", required=True)
+    x = v.add_parser("options", help="numbered options for one draft; --pick N proposes it for review (pending: edits that Inbox item)")
+    x.add_argument("kind", choices=KINDS); x.add_argument("id", type=int, nargs="?", help="job id (not needed with --mail / --pending)")
+    x.add_argument("--mail", type=int, help="reply: the mail id (lodestar mail list)"); x.add_argument("--pending", type=int, help="pending: the Inbox item")
+    x.add_argument("--contact", type=int, help="referral: the contact id"); x.add_argument("--interviewer"); x.add_argument("--notes")
+    x.add_argument("--person", help="outreach: 'Name, title'"); x.add_argument("--cite", nargs="+", metavar="JOB:FIELD", help="counter")
+    x.add_argument("--ask", help="counter: what you ask for"); x.add_argument("--question", help="answer: the form question")
+    option_args(x)
+    x = v.add_parser("rewrite", help="rewrite an Inbox email in place (stays pending) or a text file: shorter, warmer, formal, direct or your words")
+    x.add_argument("--pending", type=int, metavar="ID"); x.add_argument("--file"); x.add_argument("--how", required=True)
+    s.set_defaults(f=cmd_draft)
+    s = sub.add_parser("suggest", help="suggested emails for today: thank-yous, follow-ups, replies, offer check-ins, referral asks (no AI)")
+    s.add_argument("--dismiss", nargs=2, metavar=("JOB", "KIND"), help="hide one for 3 days")
+    s.set_defaults(f=cmd_suggest)
     sub.add_parser("today", help="today's agenda: next actions, deadlines, interviews, follow-ups, inbox").set_defaults(f=cmd_today)
     s = sub.add_parser("offer", help="evaluate an offer against your preferences; negotiation plan")
     s.add_argument("id", type=int)
@@ -1366,6 +1552,13 @@ def main(argv=None):
         if e.code not in (None, 0):
             log.get("cli").warning("%s", e.code)
         raise
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError, PermissionError) as e:
+        if not e.filename:
+            raise
+        # one check for every file argument (profile import, resume lint/audit, contacts import, --file ...): a clear
+        # line instead of a traceback
+        log.get("cli").warning("cannot open %s: %s", e.filename, e.strerror)
+        raise SystemExit(f"cannot open {e.filename}: {e.strerror or e}") from None
     except Exception:
         log.get("cli").exception("unhandled error")
         raise

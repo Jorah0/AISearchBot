@@ -80,6 +80,10 @@ TEMPLATES = {  # offline drafts: plain, honest, only what the tracker knows; nev
     "withdraw": ("Withdrawing my application for {title}",
                  "Thank you for considering me for the {title} position at {company}. I have decided to withdraw my "
                  "application. I appreciate the time you spent on it and wish you the best with the search."),
+    "checkin": ("Checking in on the {title} offer",
+                "Thank you again for the offer for the {title} position at {company}. Before the decision deadline I "
+                "wanted to check in and confirm the next steps and timeline. Please let me know if you need anything "
+                "from me in the meantime."),
 }
 
 
@@ -149,12 +153,13 @@ CANDIDATE SUMMARY (for the name only):
 
 
 def mail_proposal(job, mail: dict, tool: str, summary: str, purpose: str = "", review: bool = False,
-                  new_status: str = "", to: str | None = None) -> dict:
+                  new_status: str = "", to: str | None = None, in_reply_to: str | None = None) -> dict:
     """Propose sending a drafted {subject, body} to the job's contact. purpose ('followup' / 'thanks') is logged as
     an event on the job only once the mail is actually sent, so the checklist reflects sends, not drafts.
     review=True: a draft the user asked for always waits in the Inbox, even when the tool is on auto.
     new_status: where the job moves once the mail is sent (forward only, see approvals._send).
-    to: another recipient (a contact asked for a referral); '' = draft only."""
+    to: another recipient (a contact asked for a referral, the sender of a mail); '' = draft only.
+    in_reply_to: the Message-ID a reply answers (threads it in the recipient's mail client)."""
     rcpt = job["contact_email"] if to is None else to
     if not rcpt:
         return {"draft": mail, "proposal": {"status": "draft_only",
@@ -164,6 +169,8 @@ def mail_proposal(job, mail: dict, tool: str, summary: str, purpose: str = "", r
         payload["purpose"] = purpose
     if new_status:
         payload["new_status"] = new_status
+    if in_reply_to:
+        payload["in_reply_to"] = in_reply_to
     summary = f"{summary} -> {payload['to']}"  # the label always names the real recipient
     return {"draft": mail, "proposal": approvals.propose(tool, "send_email", payload, summary, job["id"], force_pending=review)}
 
@@ -258,22 +265,8 @@ def counter(job, cite, ask: str = "", provider: str | None = None, template: boo
         raise SystemExit("tick at least one competing figure to cite, or say what you are asking for")
     ask = " ".join((ask or "").split())[:300]
     if _offline(template):
-        from .profile import load
-
-        name = settings.pref("signature") or settings.pref("name") or load()["contact"].get("name") or ""
-        who = (job["contact_name"] or "").strip()
-        body = (f"Thank you again for the offer for the {job['title']} position at {job['company']}. I am excited about the "
-                f"role and would like to find a way to make it work."
-                + (f" I have since received another offer that includes "
-                   f"{' and '.join(filter(None, (', '.join(figures[:-1]), figures[-1])))}." if figures else "")
-                + (f" Would you be able to consider {ask}?" if ask else
-                   " Would you be able to revisit the compensation package with that in mind?")
-                + " I would be glad to talk it through.")
-        mail = {"subject": f"Re: {job['title']} offer",
-                "body": f"Hello{' ' + who if who else ''},\n\n{body}\n\nBest regards,\n{name}".rstrip()}
+        mail = counter_template(job, figures, ask)
     else:
-        o = db.get_offer(job["id"]) or {}
-        theirs = ", ".join(f"{k}={o[k]}" for k in ("base", "bonus_pct", "sign_on", "equity_value_estimate") if o.get(k))
         mail = ai.ask_json(
             f"""Write a short, warm, confident counter-offer email (under 160 words) from the candidate about the {job['title']}
 offer from {job['company']}. Thank them, restate enthusiasm in one sentence, cite only the competing figures listed below
@@ -281,9 +274,7 @@ offer from {job['company']}. Thank them, restate enthusiasm in one sentence, cit
 walk-away number or any figure not listed here.{_sig()}
 {JSON_MAIL}
 
-THEIR OFFER: {theirs or 'not recorded'}
-COMPETING FIGURES TO CITE: {'; '.join(figures) or 'none'}
-THE ASK: {ask or 'ask them to revisit the package in light of the competing figures'}
+{counter_facts(job, figures, ask)}
 
 CANDIDATE SUMMARY:
 {candidate_text(1500, private=False)}""",
@@ -291,6 +282,31 @@ CANDIDATE SUMMARY:
         )
     db.add_event(job["id"], "counter_draft", mail.get("subject", ""))
     return mail_proposal(job, mail, "email_reply", f"counter-offer to {job['company']}", review=True)
+
+
+def counter_facts(job, figures: list[str], ask: str) -> str:
+    """What a counter-offer prompt may cite: the offer's own terms, the figures you ticked, your ask. Nothing private."""
+    o = db.get_offer(job["id"]) or {}
+    theirs = ", ".join(f"{k}={o[k]}" for k in ("base", "bonus_pct", "sign_on", "equity_value_estimate") if o.get(k))
+    return (f"THEIR OFFER: {theirs or 'not recorded'}\nCOMPETING FIGURES TO CITE: {'; '.join(figures) or 'none'}\n"
+            f"THE ASK: {ask or 'ask them to revisit the package in light of the competing figures'}")
+
+
+def counter_template(job, figures: list[str], ask: str) -> dict:
+    """The offline counter-offer {subject, body}: the offer, the cited figures and your ask, nothing else."""
+    from .profile import load
+
+    name = settings.pref("signature") or settings.pref("name") or load()["contact"].get("name") or ""
+    who = (job["contact_name"] or "").strip()
+    body = (f"Thank you again for the offer for the {job['title']} position at {job['company']}. I am excited about the "
+            f"role and would like to find a way to make it work."
+            + (f" I have since received another offer that includes "
+               f"{' and '.join(filter(None, (', '.join(figures[:-1]), figures[-1])))}." if figures else "")
+            + (f" Would you be able to consider {ask}?" if ask else
+               " Would you be able to revisit the compensation package with that in mind?")
+            + " I would be glad to talk it through.")
+    return {"subject": f"Re: {job['title']} offer",
+            "body": f"Hello{' ' + who if who else ''},\n\n{body}\n\nBest regards,\n{name}".rstrip()}
 
 
 # ----------------------------------------------------------------------------- listing judgement
