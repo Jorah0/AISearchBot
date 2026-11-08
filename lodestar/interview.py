@@ -176,6 +176,16 @@ def _booked(c, job_id: int, at: str, ics: str | None, note: str, once: bool) -> 
                         (job_id, at, at[:10])).fetchone()
     else:
         row = c.execute("SELECT id, at FROM interviews WHERE job_id=? AND substr(at, 1, 10)=?", (job_id, at)).fetchone()
+    if not row and len(at) > 10 and not once:
+        # a new time while the job's only upcoming round is still pending is that round moved (a reschedule mail, or
+        # accepting another of the offered slots), not a second round: move it, so old reminders/clashes go away.
+        # ponytail: a round-2 invite that arrives before round 1 happens moves round 1 too; the note keeps the old time
+        fut = c.execute("SELECT id, at, notes FROM interviews WHERE job_id=? AND length(at)=16 AND at >= ? "
+                        "AND COALESCE(outcome, 'pending')='pending'", (job_id, f"{datetime.now():%Y-%m-%d %H:%M}")).fetchall()
+        if len(fut) == 1:
+            row = fut[0]
+            moved = f"rescheduled from {row['at']}"
+            c.execute("UPDATE interviews SET notes=? WHERE id=?", ("\n".join(x for x in (row["notes"], moved) if x)[:5000], row["id"]))
     if row:
         sets = {"at": at} if len(at) > 10 and row["at"] != at else {}
         if ics:
@@ -524,13 +534,28 @@ def save_mock(job, history: list[dict]) -> Path:
     return out
 
 
+def mock_turn(job, msgs: list[dict], provider: str | None = None) -> str:
+    """The interviewer's next line. Without any AI provider the questions come from question_bank (this company's
+    logged questions first, then the bundled set) in order, so practice and the offline score card still work."""
+    try:
+        return ai.chat(msgs, mock_system(job), provider)
+    except SystemExit:
+        if provider or ai.available():  # a provider is set up but refused: say so, don't pretend to be offline
+            raise
+    if msgs and str(msgs[-1].get("content", "")).strip().lower() == "done":
+        return "Offline mock finished (no AI provider, so no debrief). Each answer's card is saved in this session."
+    n = sum(m.get("role") == "assistant" for m in msgs)
+    bank = question_bank(job)
+    q = bank[n % len(bank)]["q"]
+    return q if n else f"(No AI provider: questions come from your question bank; each answer gets the offline card.) {q}"
+
+
 def mock(job, provider: str | None = None) -> None:
-    system = mock_system(job)
     history = [{"role": "user", "content": "Please start the interview."}]
     session, avg = None, {}
     print("(type 'done' to finish)\n")
     while True:
-        reply = ai.chat(history, system, provider)
+        reply = mock_turn(job, history, provider)
         history.append({"role": "assistant", "content": reply})
         print(f"\nINTERVIEWER: {reply}\n")
         if history[-2]["content"].strip().lower() == "done":

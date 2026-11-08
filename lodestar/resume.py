@@ -77,6 +77,21 @@ def write_doc(path: Path, text: str) -> Path:
     return path
 
 
+def save_doc(job, name: str, text: str) -> Path:
+    """An edited per-job document (editor Save, `resume adjust --job --save`): the previous version moves to history/,
+    resume.md gets its variant hash and a re-score, and an existing .docx beside it is re-exported."""
+    out = write_doc(app_dir(job) / name, text)
+    if name == "resume.md":
+        from .extras import resume_hash
+
+        db.update_job(job["id"], resume_hash=resume_hash(text))
+        rescore(job["id"])  # the match % follows the resume you just saved
+    if out.with_suffix(".docx").is_file():  # the .docx is what gets uploaded: keep it current
+        export_docx(out)
+    db.add_event(job["id"], "edited", name)
+    return out
+
+
 def _jd(job) -> str:
     if not job["jd"]:
         raise SystemExit(f"job #{job['id']} has no job description. Add one: lodestar jobs jd {job['id']} <url|file>")
@@ -331,7 +346,7 @@ THE WHOLE RESUME (for facts only):
         rows.append(b | {"proposed": proposed, "drop": drop, "changed": proposed != orig, "added_terms": added,
                          "marks": marks, "reason": str(r.get("reason") or "")[:300], "flags": flags,
                          "unsupported": unsupported, "new_numbers": new_numbers,
-                         "accepted": proposed != orig and not flags})
+                         "accepted": proposed != orig and not flags and not drop})  # a drop starts unchecked: you choose
     rows.sort(key=lambda x: (x["group"], rank.get(x["id"], 10**6 + x["id"])))
     data = {"job": job["id"], "base": base or "", "created": datetime.now().isoformat(timespec="seconds"),
             "coverage": cov["score"], "source": src, "proposals": rows}
@@ -413,9 +428,14 @@ def cover_letter(job, use_council: bool = False, provider: str | None = None, to
                  words: int = 300) -> Path:
     """A complete, send-ready letter: contact block, date, addressee, greeting, 3-4 paragraphs, sign-off.
     Uses the tailored resume, the gap check and the research pack when they exist."""
+    from .drafts import leaks, screen
+
     d = app_dir(job)
     research = (d / "research.md").read_text(encoding="utf-8")[:2500] if (d / "research.md").is_file() else ""
     gapj = json.loads((d / "gap.json").read_text(encoding="utf-8")) if (d / "gap.json").is_file() else {}
+    # the gap check is a private judgement (it weighs pay against the floor): only its items that name no floor go in
+    gapj = {k: [x for x in v if not leaks(str(x))] if isinstance(v := gapj.get(k), list) else (None if leaks(str(v or "")) else v)
+            for k in ("missing_keywords", "weak_areas")}
     addressee = job["contact_name"] or "Hiring Manager"
     prompt = f"""Write the BODY of a cover letter (no header, no greeting line, no sign-off; those are added by the program)
 for {job['title']} at {job['company']}, addressed to {addressee}. {words} words maximum, 3-4 paragraphs, tone: {tone}.
@@ -427,7 +447,7 @@ Never invent facts. No cliches ("I am writing to apply", "team player", "passion
 JOB DESCRIPTION:
 {_jd(job)}
 
-GAP CHECK (address the weak spots gracefully, do not list them): {json.dumps({k: gapj.get(k) for k in ('missing_keywords', 'weak_areas')})}
+GAP CHECK (address the weak spots gracefully, do not list them): {json.dumps(gapj)}
 
 RESEARCH NOTES:
 {research or '(none)'}
@@ -435,7 +455,7 @@ RESEARCH NOTES:
 CANDIDATE (tailored resume if available, else master profile):
 {_current_resume(job)}"""
     body = (ai.council(prompt, SYSTEM)["synthesis"] if use_council else ai.ask(prompt, SYSTEM, provider)).strip()
-    out = write_doc(d / "cover_letter.md", letter(job, body))
+    out = write_doc(d / "cover_letter.md", screen({"body": letter(job, body)})["body"])
     db.add_event(job["id"], "cover_letter", str(out))
     return out
 

@@ -196,13 +196,22 @@ def cmd_vault(a):
 def cmd_jobs(a):
     op = a.op
     if op == "add":
-        jd = read_source(a.jd) if a.jd else None
         url = a.url or (a.jd if a.jd and a.jd.startswith("http") else None)
+        jd, failed = None, ""
+        try:
+            jd = read_source(a.jd) if a.jd else None
+        except Exception as e:  # an unreachable posting still gets its card, with the URL; only a fetch lands here
+            if not (a.jd or "").startswith(("http://", "https://")):
+                raise
+            failed = str(getattr(e, "reason", "") or e)[:160]
         jid = db.add_job(a.company, a.title, url, jd, a.notes)
         print(f"added job #{jid}" + (" (JD captured)" if jd else ""))
+        if failed:
+            print(f"could not fetch the posting ({failed}); add the JD later with: lodestar jobs jd {jid} <url|file>")
     elif op == "list":
         for j in db.list_jobs(a.status, a.sort, a.remote, a.min_salary, a.tag):
-            print(f"{_job_line(j)}  {_details(j)}".rstrip())
+            unknown = "  pay unknown" if a.min_salary and db._pay(j) is None else ""
+            print(f"{_job_line(j)}  {_details(j)}{unknown}".rstrip())
     elif op == "set":
         changed = db.set_fields(a.id, **_kv(a.pairs, db.FIELDS))
         print(f"#{a.id} " + ", ".join(f"{k}={'' if v is None else v}" for k, v in changed.items()))
@@ -238,7 +247,8 @@ def cmd_jobs(a):
         from .apply import checklist
 
         for c in checklist(db.get_job(a.id)):
-            print(f"[{'x' if c['done'] else ' '}] {c['item']}" + ("" if c["done"] else f"   -> {c['next']}"))
+            mark = "x" if c["done"] else "-" if c["na"] else " "
+            print(f"[{mark}] {c['item']}" + (" (n/a yet)" if c["na"] else "" if c["done"] else f"   -> {c['next']}"))
     elif op == "stats":
         _p(db.stats())
     elif op == "funnel":
@@ -273,8 +283,14 @@ def cmd_jobs(a):
         if errs:
             print(("no job board could be reached, nothing was checked: " if len(errs) >= len(web_monitor.SOURCES)
                    else "could not read: ") + "; ".join(errs), file=sys.stderr)
+        if bad := [i for i in a.save or [] if not 0 <= i < len(found)]:  # checked before anything is printed or saved
+            raise SystemExit(f"--save {' '.join(map(str, bad))}: no such result (this search returned {len(found)}, "
+                             f"numbered from 0)")
         if a.rank:
-            found = web_monitor.rank(found, a.provider)
+            try:
+                found = web_monitor.rank(found, a.provider)
+            except SystemExit as e:  # no provider / rejected model: show the listings unranked and say why (as the web does)
+                print(f"not ranked: {e}", file=sys.stderr)
         for i, j in enumerate(found):
             score = f"[{j['score']:>3}] " if "score" in j else ""
             print(f"{i:>2}. {score}{j['title']} @ {j['company']} ({j['location'] or 'n/a'}) {j['salary']} <{', '.join(j['sources'])}>\n    {j['url']}"
@@ -302,7 +318,7 @@ def _listing_notes(j) -> list[str]:
     """The extra lines a search result carries: coverage, unknown fields, stale signals, sponsor hint, other links."""
     from .web_monitor import GHOST_SHOW
 
-    out = []
+    out = [f"tracked as #{j['tracked']}"] if j.get("tracked") else []
     if c := j.get("coverage"):
         out.append(f"JD coverage {c['score']}%  matched: {', '.join(c['matched']) or '-'}  missing: {', '.join(c['missing']) or '-'}")
     unknown = [k.split("_")[0] for k in ("salary_unknown", "location_unknown", "date_unknown") if j.get(k)]
@@ -495,7 +511,8 @@ def cmd_resume(a):
         if a.job:
             from .resume import app_dir
 
-            target = app_dir(db.get_job(a.job)) / (a.doc or "resume.md")
+            job = db.get_job(a.job)
+            target = app_dir(job) / (a.doc or "resume.md")
             kind = "cover letter" if "cover" in target.name else "resume"
         else:
             target, kind = PROFILE, "master profile"
@@ -506,7 +523,7 @@ def cmd_resume(a):
 
                 write_master(new)
             else:
-                target.write_text(new, encoding="utf-8")
+                resume.save_doc(job, target.name, new)  # the old version moves to history/; resume.md is re-scored
             print(f"saved {target}")
         else:
             print(new)
@@ -612,7 +629,9 @@ def cmd_watch(a):
     from . import web_monitor
 
     if a.op == "add":
-        db.add_watch(a.url, a.keywords or "")
+        if not a.url.strip().lower().startswith(("http://", "https://")):  # the same rule as POST /api/watches
+            raise SystemExit("a page watch needs an http(s) URL (for a job search use: lodestar watch search-add QUERY)")
+        db.add_watch(a.url.strip(), a.keywords or "")
         print("watch added; first run takes a baseline snapshot")
     elif a.op == "search-add":
         f = _search_filters(a)
@@ -623,7 +642,8 @@ def cmd_watch(a):
         for w in db.watches():
             f = db.watch_filters(w)
             print(f"#{w['id']:<3} {w['url']:<60} kw={w['keywords'] or '-'} last={w['last_seen'] or 'never'}"
-                  + (f" filters={','.join(f'{k}={v}' for k, v in f.items())}" if f else ""))
+                  + (f" filters={','.join(f'{k}={v}' for k, v in f.items())}" if f else "")
+                  + (f"\n     last run failed: {w['last_error']}" if w["last_error"] else ""))
     elif a.op == "rm":
         db.remove_watch(a.id)
     elif a.op == "run":
@@ -851,12 +871,13 @@ def cmd_answers(a):
 
     if a.op == "list":
         for r in db.list_answers():
-            print(f"#{r['id']:<3} Q: {r['question'][:90]}\n     A: {r['answer'][:300].replace(chr(10), ' ')}\n")
+            print(f"#{r['id']:<3} Q: {r['question'][:90]}{'  [private]' if r['private'] else ''}\n     A: {r['answer'][:300].replace(chr(10), ' ')}\n")
     elif a.op == "add":
-        db.save_answer(a.question, a.answer, a.tags or "")
-        print("saved")
+        db.save_answer(a.question, a.answer, a.tags or "", a.private)
+        print("saved" + (" (private: never sent to an employer)" if a.private else ""))
     elif a.op == "rm":
         db.delete_answer(a.id)
+        print(f"#{a.id} removed")
     elif a.op == "ask":
         r = apply.answer(db.get_job(a.id), a.question, a.provider)
         print(r["answer"])
@@ -1030,7 +1051,10 @@ def cmd_comp(a):
     from . import comp
 
     if a.op == "set":
-        comp.set_range(a.title, a.city or "*", a.low, a.high)
+        try:
+            comp.set_range(a.title, a.city or "*", a.low, a.high)
+        except ValueError as e:
+            raise SystemExit(str(e)) from None
         print(f"recorded {a.title} / {a.city or '*'}: {a.low}-{a.high}")
     elif a.op == "lookup":
         print(comp.lookup(a.title, a.city or "") or "no match")
@@ -1194,24 +1218,24 @@ def build() -> argparse.ArgumentParser:
 
     s = sub.add_parser("jobs", help="application tracker + job search")
     v = s.add_subparsers(dest="op", required=True)
-    x = v.add_parser("add"); x.add_argument("company"); x.add_argument("title"); x.add_argument("--url"); x.add_argument("--jd", help="url, file, or text"); x.add_argument("--notes")
-    x = v.add_parser("list"); x.add_argument("--status", choices=db.STATUSES)
+    x = v.add_parser("add", help="track a job: --url, --jd (URL, file or text; pay and remote are read from it), --notes"); x.add_argument("company"); x.add_argument("title"); x.add_argument("--url"); x.add_argument("--jd", help="url, file, or text"); x.add_argument("--notes")
+    x = v.add_parser("list", help="tracked jobs with pay, stars, workplace, deadline and tags; filters and sort"); x.add_argument("--status", choices=db.STATUSES)
     x.add_argument("--sort", choices=list(db.SORTS), help="default: updated (most recent first)")
     x.add_argument("--remote", choices=db.REMOTE); x.add_argument("--min-salary", type=int, help="top of the stated range")
     x.add_argument("--tag")
     x = v.add_parser("set", help="tracker fields: " + ", ".join(db.FIELDS) + " (key=value; empty value clears)")
     x.add_argument("id", type=int); x.add_argument("pairs", nargs="+", metavar="key=value")
-    x = v.add_parser("show"); x.add_argument("id", type=int)
-    x = v.add_parser("status"); x.add_argument("id", type=int); x.add_argument("status", choices=db.STATUSES); x.add_argument("--note")
-    x = v.add_parser("note"); x.add_argument("id", type=int); x.add_argument("text")
-    x = v.add_parser("jd"); x.add_argument("id", type=int); x.add_argument("source", help="url, file, or text")
-    x = v.add_parser("rm"); x.add_argument("id", type=int)
+    x = v.add_parser("show", help="every field plus the event timeline"); x.add_argument("id", type=int)
+    x = v.add_parser("status", help="move a job: applied stamps applied_at; accepted offers to withdraw the others"); x.add_argument("id", type=int); x.add_argument("status", choices=db.STATUSES); x.add_argument("--note")
+    x = v.add_parser("note", help="append a note (also logged on the timeline)"); x.add_argument("id", type=int); x.add_argument("text")
+    x = v.add_parser("jd", help="replace the job description"); x.add_argument("id", type=int); x.add_argument("source", help="url, file, or text")
+    x = v.add_parser("rm", help="delete a job and its timeline"); x.add_argument("id", type=int)
     x = v.add_parser("contact", help="recruiter / hiring manager email for replies and follow-ups"); x.add_argument("id", type=int); x.add_argument("email"); x.add_argument("--name")
     x = v.add_parser("checklist", help="what is done and what is next for this application"); x.add_argument("id", type=int)
-    v.add_parser("stats")
+    v.add_parser("stats", help="counts, response rate, interview rate")
     v.add_parser("funnel", help="stage conversion, median days per stage, rejections by stage, outcomes by source")
     x = v.add_parser("packet", help="zip everything about one application (documents, JD, notes)"); x.add_argument("id", type=int)
-    x = v.add_parser("followups"); x.add_argument("--days", type=int, default=None, help="default: pref followup_days")
+    x = v.add_parser("followups", help="applications quiet for N+ days"); x.add_argument("--days", type=int, default=None, help="default: pref followup_days")
     x = v.add_parser("search", help="free job APIs: Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse")
     x.add_argument("query"); x.add_argument("--keywords", help="comma list, must appear in title/desc")
     x.add_argument("--rank", action="store_true", help="AI fit score vs your profile"); x.add_argument("--limit", type=int, default=25)
@@ -1285,8 +1309,8 @@ def build() -> argparse.ArgumentParser:
     v.add_parser("test-send", help="send a short test email to your own address")
     v.add_parser("status", help="connected address and servers (never the password)")
     v.add_parser("disconnect", help="remove the stored app password")
-    x = v.add_parser("check"); x.add_argument("--days", type=int, default=3); x.add_argument("--dry", action="store_true", help="report only, change nothing")
-    x = v.add_parser("reply"); x.add_argument("id", type=int); x.add_argument("--intent", required=True, help="e.g. 'accept interview, propose Tue/Wed afternoons'")
+    x = v.add_parser("check", help="scan the mailbox for hiring mail: classify, file under jobs, propose replies"); x.add_argument("--days", type=int, default=3); x.add_argument("--dry", action="store_true", help="report only, change nothing")
+    x = v.add_parser("reply", help="draft an email to the job's contact (waits in the Inbox)"); x.add_argument("id", type=int); x.add_argument("--intent", required=True, help="e.g. 'accept interview, propose Tue/Wed afternoons'")
     s.set_defaults(f=cmd_email)
 
     s = sub.add_parser("mail", help="mail Lodestar recorded: relevant scanned mail and everything it sent, by job")
@@ -1301,12 +1325,12 @@ def build() -> argparse.ArgumentParser:
 
     s = sub.add_parser("watch", help="career-page change alerts + saved job searches")
     v = s.add_subparsers(dest="op", required=True)
-    x = v.add_parser("add"); x.add_argument("url"); x.add_argument("--keywords")
-    x = v.add_parser("search-add"); x.add_argument("query"); x.add_argument("--keywords")
+    x = v.add_parser("add", help="watch a careers page (http/https) for changes; --keywords filters the alert lines"); x.add_argument("url"); x.add_argument("--keywords")
+    x = v.add_parser("search-add", help="save a job search: new listings alert each monitor cycle (filters kept on re-add)"); x.add_argument("query"); x.add_argument("--keywords")
     filter_args(x)
-    v.add_parser("list")
-    x = v.add_parser("rm"); x.add_argument("id", type=int)
-    v.add_parser("run")
+    v.add_parser("list", help="watches with keywords, filters, last good run and last error")
+    x = v.add_parser("rm", help="remove a watch"); x.add_argument("id", type=int)
+    v.add_parser("run", help="run every watch and watched company once now")
     s.set_defaults(f=cmd_watch)
 
     s = sub.add_parser("companies", help="watch companies' public job boards (Greenhouse, Lever, Ashby); new postings alert like saved searches")
@@ -1350,7 +1374,7 @@ def build() -> argparse.ArgumentParser:
 
     s = sub.add_parser("interview", help="prep pack, live mock interview with a score card per answer, interview rounds")
     v = s.add_subparsers(dest="op", required=True)
-    x = v.add_parser("prep"); x.add_argument("id", type=int); x.add_argument("--council", action="store_true")
+    x = v.add_parser("prep", help="interview prep pack for one job (needs AI)"); x.add_argument("id", type=int); x.add_argument("--council", action="store_true")
     x = v.add_parser("mock", help="one question at a time; each answer gets a score card (STAR rubric needs AI)"); x.add_argument("id", type=int)
     x = v.add_parser("log", help="log an interview round (again with --round N to update that round)"); x.add_argument("id", type=int)
     x.add_argument("--round", type=int, help="round number (default: the next one)")
@@ -1450,7 +1474,7 @@ def build() -> argparse.ArgumentParser:
     s = sub.add_parser("comp", help="your market-rate table, used by gap checks and offer evaluation")
     v = s.add_subparsers(dest="op", required=True)
     v.add_parser("list")
-    x = v.add_parser("set"); x.add_argument("title"); x.add_argument("city", nargs="?"); x.add_argument("low", type=int); x.add_argument("high", type=int)
+    x = v.add_parser("set"); x.add_argument("title"); x.add_argument("city", nargs="?"); x.add_argument("low", help="150000 or 150k"); x.add_argument("high")
     x = v.add_parser("lookup"); x.add_argument("title"); x.add_argument("city", nargs="?")
     s.set_defaults(f=cmd_comp)
 
@@ -1481,6 +1505,7 @@ def build() -> argparse.ArgumentParser:
     v = s.add_subparsers(dest="op", required=True)
     v.add_parser("list")
     x = v.add_parser("add"); x.add_argument("question"); x.add_argument("answer"); x.add_argument("--tags")
+    x.add_argument("--private", action="store_true", help="for you only: never used in an employer-facing prompt or form")
     x = v.add_parser("rm"); x.add_argument("id", type=int)
     x = v.add_parser("ask", help="draft an answer for a job's form question"); x.add_argument("id", type=int); x.add_argument("question")
     s.set_defaults(f=cmd_answers)

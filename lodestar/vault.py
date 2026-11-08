@@ -14,7 +14,10 @@ INDEX = HOME / "vault_index.json"
 
 
 def _index() -> dict:
-    return json.loads(INDEX.read_text()) if INDEX.is_file() else {}
+    try:
+        return json.loads(INDEX.read_text()) if INDEX.is_file() else {}
+    except ValueError:  # a corrupt name index must not break /api/state (the whole page); the secrets stay in the keyring
+        return {}
 
 
 def _save_index(idx: dict) -> None:
@@ -22,6 +25,9 @@ def _save_index(idx: dict) -> None:
 
 
 def set(name: str, secret: str, user: str | None = None) -> None:
+    name = str(name or "").strip()
+    if not name or not str(secret or ""):  # a nameless or empty entry is a mis-click, not a secret
+        raise ValueError("give both a name (e.g. ANTHROPIC_API_KEY) and the secret to store")
     keyring.set_password(SERVICE, name, secret)
     idx = _index()
     idx[name] = {"user": user or ""}

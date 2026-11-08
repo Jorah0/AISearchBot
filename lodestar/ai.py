@@ -72,16 +72,22 @@ def local_preset() -> str:
     """Ollama-only preset: single calls and the council stay local, and a model Ollama actually serves is pinned."""
     from . import settings
 
+    head = "local-only preset: provider=ollama, council_providers=ollama"
+    m = setting("OLLAMA_MODEL") or pick_model("ollama")
+    if not m:  # nothing saved: a preset pointing at a dead Ollama would also switch off the offline templates
+        return ("local-only preset NOT applied (nothing changed): Ollama is not reachable at localhost:11434 or serves no "
+                "model. Start it, `ollama pull llama3.1`, and run this again.")
     settings.set_pref("provider", "ollama")
     settings.set_pref("council_providers", "ollama")
-    head = "local-only preset: provider=ollama, council_providers=ollama"
     if setting("OLLAMA_MODEL"):
-        return f"{head}, model {setting('OLLAMA_MODEL')} (from OLLAMA_MODEL)"
-    m = pick_model("ollama")
-    if not m:
-        return f"{head}. Ollama is not reachable at localhost:11434 or serves no model: start it, `ollama pull llama3.1`, and run this again."
+        return f"{head}, model {m} (from OLLAMA_MODEL)"
     settings.set_model("ollama", m)
     return f"{head}, model {m} (saved in prefs.models)"
+
+
+# the one no-key message, read in the UI and the terminal alike
+NO_PROVIDER = ("No AI provider configured: add a key such as ANTHROPIC_API_KEY in Setup > Vault (terminal: lodestar vault set "
+               "ANTHROPIC_API_KEY), or click 'Local only (Ollama)' in Setup")
 
 
 def council_providers() -> list[str]:
@@ -101,14 +107,18 @@ def council_providers() -> list[str]:
 def default_provider() -> str:
     from . import settings
 
-    p = setting("LODESTAR_PROVIDER") or settings.pref("provider")
+    p = str(setting("LODESTAR_PROVIDER") or settings.pref("provider") or "").strip().lower()
+    allow = settings.pref("council_providers")
+    if p and allow and p not in [x.strip() for x in str(allow).split(",")]:  # a hard boundary for the default too
+        raise SystemExit(f"provider {p} is not in council_providers={allow}: add it there, or set provider to one "
+                         "of those (`lodestar tools set provider NAME`)")
     if p:
         return p
-    if settings.pref("council_providers"):  # with an allowlist, the default must come from it too
+    if allow:  # with an allowlist, the default must come from it too
         return council_providers()[0]
     avail = available()
     if not avail:
-        raise SystemExit("No AI provider configured. Run: lodestar vault set ANTHROPIC_API_KEY  (or OPENAI_API_KEY, GEMINI_API_KEY, ...)")
+        raise SystemExit(NO_PROVIDER)
     return avail[0]
 
 
@@ -176,7 +186,9 @@ def usage(days: int = 30) -> dict:
 
 def chat(messages: list[dict], system: str | None = None, provider: str | None = None, max_tokens: int = 4000) -> str:
     """messages: [{"role": "user"|"assistant", "content": str}, ...]"""
-    name = provider or default_provider()
+    name = str(provider or default_provider()).strip().lower()
+    if name not in PROVIDERS:  # a typo in -p, LODESTAR_PROVIDER or an old settings.json: one line, not a KeyError
+        raise SystemExit(f"unknown AI provider '{name}'. Providers: {', '.join(PROVIDERS)}")
     p = PROVIDERS[name]
     key = api_key(name)
     if not key:
@@ -261,10 +273,14 @@ def council(prompt: str, system: str | None = None, providers: list[str] | None 
     )
     from . import settings
 
-    if settings.pref("council_judge") and len(names) >= 2:  # a second provider checks the first one's synthesis
-        synthesis = ask(
-            f"Original task:\n{prompt}\n\nProposed final answer:\n{synthesis}\n\nAct as an independent judge: find factual "
-            "errors, omissions, or generic filler, then output the improved final answer only (no commentary).",
-            system, provider=names[1],
-        )
+    judge = next((n for n in ok if n != (ok or names)[0]), None)  # another provider that answered, never the writer
+    if settings.pref("council_judge") and judge:  # a second provider checks the first one's synthesis
+        try:
+            synthesis = ask(
+                f"Original task:\n{prompt}\n\nProposed final answer:\n{synthesis}\n\nAct as an independent judge: find factual "
+                "errors, omissions, or generic filler, then output the improved final answer only (no commentary).",
+                system, provider=judge,
+            )
+        except (Exception, SystemExit):  # a failed judge keeps the synthesis already made
+            pass
     return {"answers": answers, "synthesis": synthesis}

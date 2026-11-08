@@ -86,12 +86,17 @@ def context(job=None, role: str = "") -> str:
     return "\n\n".join(parts)
 
 
+def _score(i: dict) -> float:
+    """(impact * fit) / effort of a cleaned idea: how saved ideas rank."""
+    return round(float(i.get("impact", 3)) * float(i.get("fit", 50)) / max(float(i.get("effort", 3)), 1), 1)
+
+
 def craft(topic: str, extra: str = "", job=None, role: str = "", n: int = 8, use_council: bool = True,
           provider: str | None = None) -> list[dict]:
     """Diverge -> critique -> converge. Saves the ranked ideas and returns them."""
     brief = TOPICS.get(topic, TOPICS["custom"])
     if topic == "custom" and not extra:
-        raise SystemExit('custom topic needs text: lodestar ideas craft custom --extra "..."')
+        raise SystemExit('the custom topic needs text: type it in the extra instructions box (terminal: --extra "...")')
     ctx = context(job, role)
     ask = (f"Propose {n} distinct, specific ideas for {brief}. {extra}\nGround every idea in the data below; "
            f"reject generic advice. Return JSON only: {IDEA_SCHEMA}\n\n{ctx}")
@@ -112,8 +117,10 @@ def craft(topic: str, extra: str = "", job=None, role: str = "", n: int = 8, use
                 provider=provider) if isinstance(i, dict)]
         except (Exception, SystemExit) as e:
             print(f"  critic pass skipped: {e}")
+    if not providers:  # nothing configured: say how to fix it, not which command to debug with
+        raise SystemExit(ai.NO_PROVIDER)
     if not pools:
-        raise SystemExit("no provider produced ideas (check `lodestar providers --test`)"
+        raise SystemExit("no provider produced ideas (Setup > Test providers shows why)"
                          + (": " + "; ".join(errors)[:400] if errors else ""))
     final = ai.ask_json(
         f"""You are converging a brainstorm on {brief}. Candidate ideas (from several sources, may overlap):
@@ -132,7 +139,7 @@ Order by (impact * fit) / effort, best first. Fit = how well it matches THIS can
         if not isinstance(i, dict) or not i.get("title"):
             continue
         i = clean(i)
-        score = round(float(i.get("impact", 3)) * float(i.get("fit", 50)) / max(float(i.get("effort", 3)), 1), 1)
+        score = _score(i)
         iid = db.add_idea(topic, str(i["title"]), json.dumps(i), score, job["id"] if job else None,
                           ",".join(filter(None, [role, job["company"] if job else ""])))
         out.append(i | {"id": iid, "topic": topic, "score": score, "status": "new"})
@@ -157,8 +164,9 @@ CONTEXT:
         new = new[0] if new else {}
     new = clean(new if isinstance(new, dict) else {})
     new["history"] = body.get("history", []) + [{"at": datetime.now().isoformat(timespec="minutes"), "feedback": feedback}]
-    db.update_idea(idea_id, title=str(new.get("title", row["title"])), body=json.dumps(new))
-    return new | {"id": idea_id, "topic": row["topic"], "score": row["score"], "status": row["status"]}
+    score = _score(new)  # the ranking follows the refined impact, fit and effort
+    db.update_idea(idea_id, title=str(new.get("title", row["title"])), body=json.dumps(new), score=score)
+    return new | {"id": idea_id, "topic": row["topic"], "score": score, "status": row["status"]}
 
 
 def rows() -> list[dict]:

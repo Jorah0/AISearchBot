@@ -87,7 +87,7 @@ class Feeds(Base):
         c = wm.add_company("https://boards.greenhouse.io/acme-corp", keywords="python")
         self.assertEqual((c["vendor"], c["slug"], c["name"]), ("greenhouse", "acme-corp", "Acme Corp"))
         self.assertEqual(wm.add_company("greenhouse:acme-corp", name="ACME")["id"], c["id"])  # again: renamed, not doubled
-        self.assertEqual([(r["name"], r["keywords"]) for r in db.companies()], [("ACME", "")])
+        self.assertEqual([(r["name"], r["keywords"]) for r in db.companies()], [("ACME", "python")])  # re-add without keywords keeps them
         with self.assertRaises(SystemExit):
             wm.add_company("lever:acme", name="x" * 81)
         a = build().parse_args(["companies", "add", "lever:acme", "--keywords", "go"])

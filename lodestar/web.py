@@ -3,6 +3,7 @@
 Long-running AI actions run in a thread and are polled via /api/tasks/<id> so the page never blocks.
 """
 import json
+import re
 import secrets
 import threading
 import traceback
@@ -156,7 +157,9 @@ def _act(action: str, p: dict):
         case "reply":
             return email_monitor.draft_reply(job, p.get("intent", "polite follow-up"), prov)
         case "email_check":
-            return {"found": email_monitor.check(int(p.get("days", 3)), dry=bool(p.get("dry")), provider=prov)}
+            found = email_monitor.check(int(p.get("days", 3)), dry=bool(p.get("dry")), provider=prov)
+            return {"found": found, "note": "" if prov or ai.available() else  # say why nothing else was classified
+                    "no AI provider: only replies tied to a job were filed; other mail waits until you add a key in Setup > Vault"}
         case "watch_run":
             return {"alerts": web_monitor.check_watches()}
         case "search":  # filters: location (or 'remote'), min_salary, posted_within (days), seniority
@@ -177,7 +180,7 @@ def _act(action: str, p: dict):
             if not job:
                 raise ValueError("pick a job to interview for (add one on the Board first)")
             msgs = p["messages"]
-            reply = ai.chat(msgs, interview.mock_system(job), prov)
+            reply = interview.mock_turn(job, msgs, prov)
             if msgs and str(msgs[-1].get("content", "")).strip().lower() == "done":  # the debrief: keep it with the job
                 return {"reply": reply, "path": str(interview.save_mock(job, [*msgs, {"role": "assistant", "content": reply}]))}
             if len(msgs) >= 2 and msgs[-2].get("role") == "assistant" and msgs[-1].get("role") == "user":  # an answer
@@ -376,12 +379,20 @@ def http_only(url) -> str | None:
 
 
 def split_title(page_title: str) -> tuple[str, str]:
-    """'Role - Company | LinkedIn' / 'Role - Company - City | Indeed.com' -> (role, company). Best effort."""
-    t = page_title.split("|")[0].strip()
+    """'Role - Company | LinkedIn', '(3) Role | Company | LinkedIn', 'Company hiring Role in City | LinkedIn',
+    'Role - Company - City | Indeed.com' -> (role, company). Workplace words (Remote, Hybrid) are never the company.
+    Best effort: the company can be edited after capture."""
+    parts = [p.strip() for p in re.sub(r"^\s*\(\d+\)\s*", "", page_title).split("|")]  # '(3) ': unread notifications
+    if len(parts) >= 3 and parts[-1].lower().startswith("linkedin"):
+        return parts[0], parts[1]
+    t = parts[0]
+    if m := re.fullmatch(r"(.+?) hiring (.+?)(?: in .+)?", t):
+        return m[2].strip(), m[1].strip()
     for sep in (" - ", " – ", " at ", " @ "):
         if sep in t:
             role, rest = t.split(sep, 1)
-            return role.strip(), rest.split(" - ")[0].split(" – ")[0].strip()
+            bits = [b.strip() for b in re.split(r" - | – ", rest)]
+            return role.strip(), next((b for b in bits if b.lower() not in ("remote", "hybrid", "on-site", "onsite")), "")
     return t, ""
 
 
@@ -422,6 +433,7 @@ def state() -> dict:
         "tools": settings.table(),
         "prefs": settings.load()["prefs"],
         "pref_choices": settings.CHOICES,
+        "pref_help": settings.PREF_HELP,
         "bases": _bases(),
         "answers": [dict(r) for r in db.list_answers() if r["star"] is None],  # stories are listed apart
         "stories": interview.stories(),
@@ -435,7 +447,8 @@ def state() -> dict:
         "watches": [dict(w) | {"filters": db.watch_filters(w)} for w in db.watches()],
         "companies": [dict(c) for c in db.companies()],
         "alerts": ALERTS.read_text(encoding="utf-8").splitlines()[-30:] if ALERTS.is_file() else [],
-        "vault": [{"name": n, "user": u} for n, u in vault.names()],
+        "vault": [{"name": n, "user": u} for n, u in vault.names() if n not in mailconn.MANAGED],  # Disconnect manages those
+        "obsidian_dir": str(extras.vault_root() / "jobs"),  # Export tracker to Obsidian asks before writing there
         "comp": comp.load(),
         "upcoming": [i | {"when": f"{i['when']:%a %Y-%m-%d %H:%M}"} for i in extras.upcoming_interviews(14)],
         "today": loop.agenda(),
@@ -556,7 +569,10 @@ class Handler(BaseHTTPRequestHandler):
 
                 self._json({"contacts": rows(), "roles": ROLES})
             elif path == "/api/analytics":  # Insights tab: weekly series, response rates, funnel, variants, goals
-                self._json(extras.analytics() | {"goal_keys": settings.GOALS})
+                from urllib.parse import parse_qs
+
+                weeks = parse_qs(urlparse(self.path).query).get("weeks", ["12"])[0]  # the Insights range picker
+                self._json(extras.analytics(int(weeks) if weeks.isdigit() else 12) | {"goal_keys": settings.GOALS})
             elif path == "/api/offers":  # live offers side by side; includes the private floor gap (this page only)
                 self._json(comp.compare() | {"fields": db.OFFER_FIELDS, "cite": list(apply.COUNTER_CITE)})
             elif path.startswith("/api/contacts/"):
@@ -594,13 +610,25 @@ class Handler(BaseHTTPRequestHandler):
             p = self._body()
             parts = path.split("/")
             if path == "/api/jobs":
-                from .util import read_source
+                from html import unescape
 
-                jd = read_source(p["jd"], allow_files=False) if p.get("jd") else None
-                url = http_only(p.get("url") or (p["jd"] if str(p.get("jd", "")).startswith("http") else None))
+                from .util import fetch, strip_html
                 from .web_monitor import listing_fields  # a saved search listing carries location and posting date
 
-                self._json({"id": db.add_job(p["company"], p["title"], url, jd, p.get("notes"), **listing_fields(p))})
+                src, jd = str(p.get("jd") or "").strip(), None
+                company, title = str(p.get("company") or "").strip(), str(p.get("title") or "").strip()
+                if src.startswith(("http://", "https://")):  # a link: its page title names the role and company
+                    page = fetch(src)
+                    jd = strip_html(page)
+                    if m := re.search(r"(?is)<title[^>]*>(.*?)</title>", page):
+                        t, c = split_title(" ".join(unescape(m[1]).split()))  # same parse as the capture bookmarklet
+                        company, title = company or c, title or t
+                elif src:
+                    jd = src
+                if not (company or title or jd):
+                    raise ValueError("type a company and title, or paste a job description or its link")
+                url = http_only(p.get("url") or (src if src.startswith("http") else None))
+                self._json({"id": db.add_job(company, title, url, jd, p.get("notes"), **listing_fields(p))})
             elif path == "/api/capture":  # bookmarklet: {title, url, desc} from the open tab
                 title, company = split_title(p.get("title", ""))
                 jid = db.add_job(company or "Unknown company", title or "Unknown role", http_only(p.get("url")),
@@ -611,9 +639,12 @@ class Handler(BaseHTTPRequestHandler):
                 if op == "status":
                     db.set_status(jid, p["status"], p.get("note", ""))
                 elif op == "note":
+                    text = str(p.get("text") or "").strip()
+                    if not text:
+                        raise ValueError("type a note first")
                     j = db.get_job(jid)
-                    db.update_job(jid, notes=((j["notes"] or "") + "\n" + p["text"]).strip())
-                    db.add_event(jid, "note", p["text"])
+                    db.update_job(jid, notes=((j["notes"] or "") + "\n" + text).strip())
+                    db.add_event(jid, "note", text)
                 elif op == "jd":
                     from .resume import set_jd
                     from .util import read_source
@@ -753,25 +784,13 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("file too large (15 MB max)")
                 self._json({"text": extras.import_document(raw, p.get("name") or "resume.txt")})
             elif path.startswith("/api/docs/") and len(parts) == 4:  # save an edited per-job document
-                from .resume import app_dir
+                from .resume import save_doc
 
                 job = db.get_job(int(parts[3]))
                 name = p.get("name") or ""
                 if name not in DOC_NAMES:
                     raise ValueError(f"not an editable document: {name}")
-                (app_dir(job) / name).write_text(p.get("text") or "", encoding="utf-8")
-                if name == "resume.md":
-                    from .extras import resume_hash
-
-                    from .resume import rescore
-
-                    db.update_job(job["id"], resume_hash=resume_hash(p.get("text") or ""))
-                    rescore(job["id"])  # the match % follows the resume you just saved
-                if (app_dir(job) / name).with_suffix(".docx").is_file():  # the .docx is what gets uploaded: keep it current
-                    from .resume import export_docx
-
-                    export_docx(app_dir(job) / name)
-                db.add_event(job["id"], "edited", name)
+                save_doc(job, name, p.get("text") or "")  # the version it replaces moves to history/
                 self._json({"ok": True, "docs": _docs(job)})
             elif path.startswith("/api/approvals/") and len(parts) == 5:
                 pid, op = int(parts[3]), parts[4]
@@ -801,7 +820,7 @@ class Handler(BaseHTTPRequestHandler):
                     comp.set_range(p.get("title", ""), p.get("city") or "*", p["low"], p["high"])
                 self._json({"ok": True, "comp": comp.load()})
             elif path == "/api/answers":
-                db.save_answer(p["question"], p["answer"], p.get("tags", ""))
+                db.save_answer(p["question"], p["answer"], p.get("tags", ""), bool(p.get("private")))
                 self._json({"ok": True})
             elif path.startswith("/api/answers/"):
                 db.delete_answer(int(parts[3]))

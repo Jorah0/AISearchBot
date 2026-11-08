@@ -40,7 +40,7 @@ lodestar tools set signature "Sean"
 | `answers` | save the answers it drafts for application-form questions into the answer bank | on, manual |
 | `calendar` | write .ics files for interview dates found in mail | on, auto |
 | `obsidian_sync` | mirror the tracker into your vault after each monitor cycle | off |
-| `digest` | email the weekly digest on Fridays | off |
+| `digest` | email the weekly digest to `LODESTAR_NOTIFY_EMAIL` on the first cycle from Friday on (a missed Friday catches up on the next cycle); without that address a one-line alert says it is ready | off |
 | `posting_check` | weekly: re-check saved jobs from Greenhouse / Lever / Ashby boards; propose `withdrawn` ("posting removed") for ones whose posting vanished. Always waits in the inbox, even on auto | on, manual |
 
 ## The inbox
@@ -111,6 +111,9 @@ address, always reviewed in the Inbox.
   bookmarklets receive when you drag them from the Setup tab. The capture token persists across restarts; delete
   `~/.lodestar/capture.token` to revoke it and re-drag.
 - Mail that failed classification (provider outage) is left unread for the next run instead of being skipped.
+  A reply in a thread Lodestar started, or mail from a live job's stored contact address, is scanned even without a
+  hiring keyword ("Sounds good, talk Tuesday."). With no AI provider such tied mail is still filed under its job as
+  `unclassified` (no status move, round or reply); other mail waits unread until a provider works.
 - A message is matched to a job by something Lodestar already holds for it: the stored contact address (or its
   corporate domain), our own thread (below), or the full registrable domain of the job's posting URL when that URL is
   on the company's own site (`careers.acme.com/jobs/1` vouches for `acme.com` and its subdomains). Those are strong
@@ -137,7 +140,9 @@ address, always reviewed in the Inbox.
   "track this company" proposal the same mail raised in the Inbox is tied to it by Message-ID: tracking or linking the
   mail closes the proposal, and approving the proposal files the mail under the new job, so you never get two jobs.
   Deleting a job deletes its mail records too. Exports include the mail table (CSV formula cells neutralised).
-- `council_providers` limits which providers ever receive your profile. `backup` keeps the last 7 nightly zips.
+- `council_providers` limits which providers receive your profile: the council, idea crafting and the default provider
+  (a `provider` pref or `LODESTAR_PROVIDER` outside the list stops with an error). Only an explicit `-p NAME` on one
+  command overrides it. `backup` keeps the last 7 nightly zips.
 
 ### After the ECC and security reviews (2026-11-04)
 
@@ -160,9 +165,13 @@ address, always reviewed in the Inbox.
 ### Cadence, conflicts, judge (pass 8)
 
 - `followup`: nudge at every `followup_days`; after three nudges the loop proposes `withdrawn` ("ghosted") instead of
-  nudging forever. A proposal, so it waits in the inbox unless the tool is auto.
+  nudging forever. A proposal, so it waits in the inbox unless the tool is auto. "Quiet" counts real activity only:
+  Inbox proposals, rejections, failed sends, unsent drafts and unverified mail do not restart the clock
+  (`db.BOOKKEEPING`).
 - Interview replies see your booked interviews (interview rounds with a time) and are told never to accept or propose a time
   within 90 minutes of one; approving a reply that still clashes sends the mail but skips the calendar file and says so.
+  The same job's own rounds are not a clash (the slot its invite booked can be accepted). A new time for a job whose
+  only upcoming round is still pending moves that round ("rescheduled from ..." in its notes) instead of adding one.
 - `council_judge`: when on and two or more providers are allowed, the second provider audits the synthesis.
 
 ### Draft options and suggested emails (pass 16)
@@ -170,7 +179,7 @@ address, always reviewed in the Inbox.
 - One AI call per set of options (up to 3), whatever the kind; suggestions cost none. Usage is recorded in
   `usage.jsonl` like every other call.
 - Exactly one option is recommended, with a one-line reason tied to the situation. Without a provider, follow-up,
-  thank-you, withdrawal, offer check-in and counter-offer options are the offline template; other kinds say they need
+  thank-you, withdrawal, offer check-in, referral ask and counter-offer options are the offline template; other kinds say they need
   a provider, and so do rewrites.
 - Picking an option never sends anything: mail is proposed through `approvals.propose` with review (it waits in the
   Inbox even when the tool is on auto), to the recipient Lodestar already knows (the job's contact, the sender of the
@@ -181,5 +190,7 @@ address, always reviewed in the Inbox.
 - Prompts carry `candidate_text(private=False)` (no Preferences, no salary floor); a reply's original mail (sender,
   subject, text) and a pending draft go in fenced as untrusted data. Every option, rewrite, pick and pending edit passes
   the salary-floor guard (`profile.employer_safe`): a draft naming the floor is dropped or refused, never proposed.
+  So does an email you edit in its Inbox card and approve; there only the recipient, subject, body and chosen time
+  can change (job, status-on-send and the unverified flag stay as proposed).
 - Mail trust is unchanged: replying to a mail does not make its sender trusted or the job's contact.
 - "Dismiss for now" snoozes a suggestion for 3 days through the `seen` table (`suggest:JOB:KIND`).

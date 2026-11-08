@@ -92,7 +92,7 @@ class Fields(MemDb):
         self.assertEqual(ids(sort="excitement")[:2], [c, a])
         self.assertEqual(ids(sort="deadline"), [c, b, a])
         self.assertEqual(ids(remote="remote"), [a])
-        self.assertEqual(ids(min_salary=120000), [b])
+        self.assertEqual(sorted(ids(min_salary=120000)), sorted([b, c]))  # c has no pay: kept (marked), as search does
         self.assertEqual(sorted(ids(tag="python")), sorted([a, c]))
 
     def test_funnel_reads_the_source_column(self):

@@ -14,6 +14,10 @@ def propose(tool: str, kind: str, payload: dict, summary: str, job_id: int | Non
     force_pending: ignore the tool's auto flag (used for actions triggered by unauthenticated mail)."""
     if not settings.enabled(tool):
         return {"status": "disabled", "tool": tool}
+    if kind in ("send_email", "save_answer"):  # the one choke point: no AI draft naming the salary floor is ever proposed
+        from .drafts import screen
+
+        screen({"subject": payload.get("subject"), "body": payload.get("body") or payload.get("answer")})
     if kind == "set_status" and payload.get("job_id") and "from_status" not in payload:
         payload = payload | {"from_status": db.get_job(payload["job_id"])["status"]}  # _status refuses it once the job moves
     src = kind == "send_email" and payload.get("in_reply_to") and db.mail_by_message_id(payload["in_reply_to"])
@@ -29,10 +33,20 @@ def propose(tool: str, kind: str, payload: dict, summary: str, job_id: int | Non
     return {"id": pid, "status": "pending", "summary": summary}
 
 
+MAIL_EDITS = ("to", "subject", "body", "chosen_time")  # what an Inbox email card edits; job, status, trust stay as proposed
+
+
 def approve(pid: int, edits: dict | None = None) -> dict:
     if edits is not None and not isinstance(edits, dict):  # checked before the claim, or the item would stick claimed
         raise ValueError("edits must be a JSON object")
     row = db.get_pending(pid)
+    if edits and row["kind"] == "send_email" and row["status"] == "pending":  # before the claim, like the type check
+        from .drafts import screen
+
+        # the Inbox textarea path: only what the card lets you edit, and the salary-floor guard as for options/rewrites
+        edits = {k: v for k, v in edits.items() if k in MAIL_EDITS}
+        merged = json.loads(row["payload"]) | edits
+        screen({"subject": merged.get("subject"), "body": merged.get("body")})
     if row["status"] != "pending" or not db.claim_pending(pid):
         row = db.get_pending(pid)
         return {"id": pid, "status": row["status"], "result": row["result"]}
@@ -108,7 +122,7 @@ def _send(p: dict) -> str:
             from .extras import conflicts, ics, parse_when
 
             when = parse_when(p["chosen_time"])
-            clash = conflicts(when)
+            clash = conflicts(when, job_id=p["job_id"])
             if clash:
                 note = f" (WARNING: {when:%Y-%m-%d %H:%M} clashes with {clash[0]['company']} at {clash[0]['when']:%H:%M}; no .ics written)"
             else:

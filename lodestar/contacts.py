@@ -29,7 +29,10 @@ def _clean(k: str, v):
     if not s:
         return None
     if k in ("last_touch", "next_touch"):
-        return db.valid_date(k, s)
+        d = db.valid_date(k, s)
+        if k == "last_touch" and d and d > date.today().isoformat():  # a touch that has not happened yet: next_touch
+            raise SystemExit("last_touch cannot be in the future (use next_touch to plan one)")
+        return d
     if len(s) > _TEXT[k]:
         raise SystemExit(f"{k} is longer than {_TEXT[k]} characters")
     if k == "email":
@@ -237,11 +240,17 @@ def referral(job, cid: int, provider: str | None = None) -> dict:
     """Draft a referral ask to a contact about this job through extras.outreach. With their email it is proposed via
     the Inbox and always waits for your review; without one it is a LinkedIn note you send yourself. The contact is
     linked as referrer unless they already have a role on this job."""
+    from .apply import _offline, mail_proposal, template_mail
     from .extras import outreach
 
     c = get(cid)
     person = ", ".join(x for x in (c["name"], c["position"]) if x)
-    r = outreach(job, person, "email" if c["email"] else "linkedin", provider, to=c["email"] or "", goal=REFERRAL)
+    if _offline(False) and not provider:  # no AI provider: the plain referral template, reviewed the same way
+        mail = template_mail("referral", job, c["name"])
+        r = mail_proposal(job, mail, "email_reply", f"referral ask to {c['name']} at {job['company']} (template)",
+                          review=True, to=c["email"]) if c["email"] else {"text": mail["body"]}
+    else:
+        r = outreach(job, person, "email" if c["email"] else "linkedin", provider, to=c["email"] or "", goal=REFERRAL)
     link(cid, job["id"], "referrer", keep_role=True)
     db.add_event(job["id"], "referral", f"referral ask drafted for {c['name']}")
     return r

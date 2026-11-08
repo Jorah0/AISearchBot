@@ -14,6 +14,16 @@ UA = "Mozilla/5.0 (compatible; lodestar/0.1; +https://github.com/)"
 MAIL_TIMEOUT = 60  # seconds per IMAP/SMTP socket operation: a server that accepts and goes quiet must not hang the loop
 
 
+def redact_url(url) -> str:
+    """url with every query value shown as ***: an API key passed as ?key=... never reaches an error, log or alert."""
+    from urllib.parse import parse_qsl, urlsplit
+
+    u = urlsplit(str(url or ""))
+    if not u.query:
+        return str(url or "")
+    return u._replace(query="&".join(f"{k}=***" for k, _ in parse_qsl(u.query, keep_blank_values=True))).geturl()
+
+
 def _check_url(url: str) -> None:
     """SSRF guard: http(s) only, and the host must not resolve to loopback, link-local, or private ranges.
     Set LODESTAR_ALLOW_PRIVATE_URLS=1 to watch an intranet careers page on purpose."""
@@ -22,7 +32,7 @@ def _check_url(url: str) -> None:
 
     u = urlparse(url)
     if u.scheme not in ("http", "https") or not u.hostname:
-        raise ValueError(f"only http(s) URLs can be fetched: {url[:80]}")
+        raise ValueError(f"only http(s) URLs can be fetched: {redact_url(url)[:80]}")
     if os.environ.get("LODESTAR_ALLOW_PRIVATE_URLS") == "1":
         return
     _public_addrs(u.hostname, u.port or (443 if u.scheme == "https" else 80))
@@ -108,18 +118,30 @@ def fetch(url: str, timeout: int = 25, headers: dict | None = None, max_bytes: i
     import time
 
     _check_url(url)
-    cap = max_bytes or FETCH_MAX_BYTES
+    cap, shown = max_bytes or FETCH_MAX_BYTES, redact_url(url)
     deadline = time.monotonic() + timeout * 4
     req = urllib.request.Request(url, headers={"User-Agent": UA, **(headers or {})})
-    with _opener.open(req, timeout=timeout) as r:
-        buf = bytearray()
-        while chunk := r.read(65536):
-            buf += chunk
-            if len(buf) > cap:
-                raise ValueError(f"response from {url[:80]} is larger than {cap // 1_000_000} MB")
-            if time.monotonic() > deadline:
-                raise ValueError(f"response from {url[:80]} took longer than {timeout * 4} s")
-        return buf.decode(r.headers.get_content_charset() or "utf-8", errors="replace")
+    try:
+        with _opener.open(req, timeout=timeout) as r:
+            buf = bytearray()
+            while chunk := r.read(65536):
+                buf += chunk
+                if len(buf) > cap:
+                    raise ValueError(f"response from {shown[:80]} is larger than {cap // 1_000_000} MB")
+                if time.monotonic() > deadline:
+                    raise ValueError(f"response from {shown[:80]} took longer than {timeout * 4} s")
+            return buf.decode(r.headers.get_content_charset() or "utf-8", errors="replace")
+    except Exception as e:  # urllib / http.client errors can quote the URL: scrub query values, keep the exception type
+        if shown != url:
+            e.args = tuple(a.replace(url, shown) if isinstance(a, str) else a for a in e.args)
+            for k in ("reason", "filename", "url"):  # URLError.reason; HTTPError keeps the URL in filename / url
+                v = getattr(e, k, None)
+                if isinstance(v, str):
+                    try:
+                        setattr(e, k, v.replace(url, shown))
+                    except AttributeError:  # a read-only property: nothing stored there to scrub
+                        pass
+        raise
 
 
 def fetch_json(url: str, **kw):
@@ -168,6 +190,12 @@ def read_source(src: str, allow_files: bool = True) -> str:
     p = Path(src)
     if allow_files and len(src) < 400 and p.is_file():
         return p.read_text(encoding="utf-8", errors="replace")
+    # one word with a folder separator or a document extension is a mistyped path, not a job description: say so
+    # (cli.main turns this into 'cannot open ...') instead of storing the path as the text
+    if allow_files and not re.search(r"\s", src.strip()) and re.search(r"[\\/]|\.(txt|md|pdf|docx?|html?|rtf)$", src.strip(), re.I):
+        import errno
+
+        raise FileNotFoundError(errno.ENOENT, "no such file (give a URL, an existing file, or the text in quotes)", src)
     return src
 
 
@@ -198,7 +226,7 @@ def notify(msg: str) -> None:
     if not to:
         return
     try:
-        send_email(to, f"[lodestar] {msg[:60]}", msg)
+        send_email(to, f"[lodestar] {(msg.strip().splitlines() or [''])[0][:60]}", msg)  # a header may not hold a newline
     except Exception as e:  # ponytail: notification failure must never kill the watch loop
         print(f"  (email notify failed: {e})")
 

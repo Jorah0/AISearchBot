@@ -83,7 +83,7 @@ lodestar watch run
 lodestar app
 lodestar run --every 30            # loop only
 lodestar schedule install          # background task, survives app close
-lodestar digest --send             # weekly summary by email
+lodestar digest --send             # weekly summary emailed to LODESTAR_NOTIFY_EMAIL (needs a connected mailbox)
 lodestar alerts
 
 # stats and nudges
@@ -136,7 +136,7 @@ Tests (offline): `python -m unittest discover -s tests -v`
 ## Run it on a schedule (Windows)
 
 ```powershell
-schtasks /Create /SC MINUTE /MO 30 /TN lodestar /TR "lodestar run --once" /F
+.venv\Scripts\lodestar schedule install --every 30   # or: install.ps1 -Schedule
 ```
 
 ## Limits worth knowing

@@ -10,7 +10,7 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 | `lodestar ui [--port] [--no-open]` | Web UI only. |
 | `lodestar run [--every 30] [--days 2] [--followup N] [--no-email] [--once]` | Monitor loop: email check, watches, follow-up nudges (N defaults to pref `followup_days`). `--once` for schedulers. |
 | `lodestar schedule install [--every 30]` / `remove` | Windows scheduled task that runs `run --once`; prints the cron line elsewhere. |
-| `lodestar digest [--days 7] [--send]` | Weekly summary with a coach's 5-action plan; `--send` emails it. |
+| `lodestar digest [--days 7] [--send]` | Weekly summary with a coach's 5-action plan; `--send` emails it to `LODESTAR_NOTIFY_EMAIL` through your connected mailbox, and says so when either is missing. |
 | `lodestar alerts` | Tail of `alerts.log`. |
 | `lodestar init` | Create data dir, profile template, database; print next steps. |
 
@@ -19,7 +19,7 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 | Command | What it does |
 |---|---|
 | `lodestar jobs add "Company" "Title" [--jd url\|file\|text] [--url] [--notes]` | Track a job; `--jd` URL is fetched and stored as text. |
-| `lodestar jobs list [--status S] [--sort match\|salary\|excitement\|deadline\|updated] [--remote onsite\|hybrid\|remote] [--min-salary N] [--tag T]` | Board as a table, with pay, match, excitement, workplace, deadline and tags on each line. `--min-salary` compares the top of the stated range. |
+| `lodestar jobs list [--status S] [--sort match\|salary\|excitement\|deadline\|updated] [--remote onsite\|hybrid\|remote] [--min-salary N] [--tag T]` | Board as a table, with pay, match, excitement, workplace, deadline and tags on each line. `--min-salary` compares the top of the stated range; jobs with no pay on file are kept and marked `pay unknown`. |
 | `lodestar jobs set ID key=value ...` | Tracker fields: `location`, `remote` (onsite/hybrid/remote), `salary_min`, `salary_max` (`120k` works), `currency` (3 letters), `source`, `posted_at`, `deadline`, `next_action_at` (YYYY-MM-DD), `excitement` (1-5), `tags` (comma list), `match_score` (0-100), `next_action`. An empty value clears; a bad value changes nothing. |
 | `lodestar today` | Today's agenda: next actions due or overdue, deadlines within 3 days, interviews within 48 h, follow-ups due, contacts whose next touch has come, suggested emails, Inbox size. The Board shows the same as a Today panel. |
 | `lodestar jobs show ID` | Fields + full event timeline. |
@@ -28,7 +28,7 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 | `lodestar jobs stats` | Counts, response rate, interview rate. |
 | `lodestar variants` | Outcomes per tailored-resume variant: which resume gets interviews. |
 | `lodestar jobs followups [--days N]` | Applications quiet for N+ days (default: pref `followup_days`). |
-| `lodestar jobs search "query" [--keywords a,b] [--rank] [--limit 25] [--save 0 3]` | Free job APIs; `--rank` scores fit 0-100 against your profile; `--save` tracks results by index. |
+| `lodestar jobs search "query" [--keywords a,b] [--rank] [--limit 25] [--save 0 3] [--auto] [--location L\|remote] [--min-salary N] [--posted-within DAYS] [--seniority LEVEL]` | Free job APIs; `--rank` scores fit 0-100 against your profile (no provider: results shown unranked with the reason); `--save` tracks results by index; `--auto` proposes strong fits (tool `auto_track`); filters: see Sourcing below. Results already on your Board say `tracked as #N`. |
 | `lodestar export obsidian [--folder jobs]` | One note per application + index table in your vault. |
 
 ## Documents
@@ -103,7 +103,7 @@ in once to each.
 | `lodestar mail dismiss MAIL_ID` | Drop an unmatched message from the list (a scan never brings it back). |
 | `lodestar watch add URL [--keywords a,b]` | Alert when matching lines appear on a page (skipped, with one alert, when the site's robots.txt disallows it). |
 | `lodestar watch search-add "query" [--keywords] [--location] [--min-salary] [--posted-within] [--seniority]` | Alert on new listings for a query, with saved search filters. |
-| `lodestar watch list` / `watch rm ID` / `watch run` | Manage and run watches. |
+| `lodestar watch list` / `watch rm ID` / `watch run` | Manage and run watches. `list` shows `last run failed: ...` under a watch whose last run failed. Re-adding a watch keeps its id and baseline. |
 | `lodestar companies add URL\|vendor:slug [--name] [--keywords]` / `companies list` / `companies rm ID` | Follow a company's public Greenhouse, Lever or Ashby board (see "Sourcing" below). |
 
 ## AI
@@ -166,11 +166,11 @@ page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, w
 |---|---|
 | `lodestar tools list` | every automated tool with its enabled / auto switches, plus preferences |
 | `lodestar tools enable\|disable\|auto\|manual NAME` | flip a switch |
-| `lodestar tools set KEY VALUE` | preferences: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, weekly_target (applications/week, used by idea crafting), provider, council_providers, council_judge, signature, desktop_notifications, models (`provider=model`; also written by self-healing model selection) |
+| `lodestar tools set KEY VALUE` | preferences: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, weekly_target (applications/week, used by idea crafting), provider, council_providers, council_judge, signature, desktop_notifications (true/false), resume_style (classic, modern, compact), excluded_companies, excluded_title_words, weekly_goals (`goal=number`), activity_weekly_min, models (`provider=model`; also written by self-healing model selection). Whole numbers are range-checked: followup_days 1-90, auto_track_min_score 0-100, weekly_target 0-200, activity_weekly_min 0-100 |
 | `lodestar inbox [--all] [-v]` | actions waiting for approval (`-v` shows the drafted email / payload) |
 | `lodestar approve ID... [--subject] [--body FILE] [--to]` | execute, optionally editing the email first |
 | `lodestar reject ID... [--reason]` | discard |
-| `lodestar answers list\|add Q A [--tags t1,t2]\|rm ID\|ask ID "question"` | answer bank for application-form questions; `ask` drafts from profile + bank and proposes saving |
+| `lodestar answers list\|add Q A [--tags t1,t2] [--private]\|rm ID\|ask ID "question"` | answer bank for application-form questions; `ask` drafts from profile + bank and proposes saving. `--private` (UI: the private checkbox / make private) keeps an answer for you only: drafted answers, letters and form autofill never see it. An answer that names your salary floor must be private |
 | `lodestar jobs contact ID EMAIL [--name]` | recruiter / hiring-manager address used for replies and follow-ups |
 | `lodestar jobs checklist ID` | done / next for every stage of this application |
 | `lodestar followup ID [--template]` | follow-up email draft; sent through the inbox when a contact is known |
@@ -205,8 +205,8 @@ Web: Ideas tab (craft, status, refine), `GET /api/autofill` (data for the autofi
 | Command | What it does |
 |---|---|
 | `lodestar usage [--days 30]` | token counts per provider/model from `~/.lodestar/usage.jsonl` (every call is recorded) |
-| `lodestar backup [--out DIR] [--keep 7]` | zip of profile, tracker, settings, answers, ideas, documents; the `backup` tool does this nightly |
-| `lodestar export json / csv [--out DIR]` | dump jobs, events, answers, ideas, pending |
+| `lodestar backup [--out DIR] [--keep 7]` | zip of profile, tracker, settings, answers, ideas, documents (never `.env` or keyring secrets); keeps the newest N (at least 1); the `backup` tool does this nightly |
+| `lodestar export json / csv [--out DIR]` | dump jobs, events, answers, ideas, pending, contacts, job_contacts, interviews, mock_sessions, offers, touches, mail (CSV: one file per table, formula-safe cells) |
 | `lodestar providers models [NAME...]` | model ids each provider advertises; set `<PROVIDER>_MODEL` from the list |
 | `lodestar providers local` | local-only preset: default provider and council restricted to Ollama, and a model Ollama serves is pinned (UI: Setup > Local only) |
 | `lodestar tools set provider NAME` / `council_providers a,b` | default provider and which providers the council / idea crafting may send data to |
@@ -490,8 +490,9 @@ Computed offline, with or without a provider: word count, estimated speaking tim
 60-120 second target, the most repeated words and the posting keywords you used; words per minute only when you
 dictated the answer (browser speech recognition; the whole listening time counts). No filler-word counts. Answers
 are saved per session (`mock_sessions` table) with averages; the Coach tab shows each card, a session summary and an
-inline STAR-average trend across sessions; `interview mock` prints the card. Without a provider the rubric is skipped
-and the offline half still shows.
+inline STAR-average trend across sessions; `interview mock` prints the card. Without a provider the mock still runs:
+the questions come from the question bank in order (this company's logged questions first, then the bundled set),
+the rubric is skipped and the offline half of the card still shows; there is no debrief.
 
 ## Insights, weekly goals, offers and the activity log (pass 15)
 

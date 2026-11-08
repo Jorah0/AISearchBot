@@ -3,7 +3,6 @@ resume-variant hashing, and a scheduled-task installer. One module on purpose; s
 """
 import hashlib
 import json
-import os
 import platform
 import re
 import subprocess
@@ -13,7 +12,7 @@ from pathlib import Path
 
 from . import ai, db
 from .config import ALERTS, APPS_DIR
-from .util import notify, slug
+from .util import slug
 
 
 def _job_dir(j) -> Path:
@@ -103,7 +102,7 @@ def digest(days: int = 7, send: bool = False, provider: str | None = None) -> st
               if ln[1:11] >= cutoff]
     st = db.stats()
     lines = [f"# lodestar digest - last {days} days ({datetime.now():%Y-%m-%d})", "",
-             f"Pipeline: {st['counts']} | applied {st['applied_total']} | response {st['response_rate']:.0%} | interview {st['interview_rate']:.0%}",
+             f"Pipeline: {', '.join(f'{k} {v}' for k, v in st['counts'].items()) or 'empty'} | applied {st['applied_total']} | response {st['response_rate']:.0%} | interview {st['interview_rate']:.0%}",
              "", f"## Moved this week ({len(recent)})",
              *[f"- #{j['id']} {j['company']} - {j['title']}: {j['status']}" for j in recent[:20]],
              "", f"## Needs follow-up ({len(follow)})",
@@ -119,14 +118,26 @@ def digest(days: int = 7, send: bool = False, provider: str | None = None) -> st
                 + text, provider=provider)
         except (Exception, SystemExit) as e:  # the digest is still useful without the AI paragraph (rejected model: SystemExit)
             text += f"\n\n(coach unavailable: {e})"
-    if send:
-        notify(text)
+    if send:  # straight to your own address: the full text never lands in alerts.log (and the next digest's Alerts)
+        from .config import setting
+        from .util import send_email
+
+        to = setting("LODESTAR_NOTIFY_EMAIL") or setting("IMAP_USER")  # else your own connected mailbox's address
+        if not to:
+            raise SystemExit("emailing the digest needs your own address: connect your mailbox (Setup > Connect email), "
+                             "or store LODESTAR_NOTIFY_EMAIL in Setup > Vault (lodestar vault set LODESTAR_NOTIFY_EMAIL)")
+        try:
+            send_email(to, f"[lodestar] digest - last {days} days", text)
+        except Exception as e:  # no mailbox, SMTP refused: say so instead of a traceback
+            raise SystemExit(f"the digest was not emailed: {e}") from None
     return text
 
 
 # ----------------------------------------------------------------------------- obsidian mirror of the tracker
 def vault_root() -> Path:
-    return Path(os.environ.get("OBSIDIAN_VAULT") or (Path.home() / "Documents" / "Obsidian Vault"))
+    from .config import setting  # env, then Setup > Vault (OBSIDIAN_VAULT)
+
+    return Path(setting("OBSIDIAN_VAULT") or (Path.home() / "Documents" / "Obsidian Vault"))
 
 
 def export_obsidian(folder: str = "jobs") -> Path:
@@ -139,8 +150,9 @@ def export_obsidian(folder: str = "jobs") -> Path:
         d = _job_dir(j)
         docs = sorted(p.name for p in d.iterdir()) if d.exists() else []
         note = "\n".join([
-            "---", f'company: "{j["company"]}"', f'title: "{j["title"]}"', f"status: {j['status']}",
-            f"url: {j['url'] or ''}", f"applied: {j['applied_at'] or ''}", f"updated: {j['updated_at'][:10]}",
+            # JSON strings are valid YAML: a quote or colon in a company or title cannot break the properties
+            "---", f"company: {json.dumps(j['company'] or '')}", f"title: {json.dumps(j['title'] or '')}", f"status: {j['status']}",
+            f"url: {json.dumps(j['url'] or '')}", f"applied: {j['applied_at'] or ''}", f"updated: {j['updated_at'][:10]}",
             f"tags: [job, {j['status']}]", f"lodestar_id: {j['id']}", "---", "",
             f"# {j['company']} - {j['title']}", "",
             f"> [!info] Status: **{j['status']}** · [[{folder}/_index|all applications]]", "",
@@ -165,9 +177,12 @@ def export_obsidian(folder: str = "jobs") -> Path:
 def schedule(action: str, every: int = 30) -> str:
     import sys
 
-    cmd = f'"{sys.executable}" -m lodestar run --once'  # the interpreter running this command, wherever it lives
+    from .config import HOME
+
+    # the interpreter running this command, wherever it lives; the PyInstaller exe takes the subcommand directly
+    cmd = f'"{sys.executable}" ' + ("run --once" if getattr(sys, "frozen", False) else "-m lodestar run --once")
     if platform.system() != "Windows":
-        return f"add to crontab -e:\n*/{every} * * * * {cmd} >> ~/.lodestar/cron.log 2>&1"
+        return f"add to crontab -e:\n*/{every} * * * * {cmd} >> \"{HOME / 'cron.log'}\" 2>&1"
     if action == "install":
         r = subprocess.run(["schtasks", "/Create", "/SC", "MINUTE", "/MO", str(every), "/TN", "lodestar", "/TR", cmd, "/F"],
                            capture_output=True, text=True)
@@ -245,23 +260,36 @@ def autofill_data() -> dict:
 
     text = profile_text()
     contact = next((ln for ln in text.splitlines() if "@" in ln and "|" in ln), "")
-    parts = [p.strip() for p in contact.split("|")]
+    parts = [p.strip() for p in contact.split("|") if p.strip()]
+    # each part classified by what it is, never by position: 'email | phone | City' must not type the phone as the city
     email = next((p for p in parts if "@" in p), "")
-    phone = next((p for p in parts if re.search(r"\+?\d[\d\s().-]{7,}", p)), "")
+    phone = next((p for p in parts if "@" not in p and re.fullmatch(r"\+?[\d\s().-]{7,}", p) and sum(c.isdigit() for c in p) >= 7), "")
     linkedin = next((p for p in parts if "linkedin" in p.lower()), "")
     github = next((p for p in parts if "github" in p.lower()), "")
-    website = next((p for p in parts if p.lower().startswith(("http", "www")) and "linkedin" not in p and "github" not in p), "")
-    name = parts[0] if parts and "@" not in parts[0] and not phone == parts[0] else ""
+    website = next((p for p in parts if re.match(r"(https?://|www\.)|[\w-]+(\.[\w-]+)+(/\S*)?$", p, re.I) and "@" not in p
+                    and p not in (linkedin, github)), "")
+    rest = [p for p in parts if p not in (email, phone, linkedin, github, website)]  # names and places
     from .profile import load as load_bank
 
     bank = load_bank()["contact"]  # imported resumes / LinkedIn fill whatever the master's contact line leaves out
-    name, email, phone = name or bank["name"], email or bank["email"], phone or bank["phone"]
+    head = next((ln.lstrip("#").strip() for ln in text.splitlines() if ln.startswith("# ")), "")
+    if re.search(r"(?i)resume|r[ée]sum[ée]|\bcv\b|curriculum|profile", head):  # '# Master Resume' names nobody
+        head = ""
+    if len(rest) >= 2:  # the template's order: Name | City | ...
+        name, location = rest[0], rest[1]
+    elif rest and (head or bank["name"]) and rest[0] != (head or bank["name"]):
+        name, location = "", rest[0]  # the name is in the heading or the bank, so the one left is the place
+    elif rest:  # ponytail: alone and unnamed elsewhere, two or more words without a comma or digit read as a name
+        one = rest[0]
+        name, location = (one, "") if len(one.split()) >= 2 and not re.search(r"[,\d]", one) else ("", one)
+    else:
+        name, location = "", ""
+    name, email, phone = name or head or bank["name"], email or bank["email"], phone or bank["phone"]
     linkedin, github, website = linkedin or bank["linkedin"], github or bank["github"], website or bank["website"]
     first, _, last = name.partition(" ")
-    answers = {a["question"]: a["answer"] for a in db.list_answers()}
+    answers = {a["question"]: a["answer"] for a in db.list_answers(employer=True)}  # typed into employer forms
     return {"name": name, "first_name": first, "last_name": last, "email": email, "phone": phone, "linkedin": linkedin,
-            "github": github, "website": website, "location": parts[1] if len(parts) > 1 and "@" not in parts[1] else bank["location"],
-            "answers": answers}
+            "github": github, "website": website, "location": location or bank["location"], "answers": answers}
 
 
 # ----------------------------------------------------------------------------- backup + export
@@ -271,9 +299,11 @@ def backup(out_dir: Path | None = None, keep: int = 7) -> Path:
 
     from .config import HOME
 
+    if int(keep) < 1:
+        raise SystemExit("keep must be at least 1 (the backup just made)")
     out_dir = out_dir or HOME / "backups"
     out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / f"lodestar-backup-{datetime.now():%Y%m%d-%H%M}.zip"
+    target = out_dir / f"lodestar-backup-{datetime.now():%Y%m%d-%H%M%S}.zip"  # seconds: two backups in the same minute both stay
     import sqlite3
     import tempfile
 
@@ -295,7 +325,7 @@ def backup(out_dir: Path | None = None, keep: int = 7) -> Path:
                 z.write(snap, str(rel))
             elif not p.name.endswith(("-wal", "-shm", "-journal")):
                 z.write(p, str(rel))
-    for old in sorted(out_dir.glob("lodestar-backup-*.zip"))[:-keep]:
+    for old in sorted(out_dir.glob("lodestar-backup-*.zip"))[:-keep]:  # keep >= 1 (checked above): [:-0] would keep all
         old.unlink()
     return target
 
@@ -424,9 +454,11 @@ def import_document(data: bytes, filename: str) -> str:
     raise SystemExit(f"unsupported resume format '{ext}' (use .docx, .pdf, .md or .txt)")
 
 
-def conflicts(when: datetime, window_minutes: int = 90) -> list[dict]:
-    """Existing interviews within the window of a proposed time."""
-    return [it for it in upcoming_interviews(60) if abs((it["when"] - when).total_seconds()) <= window_minutes * 60]
+def conflicts(when: datetime, window_minutes: int = 90, job_id: int | None = None) -> list[dict]:
+    """Existing interviews within the window of a proposed time; job_id's own rounds don't count (accepting the slot
+    its invite already booked is no clash with itself)."""
+    return [it for it in upcoming_interviews(60) if it["job_id"] != job_id
+            and abs((it["when"] - when).total_seconds()) <= window_minutes * 60]
 
 
 # ----------------------------------------------------------------------------- activity log, insights, weekly goals
@@ -631,7 +663,11 @@ def analytics(weeks: int = 12, today: date | None = None) -> dict:
         bump(_local(s["ts"]), "mock_sessions")
     series = [{"week": f"{m.isocalendar()[0]}-W{m.isocalendar()[1]:02d}", "start": m.isoformat(),
                **{k: len(v) if isinstance(v, set) else v for k, v in b.items()}} for m, b in buckets.items()]
+    funnel = db.funnel()
+    for v in funnel["stages"].values():  # the same n<5 guard as the rates: '2 -> 0%' is noise, not a conversion
+        if v["reached"] < MIN_N:
+            v["conversion"] = None
     return {"weeks": series, "min_n": MIN_N,
             "by_source": _rates(lambda j: j["source"] or db.source_of(j["notes"])),
             "by_band": _rates(lambda j: _band(j["match_score"]), (*BANDS, "unscored")),
-            "funnel": db.funnel(), "variants": db.variant_stats(), "goals": goal_progress(today)}
+            "funnel": funnel, "variants": db.variant_stats(), "goals": goal_progress(today)}

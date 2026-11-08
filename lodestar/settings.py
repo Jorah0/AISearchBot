@@ -10,6 +10,7 @@ import json
 import os
 import threading
 
+from .ai import PROVIDERS
 from .config import HOME
 
 PATH = HOME / "settings.json"
@@ -50,7 +51,29 @@ PREFS = {
     "weekly_goals": {},  # goal=number per week (GOALS); none by default, and no default application count
     "activity_weekly_min": 0,  # activity log: activities a week your unemployment claim asks for (0 = none set)
 }
-CHOICES = {"resume_style": ("classic", "modern", "compact")}  # prefs limited to a fixed set of values
+PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
+    "name": ("Your name", "signs drafted emails when no signature is set"),
+    "availability": ("Interview availability", "replies accept or offer interview slots inside this"),
+    "auto_track_min_score": ("Auto-track threshold (0-100)", "listings the AI scores at least this high are proposed for the Board"),
+    "followup_days": ("Follow-up after (days)", "a quiet application gets a follow-up draft after this many days (1-90)"),
+    "reply_to_confirmations": ("Reply to confirmations", "also draft replies to 'we received your application' mail"),
+    "weekly_target": ("Weekly application target", "applications a week; idea crafting plans around it (0-200)"),
+    "provider": ("Default AI provider", "empty: the first configured one"),
+    "council_providers": ("Council providers", "comma list of the only providers the council and ideas may use; empty: all configured"),
+    "council_judge": ("Council judge", "a second provider checks and improves the council's combined answer"),
+    "models": ("Pinned models", "provider=model to pin a model id (Setup > List models)"),
+    "signature": ("Email signature", "how drafted emails sign off; empty: your name"),
+    "desktop_notifications": ("Desktop notifications", "daily agenda, interview in 2 hours, deadline tomorrow"),
+    "resume_style": ("Resume style", "the look of .docx and PDF resumes"),
+    "excluded_companies": ("Excluded companies (private)", "comma list dropped from search results and watches"),
+    "excluded_title_words": ("Excluded title words (private)", "comma list: listings whose title has one are dropped"),
+    "weekly_goals": ("Weekly goals", "goal=number, e.g. contacts=5 (also on the Insights tab)"),
+    "activity_weekly_min": ("Activity log weekly minimum", "activities a week your unemployment claim asks for (0 = none)"),
+}
+CHOICES = {"resume_style": ("classic", "modern", "compact"),  # prefs limited to a fixed set of values
+           "provider": ("", *PROVIDERS)}  # "" = the first configured one
+RANGES = {"followup_days": (1, 90), "auto_track_min_score": (0, 100), "weekly_target": (0, 200),
+          "activity_weekly_min": (0, 100)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
 GOALS = ("contacts", "tailored_applications", "mock_sessions", "applications")  # quality first, raw volume last
 
 
@@ -116,8 +139,10 @@ def set_pref(key: str, value) -> None:
     with _LOCK:
         if key not in PREFS:
             raise SystemExit(f"unknown preference '{key}'. Keys: {', '.join(PREFS)}")
+        if key == "provider":  # 'Anthropic ' works; a typo is refused here (CHOICES), never a KeyError at the next AI call
+            value = str(value or "").strip().lower()
         if key in CHOICES and value not in CHOICES[key]:
-            raise SystemExit(f"{key} is one of: {', '.join(CHOICES[key])}")
+            raise SystemExit(f"{key} is one of: {', '.join(c or '(empty: automatic)' for c in CHOICES[key])}")
         data = load()
         cur = PREFS[key]
         if isinstance(cur, dict):
@@ -131,14 +156,18 @@ def set_pref(key: str, value) -> None:
             save(data)
             return
         if isinstance(cur, bool):
-            value = str(value).lower() in ("1", "true", "yes", "on")
+            v = str(value).strip().lower()
+            if v not in ("1", "true", "yes", "on", "0", "false", "no", "off", ""):
+                raise SystemExit(f"{key} is on or off (true / false): {str(value)[:40]}")
+            value = v in ("1", "true", "yes", "on")
         elif isinstance(cur, int):
             try:
                 value = int(value)
             except (TypeError, ValueError):
                 raise SystemExit(f"{key} must be a whole number") from None
-            if key == "activity_weekly_min" and not 0 <= value <= 100:
-                raise SystemExit("activity_weekly_min must be between 0 and 100")
+            lo, hi = RANGES.get(key, (value, value))
+            if not lo <= value <= hi:
+                raise SystemExit(f"{key} must be between {lo} and {hi}")
         data["prefs"][key] = value
         save(data)
 

@@ -128,7 +128,11 @@ def snapshot_master(keep: int = 30) -> Path | None:
 
 
 def write_master(text: str) -> Path:
-    """Every overwrite of profile.md goes through here: snapshot the old one, then replace atomically."""
+    """Every overwrite of profile.md goes through here: snapshot the old one, then replace atomically. An empty text is
+    refused: the master feeds every resume and letter, and a blanked editor saved by mistake is not a profile."""
+    if not str(text or "").strip():
+        raise SystemExit("refusing to save an empty profile: your master resume feeds every resume and letter "
+                         "(the saved version is unchanged)")
     snapshot_master()
     _atomic_write(PROFILE, text)
     return PROFILE
@@ -240,6 +244,14 @@ OTHER_HEADINGS = {"interests", "hobbies", "awards", "honors", "honors & awards",
                   "volunteer", "volunteering", "volunteer experience", "references", "activities", "achievements",
                   "courses", "memberships", "affiliations", "additional information", "personal", "patents",
                   "recommendations", "organizations"}
+# offline, a line under Certifications / Education must look like one: in a LinkedIn PDF the name, headline and place
+# follow the sidebar's last heading. ponytail: a cert with no keyword, acronym or year ('Scrum Fundamentals') is skipped
+CERT_RE = re.compile(r"(?i)certif|licen[cs]e|credential|accredit|associate|professional|specialist|practitioner|expert"
+                     r"|master|administrator|developer|architect|foundation|\b(?:19|20)\d\d\b|(?-i:\b[A-Z]{2,6}\b)")
+EDU_RE = re.compile(r"(?i)univers|college|school|institut|academy|polytechn|hochschule|[eé]cole|bachelor|master|doctor"
+                    r"|diploma|degree|\b(?:b\.?\s?sc?|m\.?\s?sc?|b\.?a|m\.?a|mba|ph\.?d|bs|ms|ba|ma|ged|a-levels?)\b"
+                    r"|\b(?:19|20)\d\d\b|(?-i:\b[A-Z]{2,6}\b)")
+PAGE_RE = re.compile(r"(?i)page \d+ of \d+")
 
 
 def _phone(text: str) -> str:
@@ -308,7 +320,7 @@ def extract_heuristic(text: str) -> dict:
     cur: dict | None = None  # the experience / project entry being filled
     for raw in text.splitlines():
         line = raw.strip()
-        if not line:
+        if not line or PAGE_RE.fullmatch(line):  # 'Page 1 of 2': a PDF footer, never a fact
             continue
         found = _section_of(line)
         if found:
@@ -337,9 +349,9 @@ def extract_heuristic(text: str) -> dict:
                 facts["experience"].append(cur)
             elif cur is not None and raw.lstrip().startswith(("-", "*", "•")):
                 cur["bullets"].append(item)
-        elif sec == "education" and not line.startswith("#"):
+        elif sec == "education" and not line.startswith("#") and EDU_RE.search(item):
             facts["education"].append({"school": item})
-        elif sec == "certifications":
+        elif sec == "certifications" and CERT_RE.search(item) and not re.search(r"\s(?:at|@)\s", item):
             facts["certifications"].append({"name": item})
         elif sec == "projects":
             if line.startswith("#"):  # '### name - one line, link' (the template's form)
@@ -447,6 +459,14 @@ def linkedin_connections(data: bytes, filename: str = "") -> list[dict]:
              "connected_on": r.get("Connected On", "")} for r in rows]
 
 
+def _ym(s) -> str:
+    """LinkedIn's 'Jan 2016' as '2016-01', the form resumes and the master use (lint's gap check reads it); else as is."""
+    try:
+        return datetime.strptime(str(s or "").strip(), "%b %Y").strftime("%Y-%m")
+    except ValueError:
+        return str(s or "").strip()
+
+
 def linkedin_facts(data: bytes) -> dict:
     """Facts from LinkedIn's "Download your data" zip (basic or full archive). Other CSVs in the archive are ignored."""
     try:
@@ -475,7 +495,7 @@ def linkedin_facts(data: bytes) -> dict:
         c["phone"] = phones[0].get("Number", "")
     for r in _li_rows(z, files, "positions.csv", "Company Name"):
         facts["experience"].append({"title": r.get("Title"), "company": r.get("Company Name"), "location": r.get("Location"),
-                                    "start": r.get("Started On"), "end": r.get("Finished On") or "Present",
+                                    "start": _ym(r.get("Started On")), "end": _ym(r.get("Finished On")) or "Present",
                                     "bullets": re.split(r"\n|•", r.get("Description", ""))})
     for r in _li_rows(z, files, "education.csv", "School Name"):
         facts["education"].append({"school": r.get("School Name"), "degree": r.get("Degree Name"), "start": r.get("Start Date"),
@@ -483,7 +503,7 @@ def linkedin_facts(data: bytes) -> dict:
     facts["skills"] = [{"name": r.get("Name")} for r in _li_rows(z, files, "skills.csv", "Name")]
     facts["languages"] = [{"name": r.get("Name"), "proficiency": r.get("Proficiency")} for r in _li_rows(z, files, "languages.csv", "Name")]
     for r in _li_rows(z, files, "certifications.csv", "Name"):
-        facts["certifications"].append({"name": r.get("Name"), "issuer": r.get("Authority"), "date": r.get("Started On"), "url": r.get("Url")})
+        facts["certifications"].append({"name": r.get("Name"), "issuer": r.get("Authority"), "date": _ym(r.get("Started On")), "url": r.get("Url")})
     for r in _li_rows(z, files, "projects.csv", "Title"):
         facts["projects"].append({"name": r.get("Title"), "description": r.get("Description"), "url": r.get("Url")})
     return facts
@@ -621,15 +641,16 @@ def drop_preferences(text: str) -> str:
 PAY_LINE_RE = re.compile(r"(?i)salary|compensation|\bpay\b|floor|minimum|expect")
 
 
-def employer_safe(text: str) -> str:
+def employer_safe(text: str, any_line: bool = False) -> str:
     """drop_preferences, then the last guard for anything an employer reads: text that still names the salary floor
-    (the words, or the floor's figure on a line about pay) is refused, never sent.
-    ponytail: the figure check reads '150,000' / '150000' / '150k' on lines naming pay; '$150 thousand' slips past"""
+    (the words, or the floor's figure on a line about pay) is refused, never sent. any_line: the figure counts on any
+    line ('I need at least $187,000.'); used for AI-written drafts and answers, where no pay word is needed to leak it.
+    ponytail: the figure check reads '150,000' / '150000' / '150k'; '$150 thousand' slips past"""
     text = drop_preferences(text)
     bad = re.search(r"(?i)salary floor", text)
     if not bad and (floor := salary_floor()):
         figs = rf"\b{floor}\b" + (rf"|\b{floor // 1000}k\b" if floor % 1000 == 0 else "")
-        bad = any(PAY_LINE_RE.search(ln) and re.search(figs, re.sub(r"(?<=\d),(?=\d{3})", "", ln), re.I)
+        bad = any((any_line or PAY_LINE_RE.search(ln)) and re.search(figs, re.sub(r"(?<=\d),(?=\d{3})", "", ln), re.I)
                   for ln in text.splitlines())
     if bad:
         raise SystemExit("your salary floor appears outside the Preferences section of your profile, so it would reach an "
@@ -680,9 +701,19 @@ def render_markdown(bank: dict, master: str | None = None) -> str:
 
 
 def rebuild_master() -> Path:
-    """Regenerate profile.md from the bank (the old file is snapshotted to profile-history/ first)."""
+    """Regenerate profile.md from the bank (the old file is snapshotted to profile-history/ first). What the master
+    holds but the bank lacks (roles typed by hand) is read into the bank first, so the rebuild does not drop it.
+    ponytail: offline parse; a hand summary is kept only while the bank has none, free-form roles need the '###' form"""
     with _LOCK:
-        return write_master(render_markdown(load()))
+        bank, master = load(), master_text()
+        if not is_template(master):
+            facts, shown = extract_heuristic(master), render_markdown(bank, master)
+            for k in ("education", "certifications"):  # the bank renders these one per line: re-reading one adds nothing
+                facts[k] = [x for x in facts[k] if next(iter(x.values()), "") not in shown]
+            facts["summary"] = facts["summary"].removeprefix(bank["contact"]["headline"]).strip()  # rendered above it
+            merge(bank, facts, "profile.md")
+            save(bank)
+        return write_master(render_markdown(bank, master))
 
 
 def _mentioned(name: str, text: str) -> bool:

@@ -81,7 +81,9 @@ def live_mail() -> list[tuple[str, str, str]]:
 def report(live: bool = False) -> int:
     rows = checks()
     if live:
-        rows += live_mail()
+        rows += (mail := live_mail())
+        if not mail and not ai.available():
+            rows.append(("warn", "live", "skipped: no AI provider or mailbox configured"))
         for n in ai.available():
             try:
                 ai.ask("Reply with the single word OK.", provider=n)

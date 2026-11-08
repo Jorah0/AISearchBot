@@ -19,9 +19,9 @@ def _sig() -> str:
 # ----------------------------------------------------------------------------- answer bank
 def answer(job, question: str, provider: str | None = None) -> dict:
     """Draft a form answer from the profile + prior answers; propose saving it (tool: answers)."""
-    prior = db.find_answers(question, limit=6)
+    prior = db.find_answers(question, limit=6, employer=True)  # never a private answer or one naming the floor
     seen_q = {a["question"] for a in prior}
-    prior = prior + [a for a in db.list_answers() if a["question"] not in seen_q][:10]  # the model picks what fits
+    prior = prior + [a for a in db.list_answers(employer=True) if a["question"] not in seen_q][:10]  # the model picks what fits
     bank = "\n".join(f"Q: {a['question']}\nA: {a['answer']}" for a in prior) or "(none)"
     text = ai.ask(
         f"""Answer this job-application form question for the candidate: first person, concise, honest, ready to paste.
@@ -62,11 +62,12 @@ def checklist(job) -> list[dict]:
         ("Contact known", bool(job["contact_email"]), f"lodestar jobs contact {job['id']} <email>"),
         ("Applied", job["status"] != "saved", f"lodestar jobs status {job['id']} applied"),
         ("Followed up or in motion", "followup" in kinds or past_apply, f"lodestar followup {job['id']}"),
-        ("Interview prep", (d / "interview_prep.md").is_file() or job["status"] not in ("interview", "offer"),
-         f"lodestar interview prep {job['id']}"),
-        ("Thank-you sent", "thanks" in kinds or job["status"] != "interview", f"lodestar thanks {job['id']}"),
+        ("Interview prep", (d / "interview_prep.md").is_file(), f"lodestar interview prep {job['id']}"),
+        ("Thank-you sent", "thanks" in kinds, f"lodestar thanks {job['id']}"),
     ]
-    return [{"item": i, "done": bool(ok), "next": nxt} for i, ok, nxt in items]
+    # stages the job has not reached are n/a, never a finished-looking [x]
+    na = {"Interview prep": job["status"] not in ("interview", "offer"), "Thank-you sent": job["status"] != "interview"}
+    return [{"item": i, "done": bool(ok), "na": not ok and na.get(i, False), "next": nxt} for i, ok, nxt in items]
 
 
 # ----------------------------------------------------------------------------- follow-up / thanks / withdraw
@@ -84,15 +85,32 @@ TEMPLATES = {  # offline drafts: plain, honest, only what the tracker knows; nev
                 "Thank you again for the offer for the {title} position at {company}. Before the decision deadline I "
                 "wanted to check in and confirm the next steps and timeline. Please let me know if you need anything "
                 "from me in the meantime."),
+    "referral": ("Referral for the {title} role at {company}?",
+                 "I hope you are doing well. I am applying for the {title} position at {company} and would be "
+                 "grateful if you would consider referring me, or pointing me to the right person. I am happy to send "
+                 "my resume and a short note you could forward. No worries at all if it is not a good fit."),
 }
 
 
-def template_mail(kind: str, job, to: str = "", notes: str = "") -> dict:
-    """{subject, body} from TEMPLATES, filled from the job and your name (signature / name pref, else the profile bank)."""
-    from .profile import load
+def my_name() -> str:
+    """The sign-off name: signature / name pref, the profile bank, then a hand-typed master's contact line or its
+    '# Name' heading ('' while profile.md is still the template)."""
+    from .profile import is_template, load, master_text
+    from .resume import candidate_name
 
+    if n := settings.pref("signature") or settings.pref("name") or load()["contact"].get("name"):
+        return n
+    m = master_text()
+    if is_template(m):
+        return ""
+    head = next((ln[2:].strip() for ln in m.splitlines() if ln.startswith("# ")), "")
+    return candidate_name() or ("" if re.search(r"(?i)resume|r[ée]sum[ée]|\bcv\b|profile", head) else head)
+
+
+def template_mail(kind: str, job, to: str = "", notes: str = "") -> dict:
+    """{subject, body} from TEMPLATES, filled from the job and your name (my_name)."""
     subject, body = TEMPLATES[kind]
-    name = settings.pref("signature") or settings.pref("name") or load()["contact"].get("name") or ""
+    name = my_name()
     who = (to or job["contact_name"] or "").strip()
     fill = {"title": job["title"], "company": job["company"],
             "notes": f" I especially valued our conversation about {notes.strip().rstrip('.')}." if notes.strip() else ""}
@@ -160,6 +178,9 @@ def mail_proposal(job, mail: dict, tool: str, summary: str, purpose: str = "", r
     new_status: where the job moves once the mail is sent (forward only, see approvals._send).
     to: another recipient (a contact asked for a referral, the sender of a mail); '' = draft only.
     in_reply_to: the Message-ID a reply answers (threads it in the recipient's mail client)."""
+    from .drafts import screen
+
+    screen(mail)  # the salary-floor guard on every employer-bound mail, the draft-only copy you paste included
     rcpt = job["contact_email"] if to is None else to
     if not rcpt:
         return {"draft": mail, "proposal": {"status": "draft_only",
@@ -280,8 +301,9 @@ CANDIDATE SUMMARY:
 {candidate_text(1500, private=False)}""",
             provider=provider,
         )
+    out = mail_proposal(job, mail, "email_reply", f"counter-offer to {job['company']}", review=True)  # screened there
     db.add_event(job["id"], "counter_draft", mail.get("subject", ""))
-    return mail_proposal(job, mail, "email_reply", f"counter-offer to {job['company']}", review=True)
+    return out
 
 
 def counter_facts(job, figures: list[str], ask: str) -> str:
@@ -294,9 +316,7 @@ def counter_facts(job, figures: list[str], ask: str) -> str:
 
 def counter_template(job, figures: list[str], ask: str) -> dict:
     """The offline counter-offer {subject, body}: the offer, the cited figures and your ask, nothing else."""
-    from .profile import load
-
-    name = settings.pref("signature") or settings.pref("name") or load()["contact"].get("name") or ""
+    name = my_name()
     who = (job["contact_name"] or "").strip()
     body = (f"Thank you again for the offer for the {job['title']} position at {job['company']}. I am excited about the "
             f"role and would like to find a way to make it work."
@@ -320,7 +340,9 @@ def auto_track(listings: list[dict], provider: str | None = None) -> list[dict]:
     fresh = []
     for j in listings:
         g = j.get("ghost") or ghost_signals(j)
-        if g["score"] >= GHOST_SKIP:  # a score marks it judged, so a watch does not offer it again
+        if j.get("tracked"):  # on the Board already (web_monitor.annotate): no 'track X' item for a job you have
+            j |= {"score": 0, "why": f"skipped: already tracked as #{j['tracked']}"}
+        elif g["score"] >= GHOST_SKIP:  # a score marks it judged, so a watch does not offer it again
             j |= {"score": 0, "why": "skipped: possibly stale (" + "; ".join(g["reasons"]) + ")"}
         else:
             fresh.append(j)

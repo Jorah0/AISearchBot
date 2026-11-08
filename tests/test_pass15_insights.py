@@ -297,7 +297,10 @@ class Insights(Base):
         self.assertEqual((band["<40"]["n"], band["<40"]["response_rate"], band["<40"]["enough"]), (1, None, False))
         src = {g["group"]: g for g in a["by_source"]}
         self.assertEqual((src["search:remotive"]["n"], src["captured"]["response_rate"]), (6, None))
-        self.assertEqual(a["funnel"], db.funnel())                                # reused, not rebuilt
+        f = db.funnel()  # reused, not rebuilt; a stage reached by fewer than MIN_N jobs shows no conversion
+        for v in f["stages"].values():
+            v["conversion"] = v["conversion"] if v["reached"] >= extras.MIN_N else None
+        self.assertEqual(a["funnel"], f)
         self.assertEqual(a["variants"], db.variant_stats())
         self.assertEqual(a["goals"], [])                                          # no goal by default
         self.assertEqual(settings.pref("weekly_goals"), {})

@@ -126,6 +126,15 @@ label.fld { display: flex; flex-direction: column; gap: 2px; color: var(--dim); 
   .grid2 { grid-template-columns: 1fr; }
 }
 
+@media (max-width: 600px) {  /* phone-width window: the nav is one scrolling row, so content keeps most of the screen */
+  body { grid-template-columns: minmax(0, 1fr); grid-template-rows: 44px auto auto 1fr; }
+  .brand small, #loopStat { display: none; }
+  .top .stats { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; max-width: 100%; }
+  nav { flex-wrap: nowrap; overflow-x: auto; padding: 4px 6px; gap: 2px; }
+  nav button { flex: none; padding: 6px 9px; gap: 6px; }
+  #drawer { width: 100vw; }
+}
+
 /* ---- JD coverage, resume check, file audit ---- */
 .cov-score { font-size: 22px; }
 .cov-row { display: grid; grid-template-columns: 140px 1fr 110px; gap: 8px; align-items: center; font-size: 12px; margin: 3px 0; }

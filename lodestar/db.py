@@ -64,7 +64,8 @@ MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "T
               "ats_feed": "TEXT"}  # 'greenhouse:acme' when tracked from a public job-board feed (code-set, not a user field)
 WATCH_MIGRATIONS = {"filters": "TEXT",  # JSON search filters of a saved search (web_monitor.clean_filters)
                     "last_error": "TEXT"}  # what the last run could not read (shown on the watch); NULL after a clean run
-ANSWER_MIGRATIONS = {"star": "TEXT"}  # JSON STAR fields when the row is a story (interview.save_story); NULL = a form answer
+ANSWER_MIGRATIONS = {"star": "TEXT",  # JSON STAR fields when the row is a story (interview.save_story); NULL = a form answer
+                     "private": "INTEGER NOT NULL DEFAULT 0"}  # 1 = for you only: never put in an employer-facing prompt
 BACKFILL_KEY = "backfill:fields-v1"
 CONTACTS_KEY = "backfill:contacts-v1"
 ATS_FEED_RE = re.compile(r"(greenhouse|lever|ashby):[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
@@ -367,7 +368,7 @@ def list_jobs(status=None, sort=None, remote=None, min_salary=None, tag=None):
     if remote:
         rows = [j for j in rows if j["remote"] == remote]
     if min_salary:
-        rows = [j for j in rows if (_pay(j) or 0) >= min_salary]
+        rows = [j for j in rows if _pay(j) is None or _pay(j) >= min_salary]  # unknown pay is kept, as search does
     if tag:
         rows = [j for j in rows if tag.strip().lower() in (t.lower() for t in tag_list(j["tags"]))]
     if SORTS.get(sort):
@@ -394,6 +395,10 @@ def set_status(job_id: int, status: str, detail: str = "") -> None:
     # 'pending', so an approved proposal never closes itself)
     con().execute("UPDATE pending SET status='rejected', decided_at=?, result=? WHERE job_id=? AND kind='set_status' "
                   "AND status='pending'", (_now(), f"stale: the job moved to {status} before this was decided", job_id))
+    if status in ("withdrawn", "rejected", "accepted"):  # 'still very interested' must never go out after the end
+        con().execute("UPDATE pending SET status='rejected', decided_at=?, result=? WHERE job_id=? AND kind='send_email' "
+                      "AND status='pending' AND json_extract(payload, '$.purpose') IN ('followup', 'thanks')",
+                      (_now(), f"stale: the job moved to {status} before this was sent", job_id))
     update_job(job_id, status=status, **extra)
     add_event(job_id, "status", f"{status} {detail}".strip())
     if status == "accepted":  # a hire: offer to close the other live applications, always through the Inbox
@@ -496,6 +501,14 @@ def variant_stats() -> list[dict]:
     return sorted(out, key=lambda v: -v["interview_rate"])
 
 
+# Timeline entries that are Lodestar's own bookkeeping, not contact with the employer: an Inbox proposal, its rejection,
+# a send that failed, a draft nobody sent yet, a reply draft that failed, unverified mail, an approval's result line
+# (the real change logs its own 'status' / 'created' / sent-mail event). None of them restarts the follow-up clock.
+BOOKKEEPING = ("proposed", "rejected_proposal", "send_failed", "set_status", "add_job", "save_answer", "reply",
+               "interview_date", "email_unverified", "followup_draft", "thanks_draft", "withdraw_draft", "counter_draft",
+               "reply_draft", "referral_draft", "outreach_draft", "checkin_draft", "referral")
+
+
 def needs_followup(days: int | None = None):
     if not days:  # the board, digest and loop all follow the followup_days preference unless told otherwise
         from . import settings
@@ -506,9 +519,9 @@ def needs_followup(days: int | None = None):
     # Round times are local, so today is the local date.
     return con().execute(
         "SELECT j.* FROM jobs j WHERE j.status IN ('applied','screening','interview') "
-        "AND (SELECT MAX(ts) FROM events e WHERE e.job_id=j.id) < ? "
+        f"AND (SELECT MAX(ts) FROM events e WHERE e.job_id=j.id AND e.kind NOT IN ({','.join('?' * len(BOOKKEEPING))})) < ? "
         "AND NOT EXISTS (SELECT 1 FROM interviews i WHERE i.job_id=j.id AND i.at >= ?) ORDER BY updated_at",
-        (cutoff, datetime.now().strftime("%Y-%m-%d")),
+        (*BOOKKEEPING, cutoff, datetime.now().strftime("%Y-%m-%d")),
     ).fetchall()
 
 
@@ -519,7 +532,9 @@ def add_watch(url: str, keywords: str = "", filters: dict | None = None) -> None
     if filters is None:
         old = con().execute("SELECT filters FROM watches WHERE url=?", (url,)).fetchone()
         filters = watch_filters(old) if old else {}
-    con().execute("INSERT OR REPLACE INTO watches(url,keywords,filters) VALUES(?,?,?)",
+    # an upsert, not INSERT OR REPLACE: re-adding keeps the watch's id, last run, error and a page watch's baseline
+    con().execute("INSERT INTO watches(url,keywords,filters) VALUES(?,?,?) ON CONFLICT(url) DO UPDATE SET "
+                  "keywords=excluded.keywords, filters=excluded.filters",
                   (url, keywords, json.dumps(filters) if filters else None))
     con().commit()
 
@@ -571,6 +586,13 @@ def add_company(vendor: str, slug: str, name: str, keywords: str = "") -> int:
                   "DO UPDATE SET name=excluded.name, keywords=excluded.keywords", (vendor, slug, name, keywords))
     con().commit()
     return con().execute("SELECT id FROM companies WHERE vendor=? AND slug=?", (vendor, slug)).fetchone()["id"]
+
+
+def tracked_id(urls) -> int | None:
+    """The newest tracked job (any status) at one of these URLs: search marks such results, auto_track skips them."""
+    urls = [u for u in urls if u]
+    row = urls and con().execute(f"SELECT MAX(id) AS id FROM jobs WHERE url IN ({','.join('?' * len(urls))})", urls).fetchone()
+    return row["id"] if row else None
 
 
 def companies():
@@ -682,17 +704,35 @@ def decide_pending(pid: int, status: str, result: str = "") -> None:
 
 
 # --- answer bank ------------------------------------------------------------
-def save_answer(question: str, answer: str, tags: str = "") -> None:
+def save_answer(question: str, answer: str, tags: str = "", private: bool | None = None) -> None:
+    """private: True keeps the answer for you only; None (AI proposals) keeps what the question already had. An answer
+    that is not private and names your salary floor is refused: it would reach an employer."""
     if not str(question or "").strip() or not str(answer or "").strip():
         raise SystemExit("an answer needs both a question and an answer")
-    con().execute("INSERT INTO answers(question,answer,tags,updated_at) VALUES(?,?,?,?) "
-                  "ON CONFLICT(question) DO UPDATE SET answer=excluded.answer, tags=excluded.tags, updated_at=excluded.updated_at",
-                  (question.strip(), answer, tags, _now()))
+    q = question.strip()
+    if private is None:
+        row = con().execute("SELECT private FROM answers WHERE question=?", (q,)).fetchone()
+        private = bool(row and row["private"])
+    from .drafts import leaks
+
+    if not private and leaks(answer):
+        raise SystemExit("this answer names your salary floor (or your private Preferences), so it would reach an "
+                         "employer: mark it private to keep it for yourself, or change it")
+    con().execute("INSERT INTO answers(question,answer,tags,updated_at,private) VALUES(?,?,?,?,?) "
+                  "ON CONFLICT(question) DO UPDATE SET answer=excluded.answer, tags=excluded.tags, "
+                  "updated_at=excluded.updated_at, private=excluded.private", (q, answer, tags, _now(), int(private)))
     con().commit()
 
 
-def list_answers():
-    return con().execute("SELECT * FROM answers ORDER BY updated_at DESC").fetchall()
+def list_answers(employer: bool = False):
+    """employer=True: only answers safe for an employer-facing prompt or form: not private, not naming the salary floor
+    (an answer saved before the guard existed is filtered here too)."""
+    rows = con().execute("SELECT * FROM answers ORDER BY updated_at DESC").fetchall()
+    if not employer:
+        return rows
+    from .drafts import leaks
+
+    return [r for r in rows if not r["private"] and not leaks(r["answer"])]
 
 
 def delete_answer(aid: int) -> None:
@@ -700,10 +740,11 @@ def delete_answer(aid: int) -> None:
     con().commit()
 
 
-def find_answers(question: str, limit: int = 4):
-    """Prior answers whose question shares distinctive words with this one (cheap, no embeddings)."""
+def find_answers(question: str, limit: int = 4, employer: bool = False):
+    """Prior answers whose question shares distinctive words with this one (cheap, no embeddings). employer: as in
+    list_answers, for prompts whose output an employer reads."""
     toks = _tokens(question)
-    scored = [(len(toks & _tokens(a["question"])), a) for a in list_answers()]
+    scored = [(len(toks & _tokens(a["question"])), a) for a in list_answers(employer)]
     return [a for n, a in sorted(scored, key=lambda x: -x[0]) if n >= 1][:limit]
 
 
@@ -794,6 +835,8 @@ def link_mail(mid: int, job_id: int) -> None:
     """Your own link: files the mail under the job. It never sets the job's contact or makes the sender trusted.
     A pending 'track this company' proposal made from the same mail is closed: the mail has its job now."""
     m, _ = get_mail(mid), get_job(job_id)
+    if m["direction"] != "in" or (m["job_id"] is not None and m["linked_by"] != "user"):  # relink + unlink would lose it
+        raise SystemExit(f"mail #{mid} was filed automatically (or sent by you); only unmatched mail or your own links move")
     con().execute("UPDATE mail SET job_id=?, linked_by='user' WHERE id=?", (job_id, mid))
     con().execute("UPDATE pending SET status='rejected', result=?, decided_at=? WHERE kind='add_job' AND status='pending' "
                   "AND json_extract(payload, '$.message_id')=?", (f"mail filed under job #{job_id}", _now(), m["message_id"]))

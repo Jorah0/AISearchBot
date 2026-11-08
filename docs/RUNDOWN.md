@@ -110,7 +110,7 @@ document is produced (`--council`) and as a standalone `council "<question>"` co
 
 ## 6. Current state (2026-11-07, pass 16)
 
-287 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`). Live-verified: installer, desktop window (Edge
+358 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`). Live-verified: installer (Desktop shortcuts; the Start Menu folder fix after the overview is checked statically only), desktop window (Edge
 WebView2), every UI route with token and Host checks, six free job sources, page watches, Obsidian export. Not yet
 exercised with real credentials: AI calls, IMAP login and SMTP sending (Connect email is tested against faked servers only). Pass-by-pass history is in [CHANGELOG.md](CHANGELOG.md).
 

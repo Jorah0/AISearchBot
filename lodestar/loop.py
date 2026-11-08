@@ -5,6 +5,7 @@ import time
 from datetime import date, datetime, timedelta
 
 from . import approvals, db, log, settings
+from .config import setting
 from .util import desktop_notify, notify
 
 STATUS = {"running": False, "every": None, "last_cycle": None, "cycles": 0, "last_error": None}  # read by the UI top bar
@@ -33,7 +34,8 @@ def agenda(now: datetime | None = None) -> dict:
     return {
         "actions": sorted(actions, key=lambda i: i["when"]),
         "deadlines": sorted(deadlines, key=lambda i: i["when"]),
-        "followups": [item(j, when=j["updated_at"][:10]) for j in db.needs_followup()],
+        # a job whose cadence is exhausted (ghosted close-out already offered) stops reappearing here
+        "followups": [item(j, when=j["updated_at"][:10]) for j in db.needs_followup() if followup_step(j) != "done"],
         "interviews": [{"id": i["job_id"], "company": i["company"], "title": i["title"], "when": f"{i['when']:%a %Y-%m-%d %H:%M}"}
                        for i in upcoming_interviews(2)],
         "contacts": [{"id": c["id"], "name": c["name"], "company": c["company"] or "", "when": c["next_touch"]} for c in due(today)],
@@ -54,13 +56,21 @@ def _suggested(now: datetime) -> list[dict]:
 
 
 def followup_step(job) -> str:
-    """Cadence for a quiet application: nudge at each followup_days interval, close as ghosted after the third.
-    Only the loop's own nudges count (a drafted follow-up email is not a second nudge)."""
+    """Cadence for a quiet application: nudge at each followup_days interval, close as ghosted after the third
+    follow-up. With a contact email only SENT follow-ups count (the 'followup' event written on send), so drafts left
+    in the Inbox never add up to 'ghosted'; without one, the nudges you were shown are the follow-ups."""
     events = db.events(job["id"])
     if any(e["kind"] == "followup_nudge" and e["detail"] == "cadence exhausted" for e in events):
         return "done"  # the close-out was proposed once already; never re-propose it
-    nudges = sum(1 for e in events if e["kind"] == "followup_nudge")
-    return "close" if nudges >= 3 else "nudge"
+    kind = "followup" if job["contact_email"] else "followup_nudge"
+    done = sum(1 for e in events if e["kind"] == kind and e["detail"] != "drafted")  # old databases logged drafts too
+    return "close" if done >= 3 else "nudge"
+
+
+def _followup_waiting(job_id: int) -> bool:
+    """A follow-up email for this job is already waiting in the Inbox: the next nudge must not add a second one."""
+    return db.con().execute("SELECT 1 FROM pending WHERE job_id=? AND kind='send_email' AND status='pending' "
+                            "AND json_extract(payload, '$.purpose')='followup'", (job_id,)).fetchone() is not None
 
 
 def _step(name: str, fn) -> None:
@@ -91,7 +101,8 @@ def _followups(a) -> None:
             continue
         notify(f"FOLLOW UP: #{j['id']} {j['company']} - {j['title']} has been quiet {days}+ days")
         db.add_event(j["id"], "followup_nudge", "")
-        if settings.enabled("followup") and j["contact_email"]:  # no AI provider: the plain template (apply.TEMPLATES)
+        # no AI provider: the plain template (apply.TEMPLATES)
+        if settings.enabled("followup") and j["contact_email"] and not _followup_waiting(j["id"]):
             from .apply import followup
 
             _step(f"follow-up draft #{j['id']}", lambda j=j: print(f"  follow-up draft -> {followup(j, a.provider)['proposal'].get('status')}"))
@@ -140,13 +151,18 @@ def _desktop(now: datetime | None = None) -> None:
             _toast_once(f"toast:deadline:{d['id']}:{tomorrow}", "Deadline tomorrow", f"#{d['id']} {d['company']} - {d['title']}")
 
 
-def _digest(a) -> None:
-    week = time.strftime("digest:%Y-%W")
-    if settings.auto("digest") and time.localtime().tm_wday == 4 and not db.seen(week):
+def _digest(a, now: datetime | None = None) -> None:
+    """Once per Friday-to-Thursday week, on the first cycle from Friday on: a Friday the app was closed still gets
+    its digest on the next cycle. Emailed when LODESTAR_NOTIFY_EMAIL is set, else a one-line alert says it is ready."""
+    week = f"digest:{(now or datetime.now()) - timedelta(days=4):%G-%V}"  # the key turns over on Friday
+    if settings.auto("digest") and not db.seen(week):
         from .extras import digest
 
-        digest(7, send=True, provider=a.provider)
-        db.mark_seen(week)
+        db.mark_seen(week)  # ponytail: one try a week; a failed send is reported once, the digest stays on Monitor
+        if setting("LODESTAR_NOTIFY_EMAIL"):
+            digest(7, send=True, provider=a.provider)
+        else:
+            notify("DIGEST ready: Monitor > Weekly digest (or lodestar digest); set LODESTAR_NOTIFY_EMAIL to get it by email")
 
 
 def _backup() -> None:
@@ -161,7 +177,10 @@ def _backup() -> None:
 def cycle(a) -> None:
     STATUS["last_cycle"], STATUS["cycles"] = time.strftime("%H:%M"), STATUS["cycles"] + 1
     print(f"\n--- lodestar cycle {STATUS['last_cycle']} ---")
-    if getattr(a, "email", True):
+    STATUS["last_error"] = None  # the top bar shows this cycle's problem, not one fixed since
+    if getattr(a, "email", True) and not (setting("IMAP_USER") and setting("IMAP_PASS")):
+        print("email: skipped (no mailbox connected: Setup > Connect email)")  # optional, so not a 'problem'
+    elif getattr(a, "email", True):
         from . import email_monitor
 
         _step("email", lambda: email_monitor.check(a.days, provider=a.provider))
@@ -189,7 +208,7 @@ def run(a) -> None:
         while True:
             try:
                 cycle(a)
-            except Exception as e:  # anything the steps did not contain; the next cycle still runs
+            except (Exception, SystemExit) as e:  # anything the steps did not contain; the next cycle still runs
                 STATUS["last_error"] = f"{time.strftime('%H:%M')} cycle: {e}"
                 log.get("loop").exception("cycle failed")
             if getattr(a, "once", False):

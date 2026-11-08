@@ -39,6 +39,9 @@ def _load_dotenv(path: Path) -> None:
 
 
 _load_dotenv(Path.cwd() / ".env")
+# the install folder's .env (install.ps1 / install.sh create it there): a scheduled task or cron job starts in system32
+# or $HOME, so cwd alone would miss it. ponytail: a site-packages install looks for site-packages/.env, harmlessly
+_load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 _load_dotenv(HOME / ".env")
 
 

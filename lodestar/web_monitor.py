@@ -13,6 +13,8 @@ from .config import SNAPSHOTS
 from .util import fetch, fetch_json, notify, strip_html
 
 GHOST_SHOW, GHOST_SKIP = 30, 60  # "possibly stale" chip from 30; auto_track leaves listings at 60+ alone
+# ponytail: withholds the 'Salary floor:' value (where profile.salary_floor reads it); the figure written elsewhere slips past
+FLOOR_RE = re.compile(r"(?im)(salary floor[*_ \t]*:)[^|\n]*")
 
 
 def _urls(j) -> list[str]:
@@ -72,7 +74,8 @@ def check_watches() -> list[str]:
     for w in db.watches():
         if w["url"].startswith("search:"):
             q, errs = w["url"][7:], []
-            new = search(q, keywords=w["keywords"] or "", only_new=True, mark=False, errors=errs, **db.watch_filters(w))
+            new = search(q, keywords=w["keywords"] or "", only_new=True, mark=False, errors=errs, cached=True,
+                         **db.watch_filters(w))
             alerts += _hits(q, new)
             if len(errs) >= len(SOURCES):  # not one board answered: this was no run, whatever the empty result says
                 db.watch_failed(w["id"], "no job board could be reached: " + "; ".join(errs))
@@ -168,7 +171,11 @@ def add_company(src: str, name: str = "", keywords: str = "") -> dict:
     if len(name) > 80 or len(keywords) > 200:
         raise SystemExit("name: at most 80 characters; keywords: at most 200")
     vendor, slug = found
-    name = name or slug.replace("-", " ").replace("_", " ").title()
+    # re-adding a board keeps its name and keywords unless new ones are given (as saved-search filters do)
+    # ponytail: so keywords are cleared by remove + add, not by re-adding with none
+    old = next((c for c in db.companies() if (c["vendor"], c["slug"]) == (vendor, slug)), None)
+    keywords = keywords or (old["keywords"] or "" if old else "")
+    name = name or (old["name"] if old else "") or slug.replace("-", " ").replace("_", " ").title()
     return {"id": db.add_company(vendor, slug, name, keywords), "vendor": vendor, "slug": slug, "name": name}
 
 
@@ -242,7 +249,8 @@ def feed(vendor: str, slug: str, company: str) -> list[dict]:
 
 def _posting_id(url) -> str:
     """The id a posting URL carries: Greenhouse gh_jid= / embed token=, else the last path segment (/jobs/123, lever or
-    ashby uuid) ignoring a trailing /apply or /application. "" for a board root (/<slug>) that names no posting."""
+    ashby uuid) ignoring a trailing /apply or /application. SmartRecruiters '/<company>/<id>-title' gives the id and
+    Workday '.../Title_R12345' the requisition. "" for a board root (/<slug>) that names no posting."""
     u = urllib.parse.urlparse(str(url or ""))
     q = urllib.parse.parse_qs(u.query)
     if q.get("gh_jid") or q.get("token"):
@@ -250,7 +258,24 @@ def _posting_id(url) -> str:
     parts = [p for p in u.path.split("/") if p]
     while parts and parts[-1].lower() in ("apply", "application"):
         parts.pop()
-    return parts[-1] if len(parts) > 1 else ""
+    last = parts[-1] if len(parts) > 1 else ""
+    host = (u.hostname or "").lower()
+    if host.endswith("smartrecruiters.com") and (m := re.match(r"(\d{6,})(?:-|$)", last)):
+        return m[1]
+    if "workday" in host and (m := re.search(r"_([A-Za-z]*-?\d[\w-]*)$", last)):
+        return m[1]
+    return last
+
+
+def _known_shape(url, vendor: str, live: list[dict]) -> bool:
+    """The posting check may judge this URL: it carries a Greenhouse id, sits on the feed's own ATS host, or on a host
+    the live feed's postings use. A job saved from somewhere else (SmartRecruiters, Workday, Recruitee, a careers page
+    the feed does not link to) cannot be looked up in this feed, so it is never called removed."""
+    u = urllib.parse.urlparse(str(url or ""))
+    host = (u.hostname or "").lower()
+    if "gh_jid" in urllib.parse.parse_qs(u.query) or ATS_HOSTS.get(host) == vendor:
+        return True
+    return host in {(urllib.parse.urlparse(j["url"]).hostname or "").lower() for j in live}
 
 
 def recheck_postings(now: datetime | None = None) -> list[int]:
@@ -280,8 +305,9 @@ def recheck_postings(now: datetime | None = None) -> list[int]:
         ids = {j["ats_id"] for j in live} | {_posting_id(j["url"]) for j in live}
         for j in jobs:
             pid = _posting_id(j["url"])
-            # a URL naming no posting cannot be proven gone
-            if not pid or pid in ids or any(e["kind"] == "posting_removed" for e in db.events(j["id"])):
+            # a URL naming no posting, or of a shape this feed cannot vouch for, cannot be proven gone
+            if (not pid or pid in ids or j["url"] in {x["url"] for x in live} or not _known_shape(j["url"], vendor, live)
+                    or any(e["kind"] == "posting_removed" for e in db.events(j["id"]))):
                 continue
             db.add_event(j["id"], "posting_removed", f"not in the {vendor} feed for {slug} on {now:%Y-%m-%d}")
             approvals.propose("posting_check", "set_status", {"job_id": j["id"], "status": "withdrawn", "note": "posting removed"},
@@ -420,21 +446,36 @@ def _muse(q):
 
 
 SOURCES = {"remotive": _remotive, "arbeitnow": _arbeitnow, "remoteok": _remoteok, "hn": _hn, "jobicy": _jobicy, "themuse": _muse}
+WATCH_CACHE_HOURS = {"remotive": 6}  # saved searches reuse a board's answer this long (Remotive asks for ~4 calls a day)
+WATCH_CACHE_DEFAULT = 2
+_ANSWERS: dict = {}  # (source function, query) -> (monotonic time, listings); ponytail: in memory, a restart refetches
+
+
+def _ask(name: str, query: str, cached: bool) -> list[dict]:
+    """One board's listings for a query. cached (saved searches in the monitor loop): reuse a recent answer, so every
+    cycle times every saved search stays within each board's published limits. A manual search always asks afresh."""
+    import time
+
+    fn, now = SOURCES[name], time.monotonic()
+    hit = _ANSWERS.get((fn, query.casefold()))
+    if not (cached and hit and now - hit[0] < WATCH_CACHE_HOURS.get(name, WATCH_CACHE_DEFAULT) * 3600):
+        hit = _ANSWERS[(fn, query.casefold())] = (now, fn(query))  # a failure raises and caches nothing
+    return [dict(j) for j in hit[1]]
 
 
 def search(query: str, keywords: str = "", only_new: bool = False, sources=None, mark: bool | None = None,
-           errors: list | None = None, **filters) -> list[dict]:
+           errors: list | None = None, cached: bool = False, **filters) -> list[dict]:
     """Listings from the free job APIs: keyword filter, your private dealbreakers, cross-source de-dup, then the
     search filters (location / remote, min_salary, posted_within days, seniority; see refine), each annotated with
     stale signals and a sponsor hint. only_new skips listings seen before; `mark` (default: only_new) records the
     results as seen. A manual search never marks, so it cannot use up listings a watch has not judged yet.
     errors: gets one 'source: problem' line per board that could not be read, so callers can tell 'nothing new' from
-    'nothing checked'."""
+    'nothing checked'. cached: reuse a board's recent answer (saved searches; see _ask)."""
     mark = only_new if mark is None else mark
     raw = []
     for name in (sources or SOURCES):
         try:
-            raw += SOURCES[name](query)
+            raw += _ask(name, query, cached)
         except Exception as e:
             print(f"  {name}: {e}")
             if errors is not None:
@@ -657,6 +698,8 @@ def annotate(listings: list[dict]) -> list[dict]:
     """Stale signals and sponsor hint on each listing, then remember the posting (for repost detection next time)."""
     for j in listings:
         j["ghost"], j["sponsor"], j["seniority"] = ghost_signals(j), sponsor_hint(j["company"]), seniority_of(j["title"])
+        if tid := db.tracked_id(_urls(j)):  # already on your Board: shown, and never proposed again by auto_track
+            j["tracked"] = tid
         db.note_posting(posting_key(j), j["url"])
     return listings
 
@@ -712,14 +755,17 @@ def import_sponsors(raw: bytes) -> dict:
 
 
 def rank(listings: list[dict], provider: str | None = None, chunk: int = 15) -> list[dict]:
-    """AI fit score (0-100) against the master profile, in chunks so one bad batch cannot sink the rest; best first."""
+    """AI fit score (0-100) against the master profile, in chunks so one bad batch cannot sink the rest; best first.
+    The provider sees the profile with the salary floor withheld (locations and deal-breakers stay: they are the fit),
+    and the listings fenced as third-party data. A reply row without a usable index and numeric score is skipped."""
+    from .drafts import _data
     from .resume import candidate_text
 
     if not listings:
         return listings
     if not ai.available():  # never a silent 'no fits': unranked results must not read as judged and rejected
         raise SystemExit("AI ranking needs an AI provider: store a key in Setup > Vault, or click 'Local only (Ollama)'")
-    prof = candidate_text(6000)
+    prof = FLOOR_RE.sub(r"\1 (withheld)", candidate_text(6000))
     errors = []
     for start in range(0, len(listings), chunk):
         part = listings[start:start + chunk]
@@ -733,7 +779,7 @@ CANDIDATE:
 {prof}
 
 LISTINGS:
-{brief}""",
+{_data(brief)}""",
                 provider=provider,
             )
         except (Exception, SystemExit) as e:
@@ -741,8 +787,14 @@ LISTINGS:
             errors.append(str(e))
             continue
         for d in data if isinstance(data, list) else []:
-            if isinstance(d, dict) and isinstance(d.get("i"), int) and 0 <= d["i"] < len(part):
-                part[d["i"]] |= {"score": d.get("score", 0), "why": d.get("why", "")}
+            try:  # untrusted reply: "85" or 85.0 is a score, "high" / null / a bool is not
+                if isinstance(d.get("i"), bool) or isinstance(d.get("score"), bool):
+                    raise TypeError
+                i, score = int(d["i"]), max(0, min(100, round(float(d["score"]))))
+            except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+                continue
+            if 0 <= i < len(part):
+                part[i] |= {"score": score, "why": str(d.get("why") or "")[:300]}
     if errors and not any("score" in j for j in listings):  # every batch failed (e.g. the model was rejected): say so
         raise SystemExit(f"AI ranking failed: {errors[0][:300]}")
     listings.sort(key=lambda j: -j.get("score", 0))

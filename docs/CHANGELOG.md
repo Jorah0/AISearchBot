@@ -60,7 +60,7 @@
   typing a password removes the stored one, so one provider's app password is never sent to another server. A test
   whose sign-in failed reads "Saved, but sign-in failed" instead of "Connected as". Picking Outlook no longer locks the
   address field. The Answers answer box is multi-line, so "Use this" keeps paragraph breaks.
-- Tests: 287 in total (102 new this pass) (`tests/test_pass16_audit_a.py`, `test_pass16_audit_b.py`, `test_pass16_email.py`,
+- Tests: 288 in total (103 new this pass) (`tests/test_pass16_audit_a.py`, `test_pass16_audit_b.py`, `test_pass16_email.py`,
   `test_pass16_mail.py`, `test_pass16_drafts.py`, `test_pass16_review.py`); mail servers, keyring and AI are faked, so
   no real IMAP, SMTP or AI call has been made yet. Older trust tests now give the job a posting URL or contact (the new
   rule) and expect untracked-company outreach to wait.

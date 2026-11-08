@@ -15,6 +15,8 @@ $root = $PSScriptRoot
 
 Write-Host "== lodestar installer ==" -ForegroundColor Cyan
 if (-not (Get-Command python -ErrorAction SilentlyContinue)) { throw "Python 3.11+ is required: https://www.python.org/downloads/" }
+python -c "import sys; sys.exit(sys.version_info < (3, 11))"
+if ($LASTEXITCODE -ne 0) { throw "Python 3.11+ is required (found $(python --version 2>&1)): https://www.python.org/downloads/" }
 
 # 1. environment
 if (-not (Test-Path .venv)) { Write-Host "[1/6] creating .venv"; python -m venv .venv } else { Write-Host "[1/6] .venv exists" }
@@ -56,7 +58,6 @@ if (-not $NoShortcuts) {
       $lnk.Save()
     }
   }
-  Remove-Item -Recurse -Force (Join-Path ([Environment]::GetFolderPath("Programs")) "lodestar") -ErrorAction SilentlyContinue
 } else { Write-Host "[4/6] shortcuts skipped" }
 
 # 5. scheduled task

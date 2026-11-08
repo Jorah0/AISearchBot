@@ -57,11 +57,12 @@ FENCE = ("<<<UNTRUSTED", "UNTRUSTED>>>")
 
 # ----------------------------------------------------------------------------- guard
 def leaks(text: str) -> bool:
-    """True when text names the salary floor (profile.employer_safe refuses it) or carries a Preferences section."""
+    """True when text names the salary floor (the words, or its figure on any line) or carries a Preferences section.
+    ponytail: the floor's exact figure used for something else ('saved $150,000') is refused too; rare, and safe"""
     from .profile import employer_safe
 
     try:
-        return employer_safe(text or "") != (text or "")
+        return employer_safe(text or "", any_line=True) != (text or "")
     except SystemExit:
         return True
 
@@ -153,7 +154,7 @@ def _situation(kind: str, job, c: dict) -> str:
             lines.append("EMAIL BEING ANSWERED:\n" + _data(f"From: {m.get('from_addr') or ''}\nSubject: {m.get('subject') or ''}\n\n"
                                                          f"{m.get('snippet') or m.get('summary') or ''}"))
     if kind == "answer":
-        bank = "\n".join(f"Q: {a['question']}\nA: {a['answer']}" for a in db.find_answers(c.get("question") or "", limit=4))
+        bank = "\n".join(f"Q: {a['question']}\nA: {a['answer']}" for a in db.find_answers(c.get("question") or "", limit=4, employer=True))
         lines += [f"QUESTION: {c.get('question') or ''}", f"PRIOR ANSWERS (reuse when they fit, never contradict):\n{bank or '(none)'}"]
     if kind in ("outreach", "cover", "answer") and job["jd"]:
         lines.append(f"JOB DESCRIPTION:\n{job['jd'][:2500]}")
@@ -171,7 +172,7 @@ def _situation(kind: str, job, c: dict) -> str:
 def _offline(kind: str, job, c: dict) -> list[dict]:
     """No provider: the plain template Lodestar already has for this kind, as the one (recommended) option."""
     if kind in apply.TEMPLATES:
-        mail = apply.template_mail(kind, job, c.get("interviewer") or "", c.get("notes") or "")
+        mail = apply.template_mail(kind, job, (c.get("contact") or {}).get("name") or c.get("interviewer") or "", c.get("notes") or "")
     elif kind == "counter":
         mail = apply.counter_template(job, apply.counter_figures(job["id"], c.get("cite")), " ".join(str(c.get("ask") or "").split())[:300])
     else:
@@ -306,8 +307,13 @@ def _key(job_id: int, kind: str) -> str:
     return f"suggest:{int(job_id)}:{kind}"
 
 
+SUGGEST_KINDS = ("thanks", "reply", "checkin", "followup", "referral")
+
+
 def snooze(job_id: int, kind: str) -> None:
     """'Dismiss for now': the suggestion stays away for SNOOZE_DAYS (the seen table keeps when)."""
+    if kind not in SUGGEST_KINDS:
+        raise SystemExit(f"kind must be one of {', '.join(SUGGEST_KINDS)}")
     db.con().execute("INSERT OR REPLACE INTO seen(key, ts) VALUES(?, datetime('now'))", (_key(job_id, kind),))
     db.con().commit()
 
@@ -369,7 +375,15 @@ def suggest_emails(today: datetime | date | None = None) -> list[dict]:
     for j in jobs.values():
         if j["status"] in ("saved", "applied") and (people := warm(j["company"], idx)) and not any(
                 e["kind"] == "referral" for e in db.events(j["id"])):
-            full = [dict(get(p["id"])) for p in people]
+            # the job's own recruiter, hiring manager or interviewer (or its contact address) can't refer you to it
+            staff = {r["contact_id"] for r in db.con().execute(
+                "SELECT contact_id FROM job_contacts WHERE job_id=? AND role IN ('recruiter','hiring_manager','interviewer')",
+                (j["id"],))}
+            own = (j["contact_email"] or "").lower()
+            full = [x for x in (dict(get(p["id"])) for p in people if p["id"] not in staff)
+                    if not own or (x["email"] or "").lower() != own]
+            if not full:
+                continue
             p = next((x for x in full if x["email"]), full[0])
             add(j, "referral", f"you know {p['name']} at {j['company']}: ask for a referral", day, 3,
                 to=p["email"] or "", contact_id=p["id"])

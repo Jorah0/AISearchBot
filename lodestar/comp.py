@@ -15,8 +15,17 @@ def _save(data: dict) -> None:
     PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def set_range(title: str, city: str, low: int, high: int) -> None:
-    t, low, high = (title or "").strip().lower(), int(low), int(high)
+def money(name: str, v) -> int:
+    """An annual amount as typed: 150000, '150,000', '$150,000' or '150k'; a plain message otherwise."""
+    s = str(v if v is not None else "").strip().replace(",", "").lstrip("$").strip()
+    try:
+        return int(round(float(s[:-1]) * 1000 if s[-1:] in "kK" else float(s)))
+    except ValueError:
+        raise ValueError(f"{name} must be an annual amount like 150000 or 150k: {str(v)[:40]}") from None
+
+
+def set_range(title: str, city: str, low, high) -> None:
+    t, low, high = (title or "").strip().lower(), money("low", low), money("high", high)
     if not t:  # an empty keyword is contained in every title and would answer for all of them
         raise ValueError("a title keyword is required")
     if low > high:

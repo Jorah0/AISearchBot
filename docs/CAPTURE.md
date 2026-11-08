@@ -13,7 +13,9 @@ Without `?t=TOKEN` the server answers 403. The token survives restarts; delete `
 re-drag the bookmarklets.
 
 What happens: the page title, URL and visible text are posted to the local UI. lodestar splits the title into role and
-company (LinkedIn titles look like `Role - Company | LinkedIn`, Indeed `Role - Company - City | Indeed.com`), stores
+company (LinkedIn titles look like `Role - Company | LinkedIn`, `(3) Role | Company | LinkedIn` or
+`Company hiring Role in City | LinkedIn`, Indeed `Role - Company - City | Indeed.com`; Remote / Hybrid is never taken
+as the company), stores
 the text as the job description, and the card appears on the Board. Fix the company or title on the card if the split
 guessed wrong, then run Gap to see whether it is worth applying.
 
