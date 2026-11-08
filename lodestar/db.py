@@ -526,17 +526,21 @@ def needs_followup(days: int | None = None):
 
 
 # --- watches & dedupe -------------------------------------------------------
-def add_watch(url: str, keywords: str = "", filters: dict | None = None) -> None:
+def add_watch(url: str, keywords: str | None = "", filters: dict | None = None) -> bool:
     """filters: a saved search's filters, already validated (web_monitor.clean_filters); None keeps the ones it has
-    (re-adding a saved search without filter fields never silently drops them), {} clears them."""
+    (re-adding a saved search without filter fields never silently drops them), {} clears them. keywords None keeps
+    its keywords too. True when a watch with this url already existed (updated, not added)."""
+    old = con().execute("SELECT keywords, filters FROM watches WHERE url=?", (url,)).fetchone()
     if filters is None:
-        old = con().execute("SELECT filters FROM watches WHERE url=?", (url,)).fetchone()
         filters = watch_filters(old) if old else {}
+    if keywords is None:
+        keywords = old["keywords"] if old else ""
     # an upsert, not INSERT OR REPLACE: re-adding keeps the watch's id, last run, error and a page watch's baseline
     con().execute("INSERT INTO watches(url,keywords,filters) VALUES(?,?,?) ON CONFLICT(url) DO UPDATE SET "
                   "keywords=excluded.keywords, filters=excluded.filters",
                   (url, keywords, json.dumps(filters) if filters else None))
     con().commit()
+    return old is not None
 
 
 def watch_filters(w) -> dict:
@@ -703,10 +707,15 @@ def decide_pending(pid: int, status: str, result: str = "") -> None:
     con().commit()
 
 
+def followup_waiting(job_id: int):
+    """The follow-up email for this job already waiting in the Inbox (a pending row), or None: no second one is added."""
+    return con().execute("SELECT * FROM pending WHERE job_id=? AND kind='send_email' AND status='pending' "
+                         "AND json_extract(payload, '$.purpose')='followup' ORDER BY id LIMIT 1", (job_id,)).fetchone()
+
+
 # --- answer bank ------------------------------------------------------------
-def save_answer(question: str, answer: str, tags: str = "", private: bool | None = None) -> None:
-    """private: True keeps the answer for you only; None (AI proposals) keeps what the question already had. An answer
-    that is not private and names your salary floor is refused: it would reach an employer."""
+def check_answer(question: str, answer: str, private: bool | None = None) -> tuple[str, bool]:
+    """(question, private) once an answer may be saved, else SystemExit. Also run before an Inbox item is claimed."""
     if not str(question or "").strip() or not str(answer or "").strip():
         raise SystemExit("an answer needs both a question and an answer")
     q = question.strip()
@@ -718,6 +727,13 @@ def save_answer(question: str, answer: str, tags: str = "", private: bool | None
     if not private and leaks(answer):
         raise SystemExit("this answer names your salary floor (or your private Preferences), so it would reach an "
                          "employer: mark it private to keep it for yourself, or change it")
+    return q, private
+
+
+def save_answer(question: str, answer: str, tags: str = "", private: bool | None = None) -> None:
+    """private: True keeps the answer for you only; None (AI proposals) keeps what the question already had. An answer
+    that is not private and names your salary floor is refused: it would reach an employer."""
+    q, private = check_answer(question, answer, private)
     con().execute("INSERT INTO answers(question,answer,tags,updated_at,private) VALUES(?,?,?,?,?) "
                   "ON CONFLICT(question) DO UPDATE SET answer=excluded.answer, tags=excluded.tags, "
                   "updated_at=excluded.updated_at, private=excluded.private", (q, answer, tags, _now(), int(private)))

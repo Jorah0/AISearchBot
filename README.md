@@ -83,7 +83,7 @@ lodestar watch run
 lodestar app
 lodestar run --every 30            # loop only
 lodestar schedule install          # background task, survives app close
-lodestar digest --send             # weekly summary emailed to LODESTAR_NOTIFY_EMAIL (needs a connected mailbox)
+lodestar digest --send             # weekly summary emailed to LODESTAR_NOTIFY_EMAIL, else your connected mailbox
 lodestar alerts
 
 # stats and nudges

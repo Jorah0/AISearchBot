@@ -179,7 +179,10 @@ def cmd_chat(a):
 def cmd_vault(a):
     if a.op == "set":
         secret = a.value or getpass.getpass(f"value for {a.name}: ")
-        vault.set(a.name, secret, a.user)
+        try:
+            vault.set(a.name, secret, a.user)
+        except ValueError as e:  # Enter at the prompt: one line, not a traceback
+            raise SystemExit(str(e)) from None
         print(f"stored {a.name}")
     elif a.op == "get":
         v = vault.get(a.name)
@@ -583,6 +586,8 @@ def cmd_email(a):
               f"SMTP {st['smtp_host']}:{st['smtp_port']} {st['smtp_mode']}")
         if st["shadowed"]:
             print(f"note: {', '.join(st['shadowed'])} set in the environment / .env win over these values")
+        for x in st["conflicts"]:
+            print(f"WARNING: {x}")
         if st["configured"]:
             print(_mail_test_text(mailconn.test()))
     elif a.op == "test":
@@ -643,7 +648,8 @@ def cmd_watch(a):
             f = db.watch_filters(w)
             print(f"#{w['id']:<3} {w['url']:<60} kw={w['keywords'] or '-'} last={w['last_seen'] or 'never'}"
                   + (f" filters={','.join(f'{k}={v}' for k, v in f.items())}" if f else "")
-                  + (f"\n     last run failed: {w['last_error']}" if w["last_error"] else ""))
+                  + (f"\n     {'note' if w['last_error'].startswith('partial:') else 'last run failed'}: {w['last_error']}"
+                     if w["last_error"] else ""))
     elif a.op == "rm":
         db.remove_watch(a.id)
     elif a.op == "run":
@@ -790,6 +796,8 @@ def cmd_digest(a):
     from . import extras
 
     print(extras.digest(a.days, a.send, a.provider))
+    if a.send:
+        print(f"\n(emailed to {extras.digest_to()})")
 
 
 def cmd_ics(a):

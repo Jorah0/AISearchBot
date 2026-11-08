@@ -10,7 +10,7 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 | `lodestar ui [--port] [--no-open]` | Web UI only. |
 | `lodestar run [--every 30] [--days 2] [--followup N] [--no-email] [--once]` | Monitor loop: email check, watches, follow-up nudges (N defaults to pref `followup_days`). `--once` for schedulers. |
 | `lodestar schedule install [--every 30]` / `remove` | Windows scheduled task that runs `run --once`; prints the cron line elsewhere. |
-| `lodestar digest [--days 7] [--send]` | Weekly summary with a coach's 5-action plan; `--send` emails it to `LODESTAR_NOTIFY_EMAIL` through your connected mailbox, and says so when either is missing. |
+| `lodestar digest [--days 7] [--send]` | Weekly summary with a coach's 5-action plan; `--send` emails it to `LODESTAR_NOTIFY_EMAIL`, else to your connected mailbox address, and says where it went (says so when neither is set). |
 | `lodestar alerts` | Tail of `alerts.log`. |
 | `lodestar init` | Create data dir, profile template, database; print next steps. |
 
@@ -84,7 +84,7 @@ backup returns it. In the app: Setup > **Connect email** (provider, address, app
 | `lodestar email connect [--preset P] [--user U] [--imap-host] [--imap-port] [--smtp-host] [--smtp-port] [--smtp-mode ssl\|starttls] [--smtp-user]` | Store the connection, prompt for the app password (hidden; Enter keeps the stored one, but only when the address and servers are unchanged: a new address, IMAP/SMTP host or SMTP login drops it, so one account's password never goes to another server), then test. The preset is guessed from the address when omitted. |
 | `lodestar email test` | Log in to IMAP (INBOX read-only, counts the last 7 days) and SMTP (sends nothing); a failure comes with a plain hint (app password / 2-Step Verification, wrong host, timeout, TLS port or mode, IMAP turned off). |
 | `lodestar email test-send` | Send a short test email to your own connected address (never anyone else). |
-| `lodestar email status` | Connected address, preset and servers (never the password); lists env vars that override the stored values. |
+| `lodestar email status` | Connected address, preset and servers (never the password); lists env vars that override the stored values, with a warning when an `IMAP_HOST` / `SMTP_HOST` in `.env` or the environment points somewhere other than the provider you chose (`email test` puts that first in its hint). |
 | `lodestar email disconnect` | Remove the stored app password (servers stay filled in). |
 
 Settings: `EMAIL_PRESET`, `IMAP_USER`, `IMAP_HOST`, `IMAP_PORT`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_MODE`, `SMTP_USER`
@@ -103,7 +103,7 @@ in once to each.
 | `lodestar mail dismiss MAIL_ID` | Drop an unmatched message from the list (a scan never brings it back). |
 | `lodestar watch add URL [--keywords a,b]` | Alert when matching lines appear on a page (skipped, with one alert, when the site's robots.txt disallows it). |
 | `lodestar watch search-add "query" [--keywords] [--location] [--min-salary] [--posted-within] [--seniority]` | Alert on new listings for a query, with saved search filters. |
-| `lodestar watch list` / `watch rm ID` / `watch run` | Manage and run watches. `list` shows `last run failed: ...` under a watch whose last run failed. Re-adding a watch keeps its id and baseline. |
+| `lodestar watch list` / `watch rm ID` / `watch run` | Manage and run watches. `list` shows `last run failed: ...` under a watch whose last run failed, and `note: partial: ...` when only some job boards were unreachable (the run still counted). Re-adding a watch keeps its id and baseline; the Search tab's Save as watch with blank keywords and filters keeps the saved ones and says it updated the existing search. |
 | `lodestar companies add URL\|vendor:slug [--name] [--keywords]` / `companies list` / `companies rm ID` | Follow a company's public Greenhouse, Lever or Ashby board (see "Sourcing" below). |
 
 ## AI
@@ -119,7 +119,7 @@ in once to each.
 
 | Command | What it does |
 |---|---|
-| `lodestar vault set NAME [value] [--user U]` | Store in the OS keyring (prompts if no value). |
+| `lodestar vault set NAME [value] [--user U]` | Store in the OS keyring (prompts if no value). Surrounding spaces and newlines are trimmed; an empty or blank value is refused with one line. |
 | `lodestar vault get NAME [--show]` / `vault rm NAME` / `vault list` | Read, delete, list names. |
 
 ## Web API (for the page and the bookmarklets)
@@ -173,7 +173,7 @@ page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, w
 | `lodestar answers list\|add Q A [--tags t1,t2] [--private]\|rm ID\|ask ID "question"` | answer bank for application-form questions; `ask` drafts from profile + bank and proposes saving. `--private` (UI: the private checkbox / make private) keeps an answer for you only: drafted answers, letters and form autofill never see it. An answer that names your salary floor must be private |
 | `lodestar jobs contact ID EMAIL [--name]` | recruiter / hiring-manager address used for replies and follow-ups |
 | `lodestar jobs checklist ID` | done / next for every stage of this application |
-| `lodestar followup ID [--template]` | follow-up email draft; sent through the inbox when a contact is known |
+| `lodestar followup ID [--template]` | follow-up email draft; sent through the inbox when a contact is known. One at a time: while one waits in the Inbox you get that one back, and sending one closes any other waiting for the job |
 | `lodestar thanks ID [--interviewer] [--notes] [--template]` | post-interview thank-you note |
 | `lodestar withdraw ID [--template]` | withdrawal email; always waits in the inbox, and sending it moves the job to `withdrawn` |
 | `lodestar offer ID [--salary --bonus --equity --benefits --deadline --notes]` | offer evaluation vs your preferences + negotiation plan (`offer.md`) |
@@ -501,7 +501,7 @@ lodestar insights [--weeks 12] [--json]          # weekly series, response rates
 lodestar tools set weekly_goals contacts=5       # also tailored_applications, mock_sessions, applications; 0 clears
 lodestar offers                                  # = offers compare: live offers side by side
 lodestar offers set 7 base=150k bonus_pct=10 sign_on=20000 equity_value_estimate=200k vest_years=4 cliff_months=12
-lodestar offers counter 7 --cite 9:base 9:sign_on [--ask "a base of 170,000"] [--template]
+lodestar offers counter 7 --cite 9:base 9:sign_on [--ask "a base of 170,000"] [--template]   # a cited figure may equal your floor; the ask may not
 lodestar activity [--week 2026-11-04 | --from 2026-10-01 --to 2026-10-31] [--csv | --html]
 lodestar tools set activity_weekly_min 3         # the weekly count your claim asks for (default: none)
 ```

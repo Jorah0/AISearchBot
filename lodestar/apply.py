@@ -123,7 +123,11 @@ def _offline(template: bool) -> bool:
 
 
 def followup(job, provider: str | None = None, template: bool = False) -> dict:
-    last = next((e for e in reversed(db.events(job["id"])) if e["kind"] == "status"), None)
+    if w := db.followup_waiting(job["id"]):  # one follow-up at a time: the recruiter never gets the same nudge twice
+        p = json.loads(w["payload"])
+        return {"draft": {"subject": p.get("subject", ""), "body": p.get("body", "")},
+                "proposal": {"id": w["id"], "status": "pending", "reason": f"a follow-up is already waiting in the Inbox as #{w['id']}"}}
+    last =next((e for e in reversed(db.events(job["id"])) if e["kind"] == "status"), None)
     mail = template_mail("followup", job) if _offline(template) else ai.ask_json(
         f"""Write a brief, warm follow-up email (under 110 words) from the candidate about the {job['title']} application
 at {job['company']} (status: {job['status']}, last update: {last['ts'][:10] if last else 'unknown'}). Reaffirm interest
@@ -171,16 +175,19 @@ CANDIDATE SUMMARY (for the name only):
 
 
 def mail_proposal(job, mail: dict, tool: str, summary: str, purpose: str = "", review: bool = False,
-                  new_status: str = "", to: str | None = None, in_reply_to: str | None = None) -> dict:
+                  new_status: str = "", to: str | None = None, in_reply_to: str | None = None,
+                  cited: list[str] | None = None) -> dict:
     """Propose sending a drafted {subject, body} to the job's contact. purpose ('followup' / 'thanks') is logged as
     an event on the job only once the mail is actually sent, so the checklist reflects sends, not drafts.
     review=True: a draft the user asked for always waits in the Inbox, even when the tool is on auto.
     new_status: where the job moves once the mail is sent (forward only, see approvals._send).
     to: another recipient (a contact asked for a referral, the sender of a mail); '' = draft only.
-    in_reply_to: the Message-ID a reply answers (threads it in the recipient's mail client)."""
+    in_reply_to: the Message-ID a reply answers (threads it in the recipient's mail client).
+    cited: a counter-offer's competing figures you ticked (counter_figures): sent by your choice, so those exact phrases
+    are left out of the floor check here, in the Inbox and on edits; the ask and the rest of the text are still checked."""
     from .drafts import screen
 
-    screen(mail)  # the salary-floor guard on every employer-bound mail, the draft-only copy you paste included
+    screen(mail, cited or ())  # the salary-floor guard on every employer-bound mail, the draft-only copy you paste included
     rcpt = job["contact_email"] if to is None else to
     if not rcpt:
         return {"draft": mail, "proposal": {"status": "draft_only",
@@ -192,6 +199,8 @@ def mail_proposal(job, mail: dict, tool: str, summary: str, purpose: str = "", r
         payload["new_status"] = new_status
     if in_reply_to:
         payload["in_reply_to"] = in_reply_to
+    if cited:
+        payload["cited"] = list(cited)
     summary = f"{summary} -> {payload['to']}"  # the label always names the real recipient
     return {"draft": mail, "proposal": approvals.propose(tool, "send_email", payload, summary, job["id"], force_pending=review)}
 
@@ -290,8 +299,8 @@ def counter(job, cite, ask: str = "", provider: str | None = None, template: boo
     else:
         mail = ai.ask_json(
             f"""Write a short, warm, confident counter-offer email (under 160 words) from the candidate about the {job['title']}
-offer from {job['company']}. Thank them, restate enthusiasm in one sentence, cite only the competing figures listed below
-(say "another offer", never a company name), make the ask, and keep the door open. Never mention a minimum, a floor, a
+offer from {job['company']}. Thank them, restate enthusiasm in one sentence, cite only the competing figures listed below,
+each word for word as written (say "another offer", never a company name), make the ask, and keep the door open. Never mention a minimum, a floor, a
 walk-away number or any figure not listed here.{_sig()}
 {JSON_MAIL}
 
@@ -301,7 +310,8 @@ CANDIDATE SUMMARY:
 {candidate_text(1500, private=False)}""",
             provider=provider,
         )
-    out = mail_proposal(job, mail, "email_reply", f"counter-offer to {job['company']}", review=True)  # screened there
+    # screened there; ponytail: a cited figure the AI rewords ('$150,000') is checked like any text, so it may be refused
+    out = mail_proposal(job, mail, "email_reply", f"counter-offer to {job['company']}", review=True, cited=figures)
     db.add_event(job["id"], "counter_draft", mail.get("subject", ""))
     return out
 

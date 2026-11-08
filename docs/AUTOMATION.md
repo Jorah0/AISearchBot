@@ -53,10 +53,15 @@ lodestar approve 12 --subject "Re: Interview" --body edited.txt
 lodestar reject 12 --reason "already replied"
 ```
 
-In the UI the Inbox tab shows each item with the email fields editable before **Approve & send**.
+In the UI the Inbox tab shows each item with the email fields editable before **Approve & send**. An edit that would
+be refused (an email or a saved answer that names your salary floor, a slot that clashes with another interview) is
+refused before the item is claimed, so it stays in the Inbox with the reason and nothing is sent or saved. Only one
+follow-up per job waits at a time: asking again returns the waiting one, and sending one closes any other.
 
 A counter-offer (`lodestar offers counter`, Insights > Offers) is always proposed with review, even when
-`email_reply` is on auto, and never contains your salary floor, Preferences or offer notes.
+`email_reply` is on auto, and never contains your salary floor, Preferences or offer notes. A competing figure you
+cite is sent by your choice, so it may equal your floor (the exact cited phrase is exempt from the floor check, in the
+draft, the Inbox and your edits); the ask and everything else in the email are still checked.
 
 Insights, weekly goals and the activity log count only what you did: an approved and sent item counts, a
 pending, rejected or failed one does not, and nothing the loop adds on its own (an auto-tracked save) is an
@@ -141,7 +146,8 @@ address, always reviewed in the Inbox.
   mail closes the proposal, and approving the proposal files the mail under the new job, so you never get two jobs.
   Deleting a job deletes its mail records too. Exports include the mail table (CSV formula cells neutralised).
 - `council_providers` limits which providers receive your profile: the council, idea crafting and the default provider
-  (a `provider` pref or `LODESTAR_PROVIDER` outside the list stops with an error). Only an explicit `-p NAME` on one
+  (a `provider` pref or `LODESTAR_PROVIDER` outside the list stops with an error; names compare without case, so
+  `Anthropic` = `anthropic`). Only an explicit `-p NAME` on one
   command overrides it. `backup` keeps the last 7 nightly zips.
 
 ### After the ECC and security reviews (2026-11-04)
@@ -169,7 +175,8 @@ address, always reviewed in the Inbox.
   Inbox proposals, rejections, failed sends, unsent drafts and unverified mail do not restart the clock
   (`db.BOOKKEEPING`).
 - Interview replies see your booked interviews (interview rounds with a time) and are told never to accept or propose a time
-  within 90 minutes of one; approving a reply that still clashes sends the mail but skips the calendar file and says so.
+  within 90 minutes of one; approving a reply whose chosen slot still clashes is refused before anything is sent (the
+  item stays in the Inbox: pick another slot or clear it), and on auto it waits in the Inbox instead.
   The same job's own rounds are not a clash (the slot its invite booked can be accepted). A new time for a job whose
   only upcoming round is still pending moves that round ("rescheduled from ..." in its notes) instead of adding one.
 - `council_judge`: when on and two or more providers are allowed, the second provider audits the synthesis.

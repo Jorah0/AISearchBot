@@ -80,7 +80,8 @@ def check_watches() -> list[str]:
             if len(errs) >= len(SOURCES):  # not one board answered: this was no run, whatever the empty result says
                 db.watch_failed(w["id"], "no job board could be reached: " + "; ".join(errs))
             else:
-                db.update_watch(w["id"], "", "; ".join(f"unreachable {e}" for e in errs))
+                # the run worked: a board that did not answer is a note ('partial:'), not 'last run failed'
+                db.update_watch(w["id"], "", ("partial: some boards unreachable: " + "; ".join(errs)) if errs else "")
             continue
         if not _robots_ok(w["url"], robots):
             msg = f"SKIPPED watch #{w['id']} {w['url']}: the site's robots.txt does not allow automated fetching of this page"

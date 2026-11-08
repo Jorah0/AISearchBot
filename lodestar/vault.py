@@ -25,8 +25,8 @@ def _save_index(idx: dict) -> None:
 
 
 def set(name: str, secret: str, user: str | None = None) -> None:
-    name = str(name or "").strip()
-    if not name or not str(secret or ""):  # a nameless or empty entry is a mis-click, not a secret
+    name, secret = str(name or "").strip(), str(secret or "").strip()  # a pasted key's trailing space or newline too
+    if not name or not secret:  # a nameless, empty or blank entry is a mis-click, not a secret
         raise ValueError("give both a name (e.g. ANTHROPIC_API_KEY) and the secret to store")
     keyring.set_password(SERVICE, name, secret)
     idx = _index()

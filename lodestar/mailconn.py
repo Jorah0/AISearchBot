@@ -70,7 +70,21 @@ def status() -> dict:
     configured = bool(c["user"] and setting("IMAP_PASS"))
     return c | {"configured": configured, "verified": configured and vault.get("EMAIL_VERIFIED") == _fingerprint(c),
                 "label": p.get("label", c["preset"]),
-                "shadowed": [k for k in ("IMAP_USER", "IMAP_PASS", *KEYS.values()) if os.environ.get(k)]}
+                "shadowed": [k for k in ("IMAP_USER", "IMAP_PASS", *KEYS.values()) if os.environ.get(k)],
+                "conflicts": conflicts(c)}
+
+
+def conflicts(c: dict) -> list[str]:
+    """A server in the environment or .env that differs from the one Connect email chose (a stray IMAP_HOST line makes a
+    Yahoo connection log in to Gmail): one plain sentence each."""
+    p = PRESETS.get(c["preset"], {})
+    out = []
+    for k in ("imap_host", "smtp_host"):
+        env, chosen = os.environ.get(KEYS[k], "").strip(), vault.get(KEYS[k]) or p.get(k, "")
+        if env and chosen and env.lower() != str(chosen).lower():
+            out.append(f"{KEYS[k]}={env} in .env or the environment overrides the {p.get('label', 'chosen')} server "
+                       f"({chosen}): remove that line, then test again.")
+    return out
 
 
 def _fingerprint(c: dict) -> str:
@@ -191,7 +205,7 @@ def test() -> dict:
     c, pw = util.mail_settings(), setting("IMAP_PASS")
     if not (c["user"] and pw):
         raise SystemExit("email is not connected: Setup > Connect email, or lodestar email connect")
-    out, hints = {}, []
+    out, hints = {}, conflicts(c)  # the likeliest cause first, before any generic 'use an app password'
     for name, fn in (("imap", _imap), ("smtp", _smtp)):
         try:
             out[name] = {"ok": True, "detail": fn(c, pw)}

@@ -1,5 +1,66 @@
 # Changelog (development passes, newest first)
 
+## Pass 16.1 (2026-11-07): full feature overview fixes
+
+Every feature was checked end to end (code read, then driven in the app against faked job boards, AI, IMAP and SMTP).
+What was broken or half-done and now works, by area:
+
+**Tracker and sourcing**
+- Adding a job whose posting cannot be fetched still adds it (with its link; fetch the description later); a mistyped
+  file path is refused instead of being stored as the description.
+- Withdrawing, being rejected or accepting closes the follow-up and thank-you emails still waiting in the Inbox.
+- Follow-ups: one at a time per job (asking again gives you the waiting one, sending one closes any duplicate), and
+  "ghosted" counts only follow-ups that were actually sent.
+- Saved searches reuse a board's recent answer instead of asking it again every cycle; a bad `--save` index says so.
+- Save as watch on the Search tab no longer wipes a saved search's keywords and filters when its fields are blank; the
+  toast says it updated the existing search.
+- One unreachable job board no longer marks a whole saved search as "last run failed": the run counts, and the watch
+  shows "some boards unreachable".
+- Ranking keeps your salary floor out of the prompt, survives odd scores, and an unranked search still prints.
+  LinkedIn titles in the current "(3) Role | Company | LinkedIn" form, autofill contact lines in any order, and
+  posting checks that never mark an unknown link as withdrawn.
+
+**Profile, resume and AI**
+- The salary floor stays out of cover letters, offline drafts and every email or answer an employer reads, at one
+  choke point. A counter-offer may now cite a competing offer that happens to equal your floor (the figure you ticked
+  is sent by your choice); the ask is still checked.
+- Rebuilding the master profile from the bank keeps everything you typed by hand: roles, summary, and education and
+  certification lines without a keyword (only a LinkedIn PDF's sidebar is filtered).
+- Provider names are checked when you set them (no crash at the next AI call), the allowlist ignores case
+  (`Anthropic` = `anthropic`), and the default provider respects it. The local preset changes nothing when Ollama does
+  not answer; a council keeps its synthesis when the judge fails.
+- Answers can be marked private and never reach an employer prompt or form; an edited answer that names the floor
+  stays in the Inbox instead of failing.
+- Saving an adjusted resume or a document from the editor keeps the old version in history.
+
+**Mail, people and interviews**
+- Short replies from a job's contact or in a thread Lodestar started are scanned; without an AI provider the scan
+  files that mail and carries on instead of stopping.
+- An interview reply whose chosen slot clashes with another interview is refused before it is sent (it waits in the
+  Inbox); accepting the invite's own slot is no clash. A new time moves the pending round instead of adding one.
+- Inbox bookkeeping no longer restarts the follow-up clock; referral asks skip the job's own recruiter; mock
+  interviews run from the question bank without a provider.
+- Connect email warns when an `IMAP_HOST` / `SMTP_HOST` line in `.env` overrides the provider you chose (a Yahoo
+  connection logging in to Gmail), and the login hint names that line first.
+
+**Outcomes and platform**
+- Email digest goes to `LODESTAR_NOTIFY_EMAIL`, else your connected mailbox, and says where it went; alert emails get
+  a one-line subject and a failed send is reported.
+- The monitor loop survives every error, skips the mailbox step quietly when none is connected, and shows only current
+  problems. Preferences are range-checked; backups keep at least one and never overwrite in the same minute; the
+  scheduled task works from the exe build and reads the install folder's `.env`; the installers keep the Start Menu
+  folder and check for Python 3.11+.
+- The vault trims a pasted key and refuses a blank one (a blank key made a provider look configured);
+  `lodestar vault set` with nothing typed prints one line, not a traceback.
+
+**UI**
+- Add job refuses an empty card and fills company and title from a link; Esc asks before discarding typed text and Tab
+  stays in the drawer; blank notes and an empty profile are refused, and unsaved edits warn before you leave.
+- Preferences have labels and help; the master profile editor, Coach and Answers selects have accessible names; the
+  narrow layout keeps the nav on one row; one no-key message points to Setup.
+
+Tests: 386 in total (98 new: `tests/test_overview_*.py`, including `test_overview_review.py` for the review findings).
+
 ## Pass 16 (2026-11-07): audit fixes, email connection, mail linking, AI options
 
 - Connect email (Setup > Connect email, `lodestar email connect|test|test-send|status|disconnect`): pick Gmail,

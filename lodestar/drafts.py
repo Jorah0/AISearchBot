@@ -56,20 +56,24 @@ FENCE = ("<<<UNTRUSTED", "UNTRUSTED>>>")
 
 
 # ----------------------------------------------------------------------------- guard
-def leaks(text: str) -> bool:
+def leaks(text: str, allow=()) -> bool:
     """True when text names the salary floor (the words, or its figure on any line) or carries a Preferences section.
+    allow: exact phrases you chose to send (a counter-offer's cited figures, apply.counter_figures), left out of the
+    check; the rest of the text, the ask included, is still checked.
     ponytail: the floor's exact figure used for something else ('saved $150,000') is refused too; rare, and safe"""
     from .profile import employer_safe
 
+    for a in allow or ():
+        text = (text or "").replace(a, "")
     try:
         return employer_safe(text or "", any_line=True) != (text or "")
     except SystemExit:
         return True
 
 
-def screen(mail: dict) -> dict:
+def screen(mail: dict, allow=()) -> dict:
     """The salary-floor guard on a draft before it is shown or proposed: refused (SystemExit), never sent."""
-    if any(leaks(str(mail.get(k) or "")) for k in ("subject", "body")):
+    if any(leaks(str(mail.get(k) or ""), allow) for k in ("subject", "body")):
         raise SystemExit("this draft names your salary floor (or your private Preferences), so it was not used: "
                          "edit it out and try again")
     return mail
@@ -181,7 +185,14 @@ def _offline(kind: str, job, c: dict) -> list[dict]:
              "why": "No AI provider is configured: the plain template, filled in from the tracker."}]
 
 
-def _clean(raw, n: int, kind: str, job) -> list[dict]:
+def _cited(kind: str, job, c: dict) -> list[str]:
+    """The competing figures a counter-offer cites (the ones you ticked), exempt from the floor check as phrases."""
+    if kind == "counter":
+        return apply.counter_figures(job["id"], c.get("cite"))
+    return list((c.get("draft") or {}).get("cited") or [])
+
+
+def _clean(raw, n: int, kind: str, job, allow=()) -> list[dict]:
     items = raw.get("options") if isinstance(raw, dict) else raw
     out, dropped = [], 0
     for o in items if isinstance(items, list) else []:
@@ -195,7 +206,7 @@ def _clean(raw, n: int, kind: str, job) -> list[dict]:
             from .resume import letter
 
             opt["body"] = letter(job, opt["body"])
-        if any(leaks(opt.get(k, "")) for k in ("subject", "body")):
+        if any(leaks(opt.get(k, ""), allow) for k in ("subject", "body")):
             dropped += 1  # a draft naming the salary floor is never shown, so it can never be proposed
             continue
         out.append(opt)
@@ -234,7 +245,7 @@ Return JSON only: {{"options": [{{{shape}"body": "...", "recommended": true, "wh
 {_situation(kind, job, c)}""",
         provider=provider,
     )
-    return _clean(raw, n, kind, job)
+    return _clean(raw, n, kind, job, _cited(kind, job, c))
 
 
 def rewrite(text: str, instruction: str, kind: str = "email", subject: str | None = None,
@@ -269,7 +280,8 @@ def use(kind: str, context: dict, choice: dict) -> dict:
     if kind == "pending":
         return approvals.edit(int(context["pending_id"]), choice.get("subject"), choice.get("body"))
     kind, job, c = _context(kind, context)
-    mail = screen({"subject": str(choice.get("subject") or ""), "body": str(choice.get("body") or "")})
+    cited = _cited(kind, job, c)
+    mail = screen({"subject": str(choice.get("subject") or ""), "body": str(choice.get("body") or "")}, cited)
     if kind == "cover":
         from .resume import app_dir, write_doc
 
@@ -295,7 +307,7 @@ def use(kind: str, context: dict, choice: dict) -> dict:
         db.add_event(job["id"], "referral", f"referral ask drafted for {p['name']}")
     db.add_event(job["id"], f"{kind}_draft", mail["subject"])
     return apply.mail_proposal(job, mail, tool, summary.format(who=who, company=job["company"]), purpose=purpose,
-                               review=True, new_status=new_status, to=to, in_reply_to=in_reply_to)
+                               review=True, new_status=new_status, to=to, in_reply_to=in_reply_to, cited=cited)
 
 
 # ----------------------------------------------------------------------------- suggested emails

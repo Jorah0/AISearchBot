@@ -186,7 +186,8 @@ class UnverifiedReply(Base):  # live-forged-thread-reply-moves-job-unflagged
         row = next(r for r in db.list_pending() if r["kind"] == "send_email" and r["job_id"] == jid)
         p = json.loads(row["payload"])
         self.assertEqual((p["to"], p.get("unverified"), "new_status" in p), ("hr@initech-careers.example", True, False))
-        approvals.approve(row["id"])
+        # chosen_time cleared: in the shared home another test's round may hold that slot, and a clash is refused first
+        approvals.approve(row["id"], {"chosen_time": None})
         self.assertEqual(db.get_job(jid)["status"], "interview")
 
     def test_any_reply_to_unverified_mail_is_flagged(self):

@@ -224,7 +224,8 @@ def _act(action: str, p: dict):
         case "ics":
             return {"path": str(extras.ics(job, extras.parse_when(p["when"]), int(p.get("minutes", 60)))), "docs": _docs(job)}
         case "digest":
-            return {"text": extras.digest(int(p.get("days", 7)), bool(p.get("send")), prov)}
+            text = extras.digest(int(p.get("days", 7)), bool(p.get("send")), prov)
+            return {"text": text} | ({"sent_to": extras.digest_to()} if p.get("send") else {})
         case "obsidian":
             return {"path": str(extras.export_obsidian())}
         case "answer":
@@ -678,14 +679,16 @@ class Handler(BaseHTTPRequestHandler):
                 url = str(p.get("url") or "").strip()
                 if not url:
                     raise ValueError("a URL or a search query is required")
+                kw = str(p.get("keywords") or "").strip() or None  # blank: an existing watch keeps its keywords
                 if p.get("search"):
-                    keep = not any(k in p for k in FILTER_KEYS)  # the Monitor form sends none: keep the saved filters
-                    db.add_watch(f"search:{url}", p.get("keywords", ""), None if keep else _filters(p))
+                    # blank filter fields (the Search tab sends all four) count as none: the saved filters stay
+                    keep = not any(str(p.get(k) or "").strip() for k in FILTER_KEYS)
+                    updated = db.add_watch(f"search:{url}", kw, None if keep else _filters(p))
                 elif not http_only(url):
                     raise ValueError("a page watch needs an http(s) URL (tick 'is a search' for a query)")
                 else:
-                    db.add_watch(url, p.get("keywords", ""))
-                self._json({"ok": True})
+                    updated = db.add_watch(url, kw)
+                self._json({"ok": True, "updated": updated})
             elif path.startswith("/api/watches/"):
                 db.remove_watch(int(parts[3]))
                 self._json({"ok": True})

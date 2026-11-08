@@ -268,7 +268,7 @@ class SearchFailures(Base):
             web_monitor.check_watches()
             s = {x["url"]: x for x in db.watches()}["search:dev"]
             self.assertIsNotNone(s["last_seen"])  # one board answered: a run, with what failed noted
-            self.assertIn("unreachable a:", s["last_error"])
+            self.assertIn("partial: some boards unreachable: a:", s["last_error"])
         js = (STATIC / "app.js").read_text(encoding="utf-8")
         self.assertIn("No job board could be reached, so nothing was checked", js)
         self.assertIn("last run failed", js)

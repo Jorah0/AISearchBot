@@ -800,7 +800,7 @@ function doSearch(btn) {
 async function saveSearch() {
   const p = searchParams(); if (!p.query.trim()) return toast('type a query first', 'err');
   const r = await api('/api/watches', { ...p, url: p.query, search: true });
-  toast(r.error ? 'error: ' + r.error : `saved: new listings for "${p.query}" will alert (Monitor > Watches)`, r.error ? 'err' : 'ok'); load();
+  toast(r.error ? 'error: ' + r.error : r.updated ? `updated the existing saved search "${p.query}" (blank fields kept its keywords and filters)` : `saved: new listings for "${p.query}" will alert (Monitor > Watches)`, r.error ? 'err' : 'ok'); load();
 }
 async function saveListing(i) {
   const j = RESULTS[i]; if (!j) return;
@@ -812,7 +812,7 @@ async function saveListing(i) {
 /* ---- monitor ---- */
 function renderMonitor() {
   const filt = f => Object.entries(f || {}).map(([k, v]) => k + '=' + v).join(', ');
-  $('#wList').innerHTML = `<div class="list">` + (S.watches.map(w => `<div>${esc(w.url)} <span class="muted">kw=${esc(w.keywords || '-')}${filt(w.filters) ? ' · ' + esc(filt(w.filters)) : ''} · last ${esc(w.last_seen ? localTs(w.last_seen, 16) : 'never')}</span>${w.last_error ? ` <span class="chip stale" title="${esc(w.last_error)}">last run failed</span> <span class="muted">${esc(w.last_error.slice(0, 160))}</span>` : ''} <button class="b ghost sm" onclick="api('/api/watches/${w.id}',{}).then(load)">remove</button></div>`).join('') || '<div class="empty">No watches yet. Add a careers page URL or a saved search.</div>') + '</div>';
+  $('#wList').innerHTML = `<div class="list">` + (S.watches.map(w => `<div>${esc(w.url)} <span class="muted">kw=${esc(w.keywords || '-')}${filt(w.filters) ? ' · ' + esc(filt(w.filters)) : ''} · last ${esc(w.last_seen ? localTs(w.last_seen, 16) : 'never')}</span>${w.last_error ? ` <span class="chip stale" title="${esc(w.last_error)}">${w.last_error.startsWith('partial:') ? 'some boards unreachable' : 'last run failed'}</span> <span class="muted">${esc(w.last_error.replace(/^partial: some boards unreachable: /, '').slice(0, 160))}</span>` : ''} <button class="b ghost sm" onclick="api('/api/watches/${w.id}',{}).then(load)">remove</button></div>`).join('') || '<div class="empty">No watches yet. Add a careers page URL or a saved search.</div>') + '</div>';
   $('#coList').innerHTML = `<div class="list">` + (S.companies.map(c => `<div><b>${esc(c.name)}</b> <span class="pill">${esc(c.vendor)}:${esc(c.slug)}</span><span class="muted">kw=${esc(c.keywords || '-')} · last ${esc(c.last_seen ? localTs(c.last_seen, 16) : 'never')}</span>${c.last_error ? ` <span class="chip stale" title="${esc(c.last_error)}">last read failed</span>` : ''} <button class="b ghost sm" onclick="api('/api/companies/${c.id}',{}).then(load)">remove</button></div>`).join('') || '<div class="empty">No companies yet.</div>') + '</div>';
   $('#alerts').textContent = S.alerts.join('\n') || '(no alerts yet)';
 }
@@ -945,6 +945,7 @@ function emailLine(test, err) {
     : s.configured ? `Connected as <b>${esc(s.user)}</b> (${esc(s.label || s.preset || 'custom')}) · IMAP ${esc(s.imap_host)}:${esc(s.imap_port)} · SMTP ${esc(s.smtp_host)}:${esc(s.smtp_port)} ${esc(s.smtp_mode)}`
     : `Not connected${s.user ? ' (address ' + esc(s.user) + ' saved, no app password)' : ''}`;
   if (s.shadowed && s.shadowed.length) h += `<div class="muted">${esc(s.shadowed.join(', '))} set in the environment or .env override these settings</div>`;
+  (s.conflicts || []).forEach(c => { h += `<div class="warnbox">${esc(c)}</div>`; });
   if (test) h += `<div>IMAP ${ok(test.imap.ok)} ${esc(test.imap.detail)}</div><div>SMTP ${ok(test.smtp.ok)} ${esc(test.smtp.detail)}</div>${test.hint ? `<div><b>What to do:</b> ${esc(test.hint)}</div>` : ''}`;
   if (err) h += `<div style="color:var(--bad)">${esc(err)}</div>`;
   $('#eStatus').innerHTML = h;

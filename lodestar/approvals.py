@@ -17,7 +17,8 @@ def propose(tool: str, kind: str, payload: dict, summary: str, job_id: int | Non
     if kind in ("send_email", "save_answer"):  # the one choke point: no AI draft naming the salary floor is ever proposed
         from .drafts import screen
 
-        screen({"subject": payload.get("subject"), "body": payload.get("body") or payload.get("answer")})
+        screen({"subject": payload.get("subject"), "body": payload.get("body") or payload.get("answer")},
+               payload.get("cited") or ())  # cited: competing-offer figures you ticked for a counter (apply.counter)
     if kind == "set_status" and payload.get("job_id") and "from_status" not in payload:
         payload = payload | {"from_status": db.get_job(payload["job_id"])["status"]}  # _status refuses it once the job moves
     src = kind == "send_email" and payload.get("in_reply_to") and db.mail_by_message_id(payload["in_reply_to"])
@@ -27,7 +28,10 @@ def propose(tool: str, kind: str, payload: dict, summary: str, job_id: int | Non
         payload = {k: v for k, v in payload.items() if k != "new_status"}
     pid = db.add_pending(tool, kind, job_id, summary, json.dumps(payload))
     if settings.auto(tool) and not force_pending:
-        return approve(pid)
+        try:
+            return approve(pid)
+        except SystemExit as e:  # refused before the claim (a clashing slot): it waits in the Inbox, nothing sent
+            return {"id": pid, "status": "pending", "summary": summary, "result": str(e)}
     if job_id:
         db.add_event(job_id, "proposed", f"inbox #{pid}: {summary[:90]}")
     return {"id": pid, "status": "pending", "summary": summary}
@@ -40,13 +44,10 @@ def approve(pid: int, edits: dict | None = None) -> dict:
     if edits is not None and not isinstance(edits, dict):  # checked before the claim, or the item would stick claimed
         raise ValueError("edits must be a JSON object")
     row = db.get_pending(pid)
-    if edits and row["kind"] == "send_email" and row["status"] == "pending":  # before the claim, like the type check
-        from .drafts import screen
-
-        # the Inbox textarea path: only what the card lets you edit, and the salary-floor guard as for options/rewrites
+    if edits and row["kind"] == "send_email":  # the Inbox textarea path: only what the card lets you edit
         edits = {k: v for k, v in edits.items() if k in MAIL_EDITS}
-        merged = json.loads(row["payload"]) | edits
-        screen({"subject": merged.get("subject"), "body": merged.get("body")})
+    if row["status"] == "pending":
+        _precheck(row, edits)  # before the claim, like the type check: a refused item stays pending with your edits
     if row["status"] != "pending" or not db.claim_pending(pid):
         row = db.get_pending(pid)
         return {"id": pid, "status": row["status"], "result": row["result"]}
@@ -71,6 +72,26 @@ def approve(pid: int, edits: dict | None = None) -> dict:
     return {"id": pid, "status": status, "result": result}
 
 
+def _precheck(row, edits: dict | None) -> None:
+    """Refusals decided before an item is claimed (SystemExit; nothing is sent or saved, the item stays pending): the
+    salary-floor guard on edited mail and answers, as for options/rewrites, and an interview slot that clashes."""
+    p = json.loads(row["payload"]) | (edits or {})
+    if row["kind"] == "send_email":
+        if edits:
+            from .drafts import screen
+
+            screen({"subject": p.get("subject"), "body": p.get("body")}, p.get("cited") or ())
+        if p.get("chosen_time") and p.get("job_id"):  # checked before the acceptance goes out, not after
+            from .extras import conflicts, parse_when
+
+            when = parse_when(p["chosen_time"])
+            if clash := conflicts(when, job_id=p["job_id"]):
+                raise SystemExit(f"{when:%Y-%m-%d %H:%M} clashes with {clash[0]['company']} at {clash[0]['when']:%H:%M}: "
+                                 "pick another slot or clear it")
+    elif row["kind"] == "save_answer" and edits:
+        db.check_answer(p.get("question"), p.get("answer"))
+
+
 def edit(pid: int, subject: str | None = None, body: str | None = None) -> dict:
     """Replace the subject and/or body of a pending email (draft options, rewrites). Recipient, In-Reply-To, job and
     everything else stay as proposed, and the item stays pending: it still waits for your approval."""
@@ -80,7 +101,7 @@ def edit(pid: int, subject: str | None = None, body: str | None = None) -> dict:
     if row["status"] != "pending" or row["kind"] != "send_email":
         raise SystemExit(f"inbox #{pid} is not an email waiting for approval")
     new = {k: str(v) for k, v in (("subject", subject), ("body", body)) if v is not None}
-    screen(new)
+    screen(new, json.loads(row["payload"]).get("cited") or ())
     payload = json.loads(row["payload"]) | new
     if not db.edit_pending(pid, json.dumps(payload)):
         raise SystemExit(f"inbox #{pid} was decided meanwhile; nothing changed")
@@ -115,6 +136,8 @@ def _send(p: dict) -> str:
                         snippet=p["body"], trusted=True, linked_by="auto" if p.get("job_id") else None)
         if p.get("purpose") in ("followup", "thanks") and p.get("job_id"):  # the checklist counts these as done
             db.add_event(p["job_id"], p["purpose"], f"sent to {p['to']}")
+        while p.get("purpose") == "followup" and p.get("job_id") and (dup := db.followup_waiting(p["job_id"])):
+            db.decide_pending(dup["id"], "rejected", "stale: a follow-up for this job was just sent")  # never twice
         from .contacts import touch
 
         touch(p["to"])  # a contact with exactly this address: last_touch = today

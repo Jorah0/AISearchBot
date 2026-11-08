@@ -90,11 +90,16 @@ NO_PROVIDER = ("No AI provider configured: add a key such as ANTHROPIC_API_KEY i
                "ANTHROPIC_API_KEY), or click 'Local only (Ollama)' in Setup")
 
 
-def council_providers() -> list[str]:
-    """Providers the council (and idea crafting) may send your data to: pref council_providers, else every configured one."""
+def _allowlist() -> list[str]:
+    """pref council_providers as names: trimmed and lower-cased like the provider pref ('Anthropic' = 'anthropic')."""
     from . import settings
 
-    allow = [x.strip() for x in str(settings.pref("council_providers") or "").split(",") if x.strip()]
+    return [x.strip().lower() for x in str(settings.pref("council_providers") or "").split(",") if x.strip()]
+
+
+def council_providers() -> list[str]:
+    """Providers the council (and idea crafting) may send your data to: pref council_providers, else every configured one."""
+    allow = _allowlist()
     avail = available()
     if not allow:
         return avail
@@ -108,9 +113,9 @@ def default_provider() -> str:
     from . import settings
 
     p = str(setting("LODESTAR_PROVIDER") or settings.pref("provider") or "").strip().lower()
-    allow = settings.pref("council_providers")
-    if p and allow and p not in [x.strip() for x in str(allow).split(",")]:  # a hard boundary for the default too
-        raise SystemExit(f"provider {p} is not in council_providers={allow}: add it there, or set provider to one "
+    allow = _allowlist()
+    if p and allow and p not in allow:  # a hard boundary for the default too
+        raise SystemExit(f"provider {p} is not in council_providers={','.join(allow)}: add it there, or set provider to one "
                          "of those (`lodestar tools set provider NAME`)")
     if p:
         return p

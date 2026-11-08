@@ -94,6 +94,16 @@ def ics(job, when: datetime, minutes: int = 60, title: str | None = None, remind
 
 
 # ----------------------------------------------------------------------------- digest
+def digest_to() -> str:
+    """Where digest --send goes: LODESTAR_NOTIFY_EMAIL, else your connected mailbox's address; SystemExit when neither."""
+    from .config import setting
+
+    if to := setting("LODESTAR_NOTIFY_EMAIL") or setting("IMAP_USER"):
+        return to
+    raise SystemExit("emailing the digest needs your own address: connect your mailbox (Setup > Connect email), "
+                     "or store LODESTAR_NOTIFY_EMAIL in Setup > Vault (lodestar vault set LODESTAR_NOTIFY_EMAIL)")
+
+
 def digest(days: int = 7, send: bool = False, provider: str | None = None) -> str:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
     recent = [j for j in db.list_jobs() if j["updated_at"] >= cutoff]
@@ -119,13 +129,9 @@ def digest(days: int = 7, send: bool = False, provider: str | None = None) -> st
         except (Exception, SystemExit) as e:  # the digest is still useful without the AI paragraph (rejected model: SystemExit)
             text += f"\n\n(coach unavailable: {e})"
     if send:  # straight to your own address: the full text never lands in alerts.log (and the next digest's Alerts)
-        from .config import setting
         from .util import send_email
 
-        to = setting("LODESTAR_NOTIFY_EMAIL") or setting("IMAP_USER")  # else your own connected mailbox's address
-        if not to:
-            raise SystemExit("emailing the digest needs your own address: connect your mailbox (Setup > Connect email), "
-                             "or store LODESTAR_NOTIFY_EMAIL in Setup > Vault (lodestar vault set LODESTAR_NOTIFY_EMAIL)")
+        to = digest_to()
         try:
             send_email(to, f"[lodestar] digest - last {days} days", text)
         except Exception as e:  # no mailbox, SMTP refused: say so instead of a traceback

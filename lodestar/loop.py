@@ -67,12 +67,6 @@ def followup_step(job) -> str:
     return "close" if done >= 3 else "nudge"
 
 
-def _followup_waiting(job_id: int) -> bool:
-    """A follow-up email for this job is already waiting in the Inbox: the next nudge must not add a second one."""
-    return db.con().execute("SELECT 1 FROM pending WHERE job_id=? AND kind='send_email' AND status='pending' "
-                            "AND json_extract(payload, '$.purpose')='followup'", (job_id,)).fetchone() is not None
-
-
 def _step(name: str, fn) -> None:
     """One cycle step. Helpers report user-facing problems as SystemExit (no key, model rejected, profile missing),
     which `except Exception` does not catch; either kind must cost only this step, never the loop thread."""
@@ -102,7 +96,7 @@ def _followups(a) -> None:
         notify(f"FOLLOW UP: #{j['id']} {j['company']} - {j['title']} has been quiet {days}+ days")
         db.add_event(j["id"], "followup_nudge", "")
         # no AI provider: the plain template (apply.TEMPLATES)
-        if settings.enabled("followup") and j["contact_email"] and not _followup_waiting(j["id"]):
+        if settings.enabled("followup") and j["contact_email"] and not db.followup_waiting(j["id"]):
             from .apply import followup
 
             _step(f"follow-up draft #{j['id']}", lambda j=j: print(f"  follow-up draft -> {followup(j, a.provider)['proposal'].get('status')}"))

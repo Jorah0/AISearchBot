@@ -244,14 +244,16 @@ OTHER_HEADINGS = {"interests", "hobbies", "awards", "honors", "honors & awards",
                   "volunteer", "volunteering", "volunteer experience", "references", "activities", "achievements",
                   "courses", "memberships", "affiliations", "additional information", "personal", "patents",
                   "recommendations", "organizations"}
-# offline, a line under Certifications / Education must look like one: in a LinkedIn PDF the name, headline and place
-# follow the sidebar's last heading. ponytail: a cert with no keyword, acronym or year ('Scrum Fundamentals') is skipped
+# offline, in a LinkedIn profile PDF (SIDEBAR_RE) a line under Certifications / Education must look like one: the name,
+# headline and place follow the sidebar's last heading. Other text (your master, a resume) keeps every line there.
+# ponytail: in a LinkedIn PDF a cert with no keyword, acronym or year ('Scrum Fundamentals') is skipped
 CERT_RE = re.compile(r"(?i)certif|licen[cs]e|credential|accredit|associate|professional|specialist|practitioner|expert"
                      r"|master|administrator|developer|architect|foundation|\b(?:19|20)\d\d\b|(?-i:\b[A-Z]{2,6}\b)")
 EDU_RE = re.compile(r"(?i)univers|college|school|institut|academy|polytechn|hochschule|[eé]cole|bachelor|master|doctor"
                     r"|diploma|degree|\b(?:b\.?\s?sc?|m\.?\s?sc?|b\.?a|m\.?a|mba|ph\.?d|bs|ms|ba|ma|ged|a-levels?)\b"
                     r"|\b(?:19|20)\d\d\b|(?-i:\b[A-Z]{2,6}\b)")
 PAGE_RE = re.compile(r"(?i)page \d+ of \d+")
+SIDEBAR_RE = re.compile(r"(?im)^\s*top skills\s*$")  # the LinkedIn 'Save to PDF' sidebar heading
 
 
 def _phone(text: str) -> str:
@@ -317,6 +319,7 @@ def extract_heuristic(text: str) -> dict:
     c["phone"] = _phone(header)
 
     sec, summary = None, []
+    sidebar = bool(SIDEBAR_RE.search(text))
     cur: dict | None = None  # the experience / project entry being filled
     for raw in text.splitlines():
         line = raw.strip()
@@ -349,9 +352,9 @@ def extract_heuristic(text: str) -> dict:
                 facts["experience"].append(cur)
             elif cur is not None and raw.lstrip().startswith(("-", "*", "•")):
                 cur["bullets"].append(item)
-        elif sec == "education" and not line.startswith("#") and EDU_RE.search(item):
+        elif sec == "education" and not line.startswith("#") and (not sidebar or EDU_RE.search(item)):
             facts["education"].append({"school": item})
-        elif sec == "certifications" and CERT_RE.search(item) and not re.search(r"\s(?:at|@)\s", item):
+        elif sec == "certifications" and (not sidebar or CERT_RE.search(item) and not re.search(r"\s(?:at|@)\s", item)):
             facts["certifications"].append({"name": item})
         elif sec == "projects":
             if line.startswith("#"):  # '### name - one line, link' (the template's form)

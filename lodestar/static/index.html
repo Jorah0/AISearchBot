@@ -113,7 +113,7 @@
       <div id="wList"></div>
       <div class="row"><button class="b ghost" onclick="run('email_check',{days:7,dry:true},r=>show('aOut',r.found),this)">Email dry-run (7 days)</button>
         <button class="b ghost" onclick="run('digest',{days:7},r=>show('aOut',r.text),this)">Weekly digest</button>
-        <button class="b ghost" title="also emails it to you: LODESTAR_NOTIFY_EMAIL if stored in the Vault, else your connected mailbox" onclick="run('digest',{days:7,send:true},r=>show('aOut',r.text),this)">Email digest</button>
+        <button class="b ghost" title="also emails it to you: LODESTAR_NOTIFY_EMAIL if stored in the Vault, else your connected mailbox" onclick="run('digest',{days:7,send:true},r=>{toast('digest emailed to '+r.sent_to,'ok');show('aOut',r.text)},this)">Email digest</button>
         <button class="b ghost" title="one note per job in your Obsidian vault; store OBSIDIAN_VAULT in Setup > Vault to choose the folder" onclick="exportObsidian(this)">Export tracker to Obsidian</button></div>
       <pre id="aOut" style="display:none"></pre></div>
     <div class="panel"><h3>Alerts</h3><pre id="alerts"></pre></div>
@@ -128,7 +128,7 @@
   <h2>Ideas</h2>
   <p class="sub">Diverge across every configured provider (or one provider plus a critic pass), merge, score impact × fit ÷ effort, save. Grounded in your profile, tracker stats, variant outcomes and gap checks.</p>
   <div class="panel"><div class="row" style="margin:0">
-    <select id="iTopic"></select><select id="iJob"></select><input id="iRole" placeholder="target role (optional)" style="width:180px">
+    <select id="iTopic" aria-label="Idea topic"></select><select id="iJob" aria-label="Job this idea is for"></select><input id="iRole" placeholder="target role (optional)" style="width:180px">
     <input id="iExtra" class="grow" placeholder="extra instructions, or the custom topic"><input id="iN" type="number" min="1" max="20" value="8" title="number of ideas" style="width:60px"><label class="muted"><input type="checkbox" id="iSingle"> single provider</label>
     <button class="b" onclick="craft(this)">Craft</button></div></div>
   <div id="ideaList"></div>
@@ -137,7 +137,7 @@
 <section id="answers">
   <h2>Answers</h2>
   <div class="panel"><h3>Draft an answer for an application-form question</h3>
-    <div class="row"><select id="aJob"></select><input id="aQ" class="grow" placeholder='e.g. "Why do you want to work at Acme?" or "Salary expectations?"'><button class="b" onclick="askAnswer(this)">Draft</button><button class="b ghost" onclick="answerOptions(this)" title="up to 3 answers from one AI call, one recommended; Use this fills the form below">Options</button></div>
+    <div class="row"><select id="aJob" aria-label="Job this answer is for"></select><input id="aQ" class="grow" placeholder='e.g. "Why do you want to work at Acme?" or "Salary expectations?"'><button class="b" onclick="askAnswer(this)">Draft</button><button class="b ghost" onclick="answerOptions(this)" title="up to 3 answers from one AI call, one recommended; Use this fills the form below">Options</button></div>
     <pre id="aOut2" style="display:none"></pre><div id="aOpts"></div></div>
   <div class="panel"><h3>Answer bank</h3>
     <div class="row"><input id="bQ" class="grow" placeholder="question"><textarea id="bA" class="grow" rows="3" placeholder="answer" style="min-height:60px; font-family:inherit; font-size:13px; flex:1"></textarea><input id="bT" placeholder="tags (comma)" style="width:140px"><label class="muted" title="for you only: never put in a drafted answer, letter or form autofill"><input type="checkbox" id="bP"> private</label><button class="b ghost" onclick="saveAnswer(this)">Save</button></div>
@@ -160,7 +160,7 @@
 <section id="coach">
   <h2>Coach</h2>
   <div class="panel">
-    <div class="row" style="margin-top:0"><select id="cMode" onchange="resetChat()"><option value="coach">Career coach</option><option value="mock">Mock interview for…</option></select><select id="cJob" onchange="resetChat()" style="display:none"></select><span class="muted" id="cHint">Coach sees your profile and tracker. Mock interview asks one question at a time; type "done" for a scored debrief.</span></div>
+    <div class="row" style="margin-top:0"><select id="cMode" aria-label="Coach mode" onchange="resetChat()"><option value="coach">Career coach</option><option value="mock">Mock interview for…</option></select><select id="cJob" aria-label="Job for the mock interview" onchange="resetChat()" style="display:none"></select><span class="muted" id="cHint">Coach sees your profile and tracker. Mock interview asks one question at a time; type "done" for a scored debrief.</span></div>
     <div class="chat" id="chat"><div class="msg ai">Ask me anything about your search. I can see your profile and tracker.</div></div>
     <div class="mock-sum muted" id="mockSum" style="display:none"></div>
     <div class="row"><input id="cIn" class="grow" placeholder="e.g. Which of my applications should I follow up on first?" onkeydown="if(event.key==='Enter')sendChat()"><button class="b ghost" id="cMic" onclick="dictate()" aria-label="Dictate" title="Dictate (browser speech recognition)">🎤</button><button class="b" id="cGo" onclick="sendChat()">Send</button><label class="muted" id="cSpeakL" style="display:none"><input type="checkbox" id="cSpeak" onchange="if(!this.checked)window.speechSynthesis?.cancel()"> speak replies</label><label class="muted"><input type="checkbox" id="cCouncil"> council (all providers)</label></div></div>
@@ -206,7 +206,7 @@
   <div class="row"><span class="muted" id="pPath"></span><button class="b" onclick="saveProfile()">Save</button><button class="b ghost" onclick="run('review',{text:$('#pText').value},r=>show('pOut',r.text),this)">AI review</button><button class="b ghost" onclick="run('lint',{text:$('#pText').value},r=>{$('#pCheck').innerHTML=lintHtml(r)},this)">Check</button><span class="muted">Check: instant offline checks (weak openers, missing numbers, pronouns, sections), line numbers match the editor</span></div>
   <div id="pCheck"></div>
   <div class="row"><input id="pAdj" class="grow" placeholder="adjust with AI, e.g. tighten to one page / emphasise leadership / rewrite summary for data roles"><button class="b ghost" onclick="adjustProfile(this)">Adjust</button><span class="muted">result replaces the editor; nothing is saved until you click Save</span></div>
-  <textarea id="pText"></textarea>
+  <textarea id="pText" aria-label="Master profile (markdown)"></textarea>
   <div class="panel" id="bankPanel"><h3>Profile bank</h3>
     <p class="muted">Every resume you import is kept, and its skills, languages, roles, education and certifications are pooled here with their source. Prompts read your master profile plus anything here it does not mention yet.</p>
     <div class="row"><b style="width:90px">LinkedIn</b><input id="liUrl" class="grow" placeholder="https://www.linkedin.com/in/your-name"><button class="b ghost sm" onclick="bankOp({op:'contact',field:'linkedin',value:$('#liUrl').value},'LinkedIn linked')">Link</button>
