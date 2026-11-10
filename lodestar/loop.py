@@ -186,6 +186,9 @@ def cycle(a) -> None:
     _step("posting check", web_monitor.recheck_postings)  # weekly: saved feed jobs whose posting vanished -> Inbox
     _step("follow-ups", lambda: _followups(a))
     _step("interview reminders", _reminders)
+    from . import pipeline
+
+    _step("pipeline", lambda: pipeline.advance(a.provider))  # step states always; Autopilot runs only when switched on
     _step("desktop notifications", _desktop)
     if settings.auto("obsidian_sync"):
         from .extras import export_obsidian

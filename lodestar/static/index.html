@@ -11,13 +11,14 @@
 <div class="brand"><img src="/logo.svg" width="30" height="30" alt=""><div>Lodestar<small>the star you steer by</small></div></div>
 <div class="top"><div class="stats" id="stats"></div><span class="muted" id="loopStat" style="margin-left:14px"></span><div class="spacer"></div>
   <button class="b ghost sm" id="codesPill" style="display:none" title="a sign-in code arrived by email" onclick="go('inbox');$('#codesPanel').open=true;codesLoad()">Codes</button>
+  <button class="b ghost sm" id="apPill" title="Autopilot runs pipeline steps in the monitor loop within its AI budgets" onclick="go('setup');$('#apCard').scrollIntoView()">Autopilot: off</button>
   <button class="b ghost sm" id="updPill" style="display:none" onclick="go('setup');$('#updCard').scrollIntoView()">Update available</button>
   <button class="b ghost sm" onclick="run('email_check',{days:3},r=>toast((r.found||[]).length+' relevant email(s)'+(r.note?'\n'+r.note:''),r.note?'err':'ok'),this)">Check email</button>
   <button class="b ghost sm" onclick="run('watch_run',{},r=>toast((r.alerts||[]).length+' alert(s)','ok'),this)">Run watches</button>
 </div>
 <nav aria-label="Sections">
   <button data-tab="board" class="on"><span class="ico" aria-hidden="true">▦</span>Board</button>
-  <button data-tab="inbox"><span class="ico" aria-hidden="true">✓</span>Inbox<span class="badge zero" id="inboxN" aria-label="pending approvals">0</span></button>
+  <button data-tab="inbox"><span class="ico" aria-hidden="true">✓</span>Inbox<span class="badge zero" id="inboxN" aria-label="pending approvals and questions">0</span></button>
   <button data-tab="contacts"><span class="ico" aria-hidden="true">☏</span>Contacts</button>
   <button data-tab="search"><span class="ico" aria-hidden="true">⌕</span>Search</button>
   <button data-tab="monitor"><span class="ico" aria-hidden="true">◉</span>Monitor</button>
@@ -59,6 +60,8 @@
   <div class="row" id="bulk" style="display:none"><b id="bulkN"></b>
     <select id="bulkStatus" aria-label="New status for the selected jobs"></select><button class="b ghost sm" onclick="bulkStatus()">Set status</button>
     <input id="bulkTag" placeholder="tag" aria-label="Tag to add to the selected jobs" style="width:110px"><button class="b ghost sm" onclick="bulkTag()">Add tag</button>
+    <button class="b ghost sm" onclick="bulkPipe(false,this)">Run next step</button>
+    <select id="bulkTo" aria-label="Run the selected jobs up to this step"></select><button class="b ghost sm" onclick="bulkPipe(true,this)">Run to</button>
     <button class="b danger sm" onclick="bulkDelete()">Delete selected</button></div>
   <div class="empty" id="filterEmpty" style="display:none">No jobs match these filters. <button class="b sm" onclick="clearFilters()">Clear filters</button></div>
   <div class="board" id="cols"></div>
@@ -72,6 +75,7 @@
     <div class="row"><button class="b ghost sm" onclick="codesCheck(this)">Check for a code now</button></div>
     <div id="codesList" role="status" aria-live="polite"></div>
     <p class="muted">Codes that job sites email you, from senders that pass DKIM/DMARC, received in the last 15 minutes. They are kept in memory only, never saved, and Lodestar never enters them for you.</p></details>
+  <div id="questions"></div>
   <div id="inboxList"></div>
   <h3>Unmatched mail</h3>
   <p class="sub">Relevant mail no tracked job claims. Linking files it under a job; it never sets the job's contact or makes the sender trusted.</p>
@@ -240,7 +244,7 @@
 
 <section id="tools">
   <h2>Tools</h2>
-  <p class="sub"><b>enabled</b> off = never runs. <b>auto</b> off = proposes into the Inbox and waits. <b>auto</b> on = runs immediately and logs an event. Commands you run yourself are confirmed by running them.</p>
+  <p class="sub"><b>enabled</b> off = never runs. <b>auto</b> off = proposes into the Inbox and waits. <b>auto</b> on = runs immediately and logs an event. Commands you run yourself are confirmed by running them. Pipeline tools (fit_check to thank_you): <b>enabled</b> = Autopilot may use this step; <b>auto</b> = it runs without asking; otherwise Autopilot asks once per job in the Inbox (Setup &gt; Autopilot).</p>
   <div class="panel" id="toolTable"></div>
   <div class="panel"><h3>Preferences</h3><div id="prefs"></div></div>
 </section>
@@ -273,6 +277,16 @@
       <button class="b ghost" id="eSend" onclick="emailSend(this)">Send me a test email</button>
       <button class="b ghost" id="eOff" onclick="emailDisconnect()">Disconnect</button></div>
     <div id="eStatus" role="status" aria-live="polite"></div></div>
+  <div class="panel" id="apCard"><h3>Autopilot</h3>
+    <p class="muted">Off by default. When on, the monitor loop moves each job along its pipeline (Board drawer &gt; Pipeline): steps set to <b>auto</b> run within the AI budgets below; the others ask once per job in the Inbox. Nothing is sent, submitted or moved without its own approval, a stale step is never redone on its own, and eligibility or EEO answers are never drafted. Jobs whose fit check says skip are left alone.</p>
+    <div class="row"><label><input type="checkbox" id="apOn" onchange="setPref('autopilot',this.checked)"> Autopilot on</label>
+      <label class="muted">AI calls per cycle <input id="apCycle" type="number" min="0" max="500" style="width:80px" onchange="setPref('autopilot_ai_per_cycle',Number(this.value))"></label>
+      <label class="muted">per day <input id="apDay" type="number" min="0" max="500" style="width:80px" onchange="setPref('autopilot_ai_per_day',Number(this.value))"></label>
+      <label class="muted">jobs per cycle <input id="apJobs" type="number" min="0" max="50" style="width:70px" onchange="setPref('autopilot_jobs_per_cycle',Number(this.value))"></label></div>
+    <div class="scroll" id="apStages"></div>
+    <div class="muted" id="apLast"></div>
+    <div class="row"><button class="b ghost" onclick="pipeLog(this)">Show the run log</button><span class="muted">every step run: by you, Autopilot or an approval, with its outcome and AI calls (also <code>lodestar pipeline log</code>)</span></div>
+    <div id="apLog"></div></div>
   <div class="grid2">
     <div class="panel" id="keysCard"><h3>Link an AI key</h3>
       <div class="row"><select id="kProv" aria-label="AI provider" onchange="keyHint()"></select><input id="kVal" type="password" autocomplete="off" class="grow" placeholder="paste the key" aria-label="API key"><button class="b" onclick="keyLink(this)">Link</button></div>

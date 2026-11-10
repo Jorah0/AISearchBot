@@ -79,6 +79,8 @@ def approve(pid: int, edits: dict | None = None) -> dict:
     db.decide_pending(pid, status, str(result))
     if row["job_id"]:
         db.add_event(row["job_id"], row["kind"], str(result)[:200])
+    if status != "done":  # done: the run itself refreshes the summary
+        _pipe_refresh(row)
     return {"id": pid, "status": status, "result": result}
 
 
@@ -129,6 +131,18 @@ def reject(pid: int, reason: str = "") -> None:
     db.decide_pending(pid, "rejected", reason)
     if row["job_id"]:
         db.add_event(row["job_id"], "rejected_proposal", f"inbox #{pid} {reason}".strip())
+    _pipe_refresh(row)
+
+
+def _pipe_refresh(row) -> None:
+    """A run_to decided without running (rejected, stale): the board's step summary stops reading 'waiting on you'."""
+    if row["kind"] == "run_to" and row["job_id"]:
+        from . import pipeline
+
+        try:
+            pipeline.status(row["job_id"])
+        except (Exception, SystemExit):  # bookkeeping: never fails the decision
+            db.release(close=False)
 
 
 # ----------------------------------------------------------------------------- executors
@@ -200,8 +214,23 @@ def _add_job(p: dict) -> str:
 
 
 def _answer(p: dict) -> str:
-    db.save_answer(p["question"], p["answer"], p.get("tags", ""))
+    db.save_answer(p["question"], p["answer"], p.get("tags", ""), source=p.get("source"))
     return f"saved answer for '{p['question'][:60]}'"
+
+
+def _run_to(p: dict) -> str:
+    """An approved Autopilot batch: runs the listed pipeline steps of one job (a thread in the app, inline in the CLI).
+    Manual steps (apply, offer, close) never run, whatever an edited payload lists."""
+    from . import pipeline
+
+    job = db.get_job(p["job_id"])
+    if p.get("from_status") and job["status"] != p["from_status"]:
+        raise Stale(f"stale: #{p['job_id']} moved to {job['status']}; nothing ran")
+    if p.get("to") not in pipeline.REGISTRY:
+        raise SystemExit(f"unknown step {str(p.get('to'))[:30]!r}")
+    stages = [s for s in p.get("stages") or [] if s in pipeline.REGISTRY]
+    pipeline.kick(p["job_id"], None, origin="approved", to=p["to"], only=set(stages))
+    return f"started #{p['job_id']} to {p['to']}: {' -> '.join(stages)} (outcome in the drawer's run log)"
 
 
 def _note(p: dict) -> str:
@@ -209,4 +238,5 @@ def _note(p: dict) -> str:
     return "noted"
 
 
-EXECUTORS = {"send_email": _send, "set_status": _status, "add_job": _add_job, "save_answer": _answer, "note": _note}
+EXECUTORS = {"send_email": _send, "set_status": _status, "add_job": _add_job, "save_answer": _answer, "note": _note,
+             "run_to": _run_to}

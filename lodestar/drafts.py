@@ -119,6 +119,11 @@ def _context(kind: str, context: dict):
         raise SystemExit("a reply needs the mail it answers (mail_id)")
     if kind == "answer" and not str(c.get("question") or "").strip():
         raise SystemExit("type the application-form question first")
+    if kind == "answer":
+        from .pipeline import NEVER_AI_MSG, never_ai
+
+        if never_ai(c["question"]):
+            raise SystemExit(NEVER_AI_MSG)
     if kind == "referral":
         from .contacts import get
 
@@ -293,7 +298,8 @@ def use(kind: str, context: dict, choice: dict) -> dict:
     if kind == "answer":
         q = str(c.get("question") or "").strip()
         return {"answer": mail["body"], "reused": [], "proposal": approvals.propose(
-            "answers", "save_answer", {"question": q, "answer": mail["body"], "tags": job["company"]}, f"save answer: {q[:70]}", job["id"])}
+            "answers", "save_answer", {"question": q, "answer": mail["body"], "tags": job["company"],
+                                       "source": f"AI draft for job #{job['id']}"}, f"save answer: {q[:70]}", job["id"])}
     tool, purpose, new_status, summary = MAIL[kind]
     to, in_reply_to, who = None, None, job["contact_name"] or job["contact_email"] or "contact"
     if kind == "reply":

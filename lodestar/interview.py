@@ -367,6 +367,16 @@ def _stories_text(job, limit: int = 3500) -> str:
             "others):\n" + text[:limit]) if text else ""
 
 
+def _round_text(job) -> str:
+    """The next round (kind, time, interviewers) for the prep prompt; read directly (rounds() imports .ics files)."""
+    r = db.con().execute("SELECT * FROM interviews WHERE job_id=? AND at >= ? ORDER BY at LIMIT 1",
+                         (job["id"], f"{datetime.now():%Y-%m-%d}")).fetchone()
+    if not r:
+        return ""
+    return (f"\n\nUPCOMING ROUND: round {r['round'] or '?'} ({r['kind'] or 'other'}) on {r['at']}"
+            + (f" with {r['interviewers']}" if r["interviewers"] else "") + ": tailor the pack to this round.")
+
+
 # ----------------------------------------------------------------------------- prep pack
 def prep(job, use_council: bool = False, provider: str | None = None) -> Path:
     prompt = f"""Prepare the candidate for an interview: {job['title']} at {job['company']}.
@@ -384,7 +394,7 @@ JOB DESCRIPTION:
 CANDIDATE:
 {_resume(job)}
 
-{_pay(job)}{_notes(job)}{_asked(job)}{_stories_text(job)}"""
+{_pay(job)}{_notes(job)}{_round_text(job)}{_asked(job)}{_stories_text(job)}"""
     text = ai.council(prompt, SYSTEM)["synthesis"] if use_council else ai.ask(prompt, SYSTEM, provider, max_tokens=8000)
     out = write_doc(app_dir(job) / "interview_prep.md", text)
     db.add_event(job["id"], "interview_prep", str(out))

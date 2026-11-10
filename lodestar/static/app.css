@@ -167,3 +167,19 @@ table.offers td.best { color: var(--ok); font-weight: 700; } table.offers tr.pri
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 progress { vertical-align: middle; width: 160px; accent-color: var(--acc); }
 .opts .opt { border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; margin: 6px 0; } .opts .opt.rec { border-left: 3px solid var(--acc); } .opts .opt .hd { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; } .opts pre { white-space: pre-wrap; }
+
+/* ---- pipeline: the drawer's stage strip (state in text and aria-label, colour only adds), questions, Autopilot ---- */
+.strip { display: flex; flex-wrap: wrap; gap: 4px; }
+.stage { background: var(--panel); border: 1px solid var(--line); color: var(--fg); border-radius: 8px; padding: 3px 8px; font: inherit; font-size: 12px; cursor: pointer; max-width: 100%; }
+.stage.on { outline: 2px solid var(--acc); outline-offset: 1px; }
+.stage.s-done { color: var(--ok); } .stage.s-ready { border-color: var(--acc); } .stage.s-waiting { color: var(--warn); border-color: var(--warn); }
+.stage.s-waiting.emp { color: var(--dim); border-style: dotted; } .stage.s-stale { color: var(--warn); border-style: dashed; }
+.stage.s-blocked, .stage.s-error { color: var(--bad); border-color: var(--bad); } .stage.s-running { border-color: var(--acc-2); }
+.stage.s-later, .stage.s-skipped, .stage.s-todo { color: var(--dim); }
+.stline { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; margin-top: 8px; overflow-wrap: anywhere; }
+.item.q .hd b { overflow-wrap: anywhere; }
+.scroll { overflow-x: auto; max-width: 100%; }
+table.log td, table.log th { font-size: 12px; padding: 4px 6px; }
+.chip.pq { color: var(--warn); border-color: var(--warn); } .chip.pe { color: var(--bad); border-color: var(--bad); }
+#apPill.on { border-color: var(--ok); color: var(--ok); }
+.reuse { margin: 6px 0; } .reuse ul { margin: 4px 0 0 18px; padding: 0; }

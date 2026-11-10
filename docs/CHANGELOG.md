@@ -1,5 +1,49 @@
 # Changelog (development passes, newest first)
 
+## Pass 16.5 (2026-11-10): step-by-step pipeline automation
+
+**Pipeline**
+- Every job now has 13 steps, from the fit check to closing it out. Each step uses what the earlier ones produced
+  (the cover letter reads the tailored resume and the research; form answers read both; prep reads the next round;
+  thank-yous name the interviewers; follow-ups carry the application date and confirmation number).
+- When something a finished step was built from changes, the step is marked stale. It is never redone without you.
+- A step that lacks a fact asks you once. One answer covers every job that asks the same question, or only this job.
+  Eligibility, work-authorization and EEO questions are never answered by AI; private answers never reach employers.
+  However a form words them ("legally eligible to work in", "18 years or older"), Lodestar recognises them. Such an
+  answer is filled in on a form only when you wrote it yourself (under Answers, or by answering the question), and
+  it is never shown to an AI, even when you saved it without a tag. An answer you saved before this update for one
+  of these questions is asked once more, so you can confirm it.
+- Questions that only look alike stay apart: "pending criminal charges" is not "convicted of a felony", "sex
+  assigned at birth" is not "gender identity", and "start date of your current role" is not your earliest start date.
+- Re-running Form answers looks every saved answer up again: a changed answer is used, and one you have since marked
+  private is asked for instead of being copied.
+- A fact you give for one job only (when the AI asks for one) is used in the redraft of that answer.
+- In the app: the job drawer's Pipeline group (step strip, Run next step, Run to, Re-run / Retry / Skip, Continue
+  anyway past a "skip" fit verdict, form questions, run log), a Next step chip and column on the Board with bulk runs,
+  and Questions for you at the top of the Inbox. In the terminal: `lodestar pipeline`.
+
+**Autopilot**
+- Off by default (top-bar pill, Setup > Autopilot). When on, the monitor loop moves jobs along within AI budgets (6
+  calls a cycle, 30 a day, 3 jobs a cycle). Steps not set to auto ask once per job in the Inbox. Nothing is sent,
+  submitted or moved without its own approval.
+- A batch you approve in the Inbox spends from the same daily budget; when the budget is used up, the rest waits and
+  Setup > Autopilot says so. The Inbox card's AI-call estimate counts each form question the batch will draft, and
+  the card lists the saved answers it will fill in on the form (work authorization, sponsorship and so on).
+- The budget message says which limit was reached: this cycle's or the day's.
+- Building documents (fit check, research, tailored resume, cover letter, interview prep), by a click or a step, no
+  longer pushes back the date a follow-up is due.
+- Only a confirmation mail Lodestar trusts marks the Confirmation step done, and only its reference number is quoted
+  in a follow-up.
+- The Follow-up step says no follow-up is needed while an interview is booked.
+
+**Fixed**
+- A bulk Run next step reported jobs with nothing ready as errors (red, with the job number twice). They are now
+  counted as "had nothing ready".
+- A drawer button refused while a step runs said "Autopilot is running this step" even when your own run held it.
+- Rejecting an Autopilot batch now clears "waiting on you" from the Board at once.
+- A question asked for a job you deleted while its step was running no longer stays in the Inbox.
+- Saving a setting could fail on Windows while another part of the app was reading the settings file at that moment.
+
 ## Pass 16.4 (2026-11-09): auto-update
 
 **Updates**

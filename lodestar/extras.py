@@ -373,7 +373,10 @@ def export_data(fmt: str = "json", out_dir: Path | None = None) -> Path:
               "mock_sessions": db.con().execute("SELECT * FROM mock_sessions ORDER BY id").fetchall(),
               "offers": db.con().execute("SELECT * FROM offers ORDER BY job_id").fetchall(),
               "touches": db.con().execute("SELECT * FROM touches ORDER BY day").fetchall(),
-              "mail": db.con().execute("SELECT * FROM mail ORDER BY id").fetchall()}  # subjects/snippets: csv_cell
+              "mail": db.con().execute("SELECT * FROM mail ORDER BY id").fetchall(),  # subjects/snippets: csv_cell
+              "pipeline": db.con().execute("SELECT * FROM pipeline ORDER BY job_id, stage").fetchall(),
+              "pipeline_runs": db.con().execute("SELECT * FROM pipeline_runs ORDER BY id").fetchall(),
+              "questions": db.con().execute("SELECT * FROM questions ORDER BY id").fetchall()}
     out_dir = out_dir or HOME / "exports"
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = f"{datetime.now():%Y%m%d-%H%M}"

@@ -199,7 +199,7 @@ page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, w
 |---|---|
 | `lodestar tools list` | every automated tool with its enabled / auto switches, plus preferences |
 | `lodestar tools enable\|disable\|auto\|manual NAME` | flip a switch |
-| `lodestar tools set KEY VALUE` | preferences: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, weekly_target (applications/week, used by idea crafting), provider, council_providers, council_judge, signature, desktop_notifications (true/false), resume_style (classic, modern, compact), excluded_companies, excluded_title_words, weekly_goals (`goal=number`), activity_weekly_min, update_mode (off / notify / auto), update_every_hours, update_channel (commits / releases), update_origin, update_manifest_url, models (`provider=model`; also written by self-healing model selection). Whole numbers are range-checked: followup_days 1-90, auto_track_min_score 0-100, weekly_target 0-200, activity_weekly_min 0-100, update_every_hours 1-720 |
+| `lodestar tools set KEY VALUE` | preferences: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, weekly_target (applications/week, used by idea crafting), provider, council_providers, council_judge, signature, desktop_notifications (true/false), resume_style (classic, modern, compact), excluded_companies, excluded_title_words, weekly_goals (`goal=number`), activity_weekly_min, update_mode (off / notify / auto), update_every_hours, update_channel (commits / releases), update_origin, update_manifest_url, autopilot (true/false: the monitor loop runs pipeline steps), autopilot_ai_per_cycle, autopilot_ai_per_day, autopilot_jobs_per_cycle, models (`provider=model`; also written by self-healing model selection). Whole numbers are range-checked: followup_days 1-90, auto_track_min_score 0-100, weekly_target 0-200, activity_weekly_min 0-100, update_every_hours 1-720, autopilot_ai_per_cycle and autopilot_ai_per_day 0-500, autopilot_jobs_per_cycle 0-50 |
 | `lodestar inbox [--all] [-v]` | actions waiting for approval (`-v` shows the drafted email / payload) |
 | `lodestar approve ID... [--subject] [--body FILE] [--to]` | execute, optionally editing the email first |
 | `lodestar reject ID... [--reason]` | discard |
@@ -239,7 +239,7 @@ Web: Ideas tab (craft, status, refine), `GET /api/autofill` (data for the autofi
 |---|---|
 | `lodestar usage [--days 30]` | token counts per provider/model from `~/.lodestar/usage.jsonl` (every call is recorded) |
 | `lodestar backup [--out DIR] [--keep 7]` | zip of profile, tracker, settings, answers, ideas, documents (never `.env` or keyring secrets); keeps the newest N (at least 1); the `backup` tool does this nightly |
-| `lodestar export json / csv [--out DIR]` | dump jobs, events, answers, ideas, pending, contacts, job_contacts, interviews, mock_sessions, offers, touches, mail (CSV: one file per table, formula-safe cells) |
+| `lodestar export json / csv [--out DIR]` | dump jobs, events, answers, ideas, pending, contacts, job_contacts, interviews, mock_sessions, offers, touches, mail, pipeline, pipeline_runs, questions (CSV: one file per table, formula-safe cells) |
 | `lodestar providers models [NAME...]` | model ids each provider advertises; set `<PROVIDER>_MODEL` from the list |
 | `lodestar providers local` | local-only preset: default provider and council restricted to Ollama, and a model Ollama serves is pinned (UI: Setup > Local only) |
 | `lodestar tools set provider NAME` / `council_providers a,b` | default provider and which providers the council / idea crafting may send data to |
@@ -635,3 +635,52 @@ cite?, ask?, question?, tone?, words?, n?}` -> `{options}`; `POST /api/run/draft
 (the recipient comes from the job, the mail being answered or the contact, never from the request);
 `POST /api/approvals/ID/edit {subject?, body?}` (pending emails only; it stays pending);
 `POST /api/suggest/dismiss {job_id, kind}`. `GET /api/state` carries `today.emails`. All behind the page token.
+
+## Step-by-step pipeline (pass 16.5)
+
+| Command | What it does |
+|---|---|
+| `lodestar pipeline status [JOB]` | No JOB: one line per live job (next step, questions waiting on you, stale and failed steps, fit gate). JOB: the step table: fit check, research, tailor resume, cover letter, form answers, apply, confirmation, follow-up, schedule, interview prep, thank-you, offer, close, each with its state (done, ready, waiting on you / the employer, stale, blocked, error, running, todo, later, skipped), why, rev, origin and file |
+| `lodestar pipeline run JOB [--to STEP \| --stage STEP] [--rerun]` | No option: run the next ready step. `--to`: the ready steps in order up to STEP, stopping at anything waiting, blocked, failed or manual (apply, offer, close) and at a stale step unless `--rerun`. `--stage`: one step (`--rerun` builds a done or stale one again; the old document moves to history/). Your own runs need no tool switch or Autopilot; `lodestar -p PROVIDER pipeline run ...` picks the provider |
+| `lodestar pipeline skip JOB STEP [--undo]` | skip a step for this job (no letter for this one) or bring it back |
+| `lodestar pipeline add-questions JOB FILE\|-` | the job's application-form questions, one per line (merged, at most 100) |
+| `lodestar pipeline questions [--all] [--job JOB]` | questions waiting for you, with the jobs waiting on each and near matches from the answer bank |
+| `lodestar pipeline answer QID TEXT [--job-only] [--private]` | answer one: saved to the answer bank for every job (source: "answered for job #N"), or for this job only; the waiting steps continue |
+| `lodestar pipeline dismiss QID` | I'll fill it in myself: the waiting steps go on without it ("(left for you)") |
+| `lodestar pipeline autopilot [on\|off\|status]` | the Autopilot switch, its budgets, the AI calls of the last 24 hours, each step's tool mode and the last cycle |
+| `lodestar pipeline log [JOB] [--limit N]` | the run log (origin user / autopilot / approved / observed, outcome, AI calls); never written to the job timeline |
+
+A done step whose inputs changed (the JD, your profile, the tailored resume, the research pack, a new round) reads
+**stale** and is never redone on its own: re-run it. Work done by hand (a drawer Tailor, an edited cover_letter.md, a
+sent thank-you) is adopted as done. A step that lacks a fact asks once (Inbox > Questions); the answer is reused by
+every step and job that asks the same question. Eligibility, work-authorization and EEO questions are never answered
+by AI (also when worded "legally eligible to work in" or "18 years or older"), are filled in only from answers you
+wrote (`answers add`, the Answers tab, a question you answered; never an approved AI draft or an answer saved before
+pass 16.5), and never reach an AI prompt even untagged. Private answers never reach employer text. Autopilot (off by default) runs from the monitor loop within
+`autopilot_ai_per_cycle`, `autopilot_ai_per_day` and `autopilot_jobs_per_cycle`: steps whose tool is on auto run, the
+rest wait for one Inbox approval per job (`run_to`; its card estimates the AI calls and lists the saved answers it
+fills in on the form; an approved batch spends from the daily budget too). Sends, submissions and status changes still go only through the
+Inbox. Tools: fit_check, research, tailor, cover_letter, form_answers, interview_prep, thank_you (a drafted thank-you
+always waits in the Inbox).
+
+In the app: the job drawer opens with a **Pipeline** group: the step strip (each step's state in words, never colour
+alone), **Run next step**, **Run to** a step (tick "include stale steps" to re-run those), a click on a step for its
+line (why, rev, who ran it, what it was built from, its document, **Run / Re-run / Retry / Skip / Unskip**; on Apply:
+Open posting, Show folder, form_answers.md, **Mark applied**), **Continue anyway** when the fit check said skip (a click
+is the override; Autopilot still leaves the job alone), a Form questions box (one per line), the job's questions and
+its run log. Board cards carry a chip (next step, `? N` questions, stale, error); the table view has a Next step column
+and the bulk bar runs the next step or runs to a step for up to 25 jobs (the confirm names the AI calls; jobs with
+nothing ready are counted as such, not as errors). The Inbox
+starts with **Questions for you**: answer for every job or only this job, private (this job only, never in the answer
+bank), **Use this** on a near match from your answers, or **I'll fill it in myself**; the badge and Today count them.
+The top bar's Autopilot pill ("off", or "on · N of 30 AI calls today") opens Setup > Autopilot: the switch, the three
+budgets, each step's enabled / auto switch and the run log.
+
+Web API (all behind the page token): `GET /api/jobs/ID` adds `pipeline`, `questions`, `runs`;
+`POST /api/run/pipeline_run {id, stage? | to?, rerun?}` and `POST /api/run/pipeline_bulk {ids: [up to 25], to?}`
+(background tasks; a bad step name or id is a 400 before anything starts; in a bulk run a job with nothing ready
+comes back as `{id, runs: []}`, while `pipeline_run` for that one job is an error); `POST /api/pipeline/ID/skip {stage, on}`;
+`POST /api/pipeline/ID/questions {lines}`; `GET /api/questions?all=1&job=ID`;
+`POST /api/questions/QID/answer {text, scope?: reusable | job, private?}`; `POST /api/questions/QID/dismiss`;
+`GET /api/pipeline/log?job=ID&limit=N`. `GET /api/state` carries `pipeline` (per-job summary), `pipeline_stages`,
+`questions` and `autopilot` (AI calls in the last 24 hours, the last cycle).

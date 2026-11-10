@@ -186,3 +186,12 @@ bank, coach chat with a scored mock interview (dictation), tool switches, Connec
 test send), provider and vault setup, Updates (off / notify / auto on an interval, Check now with the commit range and
 changelog, Update now with a backup, the tests and a rollback, Restart in the desktop app, the update log; a top-bar
 badge when an update is out; an update cut off mid-way is rolled back at the next start). Full walkthrough and roadmap: [docs/RUNDOWN.md](docs/RUNDOWN.md).
+
+Step-by-step pipeline: each job's drawer shows its steps (fit check, research, tailor, cover letter, form answers,
+apply, confirmation, follow-up, schedule, prep, thank-you, offer, close) with their state in words, **Run next step**
+and **Run to**; each step reads the earlier ones' results, goes stale (never silently redone) when they change, and
+asks you once for a fact it cannot know (Inbox > Questions for you; eligibility and EEO answers are always yours).
+Autopilot (off by default; the top-bar pill) moves jobs along in the monitor loop within AI budgets, with one Inbox
+approval per job for steps not on auto (the card lists the saved answers it will fill in; approved batches count
+toward the daily budget). Same from the terminal: `lodestar pipeline` (docs/COMMANDS.md,
+docs/AUTOMATION.md).

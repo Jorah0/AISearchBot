@@ -832,6 +832,9 @@ def _keys_table(st: dict, only: list[str] | None = None) -> None:
 
 def cmd_ui(a):
     from . import connections, updater
+    from . import pipeline
+
+    pipeline.AUTO = True  # answering a question resumes its step in a thread (never set by web.start_server)
     from .web import serve
 
     updater.startup()
@@ -842,6 +845,9 @@ def cmd_ui(a):
 def cmd_app(a):
     """The personal workbot: monitor loop in a background thread + web UI in the foreground, one process."""
     import threading
+    from . import pipeline
+
+    pipeline.AUTO = True  # answering a question resumes its step in a thread (never set by web.start_server)
 
     from .web import serve
 
@@ -910,6 +916,9 @@ def cmd_update(a):
 def cmd_desktop(a):
     """The desktop app: server + monitor loop in this process, the UI in a native window. What the shortcut runs."""
     import threading
+    from . import pipeline
+
+    pipeline.AUTO = True  # answering a question resumes its step in a thread (never set by web.start_server)
 
     from . import desktop, web
     from .web import start_server
@@ -1029,7 +1038,7 @@ def cmd_answers(a):
         for r in db.list_answers():
             print(f"#{r['id']:<3} Q: {r['question'][:90]}{'  [private]' if r['private'] else ''}\n     A: {r['answer'][:300].replace(chr(10), ' ')}\n")
     elif a.op == "add":
-        db.save_answer(a.question, a.answer, a.tags or "", a.private)
+        db.save_answer(a.question, a.answer, a.tags or "", a.private, source="typed in the CLI")
         print("saved" + (" (private: never sent to an employer)" if a.private else ""))
     elif a.op == "rm":
         db.delete_answer(a.id)
@@ -1038,6 +1047,79 @@ def cmd_answers(a):
         r = apply.answer(db.get_job(a.id), a.question, a.provider)
         print(r["answer"])
         print(f"\n[reused: {r['reused'] or 'none'}] [save -> {r['proposal'].get('status')}]")
+
+
+def cmd_pipeline(a):
+    """Step-by-step automation per job (pipeline.py): states, runs, the questions queue, Autopilot, the run log."""
+    from . import pipeline
+
+    if a.op == "status" and a.id is None:
+        summ = pipeline.summary()
+        for j in db.list_jobs():
+            if j["status"] in pipeline.CLOSED:
+                continue
+            s = (pipeline._summary_of(pipeline.status(j["id"])) if j["id"] not in summ else summ[j["id"]])
+            bits = [f"next: {s['next']}" if s.get("next") else "nothing ready", f"? {s['you']}" if s.get("you") else "",
+                    f"stale {s['stale']}" if s.get("stale") else "", f"errors {s['errors']}" if s.get("errors") else "",
+                    "fit: skip (Autopilot leaves it alone)" if s.get("fit_skip") else ""]
+            print(f"{_job_line(j)}  {'  '.join(b for b in bits if b)}")
+    elif a.op == "status":
+        for e in pipeline.status(a.id):
+            out = e["output"].get("file") or ""
+            print(f"{e['name']:<9} {e['state']:<8}{' (' + e['on'] + ')' if e['on'] else '':<11} rev {e['rev'] or 0:<2} "
+                  f"{(e['origin'] or '-'):<9} {out:<18} {e['why'][:90]}")
+    elif a.op == "run":
+        if a.stage:
+            rs = [pipeline.run(a.id, a.stage, provider=a.provider, rerun=a.rerun)]
+        else:
+            to = a.to or pipeline.next_stage(a.id)
+            if not to:
+                raise SystemExit(f"#{a.id}: nothing is ready to run (lodestar pipeline status {a.id})")
+            rs = pipeline.run_to(a.id, to, provider=a.provider, rerun=a.rerun) if a.to else [pipeline.run(a.id, to, provider=a.provider)]
+        for r in rs:
+            print(f"#{r['job_id']} {r['stage']}: {r['outcome']} ({r['ai']} AI call{'s' if r['ai'] != 1 else ''}) {r['detail'][:160]}")
+        if not rs:
+            print("nothing ran: the first step on the way is waiting, blocked, manual or stale (lodestar pipeline status "
+                  f"{a.id}; --rerun includes stale steps)")
+    elif a.op == "skip":
+        pipeline.skip(a.id, a.stage, not a.undo)
+        print(f"#{a.id} {a.stage}: {'unskipped' if a.undo else 'skipped'}")
+    elif a.op == "questions":
+        qs = pipeline.questions(all=a.all, job=a.job)
+        for q in qs:
+            jobs = ", ".join(f"#{j['job_id']} {j['company']} ({j['stage']})" for j in q["jobs"]) or f"#{q['job_id']}"
+            print(f"Q{q['id']:<4} [{q['status']}/{q['kind']}{'' if q['blocking'] else ', optional'}] {q['text']}\n"
+                  f"       for {jobs}" + (f"\n       answer: {q['answer'][:200]}" if q["answer"] else "")
+                  + "".join(f"\n       near match #{x['id']}: {x['question'][:80]} -> {x['answer'][:80]}" for x in q["suggestions"]))
+        if not qs:
+            print("no questions waiting for you")
+    elif a.op == "answer":
+        r = pipeline.answer(a.qid, a.text, scope="job" if a.job_only else None, private=a.private or None)
+        print(f"saved{' to the answer bank #' + str(r['answer_id']) if r['answer_id'] else ''}; "
+              f"resumed: {', '.join(f'#{j} {s}' for j, s in r['resumed']) or 'nothing waiting'}")
+    elif a.op == "dismiss":
+        r = pipeline.dismiss(a.qid)
+        print(f"left for you; resumed: {', '.join(f'#{j} {s}' for j, s in r['resumed']) or 'nothing waiting'}")
+    elif a.op == "add-questions":
+        lines = (sys.stdin.read() if a.file == "-" else Path(a.file).read_text(encoding="utf-8")).splitlines()
+        print(f"#{a.id}: {pipeline.add_form_questions(a.id, lines, 'cli')} new form question(s)")
+    elif a.op == "autopilot":
+        if a.mode in ("on", "off"):
+            settings.set_pref("autopilot", a.mode)
+        p = settings.load()["prefs"]
+        print(f"Autopilot: {'on' if p['autopilot'] else 'off'}; budgets {p['autopilot_ai_per_cycle']} AI calls per cycle, "
+              f"{p['autopilot_ai_per_day']} per day, {p['autopilot_jobs_per_cycle']} jobs per cycle; "
+              f"{pipeline.spent_today()} AI calls in the last 24 h")
+        for n, st in pipeline.REGISTRY.items():
+            if st.tool:
+                t = settings.load()["tools"][st.tool]
+                print(f"  {n:<9} tool {st.tool:<15} {'auto' if t['enabled'] and t['auto'] else 'asks in the Inbox' if t['enabled'] else 'off'}")
+        if pipeline.LAST["at"]:
+            print(f"last cycle {pipeline.LAST['at']}: ran {pipeline.LAST['ran']}, proposed {pipeline.LAST['proposed']} "
+                  f"{pipeline.LAST['note']}")
+    elif a.op == "log":
+        for r in pipeline.log_runs(a.id, a.limit):
+            print(f"{r['ts']}  #{r['job_id']:<4} {r['stage']:<9} {r['origin']:<10} {r['outcome']:<8} ai={r['ai']} {r['detail'][:100]}")
 
 
 def _print_mail(r: dict) -> None:
@@ -1685,6 +1767,29 @@ def build() -> argparse.ArgumentParser:
     s = sub.add_parser("reject", help="discard inbox item(s)")
     s.add_argument("ids", type=int, nargs="+"); s.add_argument("--reason")
     s.set_defaults(f=cmd_reject)
+    s = sub.add_parser("pipeline", help="step-by-step automation per job: states, run the next step or to a step, "
+                                        "questions for you, Autopilot, run log")
+    v = s.add_subparsers(dest="op", required=True)
+    x = v.add_parser("status", help="no JOB: one line per live job; JOB: the step table"); x.add_argument("id", type=int, nargs="?")
+    x = v.add_parser("run", help="run the next step, --to STEP (stops at anything waiting, manual or stale) or --stage STEP")
+    x.add_argument("id", type=int); x.add_argument("--to"); x.add_argument("--stage")
+    x.add_argument("--rerun", action="store_true", help="also re-run stale (or done, with --stage) steps")
+    x = v.add_parser("skip", help="skip a step for this job (e.g. letter), --undo to bring it back")
+    x.add_argument("id", type=int); x.add_argument("stage"); x.add_argument("--undo", action="store_true")
+    x = v.add_parser("questions", help="questions waiting for you (--all: answered and dismissed too)")
+    x.add_argument("--all", action="store_true"); x.add_argument("--job", type=int)
+    x = v.add_parser("answer", help="answer a question (reused for every job unless --job-only or --private)")
+    x.add_argument("qid", type=int); x.add_argument("text"); x.add_argument("--job-only", action="store_true")
+    x.add_argument("--private", action="store_true", help="this job only, never saved to the bank")
+    x = v.add_parser("dismiss", help="I'll fill it in myself"); x.add_argument("qid", type=int)
+    x = v.add_parser("add-questions", help="a job's application-form questions, one per line (FILE or - for stdin)")
+    x.add_argument("id", type=int); x.add_argument("file")
+    x = v.add_parser("autopilot", help="on / off / status: switches, budgets, AI calls in the last 24 h")
+    x.add_argument("mode", choices=("on", "off", "status"), nargs="?", default="status")
+    x = v.add_parser("log", help="the run log (newest first)"); x.add_argument("id", type=int, nargs="?")
+    x.add_argument("--limit", type=int, default=50)
+    s.set_defaults(f=cmd_pipeline)
+
     s = sub.add_parser("answers", help="answer bank for application-form questions")
     v = s.add_subparsers(dest="op", required=True)
     v.add_parser("list")

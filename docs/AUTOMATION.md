@@ -105,15 +105,19 @@ Executors are the only code that sends mail, changes status, or adds jobs on lod
    Suggested emails (thank-you after a round, follow-up, unanswered recruiter mail, offer check-in, referral ask) are
    computed from the tracker with no AI call, listed on Today and counted in the daily agenda; nothing is drafted until
    you click Draft options.
-4. Optional Obsidian sync and Friday digest (with your weekly goals' progress when you set any).
-5. Update check, every `update_every_hours` (pref `update_mode`: off / notify / auto; see COMMANDS.md >
+4. Pipeline: every live job's steps are refreshed (work done by hand is adopted, the board summary written, questions
+   no step needs any more are dropped). With Autopilot on, steps whose tool is on auto run within the AI budgets and
+   the rest are proposed once per job in the Inbox (see "The pipeline and Autopilot" below). A budget that runs out
+   shows on the loop line as "pipeline: per-cycle AI budget reached" or "pipeline: daily AI budget reached".
+5. Optional Obsidian sync and Friday digest (with your weekly goals' progress when you set any).
+6. Update check, every `update_every_hours` (pref `update_mode`: off / notify / auto; see COMMANDS.md >
    Updates). Auto applies only a fast-forward that passes the tests, and never while mail or a send is in flight.
    Setup > Updates sets the mode and the interval, checks and updates on demand and shows the update log; a
    failed update shows under Getting started, and the desktop app offers Restart after a successful one (never
    while an update is still running). An update cut off mid-way is rolled back at the next start; in auto mode a
    version that failed its tests is not retried automatically, and no update is applied while another Lodestar
    process (app, desktop window, loop) is running.
-6. Print how many actions are waiting in the inbox.
+7. Print how many actions are waiting in the inbox.
 
 Sending mail needs a connected mailbox (Setup > Connect email: Sign in with Google / Microsoft or an app password; or
 `lodestar email signin google|microsoft` / `lodestar email connect`; see CONNECT.md). Without one, approvals of email
@@ -123,6 +127,61 @@ stops the email check with "Sign-in expired: sign in again"; the rest of the cyc
 Every app start (`lodestar ui`, `app`, `desktop`) re-checks the linked AI keys and the mailbox once, in a background
 thread that never blocks or stops the start (`LODESTAR_NO_STARTUP_CHECK=1` turns it off). Offline reads as "couldn't
 reach" and never marks a working key or mailbox as broken.
+
+## The pipeline and Autopilot
+
+Each tracked job moves through 13 steps (`pipeline.py`), shown in the job drawer's Pipeline group and by
+`lodestar pipeline status JOB`:
+
+| Step | What it does | Tool (Autopilot) | Runs unattended |
+|---|---|---|---|
+| Fit check | JD coverage + AI verdict (asks for the JD when there is none) | fit_check | yes |
+| Research | company research pack from public pages | research | yes |
+| Tailor resume | tailor by bullet; only rewrites with no flags are applied | tailor | yes |
+| Cover letter | from the tailored resume, research and fit check | cover_letter | yes |
+| Form answers | the job's form questions: closed-form ones from your answers, open-ended ones drafted | form_answers | yes (never eligibility or EEO) |
+| Apply | you send it and click Mark applied | none | no |
+| Confirmation | the application-received mail (confirmation number) | email step | observed |
+| Follow-up | the loop's follow-up cadence | followup | loop step |
+| Schedule | interview rounds (mail and the Rounds group) | email step | observed |
+| Interview prep | prep pack once an interview is booked | interview_prep | yes |
+| Thank-you | drafted after a round; always waits in the Inbox | thank_you | yes (draft only) |
+| Offer | offer evaluation | none | no |
+| Close | accepted, rejected or withdrawn | none | no |
+
+**States**: done, ready, waiting on you (a question, an Inbox item, an approval) or on the employer (a reply, a
+confirmation), stale, blocked (no AI provider), error (with Retry), running, todo (an earlier step first), later (a
+later status), skipped (by you, or n/a). A step reads earlier steps' results (the letter reads the tailored resume and
+the research pack; form answers read both; prep reads the next round). When something a done step was built from
+changes (the JD, your profile, the resume, the research, your stories, a new round) the step reads **stale**: it is
+never redone on its own, only by Re-run (or Run to with "include stale steps"). Work done by hand is adopted as done.
+
+**Questions**: a step that lacks a fact asks once (Inbox > Questions for you, the drawer, `lodestar pipeline
+questions`) instead of guessing. One answer serves every job and step that asks the same question (common screening
+questions share one canonical key), or only this job. Eligibility, work-authorization and EEO questions are never
+AI-drafted (however the form words them: "legally eligible to work in", "18 years or older" count too). They are
+filled in only from answers you wrote (under Answers, in the CLI, or by answering the question), never from an
+approved AI draft or an answer saved before pass 16.5 (asked once more), and never shown to an AI prompt, tagged or
+not. Questions that only look alike keep their own key (pending charges vs a conviction, sex vs gender, the start date
+of your current role vs your earliest start date). Private answers never reach employer text, and a salary answer
+equal to your floor is refused. A fact you give for one job only is used when that job's answer is redrafted. Re-run
+of Form answers looks every saved answer up again (a changed or newly private one is honoured). "I'll fill it in
+myself" lets the step go on without it.
+
+**Autopilot** (Setup > Autopilot, `lodestar pipeline autopilot on|off`) is off by default. On, each monitor cycle
+advances at most `autopilot_jobs_per_cycle` jobs (default 3) within `autopilot_ai_per_cycle` (6) and
+`autopilot_ai_per_day` (30, a rolling 24 hours, approved runs included) AI calls. A step whose tool is **auto** runs; a
+step that is enabled but not auto is covered by **one** Inbox approval per job for its next batch of steps (`run_to`):
+its card estimates the AI calls (one per open-ended form question the batch drafts, at most 8) and lists the saved
+answers it fills in on the form. An approved batch spends from the daily budget; once that is used up the rest waits
+(Setup > Autopilot says so). A disabled step is left for you. Jobs whose fit check says skip are left alone. A failed auto step is retried once on a
+later cycle; a step you answered a question for continues on the next cycle. Never unattended: applying, offers,
+closing, sends, status changes and job adds (those still go only through the Inbox), re-running a stale step, and
+answering eligibility or EEO questions. Pipeline bookkeeping goes to its own run log (Setup > Autopilot > Show the
+run log, `lodestar pipeline log`), never to the job timeline, so the follow-up clock is untouched; building a
+document (fit check, research, tailored resume, cover letter, interview prep) does not move it either, by a click or
+a step. The Confirmation step counts only trusted confirmation mail, and only its reference is quoted in a follow-up.
+The Follow-up step says no follow-up is needed while an interview is booked.
 
 ## Contact capture
 

@@ -8,6 +8,7 @@ Commands you type yourself are confirmed by typing them; only automatic flows go
 """
 import json
 import os
+import time
 import threading
 
 from .ai import PROVIDERS
@@ -30,6 +31,16 @@ TOOLS = {
     "backup": ("Nightly zip of your data folder into ~/.lodestar/backups (keeps 7)", True, True),
     "posting_check": ("Weekly: re-check saved jobs from Greenhouse / Lever / Ashby feeds and propose withdrawing ones "
                       "whose posting was removed (always waits in the Inbox)", True, False),
+    # pipeline steps (pipeline.py): enabled = Autopilot may use the step; auto = it runs without asking, otherwise
+    # Autopilot asks once per job in the Inbox. Clicks and the CLI run steps whatever these say.
+    "fit_check": ("Pipeline: judge fit for newly tracked jobs (JD coverage + AI verdict)", True, False),
+    "research": ("Pipeline: build the company research pack from public pages", True, False),
+    "tailor": ("Pipeline: tailor the resume by bullet; only rewrites with no flags are applied", True, False),
+    "cover_letter": ("Pipeline: write the cover letter from the tailored resume, research and fit check", True, False),
+    "form_answers": ("Pipeline: draft answers to a job's form questions; asks you what it cannot know "
+                     "(never eligibility or EEO)", True, False),
+    "interview_prep": ("Pipeline: write the interview prep pack once an interview is booked", True, False),
+    "thank_you": ("Pipeline: draft a thank-you after an interview round; the email always waits in the Inbox", True, True),
 }
 PREFS = {
     "name": "",
@@ -56,6 +67,11 @@ PREFS = {
     "update_channel": "commits",  # commits: the origin branch's tip; releases: its newest v* tag
     "update_origin": "",  # empty: the install's git origin remote (https:// or a local folder only)
     "update_manifest_url": "",  # the standalone (-Exe) build: an https JSON {version, url, notes}; notify only
+    # Autopilot (pipeline.advance): off = the loop only refreshes step states; budgets count AI calls
+    "autopilot": False,
+    "autopilot_ai_per_cycle": 6,
+    "autopilot_ai_per_day": 30,
+    "autopilot_jobs_per_cycle": 3,
 }
 PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "name": ("Your name", "signs drafted emails when no signature is set"),
@@ -80,12 +96,17 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "update_channel": ("Update channel", "commits: every change on the origin branch; releases: tagged versions only"),
     "update_origin": ("Update origin", "https:// git URL or local folder to update from; empty: the install's origin"),
     "update_manifest_url": ("Update manifest (standalone build)", "https URL of the version file the .exe checks"),
+    "autopilot": ("Autopilot", "the monitor loop runs pipeline steps within the AI budgets; steps not on auto ask once per job in the Inbox"),
+    "autopilot_ai_per_cycle": ("Autopilot AI calls per cycle", "at most this many AI calls in one monitor cycle (0-500)"),
+    "autopilot_ai_per_day": ("Autopilot AI calls per day", "at most this many AI calls in any 24 hours, approved runs included (0-500)"),
+    "autopilot_jobs_per_cycle": ("Autopilot jobs per cycle", "at most this many jobs advanced in one monitor cycle (0-50)"),
 }
 CHOICES = {"resume_style": ("classic", "modern", "compact"),  # prefs limited to a fixed set of values
            "provider": ("", *PROVIDERS),  # "" = the first configured one
            "update_mode": ("off", "notify", "auto"), "update_channel": ("commits", "releases")}
 RANGES = {"followup_days": (1, 90), "auto_track_min_score": (0, 100), "weekly_target": (0, 200),
-          "activity_weekly_min": (0, 100), "update_every_hours": (1, 720)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
+          "activity_weekly_min": (0, 100), "update_every_hours": (1, 720),
+          "autopilot_ai_per_cycle": (0, 500), "autopilot_ai_per_day": (0, 500), "autopilot_jobs_per_cycle": (0, 50)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
 GOALS = ("contacts", "tailored_applications", "mock_sessions", "applications")  # quality first, raw volume last
 
 
@@ -118,7 +139,13 @@ def load() -> dict:
 def save(data: dict) -> None:
     tmp = PATH.with_name(PATH.name + ".tmp")  # write-then-rename: a crash mid-write never leaves a torn file
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    os.replace(tmp, PATH)
+    for i in range(40):  # Windows refuses the rename while another thread reads settings.json at this instant
+        try:
+            return os.replace(tmp, PATH)
+        except PermissionError:
+            if i == 39:
+                raise
+            time.sleep(0.025)
 
 
 def enabled(tool: str) -> bool:

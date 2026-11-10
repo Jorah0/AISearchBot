@@ -54,6 +54,23 @@ CREATE TABLE IF NOT EXISTS mail(id INTEGER PRIMARY KEY, message_id TEXT NOT NULL
   linked_by TEXT CHECK(linked_by IN ('auto','thread','user')), company TEXT, title TEXT,
   created_at TEXT DEFAULT (datetime('now')));  -- relevant mail scanned + every mail sent; job_id NULL = unmatched
 CREATE INDEX IF NOT EXISTS mail_job ON mail(job_id);
+-- pipeline (pipeline.py): one row per (job, stage); stage '_summary' holds the derived board summary of a job
+CREATE TABLE IF NOT EXISTS pipeline(job_id INTEGER NOT NULL, stage TEXT NOT NULL,
+  state TEXT NOT NULL,             -- done | waiting | error | running | skipped (the rest is derived on read)
+  output TEXT, inputs TEXT, fp TEXT, rev INTEGER NOT NULL DEFAULT 0,
+  origin TEXT,                     -- user | autopilot | approved | observed
+  error TEXT, attempts INTEGER NOT NULL DEFAULT 0, updated_at TEXT, PRIMARY KEY(job_id, stage));
+CREATE TABLE IF NOT EXISTS pipeline_runs(id INTEGER PRIMARY KEY, job_id INTEGER, stage TEXT,
+  ts TEXT DEFAULT (datetime('now')), origin TEXT, outcome TEXT, detail TEXT, ai INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS pipeline_runs_ts ON pipeline_runs(ts);
+CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY, key TEXT NOT NULL, text TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'text', options TEXT, context TEXT,
+  blocking INTEGER NOT NULL DEFAULT 1, apply_to TEXT NOT NULL DEFAULT 'bank', job_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'open', answer TEXT, scope TEXT, answer_id INTEGER,
+  created_at TEXT DEFAULT (datetime('now')), answered_at TEXT);
+CREATE UNIQUE INDEX IF NOT EXISTS questions_open ON questions(key) WHERE status = 'open';
+CREATE TABLE IF NOT EXISTS question_waiters(qid INTEGER NOT NULL, job_id INTEGER NOT NULL, stage TEXT NOT NULL,
+  PRIMARY KEY(qid, job_id, stage));
 """
 MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "TEXT",  # ponytail: additive only
               # tracker fields (pass 15); every user write goes through set_fields
@@ -65,7 +82,8 @@ MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "T
 WATCH_MIGRATIONS = {"filters": "TEXT",  # JSON search filters of a saved search (web_monitor.clean_filters)
                     "last_error": "TEXT"}  # what the last run could not read (shown on the watch); NULL after a clean run
 ANSWER_MIGRATIONS = {"star": "TEXT",  # JSON STAR fields when the row is a story (interview.save_story); NULL = a form answer
-                     "private": "INTEGER NOT NULL DEFAULT 0"}  # 1 = for you only: never put in an employer-facing prompt
+                     "private": "INTEGER NOT NULL DEFAULT 0",  # 1 = for you only: never put in an employer-facing prompt
+                     "source": "TEXT"}  # where it came from: "answered for job #12 (answers)", "typed under Answers"
 MAIL_MIGRATIONS = {"attachments": "TEXT"}  # JSON [{name, size, type, path?} | {name, skipped}] (mailfiles.py)
 BACKFILL_KEY = "backfill:fields-v1"
 CONTACTS_KEY = "backfill:contacts-v1"
@@ -395,8 +413,9 @@ def set_status(job_id: int, status: str, detail: str = "") -> None:
     extra = {"applied_at": datetime.now().strftime("%Y-%m-%d")} if status == "applied" else {}
     # status proposals waiting in the Inbox were made against the old status: close them (the one running now is not
     # 'pending', so an approved proposal never closes itself)
-    con().execute("UPDATE pending SET status='rejected', decided_at=?, result=? WHERE job_id=? AND kind='set_status' "
-                  "AND status='pending'", (_now(), f"stale: the job moved to {status} before this was decided", job_id))
+    con().execute("UPDATE pending SET status='rejected', decided_at=?, result=? WHERE job_id=? AND kind IN "
+                  "('set_status', 'run_to') AND status='pending'",
+                  (_now(), f"stale: the job moved to {status} before this was decided", job_id))
     if status in ("withdrawn", "rejected", "accepted"):  # 'still very interested' must never go out after the end
         con().execute("UPDATE pending SET status='rejected', decided_at=?, result=? WHERE job_id=? AND kind='send_email' "
                       "AND status='pending' AND json_extract(payload, '$.purpose') IN ('followup', 'thanks')",
@@ -422,6 +441,10 @@ def delete_job(job_id: int) -> None:
     con().execute("DELETE FROM mock_sessions WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM offers WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM mail WHERE job_id=?", (job_id,))  # a reply to its sent mail then reads as unmatched
+    for t in ("pipeline", "pipeline_runs", "question_waiters"):
+        con().execute(f"DELETE FROM {t} WHERE job_id=?", (job_id,))
+    con().execute("UPDATE questions SET status='dismissed', answer='no longer needed', answered_at=? WHERE status='open' "
+                  "AND NOT EXISTS (SELECT 1 FROM question_waiters w WHERE w.qid=questions.id)", (_now(),))
     con().execute("DELETE FROM jobs WHERE id=?", (job_id,))
     con().commit()
 
@@ -508,7 +531,10 @@ def variant_stats() -> list[dict]:
 # (the real change logs its own 'status' / 'created' / sent-mail event). None of them restarts the follow-up clock.
 BOOKKEEPING = ("proposed", "rejected_proposal", "send_failed", "set_status", "add_job", "save_answer", "reply",
                "interview_date", "email_unverified", "followup_draft", "thanks_draft", "withdraw_draft", "counter_draft",
-               "reply_draft", "referral_draft", "outreach_draft", "checkin_draft", "referral", "attachments")
+               "reply_draft", "referral_draft", "outreach_draft", "checkin_draft", "referral", "attachments",
+               "run_to",  # run_to: an approved pipeline batch (approvals writes the executor's kind as the event)
+               # documents built for the job (a drawer click or a pipeline step): your prep, not contact with the employer
+               "gap", "research", "bullets", "resume", "coverage", "cover_letter", "interview_prep")
 
 
 def needs_followup(days: int | None = None):
@@ -732,14 +758,17 @@ def check_answer(question: str, answer: str, private: bool | None = None) -> tup
     return q, private
 
 
-def save_answer(question: str, answer: str, tags: str = "", private: bool | None = None) -> None:
+def save_answer(question: str, answer: str, tags: str = "", private: bool | None = None, source: str | None = None) -> int:
     """private: True keeps the answer for you only; None (AI proposals) keeps what the question already had. An answer
-    that is not private and names your salary floor is refused: it would reach an employer."""
+    that is not private and names your salary floor is refused: it would reach an employer. source: where it came from
+    (None keeps the stored one). Returns the row id."""
     q, private = check_answer(question, answer, private)
-    con().execute("INSERT INTO answers(question,answer,tags,updated_at,private) VALUES(?,?,?,?,?) "
+    con().execute("INSERT INTO answers(question,answer,tags,updated_at,private,source) VALUES(?,?,?,?,?,?) "
                   "ON CONFLICT(question) DO UPDATE SET answer=excluded.answer, tags=excluded.tags, "
-                  "updated_at=excluded.updated_at, private=excluded.private", (q, answer, tags, _now(), int(private)))
+                  "updated_at=excluded.updated_at, private=excluded.private, source=COALESCE(excluded.source, answers.source)",
+                  (q, answer, tags, _now(), int(private), source))
     con().commit()
+    return con().execute("SELECT id FROM answers WHERE question=?", (q,)).fetchone()["id"]
 
 
 def list_answers(employer: bool = False):
@@ -758,11 +787,23 @@ def delete_answer(aid: int) -> None:
     con().commit()
 
 
+PROMPT_SKIP_TAGS = ("eligibility", "eeo")  # your own answers for forms, never material for an AI prompt
+
+
+def employer_answers():
+    """Bank rows an employer-facing AI prompt may see: list_answers(employer=True) minus eligibility / EEO answers, by
+    tag or by the question itself (untagged rows and rows saved before this filter too): you type those into forms
+    yourself; a model never drafts or adapts them."""
+    from .pipeline import for_prompts
+
+    return [r for r in list_answers(employer=True) if for_prompts(r)]
+
+
 def find_answers(question: str, limit: int = 4, employer: bool = False):
     """Prior answers whose question shares distinctive words with this one (cheap, no embeddings). employer: as in
-    list_answers, for prompts whose output an employer reads."""
+    employer_answers, for prompts whose output an employer reads."""
     toks = _tokens(question)
-    scored = [(len(toks & _tokens(a["question"])), a) for a in list_answers(employer)]
+    scored = [(len(toks & _tokens(a["question"])), a) for a in (employer_answers() if employer else list_answers())]
     return [a for n, a in sorted(scored, key=lambda x: -x[0]) if n >= 1][:limit]
 
 

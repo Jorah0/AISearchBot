@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import __version__, ai, apply, approvals, codes, comp, connections, db, extras, log, loop, mailconn, oauth, settings, vault
+from . import __version__, ai, apply, approvals, codes, comp, connections, db, extras, log, loop, mailconn, oauth, pipeline, settings, vault
 from .config import ALERTS, PROFILE
 
 STATIC = Path(__file__).parent / "static"
@@ -47,7 +47,7 @@ def _capture_token() -> str:
 CAPTURE_TOKEN = _capture_token()
 PUBLIC = {"/api/capture", "/api/autofill"}  # the only routes other origins may call
 TASK_LOCK = threading.Lock()
-DOC_NAMES = {"resume.md", "cover_letter.md", "interview_prep.md", "research.md", "offer.md", "mock_interview.md"}  # editable per-job files
+DOC_NAMES = {"resume.md", "cover_letter.md", "interview_prep.md", "research.md", "offer.md", "mock_interview.md", "form_answers.md"}  # editable per-job files
 TASKS: dict[str, dict] = {}
 RESTART = None  # lodestar desktop sets this (desktop.relaunch): Setup > Updates then offers a Restart button
 COACH = ("You are a sharp, practical career coach and job-search strategist. Use the candidate's profile and tracker "
@@ -84,7 +84,45 @@ def _docs(job) -> dict:
             if p.suffix in (".md", ".json", ".txt")}
 
 
+CLAIM = {"gap": "score", "research": "research", "tailor": "tailor", "bullets": "tailor", "bullets_apply": "tailor",
+         "cover": "letter", "prep": "prep", "thanks": "thanks"}  # drawer buttons doing a pipeline step's work by hand
+
+
 def _act(action: str, p: dict):
+    """A background action. A drawer button doing a pipeline step's work takes that step's claim, so it never runs while
+    Autopilot runs the same step (double AI spend, two writers of resume.md), and its result is adopted on exit."""
+    if action in CLAIM and p.get("id"):
+        with pipeline.claimed(int(p["id"]), CLAIM[action]):
+            return _do(action, p)
+    return _do(action, p)
+
+
+def _pipe_run(jid: int, p: dict, prov) -> list[dict]:
+    """One step (stage), the ready steps up to `to`, or else the next ready step. A click is the fit-gate override."""
+    rerun = bool(p.get("rerun"))
+    if p.get("stage"):
+        return [pipeline.run(jid, p["stage"], provider=prov, rerun=rerun)]
+    if p.get("to"):
+        return pipeline.run_to(jid, p["to"], provider=prov, rerun=rerun)
+    if nxt := pipeline.next_stage(jid):
+        return [pipeline.run(jid, nxt, provider=prov)]
+    return []  # nothing ready: an error for one job (pipeline_run), a skip in a bulk run
+
+
+def _check_pipeline(action: str, p: dict) -> None:
+    """Checked before the task starts, so a bad request is a 400 and not a failed background task."""
+    for k in ("stage", "to"):
+        if p.get(k) and p[k] not in pipeline.REGISTRY:
+            raise ValueError(f"unknown step {str(p[k])[:30]!r}")
+    if action == "pipeline_run":
+        db.get_job(int(p["id"]))
+    elif not isinstance(p.get("ids"), list) or not 0 < len(p["ids"]) <= 25:
+        raise ValueError("pick 1 to 25 jobs")
+    else:
+        p["ids"] = [int(i) for i in p["ids"]]
+
+
+def _do(action: str, p: dict):
     from . import email_monitor, interview, resume, web_monitor
 
     job = db.get_job(int(p["id"])) if p.get("id") else None
@@ -282,6 +320,19 @@ def _act(action: str, p: dict):
         case "research":
             out = extras.research(job, prov)
             return {"path": str(out), "text": out.read_text(encoding="utf-8"), "docs": _docs(job)}
+        case "pipeline_run":  # {id, stage? | to?, rerun?}: one step, the ready steps up to `to`, else the next step
+            if not (runs := _pipe_run(job["id"], p, prov)) and not p.get("to"):
+                raise SystemExit(f"#{job['id']}: nothing is ready to run")
+            return {"runs": runs}
+        case "pipeline_bulk":  # {ids: [<= 25], to?}: the next step (or up to `to`) per job; one failure never stops the rest
+            out = []
+            for jid in p["ids"]:
+                try:
+                    out.append({"id": jid, "runs": _pipe_run(jid, {"to": p.get("to")}, prov)})
+                except (Exception, SystemExit) as e:
+                    db.release(close=False)
+                    out.append({"id": jid, "error": str(e) or type(e).__name__})
+            return {"jobs": out}
         case "doctor":
             from .doctor import checks
 
@@ -467,6 +518,18 @@ def setup_status(conn: dict | None = None) -> dict:
     }
 
 
+def _pipeline_summary() -> dict:
+    """The board's per-job step summary; a live job with none stored yet gets its first one here (written, so once)."""
+    summ = pipeline.summary()
+    for j in db.list_jobs():
+        if j["id"] not in summ and j["status"] not in pipeline.CLOSED:
+            try:
+                summ[j["id"]] = pipeline._summary_of(pipeline.status(j["id"]))
+            except (Exception, SystemExit):  # one unreadable job never costs the page
+                db.release(close=False)
+    return summ
+
+
 def state() -> dict:
     from . import interview
     from .ideas import merged as ideas_merged
@@ -517,6 +580,11 @@ def state() -> dict:
         "usage_today": ai.usage(1)["total"],
         "usage": ai.usage(30),
         "update": update_view(),
+        "pipeline": _pipeline_summary(),  # {job_id: {next, you, stale, errors, done, total, fit_skip}}
+        "pipeline_stages": [{"name": s.name, "label": s.label, "tool": s.tool, "ai": s.ai, "run": s.run is not None,
+                             "manual": s.run is None or s.name in pipeline.MANUAL} for s in pipeline.REGISTRY.values()],
+        "questions": pipeline.questions(),  # open, blocking first (Inbox > Questions for you)
+        "autopilot": {"spent": pipeline.spent_today(), "last": dict(pipeline.LAST)},
     }
 
 
@@ -624,7 +692,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"job": dict(job), "events": [dict(e) for e in db.events(job["id"])], "docs": _docs(job),
                             "people": job_people(job["id"]), "warm": warm(job["company"]),
                             "rounds": interview.rounds(job["id"]), "bank": interview.question_bank(job, False)[:30],
-                            "stress": interview.story_prompt(job), "mail": [dict(r) for r in db.list_mail(job["id"])]})
+                            "stress": interview.story_prompt(job), "mail": [dict(r) for r in db.list_mail(job["id"])],
+                            "pipeline": pipeline.status(job["id"]), "questions": pipeline.questions(job=job["id"]),
+                            "runs": pipeline.log_runs(job["id"], 10)})
+            elif path == "/api/questions":  # ?all=1 (answered and dismissed too) &job=ID
+                from urllib.parse import parse_qs
+
+                q = parse_qs(urlparse(self.path).query)
+                job = q.get("job", [""])[0]
+                self._json({"questions": pipeline.questions(bool(q.get("all")), int(job) if job else None)})
+            elif path == "/api/pipeline/log":  # ?job=ID&limit=N (default 50)
+                from urllib.parse import parse_qs
+
+                q = parse_qs(urlparse(self.path).query)
+                job, n = q.get("job", [""])[0], q.get("limit", ["50"])[0]
+                self._json({"runs": pipeline.log_runs(int(job) if job else None, min(int(n), 500) if n.isdigit() else 50)})
             elif path == "/api/mail":  # ?job=ID (that job's mail, both ways) or ?unmatched=1
                 from urllib.parse import parse_qs
 
@@ -912,7 +994,7 @@ class Handler(BaseHTTPRequestHandler):
                     comp.set_range(p.get("title", ""), p.get("city") or "*", p["low"], p["high"])
                 self._json({"ok": True, "comp": comp.load()})
             elif path == "/api/answers":
-                db.save_answer(p["question"], p["answer"], p.get("tags", ""), bool(p.get("private")))
+                db.save_answer(p["question"], p["answer"], p.get("tags", ""), bool(p.get("private")), source="typed under Answers")
                 self._json({"ok": True})
             elif path.startswith("/api/answers/"):
                 db.delete_answer(int(parts[3]))
@@ -997,7 +1079,26 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError(f"not now: {why}; try again in a moment")
                 threading.Timer(0.5, RESTART).start()  # after this answer has left
                 self._json({"ok": True})
+            elif path.startswith("/api/pipeline/") and len(parts) == 5:  # skip {stage, on} | questions {lines}
+                jid, op = int(parts[3]), parts[4]
+                if op == "skip":
+                    pipeline.skip(jid, str(p.get("stage") or ""), bool(p.get("on", True)))
+                    self._json({"ok": True})
+                elif op == "questions":  # form questions, one per line (the drawer box)
+                    self._json({"added": pipeline.add_form_questions(jid, str(p.get("lines") or "").splitlines(), "drawer")})
+                else:
+                    raise ValueError(f"unknown pipeline operation {op}")
+            elif path.startswith("/api/questions/") and len(parts) == 5:  # answer {text, scope?, private?} | dismiss
+                qid, op = int(parts[3]), parts[4]
+                if op == "answer":
+                    self._json(pipeline.answer(qid, p.get("text"), p.get("scope") or None, bool(p.get("private")) or None))
+                elif op == "dismiss":
+                    self._json(pipeline.dismiss(qid))
+                else:
+                    raise ValueError(f"unknown question operation {op}")
             elif path.startswith("/api/run/"):
+                if parts[3] in ("pipeline_run", "pipeline_bulk"):
+                    _check_pipeline(parts[3], p)
                 self._json({"task": start_task(parts[3], p)})
             else:
                 self._json({"error": "not found"}, 404)

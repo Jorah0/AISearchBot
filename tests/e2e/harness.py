@@ -362,7 +362,8 @@ class E2ETestCase(unittest.TestCase):
         contacts.link(dev, j["offer"], "hiring_manager")
         contacts.link(sam, j["applied"], "referrer")
         j |= {"c_maya": maya, "c_dev": dev, "c_sam": sam}
-        db.save_answer("Are you legally authorized to work in the United States?", "Yes, without sponsorship.", "work-auth")
+        db.save_answer("Are you legally authorized to work in the United States?", "Yes, without sponsorship.", "work-auth",
+                       source="typed under Answers")
         db.save_answer("Why do you want to work here?", "Your data platform serves patients directly; I want that impact.",
                        "motivation")
         db.save_answer("What is my walk-away number?", f"Private: my floor is {FLOOR} base.", "comp", private=True)

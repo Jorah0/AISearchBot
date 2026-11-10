@@ -67,10 +67,11 @@ async function load() {
   $('#stats').innerHTML = `<span>tracked <b>${S.jobs.length}</b></span><span>applied <b>${st.applied_total}</b></span><span>response <b>${pct(st.response_rate)}</b></span><span>interview <b>${pct(st.interview_rate)}</b></span><span>providers <b>${Object.values(S.providers).filter(Boolean).length}</b></span><span>tokens today <b>${(S.usage_today.input + S.usage_today.output).toLocaleString()}</b></span>`;
   const pill = $('#codesPill'); pill.style.display = S.codes_count ? '' : 'none'; pill.textContent = `Codes (${Number(S.codes_count)})`;
   if (S.codes_count !== CODES.length && (S.codes_count || $('#codesPanel').open)) codesLoad();
-  const badge = $('#inboxN'); badge.textContent = S.pending.length; badge.classList.toggle('zero', !S.pending.length);
-  renderOnboard(); renderLoop(); renderUpdate(); $('#ver').textContent = 'Lodestar ' + S.version;
+  const nq = (S.questions || []).filter(q => q.blocking).length, badge = $('#inboxN');  // approvals + questions for you
+  badge.textContent = S.pending.length + nq; badge.classList.toggle('zero', !(S.pending.length + nq));
+  renderOnboard(); renderLoop(); renderUpdate(); renderAutopilot(); $('#ver').textContent = 'Lodestar ' + S.version;
   if (!$('#fStatus').options.length) initFilters();
-  renderBoard(); renderInbox(); renderSearchless(); renderMonitor(); renderAnswers(); renderStories(); renderIdeas(); renderTools(); renderSetup(); fillCoachJobs(); renderTrend();
+  renderBoard(); renderQuestions(); renderInbox(); renderSearchless(); renderMonitor(); renderAnswers(); renderStories(); renderIdeas(); renderTools(); renderSetup(); fillCoachJobs(); renderTrend();
 }
 
 /* ---- board: filters, sort, view (kept in localStorage), drag and drop, table, Today ---- */
@@ -81,7 +82,7 @@ const saveView = () => { try { localStorage.setItem(VIEW_KEY, JSON.stringify(V))
 const SORTS = { updated: ['updated_at', -1], stale: ['updated_at', 1], match: ['match_score', -1], salary: ['salary', -1], excitement: ['excitement', -1], deadline: ['deadline', 1] };
 const tagsOf = j => (j.tags || '').split(',').map(t => t.trim()).filter(Boolean);
 const payOf = j => j.salary_max ?? j.salary_min ?? null;
-const sortVal = (j, k) => k === 'salary' ? payOf(j) : k === 'status' ? S.statuses.indexOf(j.status) : j[k] ?? null;
+const sortVal = (j, k) => k === 'salary' ? payOf(j) : k === 'next' ? ((S.pipeline || {})[j.id] || {}).next ?? null : k === 'status' ? S.statuses.indexOf(j.status) : j[k] ?? null;
 const k0 = n => n >= 1000 ? Math.round(n / 1000) + 'k' : String(n);
 const salaryText = j => payOf(j) == null ? '' : (j.currency ? j.currency + ' ' : '') + (j.salary_min != null && j.salary_max != null && j.salary_min !== j.salary_max ? k0(j.salary_min) + '–' + k0(j.salary_max) : k0(payOf(j)));
 const stars = j => { const n = Math.max(0, Math.min(5, j.excitement | 0)); return n ? `<span class="stars" title="excitement ${n} of 5" aria-label="excitement ${n} of 5">${'★'.repeat(n)}${'☆'.repeat(5 - n)}</span>` : ''; };
@@ -127,7 +128,7 @@ function clearFilters() {
 function toggleView() { V.view = V.view === 'table' ? 'board' : 'table'; saveView(); renderBoard(); }
 function card(j) {
   const chips = [stars(j), salaryText(j) && `<span>${esc(salaryText(j))}</span>`, j.match_score != null && `<span>match ${esc(j.match_score)}%</span>`,
-    where(j) && `<span>${esc(where(j))}</span>`, deadlineChip(j), staleChip(j.ghost), sponsorChip(j.sponsor), warmChip(j.warm)].filter(Boolean).join('');
+    where(j) && `<span>${esc(where(j))}</span>`, deadlineChip(j), pipeChip(j), staleChip(j.ghost), sponsorChip(j.sponsor), warmChip(j.warm)].filter(Boolean).join('');
   return `<div class="card ${S.followups.includes(j.id) ? 'late' : ''} ${cur && cur.job.id === j.id ? 'sel' : ''}" data-id="${j.id}" draggable="true" tabindex="0" role="button"
     aria-label="${esc(`#${j.id} ${j.company} - ${j.title}, ${j.status}`)}" ondragstart="event.dataTransfer.setData('text/plain','${j.id}');event.dataTransfer.effectAllowed='move'"
     onclick="openJob(${j.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openJob(${j.id})}">
@@ -157,19 +158,20 @@ function renderToday() {
     ...(t.contacts || []).map(c => `<button class="b ghost sm" onclick="openContact(${Number(c.id)})">get in touch (due ${esc(c.when)}) · ${esc(c.name)}${c.company ? ' (' + esc(c.company) + ')' : ''}</button>`)];
   const em = (t.emails || []).map((s, i) => `<div class="row"><span class="chip ${s.priority === 1 ? 'due' : ''}">${esc(dueText(s.due))}</span><span>${esc(s.reason)} · #${Number(s.job_id)} ${esc(s.company)}${s.to ? ' → ' + esc(s.to) : ''}</span>
     <button class="b ghost sm" onclick="suggestDraft(${i},this)">Draft options</button><button class="b ghost sm" onclick="suggestDismiss(${i})">Dismiss for now</button></div>`);
-  el.style.display = parts.length || em.length || t.pending ? '' : 'none';
-  el.innerHTML = `<h3>Today</h3><div class="row">${parts.join('')}${t.pending ? `<button class="b sm" onclick="go('inbox')">${t.pending} waiting in the Inbox</button>` : ''}</div>`
+  const nq = (S.questions || []).filter(q => q.blocking).length;
+  el.style.display = parts.length || em.length || t.pending || nq ? '' : 'none';
+  el.innerHTML = `<h3>Today</h3><div class="row">${parts.join('')}${t.pending ? `<button class="b sm" onclick="go('inbox')">${t.pending} waiting in the Inbox</button>` : ''}${nq ? `<button class="b sm" onclick="go('inbox')">${nq} question${nq === 1 ? '' : 's'} for you</button>` : ''}</div>`
     + (em.length ? `<h4>Suggested emails</h4>${em.join('')}` : '');
 }
 let SEL = new Set();  // table checkboxes; survives the 60 s refresh
-const COLS = [['id', '#'], ['company', 'Company'], ['title', 'Title'], ['status', 'Status'], ['salary', 'Salary'], ['match_score', 'Match'], ['excitement', 'Excitement'], ['deadline', 'Deadline'], ['location', 'Location'], ['updated_at', 'Last activity']];
+const COLS = [['id', '#'], ['company', 'Company'], ['title', 'Title'], ['status', 'Status'], ['next', 'Next step'], ['salary', 'Salary'], ['match_score', 'Match'], ['excitement', 'Excitement'], ['deadline', 'Deadline'], ['location', 'Location'], ['updated_at', 'Last activity']];
 function renderTable(jobs) {
   const shown = new Set(jobs.map(j => j.id)); SEL = new Set([...SEL].filter(id => shown.has(id)));  // bulk acts on what you see
   const sortAttr = k => V.key === k ? (V.dir > 0 ? 'ascending' : 'descending') : 'none';
   $('#jobTable').innerHTML = `<table class="jobs"><thead><tr><th><input type="checkbox" aria-label="select all shown jobs" ${jobs.length && SEL.size === jobs.length ? 'checked' : ''} onchange="selAll(this.checked)"></th>`
     + COLS.map(([k, l]) => `<th aria-sort="${sortAttr(k)}"><button class="th" onclick="sortBy('${k}')">${l}${V.key === k ? (V.dir > 0 ? ' ▲' : ' ▼') : ''}</button></th>`).join('') + '</tr></thead><tbody>'
     + jobs.map(j => `<tr class="${S.followups.includes(j.id) ? 'late' : ''}"><td><input type="checkbox" aria-label="select #${j.id}" ${SEL.has(j.id) ? 'checked' : ''} onchange="selOne(${j.id},this.checked)"></td>
-      <td>${j.id}</td><td><a href="#" onclick="openJob(${j.id});return false">${esc(j.company)}</a></td><td>${esc(j.title)}</td><td>${esc(j.status)}</td><td>${esc(salaryText(j))}</td>
+      <td>${j.id}</td><td><a href="#" onclick="openJob(${j.id});return false">${esc(j.company)}</a></td><td>${esc(j.title)}</td><td>${esc(j.status)}</td><td>${pipeChip(j)}</td><td>${esc(salaryText(j))}</td>
       <td>${esc(j.match_score ?? '')}</td><td>${stars(j)}</td><td>${deadlineChip(j)}</td><td>${esc(where(j))}</td><td>${esc(localTs(j.updated_at, 10))}</td></tr>`).join('')
     + '</tbody></table>';  // no match: #filterEmpty (renderBoard) says so for both views
   renderBulk();
@@ -271,6 +273,7 @@ async function openJob(id) {
       <select id="jStatus" aria-label="Status">${opt(S.statuses, j.status)}</select><button class="b ghost sm" onclick="moveJob(${j.id},$('#jStatus').value)">move</button>
       <button class="b ghost sm close" onclick="closeDrawer()" aria-label="Close job details">✕</button></div>
     <div class="muted">contact: ${esc(j.contact_name || '')} ${esc(j.contact_email || '(none; replies and follow-ups need one)')}</div>
+${pipelineGroup(d)}
 ${detailsForm(j)}
 ${peopleGroup(d)}
 ${roundsGroup(d)}
@@ -325,6 +328,7 @@ ${mailGroup(d)}
   openDrawer('Job details');
   renderCoverage(savedCoverage(d));
   renderBullets(savedBullets(d), false);
+  stageLine();
   showDoc('timeline', $('#docTabs button'));
 }
 function showDoc(n, btn) {
@@ -645,6 +649,7 @@ function renderInbox() {
     return `<div class="item"><div class="hd"><b>#${r.id}</b><span class="pill">${r.tool}</span><span class="pill">${r.kind}</span>${p.unverified ? '<span class="pill warn" title="the mail this answers was not authenticated or not tied to the job: check the address before you send; sending it moves no job">unverified sender</span>' : ''}${esc(r.summary)}<span class="muted">${esc(localTs(r.ts, 16))}</span></div>
       ${mail ? `<div class="row"><input id="to${r.id}" value="${esc(p.to)}" style="width:260px"><input id="sub${r.id}" class="grow" value="${esc(p.subject)}"></div><textarea id="body${r.id}">${esc(p.body)}</textarea>${'chosen_time' in p ? `<div class="row"><input id="ct${r.id}" value="${esc(p.chosen_time || '')}" placeholder="YYYY-MM-DD HH:MM" style="width:170px"><span class="muted">interview slot this reply accepts; an .ics is written on send. Empty = no .ics.</span></div>` : ''}`
         : `<textarea id="js${r.id}" spellcheck="false" style="font-family:monospace">${esc(JSON.stringify(p, null, 2))}</textarea>`}
+      ${r.kind === 'run_to' && (p.reuse || []).length ? `<div class="reuse"><b>Saved answers this fills in on the form</b> <span class="muted">(yours; reject and change them under Answers if one is wrong)</span><ul>${p.reuse.map(x => `<li>${esc(x.label)} → <b>${esc(x.answer)}</b> <span class="muted">${esc(x.source)}</span></li>`).join('')}</ul></div>` : ''}
       ${mail && r.job_id ? `<div class="row" id="att${r.id}">${attHtml(r)}</div>` : ''}
       ${mail && hasAI() ? `<div class="row"><button class="b ghost sm" onclick="draftOptions('pending',{pending_id:${r.id}},'p${r.id}',this)" title="up to 3 alternatives (one AI call); Use this changes only the subject and body">Options</button>${HOWS.map(([k, l]) => `<button class="b ghost sm" onclick="rewritePending(${r.id},'${k}',this)">${l}</button>`).join('')}<button class="b ghost sm" onclick="rewritePending(${r.id},'',this)">custom…</button></div>${optsHtml('p' + r.id)}` : ''}
       ${r.result ? `<div class="row"><span class="pill warn">${esc(r.result)}</span></div>` : ''}
@@ -1492,6 +1497,166 @@ function activity(btn, fmt) {
       + ((by[w.week] || []).length ? `<table class="kw"><thead><tr><th>date</th><th>activity</th><th>employer</th><th>position</th><th>method</th><th>contact</th><th>result</th></tr></thead><tbody>`
         + by[w.week].map(x => `<tr><td>${esc(x.date)}</td><td>${esc(x.activity.replace('_', ' '))}</td><td>${esc(x.employer)}</td><td>${esc(x.position)}</td><td>${esc(x.method)}</td><td>${esc(x.contact)}</td><td>${esc(x.result)}</td></tr>`).join('') + '</tbody></table>' : '<div class="muted">nothing recorded</div>')).join('');
   }, btn);
+}
+
+/* ---- pipeline (pipeline.py): the drawer's stage strip, Run next step / Run to, the questions queue, Autopilot, run log.
+   Stage names and question texts stay in JS (PIPE, QM); markup carries only indexes and numeric ids ---- */
+const ST_ICON = { done: '✓', ready: '▶', waiting: '?', stale: '↻', blocked: '⛔', error: '!', running: '⟳', todo: '○', later: '·', skipped: '–' };
+const stWord = e => e.state === 'waiting' ? (e.on === 'employer' ? 'waiting on the employer' : 'waiting on you') : e.state;
+const stIcon = e => e.state === 'waiting' && e.on === 'employer' ? '…' : ST_ICON[e.state] || '·';
+const stg = n => (S.pipeline_stages || []).find(s => s.name === n) || {};
+const stLabel = n => stg(n).label || n;
+let PIPE = [], PSEL = null, PJOB = null, QM = {};  // the open job's steps; the step whose line is shown (by name) and its job; question id -> question
+function pipelineGroup(d) {
+  PIPE = d.pipeline || []; if (PJOB !== d.job.id) { PSEL = null; PJOB = d.job.id; } if (!PIPE.length) return '';
+  const j = d.job, nx = PIPE.find(e => e.state === 'ready'), qs = d.questions || [];
+  const you = PIPE.filter(e => e.state === 'waiting' && e.on === 'you'), emp = PIPE.filter(e => e.state === 'waiting' && e.on === 'employer');
+  const reason = nx ? '' : you.length ? 'waiting on you: ' + you[0].why : emp.length ? 'waiting on the employer: ' + emp[0].why : 'nothing is ready to run';
+  const fit = PIPE.find(e => e.name === 'score'), gated = fit && (fit.output || {}).verdict === 'skip';
+  const asked = e => qs.filter(q => (q.jobs || []).some(w => w.job_id === j.id && w.stage === e.name)).length;
+  const tos = PIPE.filter(e => stg(e.name).run && !stg(e.name).manual && !['later', 'skipped'].includes(e.state));
+  const dflt = [...tos].reverse().find(e => e.state !== 'done') || tos[tos.length - 1];
+  const done = PIPE.filter(e => e.state === 'done').length, total = PIPE.filter(e => !['later', 'skipped'].includes(e.state)).length;
+  return `<div class="group" id="pGroup"><h4>Pipeline <span class="muted">${done} of ${total} steps done</span></h4>
+    ${gated ? `<div class="row"><span class="pill warn">fit: skip</span><span class="muted">${esc(fit.output.why || '')}: Autopilot leaves this job alone</span><button class="b ghost sm" onclick="continueAnyway(this)">Continue anyway</button></div>` : ''}
+    <div class="strip" role="group" aria-label="Pipeline steps">${PIPE.map((e, i) => { const n = e.state === 'waiting' && e.on === 'you' ? asked(e) : 0;
+      return `<button class="stage s-${esc(e.state)}${e.state === 'waiting' && e.on === 'employer' ? ' emp' : ''}${PSEL === e.name ? ' on' : ''}" aria-pressed="${PSEL === e.name}" aria-label="${esc(`${e.label}: ${stWord(e)}${e.why ? ' (' + e.why + ')' : ''}`)}" title="${esc(stWord(e) + (e.why ? ': ' + e.why : ''))}" onclick="pickStage(${i})">${stIcon(e)} ${esc(e.label)}${n ? ' ' + n : ''}</button>`; }).join('')}</div>
+    <div id="pLine"></div>
+    <div class="row"><button class="b" id="pNext" ${nx ? '' : 'disabled'} onclick="pipeRun({},this)">Run next step${nx ? ' (' + esc(nx.label) + ')' : ''}</button>${reason ? `<span class="muted" id="pWhy">${esc(reason)}</span>` : ''}</div>
+    ${tos.length ? `<div class="row"><label class="muted">Run to <select id="pTo">${tos.map(e => `<option value="${esc(e.name)}" ${e === dflt ? 'selected' : ''}>${esc(e.label)}</option>`).join('')}</select></label><button class="b ghost sm" onclick="pipeRun({to:$('#pTo').value,rerun:$('#pStale').checked},this)">Go</button><label class="muted"><input type="checkbox" id="pStale"> include stale steps (re-run them)</label></div>` : ''}
+    ${qs.length ? `<h4>Questions for you</h4>${qs.map(q => questionCard(q, 'd')).join('')}` : ''}
+    <details><summary class="muted">Form questions (${Number(((PIPE.find(e => e.name === 'answers') || {}).output || {}).form?.length || 0)})</summary>
+      <textarea id="pForm" rows="3" style="min-height:60px" aria-label="Form questions, one per line" placeholder="paste the application form's questions, one per line"></textarea>
+      <div class="row"><button class="b ghost sm" onclick="addFormQs(this)">Add form questions</button><span class="muted">the Form answers step drafts what it can and asks you the rest (never eligibility or EEO)</span></div></details>
+    <details><summary class="muted">Run log (${(d.runs || []).length})</summary><div class="scroll">${runLogHtml(d.runs)}</div></details></div>`;
+}
+function pickStage(i) { const e = PIPE[i]; PSEL = e && PSEL !== e.name ? e.name : null; $$('#pGroup .stage').forEach((b, k) => { const on = PIPE[k].name === PSEL; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }); stageLine(); }
+function stageLine() {
+  const el = $('#pLine'); if (!el) return;
+  const i = PIPE.findIndex(e => e.name === PSEL), e = PIPE[i]; if (!e) { el.innerHTML = ''; return; }
+  const st = stg(e.name), j = cur.job, o = e.output || {}, btns = [];
+  if (st.run && ['ready', 'error', 'done', 'stale'].includes(e.state)) btns.push(`<button class="b sm" onclick="pipeRun({stage:PIPE[${i}].name,rerun:${['done', 'stale'].includes(e.state)}},this)">${e.state === 'error' ? 'Retry' : e.state === 'ready' ? 'Run' : 'Re-run'}</button>`);
+  if (!['done', 'skipped', 'running', 'later'].includes(e.state) && e.name !== 'close') btns.push(`<button class="b ghost sm" onclick="skipStage(${i},true)">Skip</button>`);
+  if (e.state === 'skipped' && e.why === 'skipped by you') btns.push(`<button class="b ghost sm" onclick="skipStage(${i},false)">Unskip</button>`);
+  if (e.name === 'apply' && j.status === 'saved') {
+    if (safeUrl(j.url)) btns.push(`<a class="b ghost sm" href="${esc(j.url)}" target="_blank" rel="noopener">Open posting ↗</a>`);
+    btns.push(`<button class="b ghost sm" onclick="openJobFolder(${j.id},'')">Show folder</button>`);
+    if ('form_answers.md' in cur.docs) btns.push(`<button class="b ghost sm" onclick="docTab('form_answers.md')">form_answers.md</button>`);
+    btns.push(`<button class="b sm" onclick="moveJob(${j.id},'applied')">Mark applied</button>`);
+  }
+  const files = o.file && o.file in cur.docs && e.name !== 'apply' ? `<button class="b ghost sm" onclick="docTab(PIPE[${i}].output.file)">${esc(o.file)}</button>` : '';
+  const from = Object.entries(e.inputs || {}).filter(([, v]) => v).map(([k, v]) => `${stLabel(k)} ${String(v).slice(0, 6)}`).join(', ');
+  el.innerHTML = `<div class="stline"><div><b>${stIcon(e)} ${esc(e.label)}</b>: ${esc(stWord(e))}${e.why ? ' · ' + esc(e.why) : ''}</div>
+    ${o.verdict ? `<div class="muted">fit: ${esc(o.verdict)}${o.why ? ' (' + esc(o.why) + ')' : ''}</div>` : ''}
+    ${e.rev ? `<div class="muted">rev ${Number(e.rev)} · ${esc(e.origin || '')}${e.updated_at ? ' · ' + esc(localTs(e.updated_at, 16)) : ''}${from ? ' · built from ' + esc(from) : ''}</div>` : ''}
+    ${e.state === 'error' && e.error ? `<div class="row"><span class="pill warn">${esc(e.error)}</span></div>` : ''}
+    <div class="row">${files}${btns.join('')}</div></div>`;
+}
+function docTab(n) { const b = $$('#docTabs button').find(x => x.textContent === n); showDoc(n, b); $('#docView').scrollIntoView({ block: 'nearest' }); }
+const runsText = runs => runs.length ? runs.map(x => `${stLabel(x.stage)}: ${x.outcome}${x.outcome === 'error' || x.outcome === 'skipped' ? ' (' + x.detail + ')' : ''}`).join('; ')
+  : 'nothing ran: the first step on the way is waiting, blocked, manual or stale (tick "include stale steps" to re-run those)';
+function pipeRun(body, btn) {
+  const id = cur.job.id;
+  run('pipeline_run', { id, ...body }, r => { toast(runsText(r.runs), r.runs.some(x => x.outcome === 'error') || !r.runs.length ? 'err' : 'ok'); if (cur && cur.job.id === id) openJob(id); }, btn);
+}
+function continueAnyway(btn) { if (confirm('The fit check said skip. Run the next step for this job anyway? Autopilot still leaves it alone; this click is the override.')) pipeRun({}, btn); }
+async function skipStage(i, on) {
+  const e = PIPE[i], id = cur.job.id; if (!e) return;
+  const r = await api(`/api/pipeline/${id}/skip`, { stage: e.name, on }); if (r.error) return toast('error: ' + r.error, 'err');
+  toast(`${e.label} ${on ? 'skipped for this job' : 'back in the pipeline'}`, 'ok'); await load(); openJob(id);
+}
+async function addFormQs(btn) {
+  const id = cur.job.id, lines = $('#pForm').value; if (!lines.trim()) return toast('paste the questions first, one per line', 'err');
+  btn.disabled = true; const r = await api(`/api/pipeline/${id}/questions`, { lines }); btn.disabled = false;
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast(`${Number(r.added)} new form question(s); run the Form answers step to answer them`, 'ok'); $('#pForm').value = ''; await load(); openJob(id);
+}
+function runLogHtml(rows, job) {
+  return rows && rows.length ? `<table class="log"><tr><th>when</th>${job ? '<th>job</th>' : ''}<th>step</th><th>by</th><th>outcome</th><th>AI calls</th><th>detail</th></tr>${rows.map(r => `<tr><td>${esc(localTs(r.ts, 16))}</td>${job ? `<td><a href="#" onclick="openJob(${Number(r.job_id)});return false">#${Number(r.job_id)}</a></td>` : ''}<td>${esc(stLabel(r.stage))}</td><td>${esc(r.origin)}</td><td>${esc(r.outcome)}</td><td>${Number(r.ai)}</td><td>${esc(r.detail)}</td></tr>`).join('')}</table>`
+    : '<div class="muted">no runs yet</div>';
+}
+async function pipeLog(btn) { const r = await api('/api/pipeline/log?limit=50'); if (r.error) return toast('error: ' + r.error, 'err'); $('#apLog').innerHTML = `<div class="scroll">${runLogHtml(r.runs, true)}</div>`; }
+
+/* questions: the same card in the Inbox (prefix i) and the drawer (prefix d) */
+function questionCard(q, pre) {
+  const id = Number(q.id), k = q.kind, never = k === 'eligibility' || k === 'eeo', f = `${pre}q${id}`, ctx = q.context || {};
+  QM[id] = q;
+  const input = q.options ? `<select id="${f}a" aria-label="answer">${q.options.map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('')}</select>`
+    : k === 'number' ? `<input id="${f}a" type="number" aria-label="answer" style="width:160px">`
+    : k === 'date' ? `<input id="${f}a" type="date" aria-label="answer">`
+    : `<textarea id="${f}a" aria-label="answer" rows="3" maxlength="4000" style="min-height:60px"></textarea>`;
+  return `<div class="item q" data-q="${id}"><div class="hd"><b>${esc(q.text)}</b>${(q.jobs || []).map(w => `<span class="pill">#${Number(w.job_id)} ${esc(w.company)} - ${esc(stLabel(w.stage))}</span>`).join('')}
+      ${never ? `<span class="pill warn">You answer this one; Lodestar never drafts ${k === 'eeo' ? 'EEO' : 'eligibility'} answers</span>` : ''}${q.blocking ? '' : '<span class="pill">optional</span>'}</div>
+    ${ctx.why ? `<div class="muted">why: ${esc(ctx.why)}</div>` : ''}${q.waiting > 1 ? `<div class="muted">${Number(q.waiting)} jobs are waiting</div>` : ''}
+    <div class="row">${input}</div>
+    ${(q.suggestions || []).length ? `<div class="row"><span class="muted">from your answers:</span>${q.suggestions.map((s, n) => `<button class="b ghost sm" title="${esc(s.question)}" onclick="useSugg('${pre}',${id},${n})">Use this: ${esc(String(s.answer).slice(0, 60))}</button>`).join('')}</div>` : ''}
+    <div class="row"><select id="${f}s" aria-label="use this answer for" ${q.apply_to === 'bank' ? '' : 'disabled'}><option value="reusable" ${q.scope_default === 'reusable' ? 'selected' : ''}>every job</option><option value="job" ${q.scope_default === 'job' ? 'selected' : ''}>only this job${q.job_id ? ' (#' + Number(q.job_id) + ')' : ''}</option></select>
+      <label class="muted"><input type="checkbox" id="${f}p" ${k === 'private' ? 'checked' : ''}> private (this job only, never in the answer bank)</label>
+      <button class="b sm" onclick="answerQ('${pre}',${id},this)">Save answer</button><button class="b ghost sm" onclick="dismissQ(${id},this)">I'll fill it in myself</button></div></div>`;
+}
+function useSugg(pre, id, n) { const s = ((QM[id] || {}).suggestions || [])[n], a = $(`#${pre}q${id}a`); if (s && a) { a.value = s.answer; a.focus(); } }
+async function afterQ(r, msg) {
+  if (r.error) return toast('error: ' + r.error, 'err');
+  const n = (r.resumed || []).length; toast(msg + (n ? `; ${n} waiting step(s) can go on` : ''), 'ok'); await load(); if (cur) openJob(cur.job.id);
+}
+async function answerQ(pre, id, btn) {
+  const f = `#${pre}q${id}`, text = $(f + 'a').value.trim(); if (!text) return toast('type an answer first', 'err');
+  btn.disabled = true; const r = await api(`/api/questions/${id}/answer`, { text, scope: $(f + 's').value, private: $(f + 'p').checked }); btn.disabled = false;
+  afterQ(r, 'answer saved');
+}
+async function dismissQ(id, btn) { btn.disabled = true; const r = await api(`/api/questions/${id}/dismiss`, {}); btn.disabled = false; afterQ(r, 'left for you to fill in'); }
+function keepVals(root) {  // the 60 s refresh re-renders: typed answers, picks and the caret survive it
+  const vals = {}; root.querySelectorAll('input[id], textarea[id], select[id]').forEach(e => {
+    const d = e.tagName === 'SELECT' ? ([...e.options].find(o => o.defaultSelected) || e.options[0] || {}).value : e.type === 'checkbox' ? e.defaultChecked : e.defaultValue;
+    const v = e.type === 'checkbox' ? e.checked : e.value; if (v !== d) vals[e.id] = v; });
+  const f = root.contains(document.activeElement) ? document.activeElement : null, at = f && [f.id, f.selectionStart, f.selectionEnd];
+  return () => {
+    for (const [k, v] of Object.entries(vals)) { const e = document.getElementById(k); if (e) e[e.type === 'checkbox' ? 'checked' : 'value'] = v; }
+    const b = at && at[0] && document.getElementById(at[0]); if (b) { b.focus(); try { b.setSelectionRange(at[1], at[2]); } catch (_) { /* not a text field */ } }
+  };
+}
+function renderQuestions() {
+  const root = $('#questions'), back = keepVals(root), qs = S.questions || [];
+  root.innerHTML = qs.length ? `<h3>Questions for you (${qs.length})</h3><p class="sub">Facts a pipeline step needs and cannot know. Answer once: "every job" saves it to your answer bank, "only this job" keeps it with this application. Eligibility and EEO answers are always yours.</p>${qs.map(q => questionCard(q, 'i')).join('')}` : '';
+  back();
+}
+
+/* board chip, table column, bulk runs */
+function pipeChip(j) {
+  const p = (S.pipeline || {})[j.id]; if (!p) return '';
+  if (p.you) return `<span class="chip pq" title="waiting on you">? ${Number(p.you)}</span>`;
+  if (p.errors) return '<span class="chip pe" title="a step failed: open the job to retry">! error</span>';
+  if (p.stale) return '<span class="chip" title="an earlier step changed since">↻ stale</span>';
+  return p.next ? `<span class="chip" title="the next pipeline step">next: ${esc(stLabel(p.next))}</span>` : '';
+}
+function bulkPipe(useTo, btn) {
+  const ids = [...SEL], to = useTo ? $('#bulkTo').value : '', names = (S.pipeline_stages || []).map(s => s.name);
+  if (ids.length > 25) return toast('at most 25 jobs at a time', 'err');
+  const n = ids.reduce((sum, id) => { const nx = ((S.pipeline || {})[id] || {}).next, a = names.indexOf(nx); if (a < 0) return sum;
+    return sum + S.pipeline_stages.slice(a, (to ? names.indexOf(to) : a) + 1).filter(s => s.run && !s.manual).reduce((x, s) => x + s.ai, 0); }, 0);
+  if (!confirm(`${to ? 'Run to ' + stLabel(to) : 'Run the next step'} for ${ids.length} job(s)? About ${n} AI call${n === 1 ? '' : 's'}.`)) return;
+  run('pipeline_bulk', { ids, to: to || undefined }, r => {
+    const bad = r.jobs.filter(x => x.error || (x.runs || []).some(y => y.outcome === 'error')), ran = r.jobs.filter(x => (x.runs || []).length);
+    const idle = r.jobs.filter(x => !x.error && !(x.runs || []).length).length;  // nothing ready: not an error
+    SEL.clear(); toast(`ran steps for ${ran.length} of ${r.jobs.length} job(s)` + (idle ? `; ${idle} had nothing ready` : '')
+      + (bad.length ? ': ' + bad.map(x => `#${Number(x.id)}: ${String(x.error || 'a step failed').replace(/^#\d+:?\s*/, '')}`).join('; ') : ''), bad.length ? 'err' : 'ok');
+  }, btn);
+}
+
+/* Autopilot: the top-bar pill and the Setup card (master switch, budgets, per-step switches, last cycle, run log) */
+function renderAutopilot() {
+  const p = S.prefs, a = S.autopilot || {}, pill = $('#apPill');
+  pill.textContent = p.autopilot ? `Autopilot: on · ${Number(a.spent)} of ${Number(p.autopilot_ai_per_day)} AI calls today` : 'Autopilot: off';
+  pill.classList.toggle('on', !!p.autopilot);
+  $('#apOn').checked = !!p.autopilot;
+  [['#apCycle', 'autopilot_ai_per_cycle'], ['#apDay', 'autopilot_ai_per_day'], ['#apJobs', 'autopilot_jobs_per_cycle']].forEach(([s, k]) => { if (document.activeElement !== $(s)) $(s).value = p[k]; });
+  const rows = (S.pipeline_stages || []).filter(s => s.tool && s.run).map(s => { const i = S.tools.findIndex(t => t.tool === s.tool), t = S.tools[i]; return t ? `<tr><td><b>${esc(s.label)}</b> <span class="muted">(${esc(t.tool)}, about ${Number(s.ai)} AI call${s.ai === 1 ? '' : 's'})</span><div class="muted">${esc(t.description)}</div></td>
+    <td><input type="checkbox" aria-label="${esc(s.label)} enabled" ${t.enabled ? 'checked' : ''} onchange="api('/api/tools',{tool:S.tools[${i}].tool,enabled:this.checked}).then(load)"></td>
+    <td><input type="checkbox" aria-label="${esc(s.label)} auto" ${t.auto ? 'checked' : ''} onchange="api('/api/tools',{tool:S.tools[${i}].tool,auto:this.checked}).then(load)"></td></tr>` : ''; }).join('');
+  $('#apStages').innerHTML = `<table><tr><th>Step</th><th>enabled</th><th>auto</th></tr>${rows}</table>`;
+  const l = a.last || {};
+  $('#apLast').textContent = l.at ? `last cycle ${l.at}: ran ${Number(l.ran)}, proposed ${Number(l.proposed)}${l.note ? ' · ' + l.note : ''}` : 'no Autopilot cycle in this process yet (the monitor loop runs one every cycle)';
+  if (!$('#bulkTo').options.length) $('#bulkTo').innerHTML = (S.pipeline_stages || []).filter(s => s.run && !s.manual).map(s => `<option value="${esc(s.name)}">${esc(s.label)}</option>`).join('');
 }
 
 /* ---- drawer keyboard: Esc closes (asking first when typed text would be lost), Tab stays inside (aria-modal) ---- */
