@@ -1,5 +1,22 @@
 # Changelog (development passes, newest first)
 
+## Pass 16.4 (2026-11-09): auto-update
+
+**Updates**
+- Lodestar can now update itself. `lodestar update check` shows the commits and these changelog notes an update
+  would bring; `lodestar update apply` backs up your data, moves the install forward, runs the tests on the new code
+  and puts the old version back if anything fails. `lodestar update status` and `lodestar update log` show what
+  happened, and so does `lodestar doctor`.
+- The monitor loop checks once a day (preference `update_every_hours`). Preference `update_mode`: `notify` (the
+  default) tells you when an update is out, `auto` applies it, `off` never checks.
+- An update is never applied while the install folder has changes or commits of its own, or while a mail scan or a
+  send is running. Updates come only from an https:// origin.
+- The standalone .exe only tells you a new version is out and where to download it.
+- In the app, Setup > Updates: choose off / notify / auto and how often to check, Check now (the commits and what's
+  new), Update now (asks first, then shows progress and the result), a Restart button in the desktop app, and the
+  update log. A badge at the top says when an update is out or a restart is needed; a failed update shows under
+  Getting started.
+
 ## Pass 16.3 (2026-11-09): browser test suite and full test list
 
 **Browser tests**

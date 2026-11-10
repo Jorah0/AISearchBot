@@ -11,6 +11,7 @@
 <div class="brand"><img src="/logo.svg" width="30" height="30" alt=""><div>Lodestar<small>the star you steer by</small></div></div>
 <div class="top"><div class="stats" id="stats"></div><span class="muted" id="loopStat" style="margin-left:14px"></span><div class="spacer"></div>
   <button class="b ghost sm" id="codesPill" style="display:none" title="a sign-in code arrived by email" onclick="go('inbox');$('#codesPanel').open=true;codesLoad()">Codes</button>
+  <button class="b ghost sm" id="updPill" style="display:none" onclick="go('setup');$('#updCard').scrollIntoView()">Update available</button>
   <button class="b ghost sm" onclick="run('email_check',{days:3},r=>toast((r.found||[]).length+' relevant email(s)'+(r.note?'\n'+r.note:''),r.note?'err':'ok'),this)">Check email</button>
   <button class="b ghost sm" onclick="run('watch_run',{},r=>toast((r.alerts||[]).length+' alert(s)','ok'),this)">Run watches</button>
 </div>
@@ -314,6 +315,15 @@
         <button class="b ghost" onclick="api('/api/open_folder',{which:'backups'})">Open backups</button>
         <button class="b ghost" onclick="api('/api/open_folder',{which:'log'})">Open log</button></div>
       <p class="muted">Nightly backups keep the last 7 zips (tool <b>backup</b>). Exports are a JSON dump of every table, or one CSV per table.</p></div>
+    <div class="panel" id="updCard"><h3>Updates</h3>
+      <div class="row"><label>Updates <select id="uMode" onchange="setPref('update_mode',this.value)"><option value="off">off</option><option value="notify">tell me (notify)</option><option value="auto">install automatically</option></select></label>
+        <label>check every <input id="uEvery" type="number" min="1" max="720" style="width:70px" onchange="setPref('update_every_hours',Number(this.value))"> hours</label>
+        <button class="b ghost" id="uCheck" onclick="updCheck(this)">Check now</button></div>
+      <div class="muted" id="uInfo"></div>
+      <div id="uPlan"></div>
+      <div id="uResult" role="status" aria-live="polite"></div>
+      <details id="uLogBox"><summary class="muted">Update log</summary><div id="uLog" class="list"></div></details>
+      <p class="muted">The monitor loop checks on this interval. An update comes only from the configured origin, fast-forward only, never over your own changes or while mail is being sent or scanned: a backup first, then the tests and <code>lodestar doctor</code> on the new code, rolled back if anything fails. Same as <code>lodestar update</code>.</p></div>
     <div class="panel"><h3>About</h3><p class="muted"><span id="ver"></span> · Lodestar is local-first: the UI binds to 127.0.0.1, secrets live in the OS keyring, data is in your home folder. Docs: README.md, docs/SETUP.md, docs/AUTOMATION.md, docs/COMMANDS.md.</p></div>
   </div>
 </section>

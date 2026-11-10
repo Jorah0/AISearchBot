@@ -46,6 +46,7 @@ PUBLIC = {"/api/capture", "/api/autofill"}  # the only routes other origins may 
 TASK_LOCK = threading.Lock()
 DOC_NAMES = {"resume.md", "cover_letter.md", "interview_prep.md", "research.md", "offer.md", "mock_interview.md"}  # editable per-job files
 TASKS: dict[str, dict] = {}
+RESTART = None  # lodestar desktop sets this (desktop.relaunch): Setup > Updates then offers a Restart button
 COACH = ("You are a sharp, practical career coach and job-search strategist. Use the candidate's profile and tracker "
          "below to give specific, actionable advice. Be brief and direct.")
 
@@ -298,6 +299,17 @@ def _act(action: str, p: dict):
             return {"rows": rows}
         case "backup":
             return {"path": str(extras.backup())}
+        case "update_check":  # fetches the origin (up to 3 min): never on an HTTP thread
+            from . import updater
+
+            return updater.check(updater.ROOT)
+        case "update_apply":  # {target}: only the commit range the user saw; a moved origin asks for a new check
+            from . import updater
+
+            plan = updater.check(updater.ROOT, record=False)
+            if p.get("target") and plan["target"] != p["target"]:
+                raise SystemExit("the origin changed since your check: check again to see what the update brings")
+            return updater.apply(updater.ROOT, plan)
         case "export":  # {fmt: json|csv}; CSV writes one file per table into ~/.lodestar/exports
             return {"path": str(extras.export_data("csv" if p.get("fmt") == "csv" else "json"))}
         case "email_signin":  # {provider, account?, login_hint?}: waits for the browser, then tests IMAP and SMTP
@@ -412,6 +424,24 @@ def split_title(page_title: str) -> tuple[str, str]:
 
 
 # ----------------------------------------------------------------------------- state
+def update_view() -> dict:
+    """Setup > Updates and the top-bar badge, from the update log (no network): the last check still offers an update
+    unless a later update succeeded; failed: the last update failed or was refused (Getting started notes it)."""
+    from . import updater
+
+    try:
+        s = updater.status(updater.ROOT)
+    except (Exception, SystemExit) as e:  # the state must load whatever the install looks like
+        return {"kind": "none", "error": str(e)[:200], "log": [], "available": False, "failed": None,
+                "restart_needed": False, "restart": False}
+    c, u = s["last_check"], s["last_update"]
+    newer = lambda a, b: a and (not b or a["at"] >= b["at"])  # noqa: E731
+    return s | {"log": updater.entries(20), "restart": RESTART is not None,
+                "available": bool(c and c["result"].startswith("update available") and
+                                  not (u and u.get("ok") and newer(u, c))),
+                "failed": u if u and not u.get("ok") and u["result"].startswith(("failed", "refused")) else None}
+
+
 def setup_status(conn: dict | None = None) -> dict:
     """What a new user still has to do before the AI features work. conn: connections.status(), when already read."""
     from .profile import is_template, master_text
@@ -481,6 +511,7 @@ def state() -> dict:
         "profile_path": str(PROFILE),
         "usage_today": ai.usage(1)["total"],
         "usage": ai.usage(30),
+        "update": update_view(),
     }
 
 
@@ -630,6 +661,15 @@ class Handler(BaseHTTPRequestHandler):
 
                 pend = dict(oauth.PENDING)
                 self._json({"pending": bool(pend), "url": pend.get("url", ""), "provider": pend.get("provider", "")})
+            elif path == "/api/update/status":  # no network: install kind, prefs, last check and update, the log
+                self._json(update_view())
+            elif path == "/api/update/log":  # ?limit=N (default 50)
+                from urllib.parse import parse_qs
+
+                from .updater import entries
+
+                n = parse_qs(urlparse(self.path).query).get("limit", ["50"])[0]
+                self._json({"log": entries(min(int(n), 500) if n.isdigit() else 50)})
             elif path == "/api/autofill":  # the autofill bookmarklet reads this; it never submits a form
                 # CORS-open to the page you are on: send only the fields it types, not the private answer bank
                 self._json({k: v for k, v in extras.autofill_data().items() if k != "answers"})
@@ -941,6 +981,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"codes": codes.poll()})
             elif path.startswith("/api/codes/") and len(parts) == 5 and parts[4] == "dismiss":
                 codes.dismiss(parts[3])
+                self._json({"ok": True})
+            elif path in ("/api/update/check", "/api/update/apply"):  # background: a fetch, then tests on apply
+                self._json({"task": start_task("update_" + parts[3], {"target": str(p.get("target") or "")})})
+            elif path == "/api/update/restart":  # desktop app only: relaunch on the new code once nothing is in flight
+                from .updater import busy
+
+                if RESTART is None:
+                    raise ValueError("restart is offered in the desktop app only: close Lodestar and start it again")
+                if why := busy():
+                    raise ValueError(f"not now: {why}; try again in a moment")
+                threading.Timer(0.5, RESTART).start()  # after this answer has left
                 self._json({"ok": True})
             elif path.startswith("/api/run/"):
                 self._json({"task": start_task(parts[3], p)})

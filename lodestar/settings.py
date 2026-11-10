@@ -50,6 +50,12 @@ PREFS = {
     "excluded_title_words": "",
     "weekly_goals": {},  # goal=number per week (GOALS); none by default, and no default application count
     "activity_weekly_min": 0,  # activity log: activities a week your unemployment claim asks for (0 = none set)
+    # self-update (updater.py): the monitor loop checks every update_every_hours; notify = an alert, auto = apply
+    "update_mode": "notify",
+    "update_every_hours": 24,
+    "update_channel": "commits",  # commits: the origin branch's tip; releases: its newest v* tag
+    "update_origin": "",  # empty: the install's git origin remote (https:// or a local folder only)
+    "update_manifest_url": "",  # the standalone (-Exe) build: an https JSON {version, url, notes}; notify only
 }
 PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "name": ("Your name", "signs drafted emails when no signature is set"),
@@ -69,11 +75,17 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "excluded_title_words": ("Excluded title words (private)", "comma list: listings whose title has one are dropped"),
     "weekly_goals": ("Weekly goals", "goal=number, e.g. contacts=5 (also on the Insights tab)"),
     "activity_weekly_min": ("Activity log weekly minimum", "activities a week your unemployment claim asks for (0 = none)"),
+    "update_mode": ("Updates", "off; notify: tell me when an update is out; auto: apply it (tested, rolled back on failure)"),
+    "update_every_hours": ("Check for updates every (hours)", "how often the monitor loop looks for an update (1-720)"),
+    "update_channel": ("Update channel", "commits: every change on the origin branch; releases: tagged versions only"),
+    "update_origin": ("Update origin", "https:// git URL or local folder to update from; empty: the install's origin"),
+    "update_manifest_url": ("Update manifest (standalone build)", "https URL of the version file the .exe checks"),
 }
 CHOICES = {"resume_style": ("classic", "modern", "compact"),  # prefs limited to a fixed set of values
-           "provider": ("", *PROVIDERS)}  # "" = the first configured one
+           "provider": ("", *PROVIDERS),  # "" = the first configured one
+           "update_mode": ("off", "notify", "auto"), "update_channel": ("commits", "releases")}
 RANGES = {"followup_days": (1, 90), "auto_track_min_score": (0, 100), "weekly_target": (0, 200),
-          "activity_weekly_min": (0, 100)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
+          "activity_weekly_min": (0, 100), "update_every_hours": (1, 720)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
 GOALS = ("contacts", "tailored_applications", "mock_sessions", "applications")  # quality first, raw volume last
 
 
@@ -141,6 +153,14 @@ def set_pref(key: str, value) -> None:
             raise SystemExit(f"unknown preference '{key}'. Keys: {', '.join(PREFS)}")
         if key == "provider":  # 'Anthropic ' works; a typo is refused here (CHOICES), never a KeyError at the next AI call
             value = str(value or "").strip().lower()
+        if key in ("update_origin", "update_manifest_url"):
+            value = str(value or "").strip()
+            if key == "update_origin" and value:
+                from .updater import allowed_origin
+
+                value = allowed_origin(value)  # https:// or a local folder; ssh / http / git:// are refused here
+            elif value and not value.lower().startswith("https://"):
+                raise SystemExit(f"{key} must be an https:// URL")
         if key in CHOICES and value not in CHOICES[key]:
             raise SystemExit(f"{key} is one of: {', '.join(c or '(empty: automatic)' for c in CHOICES[key])}")
         data = load()

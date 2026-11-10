@@ -54,6 +54,27 @@ def open_window(port: int, title: str = "Lodestar") -> None:
         _browser(url)
 
 
+def relaunch() -> None:
+    """Setup > Updates > Restart: start a fresh `lodestar desktop` (same arguments, the updated code), then close this
+    window so this process ends. The browser fallback has no window to close: the process ends after a few seconds."""
+    import subprocess
+    import sys
+    import threading
+
+    cmd = [sys.executable, *sys.argv[1:]] if getattr(sys, "frozen", False) else [sys.executable, "-m", "lodestar", *sys.argv[1:]]
+    subprocess.Popen(cmd, cwd=str(Path(__file__).resolve().parent.parent))
+    try:
+        import webview
+
+        for w in list(webview.windows):
+            w.destroy()
+    except Exception:  # no pywebview: the browser fallback
+        pass
+    t = threading.Timer(5, os._exit, (0,))
+    t.daemon = True  # a closed window ends the process sooner; this is the backstop
+    t.start()
+
+
 def _browser(url: str) -> None:
     webbrowser.open(url)
     try:

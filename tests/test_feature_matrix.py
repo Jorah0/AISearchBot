@@ -27,7 +27,9 @@ outcomes-platform-schedule outcomes-platform-installer-ps1 outcomes-platform-pyi
 outcomes-platform-uninstaller outcomes-platform-start-scripts outcomes-platform-package-data outcomes-platform-desktop-launch
 outcomes-platform-ci outcomes-platform-api-token outcomes-platform-usage-alerts-init outcomes-platform-docs-test-count
 outcomes-platform-docs-inventory outcomes-platform-docs-claims platform-fetch platform-db platform-cli
-platform-test-matrix""".split())
+platform-test-matrix outcomes-platform-update-check outcomes-platform-update-apply
+outcomes-platform-update-loop outcomes-platform-update-exe outcomes-platform-update-cli
+outcomes-platform-update-ui outcomes-platform-update-restart""".split())
 PLANNED = set("""tracker-sourcing-36 tracker-sourcing-37 tracker-sourcing-38 tracker-sourcing-39 profile-resume-ai-38
 profile-resume-ai-39 profile-resume-ai-40 profile-resume-ai-41 profile-resume-ai-42 mail-people-interviews-45
 mail-people-interviews-46 mail-people-interviews-47 ui-sweep-67 ui-sweep-68 ui-sweep-69 ui-sweep-70 ui-sweep-71 ui-sweep-72

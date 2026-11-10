@@ -859,15 +859,61 @@ def cmd_doctor(a):
     raise SystemExit(0 if report(a.live) < 2 else 1)
 
 
+def _print_update(p: dict) -> None:
+    print(p["result"])
+    if p.get("origin"):
+        print(f"origin: {p['origin']}")
+    for c in p.get("commits") or []:
+        print(f"  {c}")
+    if p.get("changelog"):
+        print("\n" + p["changelog"])
+    if p.get("blocked"):
+        print(f"\nnot applicable now: {p['blocked']}")
+
+
+def cmd_update(a):
+    """Self-update (updater.py). apply shows the commit range and changelog first and asks unless --yes."""
+    from . import updater
+
+    if a.op == "check":
+        _print_update(updater.check())
+    elif a.op == "apply":
+        p = updater.check()
+        _print_update(p)
+        if not p["available"] or p["kind"] != "git" or p["blocked"]:
+            return
+        if not a.yes:
+            try:
+                if input("\nApply this update? [y/N] ").strip().lower() not in ("y", "yes"):
+                    return print("not applied")
+            except EOFError:
+                return print("not applied (no answer; use --yes)")
+        print("backing up, updating and running the tests (a minute or two)...")
+        r = updater.apply(plan=p)
+        print(r["result"])
+        if r.get("backup"):
+            print(f"backup: {r['backup']}")
+        if not r["ok"]:
+            raise SystemExit(1)
+    elif a.op == "log":
+        for e in updater.entries(a.limit) or [{"at": "", "kind": "", "from": "", "to": "", "result": "(no checks yet)"}]:
+            span = f"{e['from'][:7]}..{e['to'][:7]}" if e["from"] or e["to"] else ""
+            print(f"{e['at']:<19} {e['kind']:<6} {span:<16} {e['result']}")
+    else:
+        for status, what, detail in updater.doctor_rows():
+            print(f"{what:<14} {detail}")
+
+
 def cmd_desktop(a):
     """The desktop app: server + monitor loop in this process, the UI in a native window. What the shortcut runs."""
     import threading
 
-    from . import desktop
+    from . import desktop, web
     from .web import start_server
 
     from . import connections
 
+    web.RESTART = desktop.relaunch  # Setup > Updates offers Restart after an update
     port = a.port or desktop.free_port()
     srv = start_server(port)
     connections.start_checks()  # background, once; never blocks or crashes the window
@@ -1531,6 +1577,7 @@ def build() -> argparse.ArgumentParser:
         p.add_argument("--days", type=int, default=2, help="email lookback")
         p.add_argument("--followup", type=int, default=None, help="nudge after N quiet days (default: pref followup_days)")
         p.add_argument("--no-email", dest="email", action="store_false")
+        p.add_argument("--no-update", dest="update", action="store_false", help="skip the update check (pref update_mode)")
 
     s = sub.add_parser("run", help="automation loop: email + watches + follow-up nudges")
     loop_args(s)
@@ -1540,6 +1587,15 @@ def build() -> argparse.ArgumentParser:
     s = sub.add_parser("doctor", help="check the install: Python, modules, WebView2, keyring, data folder, profile, providers, mail")
     s.add_argument("--live", action="store_true", help="also make one real call per configured provider")
     s.set_defaults(f=cmd_doctor)
+
+    s = sub.add_parser("update", help="updates of this install: check, apply (backup, fast-forward, tests, rollback), status, log")
+    v = s.add_subparsers(dest="op")
+    v.add_parser("check", help="fetch the origin; show the commits and changelog an update would bring")
+    x = v.add_parser("apply", help="show the update, then back up, fast-forward, test and roll back on failure")
+    x.add_argument("--yes", action="store_true", help="apply without asking")
+    v.add_parser("status", help="install kind, update preferences, last check and update")
+    x = v.add_parser("log", help="every check and update: time, from, to, result"); x.add_argument("--limit", type=int, default=20)
+    s.set_defaults(f=cmd_update)
 
     s = sub.add_parser("desktop", help="the desktop app: native window + monitor loop in one process (the shortcut)")
     loop_args(s)

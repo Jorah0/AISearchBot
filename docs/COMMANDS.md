@@ -188,6 +188,9 @@ page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, w
 | `GET /api/analytics` | Insights: per-week series, response rate by source and by match band, funnel, variants, weekly goals |
 | `GET /api/offers` | live offers side by side (totals, best per row, market range, gap to your private salary floor) |
 | `POST /api/offers/ID` `{base, bonus_pct, sign_on, equity_value_estimate, vest_years, cliff_months, retirement_match_pct, remote, start_date, deadline, notes}` | record or edit a structured offer (whitelisted, validated; `""` clears; the job moves to `offer`; all fields empty records nothing, and clearing every field removes the offer) |
+| `GET /api/update/status` / `GET /api/update/log?limit=50` | Setup > Updates, no network: install kind, version, `update_mode` / `update_every_hours` / `update_channel`, last check and update, `available` (the last check found one and no update since), `failed` (the last update failed or was refused), `restart_needed`, `restart` (the desktop app can relaunch), the last 20 log rows (`GET /api/state` carries the same as `update`) / the update log, newest first |
+| `POST /api/update/check` / `POST /api/update/apply` `{target}` | background tasks (`{task}`; poll `GET /api/tasks/ID`): the check (`{available, current, target, behind, commits, changelog, blocked, result}`) / the update to exactly the `target` that check showed (a moved origin is refused: check again): backup, fast-forward, tests and doctor, rollback; `{ok, result, backup}` |
+| `POST /api/update/restart` | desktop app only: relaunch `lodestar desktop` with the same arguments and close this window; refused while a mail scan, an Inbox send or a background action runs |
 | `POST /api/run/ACTION` then `GET /api/tasks/ID` | background actions: tailor, cover, gap, prep, review, reply, outreach, ics, email_check, watch_run, search, chat, council, digest, obsidian, providers_test, providers_local, models, export (`{fmt: json or csv}`), auto_track, mock (`{messages, id, session?, seconds?}`; an answer returns a score `card`), packet, doctor (`{live}`), backup, match (`{id}`), lint (`{text}`), audit (`{id}`, or `{}` for the newest saved resume file), referral (`{id, contact_id}`), contacts_import (`{name, data: base64}`), counter (`{id, cite: ["JOB:field"], ask?, template?}`; always waits in the Inbox), activity (`{from, to, fmt?: csv\|html}`) |
 
 ## Automation and approvals (see AUTOMATION.md)
@@ -196,7 +199,7 @@ page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, w
 |---|---|
 | `lodestar tools list` | every automated tool with its enabled / auto switches, plus preferences |
 | `lodestar tools enable\|disable\|auto\|manual NAME` | flip a switch |
-| `lodestar tools set KEY VALUE` | preferences: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, weekly_target (applications/week, used by idea crafting), provider, council_providers, council_judge, signature, desktop_notifications (true/false), resume_style (classic, modern, compact), excluded_companies, excluded_title_words, weekly_goals (`goal=number`), activity_weekly_min, models (`provider=model`; also written by self-healing model selection). Whole numbers are range-checked: followup_days 1-90, auto_track_min_score 0-100, weekly_target 0-200, activity_weekly_min 0-100 |
+| `lodestar tools set KEY VALUE` | preferences: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, weekly_target (applications/week, used by idea crafting), provider, council_providers, council_judge, signature, desktop_notifications (true/false), resume_style (classic, modern, compact), excluded_companies, excluded_title_words, weekly_goals (`goal=number`), activity_weekly_min, update_mode (off / notify / auto), update_every_hours, update_channel (commits / releases), update_origin, update_manifest_url, models (`provider=model`; also written by self-healing model selection). Whole numbers are range-checked: followup_days 1-90, auto_track_min_score 0-100, weekly_target 0-200, activity_weekly_min 0-100, update_every_hours 1-720 |
 | `lodestar inbox [--all] [-v]` | actions waiting for approval (`-v` shows the drafted email / payload) |
 | `lodestar approve ID... [--subject] [--body FILE] [--to]` | execute, optionally editing the email first |
 | `lodestar reject ID... [--reason]` | discard |
@@ -309,10 +312,34 @@ and backups folders.
 
 | Command | What it does |
 |---|---|
-| `lodestar doctor [--live]` | PASS / WARN / FAIL lines for Python version, required and optional modules, WebView2 runtime, keyring backend, data folder, master profile, configured providers (with the model each will use), mail settings, leftover legacy folder; `--live` makes one real call per provider. Exit code 1 when something is broken. |
+| `lodestar doctor [--live]` | PASS / WARN / FAIL lines for Python version, required and optional modules, WebView2 runtime, keyring backend, data folder, master profile, configured providers (with the model each will use), mail settings, updates (install kind, update preferences, last check and last update from the update log, restart needed), leftover legacy folder; `--live` makes one real call per provider. Exit code 1 when something is broken. |
 
 Setup also has a Diagnostics panel (same checks as `lodestar doctor`, with an optional live AI call) and an
 "Open log" button next to the data folders.
+
+## Updates (pass 16.4)
+
+| Command | What it does |
+|---|---|
+| `lodestar update check` | fetch the origin (pref `update_origin`, else the install's `origin` remote; https:// or a local folder only) and print the commits and the CHANGELOG sections an update would bring, and why it cannot be applied now if something blocks it |
+| `lodestar update apply [--yes]` | the same, then (after you answer y, or with `--yes`) back up the data folder, fast-forward the install, reinstall only when `pyproject.toml` changed, run the unit suite (on a throwaway data folder) and `lodestar doctor` on the new code, and on any failure reset to the exact previous commit. Refused while the install has uncommitted changes or commits the origin does not, or while a mail scan, an Inbox send or a background action runs |
+| `lodestar update status` | install kind (git, standalone build, other), version, `update_mode` / `update_every_hours` / `update_channel`, last check and last update, restart needed |
+| `lodestar update log [--limit 20]` | every check and update, newest first: time, from, to, result (`~/.lodestar/update-log.jsonl`, last 500) |
+
+The monitor loop (`run`, `app`, `desktop`; `--no-update` skips it) checks every `update_every_hours` (default 24).
+`update_mode`: `off`; `notify` (default) raises one alert per new version; `auto` applies it when nothing blocks it
+and alerts the result. `update_channel`: `commits` follows the origin branch, `releases` its newest `v*` tag. A check
+that cannot reach the origin is logged as "could not check" and the loop goes on. The standalone build (`-Exe`) reads
+the https JSON at `update_manifest_url` (`{version, url, notes}`) and only tells you where to download; it never
+replaces itself. After an update, restart Lodestar to run the new code. The developer's own checkout is an install
+too: with unpushed commits or local changes it is never updated.
+
+Setup > Updates does the same in the app: the mode (off / notify / auto) and the interval, Check now (the commit
+range, each commit and the changelog the update adds, or why it cannot be applied now), Update now (asks first, shows
+progress, then the result and the backup path; a failure says what failed and that the old version is back), a Restart
+button in the desktop app (`lodestar app` / `ui`: close and start it again) and the update log. A top-bar badge shows
+"Update available" or "Restart to finish the update"; a failed or refused update is noted under Getting started and
+in Diagnostics until a later update succeeds.
 
 ## Profile bank and LinkedIn (pass 12)
 

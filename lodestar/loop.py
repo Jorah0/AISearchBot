@@ -1,10 +1,10 @@
 """The automation cycle: email -> watches + companies -> weekly posting check -> follow-up cadence -> interview
-reminders -> sync/digest/backup.
+reminders -> sync/digest/backup -> update check (updater.tick, on its own interval).
 `lodestar run`, `app` and `desktop` all drive this. Every automatic action still goes through approvals."""
 import time
 from datetime import date, datetime, timedelta
 
-from . import approvals, db, log, settings
+from . import approvals, db, log, settings, updater  # updater.BOOT: an update applied after start asks for a restart
 from .config import setting
 from .util import desktop_notify, notify
 
@@ -193,6 +193,8 @@ def cycle(a) -> None:
         _step("obsidian sync", export_obsidian)
     _step("digest", lambda: _digest(a))
     _step("backup", _backup)
+    if getattr(a, "update", False):  # lodestar run / app / desktop (--no-update skips it); every update_every_hours
+        _step("update check", updater.tick)
     pending = db.list_pending("pending")
     if pending:
         print(f"{len(pending)} action(s) waiting in `lodestar inbox`")

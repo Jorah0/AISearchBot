@@ -106,7 +106,11 @@ Executors are the only code that sends mail, changes status, or adds jobs on lod
    computed from the tracker with no AI call, listed on Today and counted in the daily agenda; nothing is drafted until
    you click Draft options.
 4. Optional Obsidian sync and Friday digest (with your weekly goals' progress when you set any).
-5. Print how many actions are waiting in the inbox.
+5. Update check, every `update_every_hours` (pref `update_mode`: off / notify / auto; see COMMANDS.md >
+   Updates). Auto applies only a fast-forward that passes the tests, and never while mail or a send is in flight.
+   Setup > Updates sets the mode and the interval, checks and updates on demand and shows the update log; a
+   failed update shows under Getting started, and the desktop app offers Restart after a successful one.
+6. Print how many actions are waiting in the inbox.
 
 Sending mail needs a connected mailbox (Setup > Connect email: Sign in with Google / Microsoft or an app password; or
 `lodestar email signin google|microsoft` / `lodestar email connect`; see CONNECT.md). Without one, approvals of email

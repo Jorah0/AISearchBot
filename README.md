@@ -107,6 +107,7 @@ lodestar jobs checklist 1 ; lodestar followup 1 ; lodestar thanks 1 --interviewe
 
 # operations
 lodestar usage ; lodestar backup ; lodestar export json ; lodestar providers models
+lodestar update check ; lodestar update apply   # updates: commits + changelog first, then backup, tests, rollback on failure
 
 # ideas: brainstorm across every provider, rank, refine, track
 lodestar ideas craft strategy          # or resume / gap --role "SRE" / outreach --job 3 / stories / pivot / questions / tools
@@ -182,4 +183,6 @@ replies, trusted / unverified), AI draft options with one recommended and rewrit
 Offers) and suggested emails on Today, contacts with warm paths, interview rounds and a question bank, insights with
 weekly goals, offer comparison and an activity log, idea crafting, answer bank and STAR stories, profile editor and
 bank, coach chat with a scored mock interview (dictation), tool switches, Connect email (provider presets, login test,
-test send), provider and vault setup. Full walkthrough and roadmap: [docs/RUNDOWN.md](docs/RUNDOWN.md).
+test send), provider and vault setup, Updates (off / notify / auto on an interval, Check now with the commit range and
+changelog, Update now with a backup, the tests and a rollback, Restart in the desktop app, the update log; a top-bar
+badge when an update is out). Full walkthrough and roadmap: [docs/RUNDOWN.md](docs/RUNDOWN.md).

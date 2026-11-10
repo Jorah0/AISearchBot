@@ -164,13 +164,13 @@ FETCH = {  # util.fetch canned by URL substring; first match wins, else a plain 
 FETCH_HOOK = """(() => {  // counts API requests in flight and background tasks still running, for E2ETestCase.idle()
   const ls = window.__ls = { inflight: 0, tasks: new Set() }, real = window.fetch.bind(window);
   window.fetch = async (input, init) => {
-    const url = String((input && input.url) || input), m = /\\/api\\/(run|tasks)\\/([^/?]+)/.exec(url);
+    const url = String((input && input.url) || input), m = /\\/api\\/(run|tasks|update)\\/([^/?]+)/.exec(url);
     ls.inflight++;
     let r;
     try { r = await real(input, init); } catch (e) { ls.inflight--; throw e; }
     if (m) {
       const j = await r.clone().json().catch(() => ({}));
-      if (m[1] === 'run' && j.task != null) ls.tasks.add(String(j.task));
+      if (m[1] !== 'tasks' && j.task != null) ls.tasks.add(String(j.task));  // /api/run/* and /api/update/*
       if (m[1] === 'tasks' && j.status !== 'running') ls.tasks.delete(m[2]);
     }
     const json = r.json.bind(r); let done = false;  // in flight until the app has read the body (api() always does)

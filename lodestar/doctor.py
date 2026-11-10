@@ -95,6 +95,12 @@ def checks() -> list[tuple[str, str, str]]:
     if mail and m.get("status") in ("verified", "failed", "unreachable"):
         out.append(({"verified": "ok", "failed": "fail"}.get(m["status"], "warn"), "email check",
                     f"{m['status']} {connections.local(m.get('checked_at', ''))}: {m.get('detail', '')}"))
+    from . import updater
+
+    try:  # no network: the install kind, update preferences and the update log
+        out += updater.doctor_rows()
+    except (Exception, SystemExit) as e:
+        out.append(("warn", "updates", str(e)[:160]))
     old = Path.home() / ".jobbot"
     if old.exists():
         out.append(("warn", "legacy folder", f"{old} still exists; safe to delete once ~/.lodestar has your data"))

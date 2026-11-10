@@ -48,7 +48,7 @@ function go(tab) {
 async function run(action, params, done, btn) {
   if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = 'working…'; }
   const finish = () => { if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label; } };
-  const { task, error } = await api('/api/run/' + action, params);
+  const { task, error } = await api(action.startsWith('/') ? action : '/api/run/' + action, params);  // or a route that starts a task
   if (error) { finish(); return toast('error: ' + error, 'err'); }
   const poll = async () => {
     const t = await api('/api/tasks/' + task);
@@ -68,7 +68,7 @@ async function load() {
   const pill = $('#codesPill'); pill.style.display = S.codes_count ? '' : 'none'; pill.textContent = `Codes (${Number(S.codes_count)})`;
   if (S.codes_count !== CODES.length && (S.codes_count || $('#codesPanel').open)) codesLoad();
   const badge = $('#inboxN'); badge.textContent = S.pending.length; badge.classList.toggle('zero', !S.pending.length);
-  renderOnboard(); renderLoop(); $('#ver').textContent = 'Lodestar ' + S.version;
+  renderOnboard(); renderLoop(); renderUpdate(); $('#ver').textContent = 'Lodestar ' + S.version;
   if (!$('#fStatus').options.length) initFilters();
   renderBoard(); renderInbox(); renderSearchless(); renderMonitor(); renderAnswers(); renderStories(); renderIdeas(); renderTools(); renderSetup(); fillCoachJobs(); renderTrend();
 }
@@ -228,6 +228,8 @@ function renderOnboard() {
   if (s.email_problem) todo.push(`<span style="color:var(--warn)">Email check failed: ${esc(s.email_problem)}</span> <button class="b sm" onclick="go('setup');$('#emailCard').scrollIntoView()">Setup</button>`);
   if (s.email_needs_signin) todo.push(`<span style="color:var(--bad)">Email sign-in expired: Lodestar cannot read or send mail</span> <button class="b sm" onclick="go('setup');$('#emailCard').scrollIntoView()">Sign in again</button>`);
   else if (!s.email_ready) todo.push(`<b>3.</b> Optional: <button class="b sm" onclick="go('setup');$('#emailCard').scrollIntoView()">Connect email</button> so replies are classified and drafted`);
+  const uf = S.update && S.update.failed;  // the last update failed or was refused: rolled back, say so once here
+  if (uf) todo.push(`<span style="color:var(--warn)">Last update ${uf.result.startsWith('refused') ? 'was refused' : 'failed'} (${esc(String(uf.at).slice(0, 16))}): ${esc(uf.result)}</span> <button class="b sm" onclick="go('setup');$('#updCard').scrollIntoView()">Updates</button>`);
   const el = $('#onboard');
   el.style.display = todo.length ? '' : 'none';
   el.innerHTML = todo.length ? `<h3>Getting started</h3><div class="row" style="gap:18px">${todo.map(t => `<span>${t}</span>`).join('')}</div>` : '';
@@ -967,6 +969,57 @@ function renderSetup() {
   const o = location.origin;
   $('#bm').href = `javascript:(()=>{const t=document.title,u=location.href,d=(document.querySelector('main')||document.body).innerText.slice(0,12000);fetch('${o}/api/capture?t=${CAPTURE}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t,url:u,desc:d})}).then(r=>r.json()).then(r=>alert(r.error?('Lodestar: '+r.error):('Lodestar tracked #'+r.id+': '+r.company+' - '+r.title))).catch(e=>alert('Lodestar UI not running? '+e))})();`;
   $('#af').href = `javascript:(()=>{fetch('${o}/api/autofill?t=${CAPTURE}').then(r=>r.json()).then(d=>{if(d.error){alert('Lodestar could not autofill: '+d.error);return}const map={first_name:/first.?name|given|fname|legalname.*first/i,last_name:/last.?name|surname|family|lname|legalname.*last/i,name:/^(full.?)?name$|your.?name|^name$|cards\\[.*\\]\\[name\\]/i,email:/e-?mail/i,phone:/phone|mobile|tel/i,linkedin:/linkedin/i,github:/github/i,website:/website|portfolio|^url|personal.?site/i,location:/city|location|address|where.*located/i};const ats={first_name:['#first_name','input[name=\"first_name\"]','[data-automation-id=\"legalNameSection_firstName\"]','#first-name','input[name=\"_systemfield_first_name\"]'],last_name:['#last_name','input[name=\"last_name\"]','[data-automation-id=\"legalNameSection_lastName\"]','#last-name','input[name=\"_systemfield_last_name\"]'],name:['input[name=\"name\"]','input[name=\"_systemfield_name\"]','#full_name'],email:['#email','input[name=\"email\"]','input[name=\"_systemfield_email\"]','[data-automation-id=\"email\"]','input[type=\"email\"]'],phone:['#phone','input[name=\"phone\"]','[data-automation-id=\"phone-number\"]','#phone-number','input[type=\"tel\"]'],linkedin:['input[name=\"urls[LinkedIn]\"]','#linkedin','input[name*=\"linkedin\" i]'],github:['input[name=\"urls[GitHub]\"]','input[name*=\"github\" i]'],website:['input[name=\"urls[Portfolio]\"]','input[name*=\"website\" i]','input[name*=\"portfolio\" i]'],location:['input[name=\"job_application[location]\"]','#location','input[name*=\"location\" i]']};let n=0;for(const k in ats){if(!d[k])continue;for(const sel of ats[k]){const el=document.querySelector(sel);if(el&&!el.value&&!el.dataset.ls){el.value=d[k];el.dataset.ls='1';el.dispatchEvent(new Event('input',{bubbles:true}));n++;break}}}document.querySelectorAll('input,textarea').forEach(el=>{if(el.type==='hidden'||el.type==='password'||el.value||el.dataset.ls)return;const lab=(el.labels&&el.labels[0]?el.labels[0].innerText:'')+' '+(el.name||'')+' '+(el.id||'')+' '+(el.placeholder||'')+' '+(el.getAttribute('aria-label')||'')+' '+(el.getAttribute('data-automation-id')||'')+' '+(el.getAttribute('autocomplete')||'')+' '+(el.getAttribute('data-qa')||'');for(const k in map){if(map[k].test(lab)&&d[k]){el.value=d[k];el.dispatchEvent(new Event('input',{bubbles:true}));n++;break}}});alert('Lodestar filled '+n+' field(s). Review everything, then submit yourself.')}).catch(e=>alert('Lodestar UI not running? '+e))})();`;
+}
+/* ---- updates (updater.py): check, the commit range + changelog, Update now, Restart (desktop), the log ---- */
+let UPLAN = null;  // the last check this page made: Update now applies exactly its target
+function renderUpdate() {
+  const u = S.update || {}, pill = $('#updPill');
+  const label = u.restart_needed ? 'Restart to finish the update' : u.available ? 'Update available' : '';
+  pill.style.display = label ? '' : 'none'; pill.textContent = label;
+  pill.title = (u.restart_needed ? u.last_update : u.last_check)?.result || '';
+  if (document.activeElement !== $('#uMode')) $('#uMode').value = u.mode || 'notify';
+  if (document.activeElement !== $('#uEvery')) $('#uEvery').value = u.every_hours ?? 24;
+  const kind = { git: 'git install', exe: 'standalone build: an update is announced with its download link, never installed', none: 'not a git install: reinstall with install.ps1 to get updates' }[u.kind] || '';
+  const last = e => e ? `${esc(String(e.at).slice(0, 16))}: ${esc(e.result)}` : 'never';
+  $('#uInfo').innerHTML = `${esc(kind)} · Lodestar ${esc(u.version || S.version)}<br>last check ${last(u.last_check)}${u.last_update ? '<br>last update ' + last(u.last_update) : ''}${u.error ? '<br>' + esc(u.error) : ''}`;
+  $('#uLog').innerHTML = (u.log || []).map(e => `<div><span class="pill ${e.kind === 'apply' ? (e.ok ? 'ok' : 'warn') : ''}">${esc(e.kind)}</span> <span class="muted">${esc(String(e.at).slice(0, 16))}</span> ${e.from || e.to ? `<code>${esc(String(e.from).slice(0, 7))}..${esc(String(e.to).slice(0, 7))}</code> ` : ''}${esc(e.result)}</div>`).join('') || '<div class="muted">no checks yet</div>';
+  if (u.restart_needed && !$('#uProgress') && !$('#uRestartRow')) $('#uResult').innerHTML = restartHtml();
+}
+const restartHtml = () => S.update.restart
+  ? '<div class="row" id="uRestartRow"><span>Updated. Restart Lodestar to run the new version.</span><button class="b" id="uRestart" onclick="updRestart(this)">Restart</button></div>'
+  : '<div class="row" id="uRestartRow">Updated. Close Lodestar and start it again to run the new version.</div>';
+function updCheck(btn) { run('/api/update/check', {}, p => { UPLAN = p; updPlan(p); }, btn); }
+function updPlan(p) {
+  if (!p.available) { $('#uPlan').innerHTML = `<div ${p.result.startsWith('could not') ? 'style="color:var(--warn)"' : 'class="muted"'} id="uUpToDate">${esc(p.result)}</div>`; return; }
+  const n = Number(p.behind), url = safeUrl(p.url);
+  $('#uPlan').innerHTML = `<h4 id="uHead">Update available: ${p.kind === 'git' ? `${n} commit${n === 1 ? '' : 's'}` : esc(p.current + ' → ' + p.target)}</h4>
+    ${p.kind === 'git' ? `<div class="muted" id="uRange">from <code>${esc(p.current.slice(0, 7))}</code> to <code>${esc(p.target.slice(0, 7))}</code>${p.origin ? ' · ' + esc(p.origin) : ''}</div>
+    <ul class="muted" id="uCommits">${p.commits.map(c => `<li><code>${esc(c.split(' ')[0])}</code> ${esc(c.split(' ').slice(1).join(' '))}</li>`).join('')}</ul>` : ''}
+    ${p.changelog ? `<details open><summary class="muted">What's new (changelog)</summary><pre id="uChangelog">${esc(p.changelog)}</pre></details>` : ''}
+    ${p.blocked ? `<div style="color:var(--warn)" id="uBlocked">Not now: ${esc(p.blocked)}</div>` : ''}
+    <div class="row">${p.kind === 'git' ? `<button class="b" id="uApply" ${p.blocked ? 'disabled' : ''} onclick="updApply(this)">Update now</button>`
+      : url ? `<a class="b" href="${esc(url)}" target="_blank" rel="noopener">Download</a>` : ''}</div>`;
+}
+function updApply(btn) {
+  const p = UPLAN, n = p ? Number(p.behind) : 0;
+  if (!p || !confirm(`Update Lodestar ${p.current.slice(0, 7)} → ${p.target.slice(0, 7)} (${n} commit${n === 1 ? '' : 's'})?\n\nA backup is taken first; the tests and lodestar doctor then run on the new code, and anything that fails is rolled back. This takes a minute or two.`)) return;
+  const t0 = Date.now(), check = $('#uCheck'), prog = s => 'Updating: backup, fast-forward, then the tests and doctor on the new code… ' + s;
+  $('#uResult').innerHTML = `<div class="muted" id="uProgress">${prog('')}</div>`; check.disabled = true;
+  const tick = setInterval(() => {  // run() re-enables the button when the task ends, whatever its outcome
+    if (!btn.disabled) { clearInterval(tick); check.disabled = false; $('#uProgress')?.remove(); return; }
+    $('#uProgress').textContent = prog(Math.round((Date.now() - t0) / 1000) + ' s');
+  }, 1000);
+  run('/api/update/apply', { target: p.target }, r => {
+    UPLAN = null; $('#uPlan').innerHTML = ''; check.disabled = false;
+    $('#uResult').innerHTML = (r.ok ? restartHtml() : `<div style="color:var(--warn)" id="uFail">${esc(r.result)}</div>`) + (r.backup ? `<div class="muted">backup: ${esc(r.backup)}</div>` : '');
+    toast(r.result, r.ok ? 'ok' : 'err');
+  }, btn);
+}
+async function updRestart(btn) {
+  btn.disabled = true;
+  const r = await api('/api/update/restart', {});
+  if (r.error) { btn.disabled = false; return toast('error: ' + r.error, 'err'); }
+  toast('restarting Lodestar…', 'ok');
 }
 function showDoctor(rows) {
   const mark = { ok: ['PASS', 'ok'], warn: ['WARN', 'warn'], fail: ['FAIL', ''] };
