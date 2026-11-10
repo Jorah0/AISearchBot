@@ -159,6 +159,40 @@ class Updates(E2ETestCase):
         self.assertIn("WARN", row.text_content())
         self.assertIn("rolled back", row.text_content())
 
+    def test_update_now_after_the_origin_moved_drops_the_old_plan_and_says_why(self):
+        pg = self.page
+        self.release()
+        self.check()
+        self.commit({"README.md": "later\n"}, "later work", push=True)  # the origin moves after the check
+        self.answer(True)
+        self.run_click("#uApply")
+        self.assertIn("the origin changed since your check", pg.text_content("#uFail"))
+        self.assertEqual(pg.inner_html("#uPlan").strip(), "")  # no stale Update now to click again
+        self.assertTrue(pg.is_enabled("#uCheck"))
+        self.expect_toast("origin changed", "err")
+        self.assertEqual((self.head(), self.gates), (self.v1, []))
+        pg.click('#uLogBox summary')
+        self.assertIn("refused: the origin changed since your check", pg.text_content("#uLog"))
+
+    def test_restart_waits_while_an_update_runs(self):
+        pg = self.page
+        self.allow_console()  # the refused restart answers 400
+        updater._done(True, self.v1, self.v1, "updated; restart Lodestar to use it")  # an earlier update, not restarted
+        self.reload_state()
+        pg.wait_for_selector("#uRestart")
+        web.TASKS["e2e-upd"] = {"status": "running", "action": "update_apply"}  # another tab or the loop updates now
+        try:
+            self.reload_state()
+            self.assertIn("An update is running", pg.text_content("#uBusy"))
+            self.assertEqual(pg.locator("#uRestart").count(), 0)
+            self.assertIn("an update is running", self.api("/api/update/restart", {})["error"])
+        finally:
+            del web.TASKS["e2e-upd"]
+        self.reload_state()
+        pg.wait_for_selector("#uRestart")
+        self.assertEqual(pg.locator("#uBusy").count(), 0)
+        self.assertEqual(self.restarts, [])
+
     def test_dirty_install_up_to_date_prefs_and_restart_outside_the_desktop_app(self):
         self.allow_console()  # the refused interval and restart answer 400
         pg = self.page

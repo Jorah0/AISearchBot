@@ -68,6 +68,9 @@ class Routes(Base):
         self.assertEqual(t["status"], "error")
         self.assertIn("check again", t["error"])
         self.assertEqual(self.head(), self.v1)
+        e = updater.entries()[0]  # logged: the card, the log and doctor say why nothing happened
+        self.assertEqual((e["kind"], e["ok"], e["to"]), ("apply", False, target[:12]))
+        self.assertIn("refused: the origin changed since your check", e["result"])
         t = self.task("/api/update/apply", {"target": newer})
         self.assertTrue(t["result"]["ok"], t)
         self.assertEqual((self.head(), self.gates), (newer, [self.install]))
@@ -109,6 +112,25 @@ class Routes(Base):
                 break
             time.sleep(0.05)
         self.assertEqual(calls, [1])
+
+    def test_restart_is_refused_while_an_update_runs(self):
+        from lodestar import util
+
+        calls = []
+        web.RESTART = lambda: calls.append(1)
+        with util.run_lock("update"):  # an update in this or another process (the loop's auto mode, another tab)
+            self.assertIsNone(updater.busy())  # apply's own view: it holds this lock itself
+            code, r = self.req("POST", "/api/update/restart", {})
+            self.assertEqual((code, r["error"]), (400, "not now: an update is running; try again in a moment"))
+            self.assertTrue(self.req("GET", "/api/update/status")[1]["updating"])  # the page hides Restart
+        web.TASKS["t-upd"] = {"status": "running", "action": "update_apply"}
+        try:
+            self.assertEqual(self.req("POST", "/api/update/restart", {})[0], 400)
+        finally:
+            del web.TASKS["t-upd"]
+        self.assertFalse(self.req("GET", "/api/update/status")[1]["updating"])
+        time.sleep(0.7)
+        self.assertEqual(calls, [])
 
     def test_state_still_loads_when_the_install_cannot_be_read(self):
         with patched(updater, status=lambda repo: (_ for _ in ()).throw(SystemExit("broken"))):

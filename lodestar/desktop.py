@@ -63,6 +63,9 @@ def relaunch() -> None:
 
     cmd = [sys.executable, *sys.argv[1:]] if getattr(sys, "frozen", False) else [sys.executable, "-m", "lodestar", *sys.argv[1:]]
     subprocess.Popen(cmd, cwd=str(Path(__file__).resolve().parent.parent))
+    from . import updater
+
+    updater.unregister()  # os._exit below skips atexit; the new process must not wait on this one
     try:
         import webview
 

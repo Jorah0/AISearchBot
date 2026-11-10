@@ -17,6 +17,27 @@
   update log. A badge at the top says when an update is out or a restart is needed; a failed update shows under
   Getting started.
 
+**Update safety (fixed before release)**
+- If Lodestar is closed, killed or loses power in the middle of an update, the next start puts the previous version
+  back and says so in the update log, instead of quietly running code that never passed its tests.
+- Restart is no longer possible while an update is still running; the Updates card says an update is in progress and
+  brings Restart back when it ends.
+- When an update fails half-way through (for example because another program held a file open), the install folder
+  is put back exactly as it was, so later updates are not blocked by leftover files. If even that fails, the update
+  log and `lodestar doctor` say so plainly (a FAIL line) with the one command that fixes it, and the next start
+  tries again.
+- A test run that hangs can no longer stall the update: after the time limit every process it started is stopped.
+- A failed update now names the tests that failed.
+- A release that was withdrawn from the origin is no longer offered or installed.
+- In auto mode, a version that failed its tests is tried only once (no new backup and test run every interval); you
+  get one alert, and `lodestar update apply` tries it again by hand.
+- An update is not applied while another Lodestar window, app or loop is running, since that one would otherwise run
+  a mix of old and new files. Update from that window, or close it first.
+- A running Lodestar keeps showing the screens it started with until you restart it, even while an update is being
+  tested on disk.
+- When Update now is refused (the origin moved since your check, or another update is running), the card says why,
+  clears the old plan, and the refusal is in the update log.
+
 ## Pass 16.3 (2026-11-09): browser test suite and full test list
 
 **Browser tests**

@@ -17,6 +17,9 @@ from . import __version__, ai, apply, approvals, codes, comp, connections, db, e
 from .config import ALERTS, PROFILE
 
 STATIC = Path(__file__).parent / "static"
+# read once: an update fast-forwards these files while this server runs (and may roll them back after its tests), so the
+# server keeps serving the front end it started with, the one that matches its routes, until it restarts
+ASSETS = {f.name: f.read_bytes() for f in STATIC.iterdir() if f.is_file()}
 TOKEN = secrets.token_urlsafe(24)          # per launch: the page embeds it, every API call must present it in a header
 
 
@@ -308,7 +311,9 @@ def _act(action: str, p: dict):
 
             plan = updater.check(updater.ROOT, record=False)
             if p.get("target") and plan["target"] != p["target"]:
-                raise SystemExit("the origin changed since your check: check again to see what the update brings")
+                why = "the origin changed since your check: check again to see what the update brings"
+                updater._done(False, plan["current"], p["target"], f"refused: {why}")  # the card and the log say so
+                raise SystemExit(why)
             return updater.apply(updater.ROOT, plan)
         case "export":  # {fmt: json|csv}; CSV writes one file per table into ~/.lodestar/exports
             return {"path": str(extras.export_data("csv" if p.get("fmt") == "csv" else "json"))}
@@ -433,7 +438,7 @@ def update_view() -> dict:
         s = updater.status(updater.ROOT)
     except (Exception, SystemExit) as e:  # the state must load whatever the install looks like
         return {"kind": "none", "error": str(e)[:200], "log": [], "available": False, "failed": None,
-                "restart_needed": False, "restart": False}
+                "restart_needed": False, "restart": False, "updating": False}
     c, u = s["last_check"], s["last_update"]
     newer = lambda a, b: a and (not b or a["at"] >= b["at"])  # noqa: E731
     return s | {"log": updater.entries(20), "restart": RESTART is not None,
@@ -583,7 +588,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "missing or wrong token; reload the Lodestar page"}, 403)
         try:
             if path == "/":
-                html = (STATIC / "index.html").read_bytes().replace(b"__TOKEN__", TOKEN.encode()).replace(b"__CAPTURE__", CAPTURE_TOKEN.encode())
+                html = ASSETS["index.html"].replace(b"__TOKEN__", TOKEN.encode()).replace(b"__CAPTURE__", CAPTURE_TOKEN.encode())
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
@@ -594,12 +599,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(html)
             elif path == "/logo.svg" or path.startswith("/static/"):
                 name = "logo.svg" if path == "/logo.svg" else path[8:]
-                f = (STATIC / name)
-                if not f.is_file() or f.resolve().parent != STATIC.resolve():  # resolved path must sit directly in static/
+                body = ASSETS.get(name)  # only files sitting directly in static/: no path ever reaches the disk
+                if body is None:
                     return self._json({"error": "not found"}, 404)
-                body = f.read_bytes()
                 self.send_response(200)
-                self.send_header("Content-Type", {".svg": "image/svg+xml", ".css": "text/css", ".js": "text/javascript"}.get(f.suffix, "application/octet-stream") + "; charset=utf-8")
+                self.send_header("Content-Type", {".svg": "image/svg+xml", ".css": "text/css", ".js": "text/javascript"}.get(Path(name).suffix, "application/octet-stream") + "; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Cache-Control", "no-cache")
                 self.end_headers()
@@ -989,7 +993,7 @@ class Handler(BaseHTTPRequestHandler):
 
                 if RESTART is None:
                     raise ValueError("restart is offered in the desktop app only: close Lodestar and start it again")
-                if why := busy():
+                if why := busy(include_update=True):  # never mid-update: that would leave untested code installed
                     raise ValueError(f"not now: {why}; try again in a moment")
                 threading.Timer(0.5, RESTART).start()  # after this answer has left
                 self._json({"ok": True})

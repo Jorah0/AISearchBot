@@ -45,16 +45,16 @@ function go(tab) {
 }
 
 /* ---- background tasks ---- */
-async function run(action, params, done, btn) {
+async function run(action, params, done, btn, fail) {  // fail(error): the caller also shows a refusal in place
   if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = 'working…'; }
   const finish = () => { if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label; } };
   const { task, error } = await api(action.startsWith('/') ? action : '/api/run/' + action, params);  // or a route that starts a task
-  if (error) { finish(); return toast('error: ' + error, 'err'); }
+  if (error) { finish(); fail && fail(error); return toast('error: ' + error, 'err'); }
   const poll = async () => {
     const t = await api('/api/tasks/' + task);
     if (t.status === 'running') return setTimeout(poll, 1200);
     finish();
-    if (t.status === 'error') return toast('error: ' + t.error, 'err');
+    if (t.status === 'error') { fail && fail(t.error); return toast('error: ' + t.error, 'err'); }
     done && done(t.result); load();
   };
   poll();
@@ -983,7 +983,10 @@ function renderUpdate() {
   const last = e => e ? `${esc(String(e.at).slice(0, 16))}: ${esc(e.result)}` : 'never';
   $('#uInfo').innerHTML = `${esc(kind)} · Lodestar ${esc(u.version || S.version)}<br>last check ${last(u.last_check)}${u.last_update ? '<br>last update ' + last(u.last_update) : ''}${u.error ? '<br>' + esc(u.error) : ''}`;
   $('#uLog').innerHTML = (u.log || []).map(e => `<div><span class="pill ${e.kind === 'apply' ? (e.ok ? 'ok' : 'warn') : ''}">${esc(e.kind)}</span> <span class="muted">${esc(String(e.at).slice(0, 16))}</span> ${e.from || e.to ? `<code>${esc(String(e.from).slice(0, 7))}..${esc(String(e.to).slice(0, 7))}</code> ` : ''}${esc(e.result)}</div>`).join('') || '<div class="muted">no checks yet</div>';
-  if (u.restart_needed && !$('#uProgress') && !$('#uRestartRow')) $('#uResult').innerHTML = restartHtml();
+  if (u.updating && !$('#uProgress')) {  // another tab or the loop is updating: no Restart until it ends
+    if (!$('#uBusy')) $('#uResult').innerHTML = '<div class="muted" id="uBusy">An update is running. Restart comes back when it has finished.</div>';
+  } else if (u.restart_needed && !$('#uProgress') && !$('#uRestartRow')) $('#uResult').innerHTML = restartHtml();
+  else if (!u.updating) $('#uBusy')?.remove();
 }
 const restartHtml = () => S.update.restart
   ? '<div class="row" id="uRestartRow"><span>Updated. Restart Lodestar to run the new version.</span><button class="b" id="uRestart" onclick="updRestart(this)">Restart</button></div>'
@@ -1013,7 +1016,10 @@ function updApply(btn) {
     UPLAN = null; $('#uPlan').innerHTML = ''; check.disabled = false;
     $('#uResult').innerHTML = (r.ok ? restartHtml() : `<div style="color:var(--warn)" id="uFail">${esc(r.result)}</div>`) + (r.backup ? `<div class="muted">backup: ${esc(r.backup)}</div>` : '');
     toast(r.result, r.ok ? 'ok' : 'err');
-  }, btn);
+  }, btn, err => {  // refused before it ran (the origin moved, another update running): the old plan is gone
+    UPLAN = null; $('#uPlan').innerHTML = ''; check.disabled = false;
+    $('#uResult').innerHTML = `<div style="color:var(--warn)" id="uFail">${esc(err)}</div>`; load();
+  });
 }
 async function updRestart(btn) {
   btn.disabled = true;

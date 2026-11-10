@@ -109,7 +109,10 @@ Executors are the only code that sends mail, changes status, or adds jobs on lod
 5. Update check, every `update_every_hours` (pref `update_mode`: off / notify / auto; see COMMANDS.md >
    Updates). Auto applies only a fast-forward that passes the tests, and never while mail or a send is in flight.
    Setup > Updates sets the mode and the interval, checks and updates on demand and shows the update log; a
-   failed update shows under Getting started, and the desktop app offers Restart after a successful one.
+   failed update shows under Getting started, and the desktop app offers Restart after a successful one (never
+   while an update is still running). An update cut off mid-way is rolled back at the next start; in auto mode a
+   version that failed its tests is not retried automatically, and no update is applied while another Lodestar
+   process (app, desktop window, loop) is running.
 6. Print how many actions are waiting in the inbox.
 
 Sending mail needs a connected mailbox (Setup > Connect email: Sign in with Google / Microsoft or an app password; or

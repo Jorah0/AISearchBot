@@ -190,7 +190,7 @@ page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, w
 | `POST /api/offers/ID` `{base, bonus_pct, sign_on, equity_value_estimate, vest_years, cliff_months, retirement_match_pct, remote, start_date, deadline, notes}` | record or edit a structured offer (whitelisted, validated; `""` clears; the job moves to `offer`; all fields empty records nothing, and clearing every field removes the offer) |
 | `GET /api/update/status` / `GET /api/update/log?limit=50` | Setup > Updates, no network: install kind, version, `update_mode` / `update_every_hours` / `update_channel`, last check and update, `available` (the last check found one and no update since), `failed` (the last update failed or was refused), `restart_needed`, `restart` (the desktop app can relaunch), the last 20 log rows (`GET /api/state` carries the same as `update`) / the update log, newest first |
 | `POST /api/update/check` / `POST /api/update/apply` `{target}` | background tasks (`{task}`; poll `GET /api/tasks/ID`): the check (`{available, current, target, behind, commits, changelog, blocked, result}`) / the update to exactly the `target` that check showed (a moved origin is refused: check again): backup, fast-forward, tests and doctor, rollback; `{ok, result, backup}` |
-| `POST /api/update/restart` | desktop app only: relaunch `lodestar desktop` with the same arguments and close this window; refused while a mail scan, an Inbox send or a background action runs |
+| `POST /api/update/restart` | desktop app only: relaunch `lodestar desktop` with the same arguments and close this window; refused while an update (any process), a mail scan, an Inbox send or a background action runs (`GET /api/update/status` `updating` is true while an update runs) |
 | `POST /api/run/ACTION` then `GET /api/tasks/ID` | background actions: tailor, cover, gap, prep, review, reply, outreach, ics, email_check, watch_run, search, chat, council, digest, obsidian, providers_test, providers_local, models, export (`{fmt: json or csv}`), auto_track, mock (`{messages, id, session?, seconds?}`; an answer returns a score `card`), packet, doctor (`{live}`), backup, match (`{id}`), lint (`{text}`), audit (`{id}`, or `{}` for the newest saved resume file), referral (`{id, contact_id}`), contacts_import (`{name, data: base64}`), counter (`{id, cite: ["JOB:field"], ask?, template?}`; always waits in the Inbox), activity (`{from, to, fmt?: csv\|html}`) |
 
 ## Automation and approvals (see AUTOMATION.md)
@@ -322,7 +322,7 @@ Setup also has a Diagnostics panel (same checks as `lodestar doctor`, with an op
 | Command | What it does |
 |---|---|
 | `lodestar update check` | fetch the origin (pref `update_origin`, else the install's `origin` remote; https:// or a local folder only) and print the commits and the CHANGELOG sections an update would bring, and why it cannot be applied now if something blocks it |
-| `lodestar update apply [--yes]` | the same, then (after you answer y, or with `--yes`) back up the data folder, fast-forward the install, reinstall only when `pyproject.toml` changed, run the unit suite (on a throwaway data folder) and `lodestar doctor` on the new code, and on any failure reset to the exact previous commit. Refused while the install has uncommitted changes or commits the origin does not, or while a mail scan, an Inbox send or a background action runs |
+| `lodestar update apply [--yes]` | the same, then (after you answer y, or with `--yes`) back up the data folder, fast-forward the install, reinstall only when `pyproject.toml` changed, run the unit suite (on a throwaway data folder) and `lodestar doctor` on the new code, and on any failure reset to the exact previous commit. Refused while the install has uncommitted changes or commits the origin does not, while a mail scan, an Inbox send, a background action or another update runs, or while another Lodestar process (app, desktop window, loop) is running. A failed test run names the failing tests |
 | `lodestar update status` | install kind (git, standalone build, other), version, `update_mode` / `update_every_hours` / `update_channel`, last check and last update, restart needed |
 | `lodestar update log [--limit 20]` | every check and update, newest first: time, from, to, result (`~/.lodestar/update-log.jsonl`, last 500) |
 
@@ -334,10 +334,21 @@ the https JSON at `update_manifest_url` (`{version, url, notes}`) and only tells
 replaces itself. After an update, restart Lodestar to run the new code. The developer's own checkout is an install
 too: with unpushed commits or local changes it is never updated.
 
+Safety net: an update in progress is recorded in `~/.lodestar/update-state.json`; if Lodestar dies before the outcome
+(closed, killed, power loss), the next start of `run`, `app`, `ui` or `desktop` (or the next update) resets the install
+to the previous commit and logs "the update was interrupted". A fast-forward that fails half-way is put back exactly
+(new files it left are removed). A rollback that itself fails is retried, then logged as `ROLLBACK FAILED` with the
+`git reset --hard` command to run (a doctor FAIL line), and retried at the next start. The test gate runs with a time
+limit and kills the whole process tree when it is exceeded. In auto mode a version that failed its tests is not tried
+again automatically (one alert; `lodestar update apply` retries it). The `releases` channel forgets tags the origin
+deleted. Each running app, desktop window and loop registers in `~/.lodestar/procs/`; an update waits while another
+one is running. A running server serves the screens it started with (read once at start) until it restarts.
+
 Setup > Updates does the same in the app: the mode (off / notify / auto) and the interval, Check now (the commit
 range, each commit and the changelog the update adds, or why it cannot be applied now), Update now (asks first, shows
 progress, then the result and the backup path; a failure says what failed and that the old version is back), a Restart
-button in the desktop app (`lodestar app` / `ui`: close and start it again) and the update log. A top-bar badge shows
+button in the desktop app (`lodestar app` / `ui`: close and start it again; hidden while an update is running) and
+the update log. A refused Update now (the origin moved, another update running) says why and clears the old plan. A top-bar badge shows
 "Update available" or "Restart to finish the update"; a failed or refused update is noted under Getting started and
 in Diagnostics until a later update succeeds.
 

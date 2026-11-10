@@ -136,7 +136,7 @@ Env vars and a `.env` file override the vault for any setting.
 
 Module map (28 modules, what each does): [docs/RUNDOWN.md, section 1](docs/RUNDOWN.md#1-what-it-is-made-of).
 
-Tests (offline, 476): `python -m unittest discover -s tests -v`. Which test covers which feature: [docs/TESTS.md](docs/TESTS.md).
+Tests (offline, 513; browser, 125): `python -m unittest discover -s tests -v`. Which test covers which feature: [docs/TESTS.md](docs/TESTS.md).
 
 ### Browser tests
 
@@ -185,4 +185,4 @@ weekly goals, offer comparison and an activity log, idea crafting, answer bank a
 bank, coach chat with a scored mock interview (dictation), tool switches, Connect email (provider presets, login test,
 test send), provider and vault setup, Updates (off / notify / auto on an interval, Check now with the commit range and
 changelog, Update now with a backup, the tests and a rollback, Restart in the desktop app, the update log; a top-bar
-badge when an update is out). Full walkthrough and roadmap: [docs/RUNDOWN.md](docs/RUNDOWN.md).
+badge when an update is out; an update cut off mid-way is rolled back at the next start). Full walkthrough and roadmap: [docs/RUNDOWN.md](docs/RUNDOWN.md).

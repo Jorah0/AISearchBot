@@ -772,8 +772,9 @@ def cmd_stories(a):
 
 def cmd_run(a):
     """The automation loop (see loop.py): email -> watches -> follow-ups -> reminders -> sync/digest/backup."""
-    from . import loop
+    from . import loop, updater
 
+    updater.startup()  # an interrupted update is rolled back first; then later updates know this process runs
     loop.run(a)
 
 
@@ -830,9 +831,10 @@ def _keys_table(st: dict, only: list[str] | None = None) -> None:
 
 
 def cmd_ui(a):
-    from . import connections
+    from . import connections, updater
     from .web import serve
 
+    updater.startup()
     connections.start_checks()  # background, once: the server below comes up first
     serve(a.port, open_browser=not a.no_open)
 
@@ -843,8 +845,9 @@ def cmd_app(a):
 
     from .web import serve
 
-    from . import connections
+    from . import connections, updater
 
+    updater.startup()
     if not a.no_loop:
         a.once = False
         threading.Thread(target=cmd_run, args=(a,), daemon=True).start()
@@ -911,8 +914,9 @@ def cmd_desktop(a):
     from . import desktop, web
     from .web import start_server
 
-    from . import connections
+    from . import connections, updater
 
+    updater.startup()
     web.RESTART = desktop.relaunch  # Setup > Updates offers Restart after an update
     port = a.port or desktop.free_port()
     srv = start_server(port)
