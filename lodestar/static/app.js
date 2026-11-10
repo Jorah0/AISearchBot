@@ -65,6 +65,8 @@ async function load() {
   S = await api('/api/state');
   const st = S.stats, pct = x => Math.round(x * 100) + '%';
   $('#stats').innerHTML = `<span>tracked <b>${S.jobs.length}</b></span><span>applied <b>${st.applied_total}</b></span><span>response <b>${pct(st.response_rate)}</b></span><span>interview <b>${pct(st.interview_rate)}</b></span><span>providers <b>${Object.values(S.providers).filter(Boolean).length}</b></span><span>tokens today <b>${(S.usage_today.input + S.usage_today.output).toLocaleString()}</b></span>`;
+  const pill = $('#codesPill'); pill.style.display = S.codes_count ? '' : 'none'; pill.textContent = `Codes (${Number(S.codes_count)})`;
+  if (S.codes_count !== CODES.length && (S.codes_count || $('#codesPanel').open)) codesLoad();
   const badge = $('#inboxN'); badge.textContent = S.pending.length; badge.classList.toggle('zero', !S.pending.length);
   renderOnboard(); renderLoop(); $('#ver').textContent = 'Lodestar ' + S.version;
   if (!$('#fStatus').options.length) initFilters();
@@ -220,8 +222,12 @@ function renderBoard() {
 function renderOnboard() {
   const s = S.setup, todo = [];
   if (!s.profile_ready) todo.push(`<b>1.</b> Fill in your master resume <button class="b sm" onclick="go('profile')">Profile</button> or import one there`);
-  if (!s.provider_ready) todo.push(`<b>2.</b> Store an AI key <button class="b sm" onclick="go('setup')">Setup</button> (the vault keeps it in the OS keyring)`);
-  if (!s.email_ready) todo.push(`<b>3.</b> Optional: <button class="b sm" onclick="go('setup');$('#emailCard').scrollIntoView()">Connect email</button> so replies are classified and drafted`);
+  const keySetup = `<button class="b sm" onclick="go('setup');$('#keysCard').scrollIntoView()">Setup</button>`;
+  if (!s.provider_ready) todo.push(`<b>2.</b> Link an AI key ${keySetup} (checked at once; kept in the OS keyring)`);
+  (s.provider_problems || []).forEach(p => todo.push(`<span style="color:var(--warn)">${esc(p.label)} key failed: ${esc(p.detail)}</span> ${keySetup}`));
+  if (s.email_problem) todo.push(`<span style="color:var(--warn)">Email check failed: ${esc(s.email_problem)}</span> <button class="b sm" onclick="go('setup');$('#emailCard').scrollIntoView()">Setup</button>`);
+  if (s.email_needs_signin) todo.push(`<span style="color:var(--bad)">Email sign-in expired: Lodestar cannot read or send mail</span> <button class="b sm" onclick="go('setup');$('#emailCard').scrollIntoView()">Sign in again</button>`);
+  else if (!s.email_ready) todo.push(`<b>3.</b> Optional: <button class="b sm" onclick="go('setup');$('#emailCard').scrollIntoView()">Connect email</button> so replies are classified and drafted`);
   const el = $('#onboard');
   el.style.display = todo.length ? '' : 'none';
   el.innerHTML = todo.length ? `<h3>Getting started</h3><div class="row" style="gap:18px">${todo.map(t => `<span>${t}</span>`).join('')}</div>` : '';
@@ -637,6 +643,7 @@ function renderInbox() {
     return `<div class="item"><div class="hd"><b>#${r.id}</b><span class="pill">${r.tool}</span><span class="pill">${r.kind}</span>${p.unverified ? '<span class="pill warn" title="the mail this answers was not authenticated or not tied to the job: check the address before you send; sending it moves no job">unverified sender</span>' : ''}${esc(r.summary)}<span class="muted">${esc(localTs(r.ts, 16))}</span></div>
       ${mail ? `<div class="row"><input id="to${r.id}" value="${esc(p.to)}" style="width:260px"><input id="sub${r.id}" class="grow" value="${esc(p.subject)}"></div><textarea id="body${r.id}">${esc(p.body)}</textarea>${'chosen_time' in p ? `<div class="row"><input id="ct${r.id}" value="${esc(p.chosen_time || '')}" placeholder="YYYY-MM-DD HH:MM" style="width:170px"><span class="muted">interview slot this reply accepts; an .ics is written on send. Empty = no .ics.</span></div>` : ''}`
         : `<textarea id="js${r.id}" spellcheck="false" style="font-family:monospace">${esc(JSON.stringify(p, null, 2))}</textarea>`}
+      ${mail && r.job_id ? `<div class="row" id="att${r.id}">${attHtml(r)}</div>` : ''}
       ${mail && hasAI() ? `<div class="row"><button class="b ghost sm" onclick="draftOptions('pending',{pending_id:${r.id}},'p${r.id}',this)" title="up to 3 alternatives (one AI call); Use this changes only the subject and body">Options</button>${HOWS.map(([k, l]) => `<button class="b ghost sm" onclick="rewritePending(${r.id},'${k}',this)">${l}</button>`).join('')}<button class="b ghost sm" onclick="rewritePending(${r.id},'',this)">custom…</button></div>${optsHtml('p' + r.id)}` : ''}
       ${r.result ? `<div class="row"><span class="pill warn">${esc(r.result)}</span></div>` : ''}
       <div class="row"><button class="b" onclick="decide(${r.id},'approve',${mail})">${mail && r.result ? 'Retry send' : 'Approve' + (mail ? ' and send' : '')}</button><button class="b ghost" onclick="decide(${r.id},'reject',false)">Reject</button></div></div>`;
@@ -644,6 +651,7 @@ function renderInbox() {
   for (const [id, v] of Object.entries(edited)) { const e = document.getElementById(id); if (e) e.value = v; }
   const back = focused && document.getElementById(focused.id);
   if (back) { back.focus(); try { back.setSelectionRange(focused.s, focused.e); } catch (_) { /* not a text field */ } back.scrollTop = focused.top; }
+  attFetch();
   $('#decidedList').innerHTML = S.decided.map(r => `<div>#${r.id} <b>${r.status}</b> ${esc(r.summary)} <span class="muted">${esc((r.result || '').slice(0, 140))}</span></div>`).join('') || '<div class="muted">nothing decided yet</div>';
   renderUnmatched();
 }
@@ -653,21 +661,83 @@ async function decide(id, op, mail) {
   if (js) { try { body = { edits: JSON.parse(js.value) }; } catch (e) { return toast('not valid JSON: ' + e.message, 'err'); }
     if (!body.edits || typeof body.edits !== 'object' || Array.isArray(body.edits)) return toast('the payload must be a JSON object', 'err'); }
   const ct = $('#ct' + id); if (body.edits && ct) body.edits.chosen_time = ct.value.trim() || null;
+  if (body.edits && mail && ATT[id]) body.edits.attachments = ATT[id];  // re-checked by the server before anything is sent
   const r = await api(`/api/approvals/${id}/${op}`, body);
   toast(r.error ? 'error: ' + r.error : op === 'approve' ? `#${id} ${r.status}: ${r.result || ''}` : `#${id} rejected`, r.error ? 'err' : 'ok'); load();
 }
+
+/* ---- attachments on Inbox email cards: names only. The server allows resume / cover letter (.pdf, .docx) and the job's
+   attach/ folder, re-checks them before the claim and at send, and never serves a file's bytes to this page ---- */
+const ATT = {}, JFILES = {};  // pending id -> chosen names (kept across the 60 s re-render); job id -> attachable files
+function attHtml(r) {
+  const id = Number(r.id), jid = Number(r.job_id), files = JFILES[jid] || [];
+  const names = ATT[id] || (ATT[id] = [...(Array.isArray(r.payload.attachments) ? r.payload.attachments : [])]);
+  const size = n => { const f = files.find(x => x.name === n); return f ? ' · ' + kb(f.size) : ''; };
+  const add = files.map((f, i) => [f, i]).filter(([f]) => !names.includes(f.name));
+  return `<span class="muted">Attachments:</span> ` + (names.map((n, k) => `<span class="pill">${esc(n + size(n))} <button class="b ghost sm" aria-label="remove attachment" onclick="attRemove(${id},${k})">×</button></span>`).join(' ') || '<span class="muted">none</span>')
+    + (add.length ? ` <select aria-label="attach a file from this job's folder" onchange="attAdd(${id},${jid},this.value)"><option value="">Add from this job's files…</option>${add.map(([f, i]) => f.blocked ? `<option value="" disabled title="${esc(f.blocked)}">${esc(f.name)} · can't attach: ${esc(f.blocked.slice(0, 90))}</option>` : `<option value="${i}">${esc(f.name + ' · ' + kb(f.size))}</option>`).join('')}</select>` : '')
+    + ` <button class="b ghost sm" title="Put a portfolio or transcript here to attach it (pdf, docx, png, jpg)" onclick="openJobFolder(${jid},'attach')">Show attach folder</button>`
+    + (r.payload.unverified && names.length ? ' <span class="pill warn">the recipient is not verified: check the address before sending a file</span>' : '');
+}
+function attPaint(id) { const r = S.pending.find(x => x.id === id), el = $('#att' + id); if (r && el) el.innerHTML = attHtml(r); }
+async function attFetch() {  // once per render per job: the folder may have changed since
+  const jobs = [...new Set(S.pending.filter(r => r.kind === 'send_email' && r.job_id).map(r => Number(r.job_id)))];
+  await Promise.all(jobs.map(async j => { const r = await api(`/api/jobs/${j}/files`); JFILES[j] = r.files || []; }));
+  S.pending.filter(r => r.kind === 'send_email' && r.job_id).forEach(r => attPaint(r.id));
+}
+function attAdd(id, jid, i) { if (i === '') return; const f = (JFILES[jid] || [])[Number(i)]; if (f && !f.blocked && !(ATT[id] ||= []).includes(f.name)) ATT[id].push(f.name); attPaint(id); }
+function attRemove(id, k) { (ATT[id] || []).splice(k, 1); attPaint(id); }
+async function openJobFolder(jid, sub) {  // reveals the folder in Explorer; Lodestar never opens a file in it
+  const r = await api('/api/open_folder', { which: 'job', id: Number(jid), sub }); if (r.error) toast('error: ' + r.error, 'err');
+}
+
+/* ---- emailed sign-in codes (lodestar/codes.py): memory only on the server, shown here with the sender's domain ---- */
+let CODES = [];
+async function codesLoad() { const r = await api('/api/codes'); if (!r.error) codesPaint(r.codes || []); }
+async function codesCheck(btn) {
+  btn.disabled = true; btn.textContent = 'checking…';
+  try { const r = await api('/api/codes/check', {}); if (r.error) return toast('error: ' + r.error, 'err'); codesPaint(r.codes || []); if (!CODES.length) toast('no code in the last 15 minutes', 'ok'); }
+  finally { btn.disabled = false; btn.textContent = 'Check for a code now'; }
+}
+function codesPaint(list) {
+  if (list.length > CODES.length) $('#codesPanel').open = true;  // a new code opens the panel; you may close it again
+  CODES = list;
+  $('#codesN').textContent = list.length ? `(${list.length})` : '';
+  $('#codesList').innerHTML = list.map((c, i) => `<div class="item"><div class="row"><code id="code${i}" style="font-size:22px;letter-spacing:2px">${esc(c.code)}</code>
+      <button class="b sm" onclick="codeCopy(${i})">Copy</button><span>from <b style="font-size:15px">${esc(c.domain)}</b></span><span class="muted">${esc(c.subject)} · expires in ${Math.max(1, Math.ceil(Number(c.expires_s) / 60))} min</span>
+      <button class="b ghost sm" onclick="codeDismiss(${i})">Dismiss</button></div>
+    <div class="muted">Enter this only on the site you are signing in to right now. Never read it out or send it to anyone.</div></div>`).join('') || '<div class="muted">no code in the last 15 minutes</div>';
+}
+async function codeCopy(i) {
+  const c = CODES[i]; if (!c) return;
+  try { await navigator.clipboard.writeText(c.code); toast('copied', 'ok'); }
+  catch (_) { const r = document.createRange(); r.selectNodeContents($('#code' + i)); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); toast('selected: press Ctrl+C', 'ok'); }
+}
+async function codeDismiss(i) { const c = CODES[i]; if (!c) return; await api(`/api/codes/${encodeURIComponent(c.id)}/dismiss`, {}); codesLoad(); }
+setInterval(() => { if ($('#codesPanel').open && CODES.length) codesLoad(); }, 20000);
 
 /* ---- mail: Unmatched mail (Inbox) and the drawer's Mail group. Subjects, senders, snippets are attacker-controlled:
    every one goes through esc, and markup carries only the numeric mail id (MAILS keeps the rows) ---- */
 const MAILS = {};
 /* mail-render */
+const kb = n => n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1e3)) + ' KB';
 function mailItem(m, actions) {
   const id = Number(m.id), out = m.direction === 'out';
   return `<div class="item" id="mail${id}"><div class="hd"><b>${out ? '→ to ' + esc(m.to_addr) : esc(m.from_addr)}</b>
     <span class="chip">${esc(m.category || 'mail')}</span>${out ? '' : m.trusted ? '<span class="pill ok" title="DKIM/DMARC-aligned and tied to the job by address or company domain">trusted</span>' : '<span class="pill warn" title="not authenticated, or not tied to this company: Lodestar never acts on it unreviewed">unverified</span>'}
     <span class="muted">${esc(localTs(m.sent_at || m.created_at, 16))}${m.linked_by ? ' · linked by ' + esc(m.linked_by) : ''}</span></div>
     <details><summary>${esc(m.subject || '(no subject)')}</summary>${m.summary ? `<div class="muted">${esc(m.summary)}</div>` : ''}<pre>${esc(m.snippet || '')}</pre></details>
+    ${mailFiles(m)}
     ${actions ? `<div class="row">${actions}</div>` : ''}</div>`;
+}
+function mailFiles(m) {  // saved files: name + size, revealed in Explorer only; skipped ones: why
+  let a = []; try { a = JSON.parse(m.attachments || '[]'); } catch (_) { /* not JSON: show nothing */ }
+  if (!Array.isArray(a) || !a.length) return '';
+  const saved = a.filter(f => !f.skipped), skip = a.filter(f => f.skipped);
+  return `<div class="row"><span class="muted">${m.direction === 'out' ? 'Attached' : 'Attachments'}:</span>`
+    + saved.map(f => `<span class="pill">${esc(f.name)}${f.size ? ' · ' + esc(kb(Number(f.size))) : ''}</span>`).join('')
+    + skip.map(f => `<span class="muted">${esc(f.name)}: ${esc(f.skipped)}</span>`).join(' ')
+    + (m.direction === 'in' && m.job_id && saved.length ? ` <button class="b ghost sm" title="opens the folder; Lodestar never opens a received file" onclick="openJobFolder(${Number(m.job_id)},'mail')">Show in folder</button>` : '') + '</div>';
 }
 /* /mail-render */
 function renderUnmatched() {
@@ -885,7 +955,7 @@ function renderTools() {
 }
 async function setPref(key, value) { const r = await api('/api/prefs', { key, value }); if (r.error) toast('error: ' + r.error, 'err'); load(); }
 function renderSetup() {
-  $('#prov').innerHTML = Object.entries(S.providers).map(([n, ok]) => `<span class="pill ${ok ? 'ok' : ''}">${n}${ok ? ' ✓' : ''}</span>`).join('');
+  renderKeys();
   $('#vList').innerHTML = S.vault.map((v, i) => `<span class="pill">${esc(v.name + (v.user ? ' (' + v.user + ')' : ''))} <button class="b ghost sm" aria-label="remove" onclick="delVault(${i})">×</button></span>`).join(' ') || 'empty';
   const u = Object.entries(S.usage).filter(([k]) => k !== 'total');
   $('#usage').innerHTML = u.length ? 'last 30 days: ' + u.map(([k, d]) => `<span class="pill">${esc(k)}: ${d.calls} calls · ${(d.input + d.output).toLocaleString()} tokens</span>`).join(' ') : '';
@@ -912,9 +982,77 @@ async function delVault(i) {  // names stay in JS; markup carries only an index
   const v = S.vault[i]; if (!v || !confirm(`Remove ${v.name} from the OS keyring?`)) return;
   const r = await api('/api/vault', { name: v.name, delete: true }); toast(r.error || 'removed ' + v.name, r.error ? 'err' : 'ok'); load();
 }
-/* ---- connect email (the password goes in once and never comes back from the server) ---- */
-let EM = null;  // {status, presets} from /api/email/status
-const EF = { imap_host: '#eImapHost', imap_port: '#eImapPort', smtp_host: '#eSmtpHost', smtp_port: '#eSmtpPort', smtp_mode: '#eSmtpMode', smtp_user: '#eSmtpUser' };
+/* ---- link an AI key (the key goes in once and never comes back from the server) ---- */
+let KEYS = [];  // provider names stay in JS; markup carries only an index
+const KSTAT = { verified: ['Verified', 'ok'], failed: ['Failed', 'bad'], unreachable: ["Couldn't reach, will retry", 'warn'], unchecked: ['Not checked', ''] };
+function renderKeys() {
+  const c = S.connections || { keys: {} }, sel = $('#kProv'), was = sel.value;
+  KEYS = Object.keys(c.keys);
+  sel.innerHTML = KEYS.map(n => `<option value="${esc(n)}">${esc(c.keys[n].label + (c.keys[n].linked ? ' (linked)' : ''))}</option>`).join('');
+  if (KEYS.includes(was)) sel.value = was;
+  keyHint();
+  $('#kList').innerHTML = (c.checking ? '<div class="muted">checking...</div>' : '') + KEYS.map((n, i) => {
+    const k = c.keys[n];
+    if (!k.linked) return `<div class="muted">${esc(k.label)}: not linked</div>`;
+    const [label, cls] = KSTAT[k.status] || KSTAT.unchecked, when = k.checked_at ? ' ' + localTs(k.checked_at, 16) : '';
+    const env = k.source === 'env';
+    return `<div><b>${esc(k.label)}</b> <span class="pill ${cls}" ${cls === 'bad' ? 'style="background:#4d1f1f;color:var(--bad)"' : ''}>${esc(label + (k.status === 'verified' ? when : ''))}</span>`
+      + (k.model ? ` <span class="muted">model ${esc(k.model)}</span>` : '')
+      + (k.detail && k.status !== 'verified' ? ` <span class="muted">${esc(k.detail)}</span>` : '')
+      + ` <button class="b ghost sm" onclick="keyCheck(${i},this)">Re-check</button>`
+      + (n === 'ollama' ? '' : ` <button class="b ghost sm" ${env ? 'disabled title="set in .env or the environment: remove it there"' : ''} onclick="keyRemove(${i})">Remove</button>`) + '</div>';
+  }).join('');
+}
+function keyHint() {
+  const k = (S.connections?.keys || {})[$('#kProv').value]; if (!k) return;
+  const u = safeUrl(k.get);
+  $('#kHint').innerHTML = (u ? `Get a key: <a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a>` : '') + (k.hint ? ` <span>(${esc(k.hint)})</span>` : '');
+  $('#kVal').disabled = $('#kProv').value === 'ollama';
+  $('#kVal').placeholder = $('#kProv').value === 'ollama' ? 'no key: Link checks Ollama on this computer' : 'paste the key';
+}
+async function keyLink(btn) {
+  btn.disabled = true;
+  try {
+    const r = await api('/api/keys/link', { name: $('#kProv').value, key: $('#kVal').value });
+    if (r.error) return toast('error: ' + r.error, 'err');
+    toast(`${r.label}: ${(KSTAT[r.status] || KSTAT.unchecked)[0]} - ${r.detail}${r.prefix_warning ? ' (' + r.prefix_warning + ')' : ''}${r.shadowed ? ' (' + r.shadowed + ')' : ''}`, r.status === 'failed' ? 'err' : 'ok');
+  } finally { $('#kVal').value = ''; btn.disabled = false; load(); }
+}
+async function keyCheck(i, btn) {
+  const n = KEYS[i]; if (!n) return;
+  btn.disabled = true;
+  const r = await api('/api/keys/check', { name: n }); btn.disabled = false;
+  if (r.error) return toast('error: ' + r.error, 'err');
+  load();
+}
+async function keyRemove(i) {
+  const n = KEYS[i], k = (S.connections?.keys || {})[n]; if (!k || !confirm(`Remove the ${k.label} key from the OS keyring?`)) return;
+  const r = await api('/api/keys/remove', { name: n }); toast(r.error ? 'error: ' + r.error : 'removed', r.error ? 'err' : 'ok'); load();
+}
+/* ---- connect email: a Google / Microsoft sign-in (every 2-step method runs on their page) or an app password. The
+   password, client secret and tokens go in once and never come back from the server ---- */
+let EM = null;  // {status, presets, clients, oauth} from /api/email/status
+const EF = { imap_host: '#eImapHost', imap_port: '#eImapPort', imap_mode: '#eImapMode', smtp_host: '#eSmtpHost', smtp_port: '#eSmtpPort', smtp_mode: '#eSmtpMode', smtp_user: '#eSmtpUser', cafile: '#eCafile' };
+const OAUTH_LABEL = { google: 'Google', microsoft: 'Microsoft' };
+const CLIENT_STEPS = {  // the one-time client setup, shortened from docs/CONNECT.md: [step, link]
+  google: [
+    ['Google Cloud console: create a project named "Lodestar".', 'https://console.cloud.google.com/'],
+    ['APIs & Services > Library: enable "Gmail API".', ''],
+    ['Google Auth Platform > Branding: app name "Lodestar (personal)", your address as support and developer contact. Audience: External. Data access: add the scope https://mail.google.com/ (plus openid, email).', ''],
+    ['Clients > Create client > Desktop app. Copy the Client ID and Client secret into the boxes below right away: Google shows the secret only once.', ''],
+    ['Audience > Test users: add your own address.', ''],
+    ['Audience > Publish app ("In production"). Unverified is fine for your own use; skip this and the sign-in stops after 7 days.', ''],
+    ['Save the client here, then Sign in with Google. On "Google hasn\'t verified this app": Advanced > Go to Lodestar (it is your own app).', ''],
+  ],
+  microsoft: [
+    ['You need a Microsoft Entra tenant to register an app (work or school: ask IT; personal: a free tenant). Not for you? Forward Outlook mail to Gmail and connect that.', 'https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-create-new-tenant'],
+    ['Entra admin center > App registrations > New registration: name "Lodestar", account types "Any Entra ID Tenant + Personal Microsoft accounts", redirect platform "Public client/native (mobile & desktop)" with http://localhost.', 'https://entra.microsoft.com'],
+    ['Authentication > Advanced settings > Allow public client flows: Yes. Save.', ''],
+    ['API permissions > Add > APIs my organization uses > Office 365 Exchange Online > Delegated: IMAP.AccessAsUser.All and SMTP.Send (plus offline_access, openid, email, profile). Work accounts: an admin may need to consent.', ''],
+    ['Copy the Application (client) ID into the box below. There is no secret.', ''],
+    ['Outlook.com only: turn on IMAP (Outlook.com > Settings > Mail > Forwarding and IMAP).', 'https://support.microsoft.com/en-us/outlook/pop-imap-and-smtp-settings-for-outlook-com'],
+  ],
+};
 async function loadEmail() {
   const r = await api('/api/email/status'); if (r.error) return toast('error: ' + r.error, 'err');
   EM = r; const s = r.status;
@@ -923,27 +1061,82 @@ async function loadEmail() {
   $('#eProv').value = r.presets[s.preset] ? s.preset : (s.configured ? 'custom' : 'gmail');
   emailPreset(s); emailLine();
 }
-function emailPreset(s) {  // s: the stored connection when it uses this preset, else the preset's own servers
-  const k = $('#eProv').value, p = EM.presets[k] || {}, v = s && (s.preset === k || (!s.preset && s.configured)) ? s : p, off = !!p.unsupported;
-  Object.entries(EF).forEach(([f, sel]) => { $(sel).value = f === 'smtp_user' && v.smtp_user === v.user ? '' : (v[f] ?? (f === 'smtp_mode' ? 'ssl' : '')); });
-  ['#ePass', '#eConnect', '#eSend'].forEach(x => { $(x).disabled = off; });  // the address stays editable: a typo must not lock it
-  $('#emailCard').style.opacity = off ? '.6' : '';
-  $('#eAdv').open = k === 'custom';
-  const help = safeUrl(p.help);
-  $('#eHelp').innerHTML = off ? `<b>Not supported:</b> ${esc(p.unsupported)}`
-    : `${esc(p.steps || '')} ${help ? `<a href="${esc(help)}" target="_blank" rel="noopener">Open the app password page</a>` : ''}`;
-}
-function emailGuess() {
+function emailGuess() {  // the address box: pick the preset its domain belongs to (Outlook and Microsoft 365 sign in only)
+  if (!EM) return;
   const dom = $('#eUser').value.trim().toLowerCase().split('@')[1] || '';
   const k = Object.keys(EM.presets).find(n => (EM.presets[n].domains || []).includes(dom));
   if (k && k !== $('#eProv').value) { $('#eProv').value = k; emailPreset(); }
 }
+function emailPreset(s) {  // s: the stored connection when it uses this preset, else the preset's own servers
+  const k = $('#eProv').value, p = EM.presets[k] || {}, v = s && (s.preset === k || (!s.preset && s.configured)) ? s : p, off = !!p.unsupported;
+  Object.entries(EF).forEach(([f, sel]) => { $(sel).value = f === 'smtp_user' && v.smtp_user === v.user ? '' : (v[f] || (f.endsWith('_mode') ? 'ssl' : '')); });
+  ['#ePass', '#eConnect', '#eSend'].forEach(x => { $(x).disabled = off; });  // the address stays editable: a typo must not lock it
+  $('#emailCard').style.opacity = off ? '.6' : '';
+  $('#eAdv').open = k === 'custom' || !!p.cert;
+  const prov = p.oauth || '', st = EM.status || {}, signedIn = st.auth === 'oauth' && st.oauth_provider === prov && st.configured;
+  $('#eOauth').style.display = prov ? '' : 'none';
+  $('#ePw').style.display = $('#eConnect').style.display = p.oauth_only ? 'none' : '';  // Microsoft takes no passwords
+  $('#ePwSum').textContent = prov ? 'Or use an app password' : 'App password';
+  $('#ePw').open = !(prov && signedIn);
+  if (prov) emailOauthCard(k, prov);
+  const help = safeUrl(p.help);
+  $('#eHelp').innerHTML = off ? `<b>Not supported:</b> ${esc(p.unsupported)}`
+    : `${esc(p.steps || '')} ${help ? `<a href="${esc(help)}" target="_blank" rel="noopener">${prov ? 'Provider help' : 'Open the app password page'}</a>` : ''}`;
+}
+function emailOauthCard(k, prov) {
+  const label = OAUTH_LABEL[prov], set = !!((EM.clients || {})[prov] || {}).set;
+  $('#eSignin').textContent = `Sign in with ${label}`;
+  $('#eSignin').disabled = !set; $('#eSignin').title = set ? '' : `set up your ${label} client first (below)`;
+  $('#eAcct').style.display = prov === 'microsoft' ? '' : 'none';
+  $$('input[name=eAcct]').forEach(x => { x.checked = x.value === (k === 'm365' ? 'work' : 'personal'); });
+  $('#eOauthNote').textContent = `Your 2-step verification (authenticator app, text code, phone prompt, passkey, security key) happens on ${label}'s page. Lodestar never sees your password or codes.`
+    + (set ? '' : ` First set up your own ${label} client below (one time, about 10 minutes).`);
+  $('#eClientSum').textContent = set ? `${label} client set up · Change client` : `Set up your ${label} client (one time)`;
+  $('#eClient').open = !set;
+  $('#eCsec').style.display = prov === 'google' ? '' : 'none';
+  $('#eCid').placeholder = prov === 'google' ? 'Client ID (ends in .apps.googleusercontent.com)' : 'Application (client) ID';
+  $('#eClientSteps').innerHTML = CLIENT_STEPS[prov].map(([t, u]) => `<li>${esc(t)}${safeUrl(u) ? ` <a href="${esc(safeUrl(u))}" target="_blank" rel="noopener">open</a>` : ''}</li>`).join('');
+}
+async function emailClient(btn) {  // the user's own OAuth client; the values never come back
+  const k = $('#eProv').value, prov = (EM.presets[k] || {}).oauth; if (!prov) return;
+  btn.disabled = true;
+  try {
+    const r = await api('/api/email/client', { provider: prov, client_id: $('#eCid').value.trim(), client_secret: $('#eCsec').value.trim() });
+    if (r.error) return toast('error: ' + r.error, 'err');
+    EM.clients = r.clients; emailOauthCard(k, prov); toast(`${OAUTH_LABEL[prov]} client saved: now Sign in with ${OAUTH_LABEL[prov]}`, 'ok');
+  } finally { $('#eCid').value = ''; $('#eCsec').value = ''; btn.disabled = false; }
+}
+async function emailSignin(btn) {  // opens the provider's page in the system browser (never this window), then tests
+  const prov = (EM.presets[$('#eProv').value] || {}).oauth; if (!prov) return;
+  const account = prov === 'microsoft' ? (($('input[name=eAcct]:checked') || {}).value || 'personal') : 'personal';
+  btn.disabled = true;
+  const r = await api('/api/email/signin', { provider: prov, account, login_hint: $('#eUser').value.trim() });
+  if (r.error) { btn.disabled = false; return emailLine(null, r.error); }
+  $('#eWait').innerHTML = `Waiting for you to finish signing in in your browser… <span id="eWaitLink"></span> <button class="b ghost sm" onclick="api('/api/email/signin_cancel',{})">Cancel</button>`;
+  setTimeout(emailSigninLink, 1000);
+  const poll = async () => {
+    const t = await api('/api/tasks/' + r.task);
+    if (t.status === 'running') return setTimeout(poll, 1500);
+    btn.disabled = false; $('#eWait').innerHTML = '';
+    if (t.status !== 'done') return emailLine(null, t.error || 'the sign-in did not finish');
+    EM.status = t.result.status; const test = t.result.test || {};
+    emailLine(test.error ? null : test, test.error); load();
+  };
+  poll();
+}
+async function emailSigninLink() {  // the fallback when no browser opened: the same page, in the system browser
+  const r = await api('/api/email/signin'), u = safeUrl(r.url), el = $('#eWaitLink');
+  if (el && r.pending && u) el.innerHTML = `<a href="${esc(u)}" target="_blank" rel="noopener">Open the sign-in page</a>`;
+}
 function emailLine(test, err) {
   const s = EM.status, ok = b => `<span class="pill ${b ? 'ok' : ''}">${b ? 'ok' : 'failed'}</span>`;
   const failed = test && !(test.imap.ok && test.smtp.ok);  // a stored password the server refused is not a connection
+  const via = s.auth === 'oauth' ? { google: 'Google', microsoft: 'Microsoft' }[s.oauth_provider] || '' : '';
   let h = failed ? `Saved, but sign-in failed for <b>${esc(s.user)}</b> (${esc(s.label || s.preset || 'custom')}): Lodestar cannot read or send mail until the test passes`
-    : s.configured ? `Connected as <b>${esc(s.user)}</b> (${esc(s.label || s.preset || 'custom')}) · IMAP ${esc(s.imap_host)}:${esc(s.imap_port)} · SMTP ${esc(s.smtp_host)}:${esc(s.smtp_port)} ${esc(s.smtp_mode)}`
-    : `Not connected${s.user ? ' (address ' + esc(s.user) + ' saved, no app password)' : ''}`;
+    : s.configured ? `${via ? 'Signed in with ' + esc(via) + ' as' : 'Connected as'} <b>${esc(s.user)}</b> (${esc(s.label || s.preset || 'custom')}${via ? ', OAuth' : ''}) · IMAP ${esc(s.imap_host)}:${esc(s.imap_port)} · SMTP ${esc(s.smtp_host)}:${esc(s.smtp_port)} ${esc(s.smtp_mode)}`
+    : `Not connected${s.user ? ' (address ' + esc(s.user) + ' saved, no app password or sign-in)' : ''}`;
+  if (via && s.needs_signin) h += `<div style="color:var(--bad)">Sign-in expired: ${esc(s.needs_signin)} <button class="b sm" onclick="emailSignin(document.getElementById('eSignin'))">Sign in again</button></div>`;
+  if (via && s.refresh_expires) h += `<div class="warnbox">Your Google app is in Testing: this sign-in stops on ${esc(String(s.refresh_expires).slice(0, 10))}. Publish it (docs/CONNECT.md, Google step 6), then sign in again.</div>`;
   if (s.shadowed && s.shadowed.length) h += `<div class="muted">${esc(s.shadowed.join(', '))} set in the environment or .env override these settings</div>`;
   (s.conflicts || []).forEach(c => { h += `<div class="warnbox">${esc(c)}</div>`; });
   if (test) h += `<div>IMAP ${ok(test.imap.ok)} ${esc(test.imap.detail)}</div><div>SMTP ${ok(test.smtp.ok)} ${esc(test.smtp.detail)}</div>${test.hint ? `<div><b>What to do:</b> ${esc(test.hint)}</div>` : ''}`;
@@ -968,9 +1161,11 @@ async function emailSend(btn) {
   finally { btn.disabled = false; }
 }
 async function emailDisconnect() {
-  if (!confirm('Remove the stored app password? Lodestar stops reading and sending mail until you connect again.')) return;
+  const s = EM.status;
+  if (!confirm(s.auth === 'oauth' ? `Sign out and revoke Lodestar's access to ${s.user}? Lodestar stops reading and sending mail until you sign in again.`
+    : 'Remove the stored app password? Lodestar stops reading and sending mail until you connect again.')) return;
   const r = await api('/api/email/disconnect', {}); if (r.error) return emailLine(null, r.error);
-  EM.status = r; emailLine(); toast('email disconnected', 'ok'); load();
+  EM.status = r; emailLine(); toast(r.note || 'email disconnected', 'ok'); load();
 }
 async function setVault() { const r = await api('/api/vault', { name: $('#vName').value, user: $('#vUser').value, value: $('#vVal').value }); toast(r.error || 'stored', r.error ? 'err' : 'ok'); $('#vVal').value = ''; load(); }
 

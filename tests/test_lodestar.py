@@ -1,4 +1,5 @@
 """Offline self-checks: no network, no keyring writes. Run: python -m unittest -v"""
+import imaplib
 import json
 import os
 import sys
@@ -391,8 +392,8 @@ class Hardening(unittest.TestCase):
                 raw = (b"From: Jane <jane@acme.com>\r\nSubject: Interview invitation\r\nMessage-ID: <x@acme>\r\n"
                        b"Content-Type: text/plain\r\n\r\nWe would like to interview you.")
                 return "OK", [(b"7", raw)]
-        orig_imap, orig_setting = email_monitor.imaplib.IMAP4_SSL, email_monitor.setting
-        email_monitor.imaplib.IMAP4_SSL = lambda host, **kw: Box()
+        orig_imap, orig_setting = imaplib.IMAP4_SSL, email_monitor.setting
+        imaplib.IMAP4_SSL = lambda host, **kw: Box()
         email_monitor.setting = lambda k, d=None: {"IMAP_USER": "me@x.com", "IMAP_PASS": "p"}.get(k, d)
 
         def boom(*a, **k):
@@ -409,7 +410,7 @@ class Hardening(unittest.TestCase):
             self.assertEqual(seen, ["email:me@x.com:7"])   # succeeded -> marked seen
         finally:
             email_monitor.classify, db.mark_seen = orig_classify, orig_seen
-            email_monitor.imaplib.IMAP4_SSL, email_monitor.setting = orig_imap, orig_setting
+            imaplib.IMAP4_SSL, email_monitor.setting = orig_imap, orig_setting
 
     def test_scheduler_uses_this_interpreter(self):
         from lodestar import extras

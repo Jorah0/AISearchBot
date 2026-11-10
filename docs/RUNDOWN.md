@@ -15,7 +15,11 @@ one SQLite file. Nothing leaves your machine except the API calls you configure 
 | JD coverage | `lodestar/ats.py` | deterministic keyword coverage of a posting against your resume (`match`), over `data/skills.json`; no AI | stdlib |
 | Resume lint | `lodestar/lint.py` | offline resume checks and the saved-file audit (`resume lint`, `resume audit`) | stdlib |
 | Inbox | `lodestar/email_monitor.py` | IMAP scan, keyword prefilter, AI classification, sender trust (DKIM + a strong job tie: contact, vouched thread, or the company site held for the job), status upgrade rules, interview rounds from trusted timed invites, contact touches, reply drafts, mail recording and thread linking, Track as new job | imaplib |
-| Mail connection | `lodestar/mailconn.py` | provider presets (Gmail, Yahoo, iCloud, Fastmail, Zoho, AOL, custom; Outlook refused: OAuth only), stored connection, IMAP + SMTP login test with plain hints, test send to yourself | imaplib, smtplib |
+| Mail connection | `lodestar/mailconn.py` | provider presets (Gmail, Yahoo, iCloud, Fastmail, Zoho, AOL, Outlook.com and Microsoft 365 by sign-in only, Proton via Bridge with STARTTLS, custom), stored connection, IMAP + SMTP login test with plain hints (every test is recorded for Getting started and doctor), test send to yourself | imaplib, smtplib |
+| Sign-in | `lodestar/oauth.py` | Google / Microsoft sign-in with your own client: authorization code + PKCE through a one-shot loopback listener, refresh token in the keyring only, XOAUTH2 for IMAP and SMTP, revoke | urllib, http.server |
+| Connections | `lodestar/connections.py` | AI key registry, no-token key checks, stored check results (fingerprints, never keys), the non-blocking startup check | urllib |
+| Codes | `lodestar/codes.py` | emailed sign-in codes from DKIM-passing mail, 15 minutes, memory only; masks codes before any AI call | imaplib |
+| Attachments | `lodestar/mailfiles.py` | outgoing files only from the job folder's employer-safe set (salary-floor guard, size caps, no links); incoming files saved under the job, never opened | email |
 | Drafts | `lodestar/drafts.py` | AI draft options (one call, one recommended), rewrites, picking an option (always proposed for review), suggested emails from the tracker (no AI) | ai, approvals |
 | Web | `lodestar/web_monitor.py` | career-page diffs (robots.txt respected); six free job sources (Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse); Greenhouse / Lever / Ashby company boards; search filters, cross-source de-dup, stale signals, H-1B sponsor hints, weekly posting check; AI fit ranking | urllib |
 | Interview | `lodestar/interview.py` | interview rounds, question bank (`data/questions.json`), STAR stories, prep pack, mock interview with per-answer scoring | ai |
@@ -108,11 +112,12 @@ document is produced (`--council`) and as a standalone `council "<question>"` co
 - `.gitignore` excludes every personal artifact (profile, database, applications, alerts, snapshots, vault index,
   `.env`) and every development artifact (graph outputs, caches, build dirs), so the repo can be shared safely.
 
-## 6. Current state (2026-11-07, pass 16.1)
+## 6. Current state (2026-11-07, pass 16.2: connections)
 
-386 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`). Live-verified: installer (Desktop shortcuts; the Start Menu folder fix after the overview is checked statically only), desktop window (Edge
+460 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`). Live-verified: installer (Desktop shortcuts; the Start Menu folder fix after the overview is checked statically only), desktop window (Edge
 WebView2), every UI route with token and Host checks, six free job sources, page watches, Obsidian export. Not yet
-exercised with real credentials: AI calls, IMAP login and SMTP sending (Connect email is tested against faked servers only). Pass-by-pass history is in [CHANGELOG.md](CHANGELOG.md).
+exercised with real credentials: AI calls and key checks, Google / Microsoft sign-in, IMAP login and SMTP sending, Proton
+Mail Bridge (all tested against faked servers and a fake OAuth server on 127.0.0.1 only). Pass-by-pass history is in [CHANGELOG.md](CHANGELOG.md).
 
 ## 7. Roadmap (shipped)
 

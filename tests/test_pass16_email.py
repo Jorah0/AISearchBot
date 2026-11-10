@@ -113,6 +113,9 @@ class Presets(Mail):
             if k in ("outlook", "custom"):
                 continue
             self.assertTrue(p["imap_host"] and p["smtp_host"] and p["steps"] and p["help"].startswith("https://"), k)
+            if k == "proton":  # Proton Mail Bridge listens on its own local ports (pass 17 preset)
+                self.assertEqual((p["imap_host"], p["imap_port"], p["smtp_port"]), ("127.0.0.1", 1143, 1025))
+                continue
             self.assertEqual((p["imap_port"], {"ssl": 465, "starttls": 587}[p["smtp_mode"]]), (993, p["smtp_port"]), k)
         self.assertEqual((mailconn.PRESETS["icloud"]["smtp_host"], mailconn.PRESETS["icloud"]["smtp_mode"]), ("smtp.mail.me.com", "starttls"))
         self.assertEqual([mailconn.guess(a) for a in ("a@gmail.com", "a@ME.com", "a@hotmail.com", "a@example.com")],

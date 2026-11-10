@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from . import ai
-from .config import HOME, PROFILE, setting
+from .config import HOME, PROFILE
 
 
 def checks() -> list[tuple[str, str, str]]:
@@ -50,18 +50,61 @@ def checks() -> list[tuple[str, str, str]]:
                 if any(n.values()) else "empty: lodestar profile import <resume> or lodestar profile linkedin <export.zip>"))
     avail = ai.available()
     out.append(("ok" if avail else "fail", "AI providers", ", ".join(f"{n} ({ai.model_for(n)})" for n in avail) or
-                "none configured: lodestar vault set ANTHROPIC_API_KEY (or another provider key)"))
-    from .util import mail_settings
+                "none configured: lodestar keys link anthropic (or another provider)"))
+    from . import connections
 
-    c = mail_settings()
-    mail = bool(c["user"] and setting("IMAP_PASS"))
-    out.append(("ok" if mail else "warn", "email", f"{c['user']} ({c['preset'] or 'no preset'}): IMAP {c['imap_host']}:"
-                f"{c['imap_port']}, SMTP {c['smtp_host']}:{c['smtp_port']} {c['smtp_mode']}" if mail else
-                "not connected (optional): Setup > Connect email, or lodestar email connect"))
+    try:
+        conn = connections.status()
+    except (Exception, SystemExit) as e:  # a locked keyring: one row, the other checks still print
+        conn = {"keys": {}, "mail": {}}
+        out.append(("warn", "key checks", str(e)[:160]))
+    for n, k in conn["keys"].items():  # the stored result of the last check: no network here
+        if not k["linked"]:
+            continue
+        when = f"checked {connections.local(k['checked_at'])}" if k["checked_at"] else ""
+        if k["status"] == "verified":
+            out.append(("ok", f"key {n}", f"verified, {when}, model {k['model']}"))
+        elif k["status"] == "failed":
+            out.append(("fail", f"key {n}", k["detail"] + (f" ({when})" if when else "")))
+        elif k["status"] == "unreachable":
+            out.append(("warn", f"key {n}", f"{k['detail']} ({when}): lodestar keys check {n}"))
+        else:
+            out.append(("warn", f"key {n}", f"not checked yet: lodestar keys check {n}"))
+    from . import mailconn
+
+    try:
+        c = mailconn.status()
+    except (Exception, SystemExit) as e:
+        c = None
+        out.append(("warn", "email", str(e)[:160]))
+    mail = bool(c and c["configured"])
+    how = {"google": "Google sign-in", "microsoft": "Microsoft sign-in"}.get(c["oauth_provider"], "app password") if c else ""
+    if c:
+        out.append(("ok" if mail else "warn", "email", f"{c['user']} ({c['preset'] or 'no preset'}, {how}): IMAP "
+                    f"{c['imap_host']}:{c['imap_port']}, SMTP {c['smtp_host']}:{c['smtp_port']} {c['smtp_mode']}" if mail else
+                    "not connected (optional): Setup > Connect email, or lodestar email connect"))
+    if mail and c["needs_signin"]:
+        out.append(("fail", "email sign-in", f"{c['needs_signin'][:120]}: sign in again: lodestar email signin {c['oauth_provider']}"))
+    if mail and c["refresh_expires"] and c["refresh_expires"] <= _in_days(7):
+        out.append(("warn", "email sign-in", f"Google app in Testing: this sign-in stops working {c['refresh_expires']} UTC; "
+                    "publish it (docs/CONNECT.md step 6), then lodestar email signin google"))
+    for prov, s in (c["clients"].items() if c else ()):
+        if s["set"]:
+            out.append(("ok", f"OAuth client {prov}", "set up (lodestar email client " + prov + " to change)"))
+    m = conn["mail"]
+    if mail and m.get("status") in ("verified", "failed", "unreachable"):
+        out.append(({"verified": "ok", "failed": "fail"}.get(m["status"], "warn"), "email check",
+                    f"{m['status']} {connections.local(m.get('checked_at', ''))}: {m.get('detail', '')}"))
     old = Path.home() / ".jobbot"
     if old.exists():
         out.append(("warn", "legacy folder", f"{old} still exists; safe to delete once ~/.lodestar has your data"))
     return out
+
+
+def _in_days(n: int) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) + timedelta(days=n)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def live_mail() -> list[tuple[str, str, str]]:
@@ -78,9 +121,21 @@ def live_mail() -> list[tuple[str, str, str]]:
              r[k]["detail"] + ("" if r[k]["ok"] or not r["hint"] else " | " + r["hint"])) for k in ("imap", "smtp")]
 
 
+def live_keys() -> list[tuple[str, str, str]]:
+    """Verify every linked key now (no tokens: each provider's model list or key info) and record the result."""
+    from . import connections
+
+    rows = []
+    for n in ai.available():
+        r = connections.check(n)
+        rows.append(({"verified": "ok", "failed": "fail"}.get(r["status"], "warn"), f"key check {n}", r["detail"]))
+    return rows
+
+
 def report(live: bool = False) -> int:
     rows = checks()
     if live:
+        rows += live_keys()
         rows += (mail := live_mail())
         if not mail and not ai.available():
             rows.append(("warn", "live", "skipped: no AI provider or mailbox configured"))

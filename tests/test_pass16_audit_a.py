@@ -2,6 +2,7 @@
 idea markup, research/scheduling prompts, .ics escaping, zip and fetch caps, DNS rebinding, database locks after a
 failed write, stale status proposals, job id reuse, closed jobs' interviews, the .ics import race, failed sends kept
 for a retry, mail socket timeouts. No network: mail, AI and DNS are faked; every patched attribute is put back."""
+import imaplib
 import http.server
 import io
 import json
@@ -307,8 +308,8 @@ class Fetch(unittest.TestCase):
                 seen[name] = k.get("timeout")
                 raise Stop()
             return f
-        real = (em.imaplib.IMAP4_SSL, util.smtplib.SMTP_SSL, util.setting)
-        em.imaplib.IMAP4_SSL, util.smtplib.SMTP_SSL = rec("imap"), rec("smtp")
+        real = (imaplib.IMAP4_SSL, util.smtplib.SMTP_SSL, util.setting)
+        imaplib.IMAP4_SSL, util.smtplib.SMTP_SSL = rec("imap"), rec("smtp")
         util.setting = lambda k, d=None: {"IMAP_USER": "me@example.com", "IMAP_PASS": "p"}.get(k, d)
         try:
             with self.assertRaises(Stop):
@@ -316,7 +317,7 @@ class Fetch(unittest.TestCase):
             with self.assertRaises(Stop):
                 util.send_email("you@example.com", "s", "b")
         finally:
-            em.imaplib.IMAP4_SSL, util.smtplib.SMTP_SSL, util.setting = real
+            imaplib.IMAP4_SSL, util.smtplib.SMTP_SSL, util.setting = real
         self.assertEqual(seen, {"imap": util.MAIL_TIMEOUT, "smtp": util.MAIL_TIMEOUT})
 
 

@@ -19,6 +19,15 @@ def propose(tool: str, kind: str, payload: dict, summary: str, job_id: int | Non
 
         screen({"subject": payload.get("subject"), "body": payload.get("body") or payload.get("answer")},
                payload.get("cited") or ())  # cited: competing-offer figures you ticked for a counter (apply.counter)
+    if kind == "send_email" and payload.get("attachments"):  # files only ever leave after you have seen the mail
+        from .mailfiles import resolve
+
+        if not force_pending:
+            raise SystemExit("a mail with attachments always waits in the Inbox for your review")
+        if not job_id or payload.get("job_id") != job_id:
+            raise SystemExit("attachments need a job: they come from that job's folder")
+        n = len(resolve(db.get_job(job_id), payload["attachments"]))  # refused before the row exists
+        summary = f"{summary} + {n} attachment{'s' if n > 1 else ''}"
     if kind == "set_status" and payload.get("job_id") and "from_status" not in payload:
         payload = payload | {"from_status": db.get_job(payload["job_id"])["status"]}  # _status refuses it once the job moves
     src = kind == "send_email" and payload.get("in_reply_to") and db.mail_by_message_id(payload["in_reply_to"])
@@ -37,7 +46,8 @@ def propose(tool: str, kind: str, payload: dict, summary: str, job_id: int | Non
     return {"id": pid, "status": "pending", "summary": summary}
 
 
-MAIL_EDITS = ("to", "subject", "body", "chosen_time")  # what an Inbox email card edits; job, status, trust stay as proposed
+# what an Inbox email card edits; job, status, trust stay as proposed. attachments: re-validated by _precheck and _send
+MAIL_EDITS = ("to", "subject", "body", "chosen_time", "attachments")
 
 
 def approve(pid: int, edits: dict | None = None) -> dict:
@@ -81,6 +91,10 @@ def _precheck(row, edits: dict | None) -> None:
             from .drafts import screen
 
             screen({"subject": p.get("subject"), "body": p.get("body")}, p.get("cited") or ())
+        if p.get("attachments") not in (None, []):  # the row's job folder, never a path or job from the payload
+            from .mailfiles import resolve
+
+            resolve(db.get_job(row["job_id"]) if row["job_id"] else None, p["attachments"])
         if p.get("chosen_time") and p.get("job_id"):  # checked before the acceptance goes out, not after
             from .extras import conflicts, parse_when
 
@@ -123,7 +137,13 @@ class Stale(Exception):
 
 
 def _send(p: dict) -> str:
-    mid = send_email(p["to"], p["subject"], p["body"], in_reply_to=p.get("in_reply_to"))
+    paths = []
+    if p.get("attachments"):  # checked again: a file may have changed or gone since approval (nothing is sent then)
+        from .mailfiles import resolve
+
+        paths = resolve(db.get_job(p["job_id"]) if p.get("job_id") else None, p["attachments"])
+    mid = send_email(p["to"], p["subject"], p["body"], in_reply_to=p.get("in_reply_to"),
+                     **({"attachments": paths} if paths else {}))
     note = ""
     try:  # the mail is out; bookkeeping failures must not turn a sent item into an "error"
         from .util import mail_settings
@@ -133,7 +153,8 @@ def _send(p: dict) -> str:
             db.add_mail(message_id=mid, in_reply_to=p.get("in_reply_to"), refs=p.get("in_reply_to"),
                         job_id=p.get("job_id"), direction="out", from_addr=mail_settings()["user"], to_addr=p["to"],
                         subject=p["subject"], sent_at=db._now(), category=p.get("purpose") or "sent",
-                        snippet=p["body"], trusted=True, linked_by="auto" if p.get("job_id") else None)
+                        snippet=p["body"], trusted=True, linked_by="auto" if p.get("job_id") else None,
+                        attachments=[{"name": f.name, "size": f.stat().st_size} for f in paths])
         if p.get("purpose") in ("followup", "thanks") and p.get("job_id"):  # the checklist counts these as done
             db.add_event(p["job_id"], p["purpose"], f"sent to {p['to']}")
         while p.get("purpose") == "followup" and p.get("job_id") and (dup := db.followup_waiting(p["job_id"])):

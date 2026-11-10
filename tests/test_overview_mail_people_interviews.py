@@ -3,6 +3,7 @@ thread or from a job's contact are scanned, tied mail is filed without an AI pro
 clash, Inbox approve edits pass the salary-floor guard, referral suggestions skip the job's own staff, a rescheduled
 round moves, the mock interview runs offline; plus mail fenced as data, CLI help, future touches, link limits and the
 offline referral template. No network: IMAP, SMTP and AI are faked; every patched attribute is put back."""
+import imaplib
 import contextlib
 import io
 import json
@@ -83,7 +84,7 @@ class Base(unittest.TestCase):
             p.write_bytes(self.snap[p]) if p in self.snap else p.unlink(missing_ok=True)
 
     def scan(self, msgs, classify):
-        with patched(em.imaplib, IMAP4_SSL=lambda host, **kw: Box(msgs)), patched(em, classify=classify), \
+        with patched(imaplib, IMAP4_SSL=lambda host, **kw: Box(msgs)), patched(em, classify=classify), \
                 contextlib.redirect_stdout(io.StringIO()):
             return em._scan("imap.example.com", "me@example.com", "p", 3, 50, False, None)
 

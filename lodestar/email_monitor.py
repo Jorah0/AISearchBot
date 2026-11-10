@@ -3,16 +3,15 @@
 Connect a mailbox first: Setup > Connect email, or `lodestar email connect` (mailconn.py: presets, app password).
 """
 import email
-import imaplib
 import re
 from datetime import datetime, timedelta, timezone
 from email.header import decode_header, make_header
 from email.utils import parseaddr
 from urllib.parse import urlparse
 
-from . import ai, approvals, db, settings
+from . import ai, approvals, codes, db, settings
 from .config import setting
-from .util import MAIL_TIMEOUT, notify, strip_html
+from .util import notify, strip_html
 
 NOREPLY = re.compile(r"no-?reply|donotreply|do-?not-?reply|notifications?@|mailer-daemon|jobs-noreply", re.I)
 
@@ -214,20 +213,27 @@ Return JSON: {{"category": "...", "company": "...", "title": "...", "summary": "
 def check(days: int = 3, limit: int = 100, dry: bool = False, provider: str | None = None) -> list[dict]:
     if not settings.enabled("email_classify"):
         raise SystemExit("tool email_classify is off (lodestar tools enable email_classify)")
-    host, user, pw = setting("IMAP_HOST", "imap.gmail.com"), setting("IMAP_USER"), setting("IMAP_PASS")
-    if not (user and pw):
+    from .util import mail_login
+
+    host, user = setting("IMAP_HOST", "imap.gmail.com"), setting("IMAP_USER")
+    pw, ready = mail_login(setting)  # pw None: signed in with Google or Microsoft (XOAUTH2)
+    if not ready:
         raise SystemExit("email is not connected: Setup > Connect email, or lodestar email connect")
+    if pw is None and setting("OAUTH_NEEDS_SIGNIN"):
+        from .oauth import needs_text
+
+        raise SystemExit("email: " + needs_text())
     from .util import run_lock
 
     with run_lock("email"):  # two overlapping scans would classify, propose and reply to the same message twice
         return _scan(host, user, pw, days, limit, dry, provider, int(setting("IMAP_PORT") or 993))
 
 
-def _scan(host: str, user: str, pw: str, days: int, limit: int, dry: bool, provider: str | None, port: int = 993) -> list[dict]:
-    from .util import tls_context
+def _scan(host: str, user: str, pw: str | None, days: int, limit: int, dry: bool, provider: str | None, port: int = 993) -> list[dict]:
+    from .util import imap_login, imap_open
 
-    box = imaplib.IMAP4_SSL(host, port=port, ssl_context=tls_context(), timeout=MAIL_TIMEOUT)  # a silent server must not hang the loop
-    box.login(user, pw)
+    box = imap_open(host, port)  # IMAP_MODE ssl or starttls; the mail timeout: a silent server must not hang the loop
+    imap_login(box, user, pw)
     box.select("INBOX", readonly=True)
     since = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
     _, data = box.uid("search", None, f"(SINCE {since})")  # type: ignore[arg-type]
@@ -242,7 +248,11 @@ def _scan(host: str, user: str, pw: str, days: int, limit: int, dry: bool, provi
             try:  # one bad message (odd MIME, malformed model reply, vanished job) must not stop the scan
                 _, raw = box.uid("fetch", uid, "(RFC822)")
                 msg = email.message_from_bytes(raw[0][1])
-                subject, sender, body = _hdr(msg, "Subject"), _hdr(msg, "From"), _body(msg)
+                codes.offer(msg)  # a sign-in code from an authenticated sender, kept in memory only; never raises
+                # every code-shaped token is masked from here on (any age, any sender): no code reaches the AI, the
+                # mail table, a notification or a task result, while a real hiring mail that has one is still filed
+                subject, body = codes.mask(_hdr(msg, "Subject"), _body(msg))
+                sender = _hdr(msg, "From")
                 if not dry:
                     _touch(sender, _hdr(msg, "Date"))
                 name, addr = parseaddr(sender)
@@ -270,7 +280,9 @@ def _scan(host: str, user: str, pw: str, days: int, limit: int, dry: bool, provi
                              "body": body[:3500],
                              "dkim_pass": mail_authenticated(msg.get_all("Authentication-Results") or [], addr)}
                     if info.get("category") != "other":
+                        _files(info, msg, len(raw[0][1]))
                         _apply(info, dry)
+                        info.pop("_files", None)  # file bytes stay out of the scan result (task results, JSON)
                         found.append(info)
             except Exception as e:
                 ok = False
@@ -283,6 +295,27 @@ def _scan(host: str, user: str, pw: str, days: int, limit: int, dry: bool, provi
         except Exception:
             pass
     return found
+
+
+BIG = 40_000_000  # a message larger than this is still filed; its attachments are not read
+
+
+def _files(info: dict, msg, size: int) -> None:
+    """Attachments worth keeping (mailfiles.extract) for _record, and an invite's start time when the classifier read
+    none. The .ics only supplies a time: _apply's trust rules decide whether it becomes a round, exactly as for a time
+    stated in the text. The classifier never sees the files."""
+    from . import mailfiles
+
+    try:
+        if size > BIG:
+            info["_files"], info["_skipped"] = [], [{"name": "attachments", "skipped": "not read: message over 40 MB"}]
+            return
+        info["_files"], info["_skipped"] = mailfiles.extract(msg)
+        when = mailfiles.ics_start(info["_files"])
+        if when and not info.get("deadline"):
+            info["deadline"], info["ics"] = f"{when:%Y-%m-%d %H:%M}", True
+    except Exception as e:  # an odd attachment never costs the message its scan
+        info["_files"], info["_skipped"] = [], [{"name": "attachments", "skipped": f"not read: {str(e)[:100]}"}]
 
 
 def _touch(sender: str, date_hdr: str) -> None:
@@ -390,13 +423,30 @@ def _record(info: dict, job) -> None:
             sent = parsedate_to_datetime(info.get("date") or "").astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         except (TypeError, ValueError, IndexError):
             sent = None
+        files, att = info.get("_files") or [], list(info.get("_skipped") or [])
+        if job and db.mail_by_message_id(_mid(info)):
+            pass  # a rescan of mail already on file: its files were saved the first time
+        elif job:  # saved under the job folder only: an unmatched sender's files stay in the mailbox
+            try:
+                from .mailfiles import save
+
+                saved = save(files, job, _mid(info), datetime.now())
+                att = saved + att
+                if saved:
+                    db.add_event(job["id"], "attachments", f"{len(saved)} attachment(s) saved: "
+                                 + ", ".join(f["name"] for f in saved)[:180])
+            except Exception as e:  # a write failure never costs the mail its record
+                att += [{"name": f["name"], "skipped": f"not saved: {str(e)[:100]}"} for f in files]
+        else:
+            att += [{"name": f["name"], "skipped": "not filed under a job: open it in your mail app"} for f in files]
         db.add_mail(message_id=_mid(info), in_reply_to=(info.get("in_reply_to") or "")[:1000] or None,
                     refs=(info.get("refs") or "")[:4000] or None, job_id=job["id"] if job else None, direction="in",
                     from_addr=info.get("sender_email") or info.get("from"), to_addr=info.get("to"),
                     subject=info.get("subject"), sent_at=sent, category=info.get("category"),
                     summary=str(info.get("summary") or "")[:500], snippet=info.get("body"), trusted=info.get("trusted"),
                     linked_by=(info.get("linked_by") or "auto") if job else None,
-                    company=str(info.get("company") or "")[:200], title=str(info.get("title") or "")[:200])
+                    company=str(info.get("company") or "")[:200], title=str(info.get("title") or "")[:200],
+                    attachments=att)
     except Exception as e:
         print(f"  mail record skipped: {e}")
 

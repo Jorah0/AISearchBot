@@ -46,6 +46,11 @@ def pick_model(name: str) -> str | None:
         models = list_models(name)
     except Exception:
         return None
+    return pick_from(name, models)
+
+
+def pick_from(name: str, models: list[str]) -> str | None:
+    """The preferred model among the ids a provider listed (first PREFERRED pattern that matches), else the first id."""
     low = [(m.lower(), m) for m in models]
     for pat in PREFERRED.get(name, []):
         hit = next((m for lm, m in low if pat in lm), None)
@@ -86,8 +91,8 @@ def local_preset() -> str:
 
 
 # the one no-key message, read in the UI and the terminal alike
-NO_PROVIDER = ("No AI provider configured: add a key such as ANTHROPIC_API_KEY in Setup > Vault (terminal: lodestar vault set "
-               "ANTHROPIC_API_KEY), or click 'Local only (Ollama)' in Setup")
+NO_PROVIDER = ("No AI provider configured: Setup > Link an AI key (terminal: lodestar keys link anthropic), or click "
+               "'Local only (Ollama)' in Setup")
 
 
 def _allowlist() -> list[str]:

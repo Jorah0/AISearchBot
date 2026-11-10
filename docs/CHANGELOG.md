@@ -1,5 +1,47 @@
 # Changelog (development passes, newest first)
 
+## Pass 16.2 (2026-11-07): connections - keys, email sign-in with 2-step verification, attachments
+
+How to link everything, step by step: [CONNECT.md](CONNECT.md).
+
+**AI keys**
+- Setup > **Link an AI key**: pick the provider, paste the key, click Link. Lodestar checks it at once by listing the
+  provider's models, so the check costs nothing. Terminal: `lodestar keys link anthropic`, `lodestar keys`,
+  `lodestar keys check`, `lodestar keys rm NAME`.
+- Every time the app starts, keys and the mailbox are re-checked in the background (it never slows the start). Being
+  offline shows "Couldn't reach", never "broken". A quota or rate limit shows as Failed (quota), and AI features stay on.
+- Getting started names a key that stopped working, and an email problem.
+
+**Email: sign in with Google or Microsoft**
+- Sign in on Google's or Microsoft's own page in your browser, so every 2-step method works there: authenticator apps,
+  SMS, phone prompts, passkeys, security keys. Lodestar keeps only a refresh token in the OS keyring, never your
+  password or your codes.
+- Outlook.com, Hotmail, Live and Microsoft 365 now work (Microsoft takes no app passwords). Proton Mail works through
+  Proton Mail Bridge with its exported certificate, on Bridge's default settings (IMAP and SMTP with STARTTLS). Not yet
+  tried against a real Bridge.
+- You set up your own free Google or Microsoft sign-in client once; CONNECT.md and Setup walk you through it.
+- When a sign-in expires, Setup and Getting started say so with a **Sign in again** button. Signing in again, or any
+  passing Connect & test, clears an old email warning at once.
+- Typing your address picks the right provider again (an Outlook address switches to Sign in with Microsoft).
+
+**Attachments**
+- An Inbox email for a job can carry that job's resume and cover letter, or files you put in its `attach/` folder
+  ("Show attach folder"). Never private notes, never on an automatic send. A file that names your salary floor is
+  greyed out in the list with the reason, and is refused at send.
+- Files that come with mail about a tracked job are saved in its folder (safe types only, marked as downloaded, never
+  opened). A calendar invite fills in the interview time.
+
+**Emailed sign-in codes**
+- Codes that job sites email you (from mail that passes DKIM/DMARC, last 15 minutes) show in the Inbox's **Codes**
+  panel, in memory only. Any code in a mail is now hidden as `******` before the mail goes to the AI or into the mail
+  list, so it is never sent or saved.
+
+**Also**
+- Company research checks each site's robots.txt and never fetches LinkedIn, Indeed, Glassdoor or ZipRecruiter. The
+  Wikipedia summary is read again (it comes from Wikipedia's API, which its robots.txt does not cover).
+- Long secrets in the keyring (Microsoft refresh tokens) are stored so that a crash or a damaged index can never give
+  back half of one or a mix of two.
+
 ## Pass 16.1 (2026-11-07): full feature overview fixes
 
 Every feature was checked end to end (code read, then driven in the app against faked job boards, AI, IMAP and SMTP).

@@ -176,7 +176,7 @@ CANDIDATE SUMMARY (for the name only):
 
 def mail_proposal(job, mail: dict, tool: str, summary: str, purpose: str = "", review: bool = False,
                   new_status: str = "", to: str | None = None, in_reply_to: str | None = None,
-                  cited: list[str] | None = None) -> dict:
+                  cited: list[str] | None = None, attachments: list[str] | None = None) -> dict:
     """Propose sending a drafted {subject, body} to the job's contact. purpose ('followup' / 'thanks') is logged as
     an event on the job only once the mail is actually sent, so the checklist reflects sends, not drafts.
     review=True: a draft the user asked for always waits in the Inbox, even when the tool is on auto.
@@ -184,7 +184,8 @@ def mail_proposal(job, mail: dict, tool: str, summary: str, purpose: str = "", r
     to: another recipient (a contact asked for a referral, the sender of a mail); '' = draft only.
     in_reply_to: the Message-ID a reply answers (threads it in the recipient's mail client).
     cited: a counter-offer's competing figures you ticked (counter_figures): sent by your choice, so those exact phrases
-    are left out of the floor check here, in the Inbox and on edits; the ask and the rest of the text are still checked."""
+    are left out of the floor check here, in the Inbox and on edits; the ask and the rest of the text are still checked.
+    attachments: names from the job folder (mailfiles.resolve); only with review, which every caller passing them sets."""
     from .drafts import screen
 
     screen(mail, cited or ())  # the salary-floor guard on every employer-bound mail, the draft-only copy you paste included
@@ -201,6 +202,8 @@ def mail_proposal(job, mail: dict, tool: str, summary: str, purpose: str = "", r
         payload["in_reply_to"] = in_reply_to
     if cited:
         payload["cited"] = list(cited)
+    if attachments:
+        payload["attachments"] = list(attachments)
     summary = f"{summary} -> {payload['to']}"  # the label always names the real recipient
     return {"draft": mail, "proposal": approvals.propose(tool, "send_email", payload, summary, job["id"], force_pending=review)}
 

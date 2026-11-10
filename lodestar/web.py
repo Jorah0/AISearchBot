@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import __version__, ai, apply, approvals, comp, db, extras, log, loop, mailconn, settings, vault
+from . import __version__, ai, apply, approvals, codes, comp, connections, db, extras, log, loop, mailconn, oauth, settings, vault
 from .config import ALERTS, PROFILE
 
 STATIC = Path(__file__).parent / "static"
@@ -159,7 +159,7 @@ def _act(action: str, p: dict):
         case "email_check":
             found = email_monitor.check(int(p.get("days", 3)), dry=bool(p.get("dry")), provider=prov)
             return {"found": found, "note": "" if prov or ai.available() else  # say why nothing else was classified
-                    "no AI provider: only replies tied to a job were filed; other mail waits until you add a key in Setup > Vault"}
+                    "no AI provider: only replies tied to a job were filed; other mail waits until you link a key in Setup > Link an AI key"}
         case "watch_run":
             return {"alerts": web_monitor.check_watches()}
         case "search":  # filters: location (or 'remote'), min_salary, posted_within (days), seniority
@@ -283,6 +283,9 @@ def _act(action: str, p: dict):
 
             rows = [{"status": s, "what": w, "detail": d} for s, w, d in checks()]
             if p.get("live"):
+                from .doctor import live_keys
+
+                rows += [{"status": s, "what": w, "detail": d} for s, w, d in live_keys()]
                 for n in ai.available():
                     try:
                         ai.ask("Reply with the single word OK.", provider=n)
@@ -297,6 +300,17 @@ def _act(action: str, p: dict):
             return {"path": str(extras.backup())}
         case "export":  # {fmt: json|csv}; CSV writes one file per table into ~/.lodestar/exports
             return {"path": str(extras.export_data("csv" if p.get("fmt") == "csv" else "json"))}
+        case "email_signin":  # {provider, account?, login_hint?}: waits for the browser, then tests IMAP and SMTP
+            from . import oauth
+
+            st = oauth.signin(p.get("provider", ""), p.get("account") or "personal", p.get("login_hint") or "")
+            try:
+                test = mailconn.test()
+            except (Exception, SystemExit) as e:  # signed in either way; the test result is shown next to it
+                test = {"error": connections.redact(str(e))[:300]}
+            return {"status": st, "test": test}
+        case "keys_check":  # Setup's Re-check all: every linked key and the mailbox, no tokens spent
+            return connections.check_all()
         case "providers_local":
             return {"text": ai.local_preset()}
         case "models":  # the ids each configured provider offers, to pin one under Tools > Preferences > models
@@ -328,7 +342,7 @@ def _draft_ctx(p: dict) -> dict:
 
 def _configured() -> list[str]:
     if not (names := ai.available()):
-        raise SystemExit("no AI provider configured: store a key such as ANTHROPIC_API_KEY in Setup > Vault, or click "
+        raise SystemExit("no AI provider configured: link a key in Setup > Link an AI key, or click "
                          "'Local only (Ollama)'")
     return names
 
@@ -398,15 +412,23 @@ def split_title(page_title: str) -> tuple[str, str]:
 
 
 # ----------------------------------------------------------------------------- state
-def setup_status() -> dict:
-    """What a new user still has to do before the AI features work."""
+def setup_status(conn: dict | None = None) -> dict:
+    """What a new user still has to do before the AI features work. conn: connections.status(), when already read."""
     from .profile import is_template, master_text
 
     text = master_text()
+    conn = conn or connections.status()
+    st, avail = conn["keys"], ai.available()
+    failed = [n for n in avail if st.get(n, {}).get("status") == "failed"]
+    mail = mailconn.status()
     return {
         "profile_ready": not is_template(text),  # same rule prompts use; a short real profile counts
-        "provider_ready": bool(ai.available()),
-        "email_ready": mailconn.status()["verified"],  # saved AND a Connect & test sign-in passed
+        # unchecked and unreachable count as usable (offline never hides AI features), and so does a quota failure
+        "provider_ready": any(n not in failed or st[n].get("quota") for n in avail),
+        "provider_problems": [{"name": n, "label": st[n]["label"], "detail": st[n]["detail"]} for n in failed],
+        "email_ready": mail["verified"],  # saved AND a Connect & test sign-in passed
+        "email_needs_signin": mail["needs_signin"],  # a Google / Microsoft sign-in that expired or was revoked
+        "email_problem": conn["mail"].get("detail", "") if conn["mail"].get("status") == "failed" else "",
     }
 
 
@@ -415,10 +437,13 @@ def state() -> dict:
     from .ideas import merged as ideas_merged
     from .contacts import ROLES, warm_index
 
-    idx = warm_index()
+    idx, conn = warm_index(), connections.status()
+    linked = {e["key"] for e in connections.REGISTRY.values() if e["key"]}  # shown on the Link an AI key card instead
     return {
         "version": __version__,
-        "setup": setup_status(),
+        "setup": setup_status(conn),
+        "connections": conn,
+        "codes_count": len(codes.current()),  # the count only: a code never travels in the state
         "loop": dict(loop.STATUS),
         "jobs": [_job_view(j, idx) for j in db.list_jobs()],
         "contact_roles": ROLES,
@@ -448,7 +473,7 @@ def state() -> dict:
         "watches": [dict(w) | {"filters": db.watch_filters(w)} for w in db.watches()],
         "companies": [dict(c) for c in db.companies()],
         "alerts": ALERTS.read_text(encoding="utf-8").splitlines()[-30:] if ALERTS.is_file() else [],
-        "vault": [{"name": n, "user": u} for n, u in vault.names() if n not in mailconn.MANAGED],  # Disconnect manages those
+        "vault": [{"name": n, "user": u} for n, u in vault.names() if n not in mailconn.MANAGED and n not in oauth.CLIENT_KEYS and n not in linked],
         "obsidian_dir": str(extras.vault_root() / "jobs"),  # Export tracker to Obsidian asks before writing there
         "comp": comp.load(),
         "upcoming": [i | {"when": f"{i['when']:%a %Y-%m-%d %H:%M}"} for i in extras.upcoming_interviews(14)],
@@ -550,6 +575,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
             elif path == "/api/state":
                 self._json(state())
+            elif path.startswith("/api/jobs/") and path.endswith("/files"):  # what a mail for this job may attach
+                from .mailfiles import attachable
+
+                self._json({"files": attachable(db.get_job(int(path.split("/")[3])))})  # names and sizes, never bytes
+            elif path == "/api/codes":  # emailed sign-in codes, memory only (codes.py)
+                self._json({"codes": codes.current()})
             elif path.startswith("/api/jobs/"):
                 from . import interview
                 from .contacts import job_people, warm
@@ -587,10 +618,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"text": PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else ""})
             elif path == "/api/profile/bank":
                 self._json(_bank_view())
-            elif path == "/api/email/status":  # connection and presets; never the password
-                from . import mailconn
+            elif path == "/api/keys":  # linked AI keys and their last check; never a key
+                self._json(connections.status())
+            elif path == "/api/email/status":  # connection and presets; never the password, a token or a client id
+                from . import mailconn, oauth
 
-                self._json({"status": mailconn.status(), "presets": mailconn.PRESETS})
+                self._json({"status": mailconn.status(), "presets": mailconn.PRESETS,
+                            "clients": oauth.client_status(), "oauth": oauth.LABELS})
+            elif path == "/api/email/signin":  # a waiting sign-in's page: the fallback link when no browser opened
+                from . import oauth
+
+                pend = dict(oauth.PENDING)
+                self._json({"pending": bool(pend), "url": pend.get("url", ""), "provider": pend.get("provider", "")})
             elif path == "/api/autofill":  # the autofill bookmarklet reads this; it never submits a form
                 # CORS-open to the page you are on: send only the fields it types, not the private answer bank
                 self._json({k: v for k, v in extras.autofill_data().items() if k != "answers"})
@@ -766,8 +805,14 @@ class Handler(BaseHTTPRequestHandler):
 
                 from .config import HOME
 
-                target = {"data": HOME, "exports": HOME / "exports", "backups": HOME / "backups",
-                          "applications": HOME / "applications", "log": HOME / "lodestar.log"}[p.get("which", "data")]
+                if p.get("which") == "job":  # {id, sub: attach | mail | ""}: a job's folder; never a file in it
+                    from .resume import app_dir
+
+                    sub = {"attach": "attach", "mail": "mail", "": ""}[str(p.get("sub") or "")]
+                    target = app_dir(db.get_job(int(p["id"]))) / sub
+                else:
+                    target = {"data": HOME, "exports": HOME / "exports", "backups": HOME / "backups",
+                              "applications": HOME / "applications", "log": HOME / "lodestar.log"}[p.get("which", "data")]
                 if target.suffix != ".log":
                     target.mkdir(parents=True, exist_ok=True)
                 elif not target.exists():
@@ -841,8 +886,21 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     vault.set(p["name"], p["value"], p.get("user"))
                 self._json({"ok": True})
-            elif path.startswith("/api/email/") and len(parts) == 4:  # connect | test | test_send | disconnect
-                from . import mailconn
+            elif path.startswith("/api/keys/") and len(parts) == 4:  # link {name, key} | check {name?} | remove {name}
+                op = parts[3]
+                if op == "link":  # the key goes into the vault and is verified at once; it never comes back
+                    self._json(connections.link(p.get("name", ""), p.get("key")))
+                elif op == "check" and p.get("name"):
+                    connections.check(p["name"])
+                    self._json(connections.status())
+                elif op == "check":  # every linked key + the mailbox: 7 x 15 s must not hold an HTTP thread
+                    self._json({"task": start_task("keys_check", {})})
+                elif op == "remove":
+                    self._json(connections.unlink(p.get("name", "")))
+                else:
+                    self._json({"error": "not found"}, 404)
+            elif path.startswith("/api/email/") and len(parts) == 4:  # connect | test | test_send | disconnect | client | signin | signin_cancel
+                from . import mailconn, oauth
 
                 op = parts[3]
                 if op == "connect":  # {preset, user, password?, imap_host?, imap_port?, smtp_host?, smtp_port?, smtp_mode?, smtp_user?}
@@ -854,6 +912,14 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(mailconn.test_send(p.get("to")))
                 elif op == "disconnect":
                     self._json(mailconn.disconnect())
+                elif op == "client":  # {provider, client_id, client_secret?}: the user's own OAuth client
+                    self._json({"clients": oauth.set_client(p.get("provider", ""), p.get("client_id", ""),
+                                                            p.get("client_secret") or None)})
+                elif op == "signin":  # the browser opens on this machine (the server is bound to 127.0.0.1)
+                    oauth._provider(p.get("provider", ""))  # an unknown provider fails here, not in the task
+                    self._json({"task": start_task("email_signin", p)})
+                elif op == "signin_cancel":
+                    self._json({"cancelled": oauth.cancel()})
                 else:
                     self._json({"error": "not found"}, 404)
             elif path.startswith("/api/mail/") and len(parts) == 5:  # link {job_id} | unlink | dismiss | track {company?, title?}
@@ -871,12 +937,18 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     raise ValueError(f"unknown mail operation {op}")
                 self._json(out)
+            elif path == "/api/codes/check":  # inline, never start_task: task results are kept in memory
+                self._json({"codes": codes.poll()})
+            elif path.startswith("/api/codes/") and len(parts) == 5 and parts[4] == "dismiss":
+                codes.dismiss(parts[3])
+                self._json({"ok": True})
             elif path.startswith("/api/run/"):
                 self._json({"task": start_task(parts[3], p)})
             else:
                 self._json({"error": "not found"}, 404)
-        except BaseException as e:
-            self._json({"error": str(e)}, 400)
+        except BaseException as e:  # a pasted secret never comes back in an error string
+            q = p if isinstance(p, dict) else {}
+            self._json({"error": connections.redact(str(e), *(str(q.get(k) or "") for k in ("key", "password", "value", "client_secret")))}, 400)
 
 
 def start_server(port: int = 8765) -> ThreadingHTTPServer:

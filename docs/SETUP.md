@@ -51,14 +51,16 @@ version in `profile-history/`.
 
 ## 2. AI providers
 
-Store at least one key in the OS keyring (never on disk):
+Link at least one key: Setup > **Link an AI key** in the app, or (the key is asked for without showing it, stored in
+the OS keyring and verified at once without spending tokens):
 
 ```powershell
-lodestar vault set ANTHROPIC_API_KEY
-lodestar vault set OPENAI_API_KEY      # optional; more providers make `council` better
-lodestar vault set GEMINI_API_KEY
-lodestar providers --test
+lodestar keys link anthropic
+lodestar keys link openai      # optional; more providers make `council` better
+lodestar keys                  # what is linked and whether each key works
 ```
+
+Where to get each key, the free options and what each status means: [CONNECT.md](CONNECT.md#2-ai-keys).
 
 | Provider | Key | Notes |
 |---|---|---|
@@ -74,18 +76,20 @@ lodestar providers --test
 
 ## 3. Email monitoring (optional)
 
-Create an **app password** with your provider (Gmail: turn on 2-Step Verification, then
-https://myaccount.google.com/apppasswords), then use Setup > **Connect email** in the app, or:
+Setup > **Connect email**: **Sign in with Google** or **Sign in with Microsoft** (any 2-step method works on their page;
+one-time client setup, step by step in [CONNECT.md](CONNECT.md)), or an **app password** (Gmail: turn on 2-Step
+Verification, then https://myaccount.google.com/apppasswords). In the terminal:
 
 ```powershell
-lodestar email connect --user you@example.com    # preset guessed from the address; app password prompted, hidden
+lodestar email client google && lodestar email signin google   # or: microsoft (add --work for Microsoft 365)
+lodestar email connect --user you@example.com    # app password instead; preset guessed from the address, prompted, hidden
 lodestar email test-send                         # a test email to yourself
 lodestar email check --days 7 --dry
 ```
 
-Presets: Gmail, Yahoo, iCloud (SMTP starttls on 587), Fastmail, Zoho, AOL, or Custom with your own hosts and ports.
-Outlook, Hotmail and Microsoft 365 are not supported: Microsoft accepts only OAuth sign-in for IMAP and SMTP. The
-provider table is in [COMMANDS.md](COMMANDS.md#connect-your-email). To be emailed about alerts and digests, set
+Presets: Gmail, Yahoo, iCloud (SMTP starttls on 587), Fastmail, Zoho, AOL, Outlook.com / Hotmail / Live and
+Microsoft 365 (sign-in only), Proton Mail via Bridge, or Custom with your own hosts and ports. The provider table is in
+[COMMANDS.md](COMMANDS.md#connect-your-email). To be emailed about alerts and digests, set
 `LODESTAR_NOTIFY_EMAIL` (sent from the connected mailbox).
 
 ## 4. Automation

@@ -1,12 +1,14 @@
 """Connect your mailbox: provider presets, the stored connection, and a login check for IMAP and SMTP.
 
 Everything is kept in the keyring vault and read back through config.setting (an env var or .env line still wins):
-EMAIL_PRESET, IMAP_USER, IMAP_HOST, IMAP_PORT, SMTP_HOST, SMTP_PORT, SMTP_MODE, SMTP_USER. IMAP_PASS, the app password,
-is the only secret and no function here returns it.
+EMAIL_PRESET, IMAP_USER, IMAP_HOST, IMAP_PORT, IMAP_MODE, SMTP_HOST, SMTP_PORT, SMTP_MODE, SMTP_USER, MAIL_CAFILE. Two ways to sign
+in, one at a time (EMAIL_AUTH): an app password (IMAP_PASS) or a Google / Microsoft sign-in (oauth.py: OAUTH_REFRESH).
+Those two are the only secrets and no function here returns either.
 """
 import imaplib
 import os
 import re
+import smtplib
 import socket
 import ssl
 from datetime import datetime, timedelta
@@ -15,9 +17,10 @@ from . import util, vault
 from .config import setting
 from .contacts import EMAIL_RE
 
-# ponytail: host/port presets for the common app-password providers; anything else is "custom". Microsoft needs OAuth.
+# ponytail: host/port presets for the common providers; anything else is "custom". "oauth": Sign in with that provider
+# works (every 2-step method runs on its page); "oauth_only": no password route (Microsoft refuses app passwords).
 PRESETS = {
-    "gmail": {"label": "Gmail", "imap_host": "imap.gmail.com", "imap_port": 993, "smtp_host": "smtp.gmail.com",
+    "gmail": {"label": "Gmail", "oauth": "google", "imap_host": "imap.gmail.com", "imap_port": 993, "smtp_host": "smtp.gmail.com",
               "smtp_port": 465, "smtp_mode": "ssl", "domains": ["gmail.com", "googlemail.com"],
               "help": "https://myaccount.google.com/apppasswords",
               "steps": "Turn on 2-Step Verification for your Google account, then create an app password at the link "
@@ -44,17 +47,41 @@ PRESETS = {
     "aol": {"label": "AOL Mail", "imap_host": "imap.aol.com", "imap_port": 993, "smtp_host": "smtp.aol.com",
             "smtp_port": 465, "smtp_mode": "ssl", "domains": ["aol.com"], "help": "https://login.aol.com/account/security",
             "steps": "AOL Account Security > Generate app password, then paste it here."},
-    "outlook": {"label": "Outlook / Hotmail / Microsoft 365", "domains": ["outlook.com", "hotmail.com", "live.com", "msn.com"],
-                "unsupported": "Microsoft no longer accepts passwords or app passwords for IMAP and SMTP, only OAuth "
-                               "sign-in, which Lodestar does not do. Forward job mail to a Gmail, Fastmail or iCloud "
-                               "address and connect that one instead."},
+    "outlook": {"label": "Outlook.com / Hotmail / Live", "oauth": "microsoft", "oauth_only": True,
+                "imap_host": "outlook.office365.com", "imap_port": 993, "smtp_host": "smtp-mail.outlook.com",
+                "smtp_port": 587, "smtp_mode": "starttls", "domains": ["outlook.com", "hotmail.com", "live.com", "msn.com"],
+                "help": "https://support.microsoft.com/en-us/outlook/pop-imap-and-smtp-settings-for-outlook-com",
+                "steps": "Turn on IMAP in Outlook.com (Settings > Mail > Forwarding and IMAP), then Sign in with Microsoft."},
+    "m365": {"label": "Microsoft 365 (work or school)", "oauth": "microsoft", "oauth_only": True,
+             "imap_host": "outlook.office365.com", "imap_port": 993, "smtp_host": "smtp.office365.com", "smtp_port": 587,
+             "smtp_mode": "starttls", "domains": [],
+             "help": "https://learn.microsoft.com/en-us/exchange/clients-and-mobile-in-exchange-online/authenticated-client-smtp-submission",
+             "steps": "Sign in with Microsoft (work account). Your organization may have SMTP AUTH turned off: then ask "
+                      "your admin to allow SMTP AUTH for your mailbox, or Lodestar can read mail but not send it."},
+    "proton": {"label": "Proton Mail (via Bridge)", "imap_host": "127.0.0.1", "imap_port": 1143, "imap_mode": "starttls",
+               "smtp_host": "127.0.0.1",
+               "smtp_port": 1025, "smtp_mode": "starttls", "domains": ["proton.me", "protonmail.com", "pm.me"],
+               "help": "https://proton.me/mail/bridge", "cert": True,
+               "steps": "Install Proton Mail Bridge (paid plans) and sign in there (your 2-step check happens in Bridge). "
+                        "Export Bridge's TLS certificate (Settings > Advanced > Export TLS certificates) and give its path "
+                        "under Advanced (certificate file), then use the Bridge password it shows, not your Proton "
+                        "password. Not yet tested with a real Bridge."},
     "custom": {"label": "Other (custom server)", "imap_port": 993, "smtp_port": 465, "smtp_mode": "ssl", "domains": [],
                "steps": "Enter your provider's IMAP and SMTP servers under Advanced. Use an app password if it offers one."},
 }
-KEYS = {"imap_host": "IMAP_HOST", "imap_port": "IMAP_PORT", "smtp_host": "SMTP_HOST", "smtp_port": "SMTP_PORT",
-        "smtp_mode": "SMTP_MODE", "smtp_user": "SMTP_USER"}
-MANAGED = {"EMAIL_PRESET", "IMAP_USER", "IMAP_PASS", "EMAIL_VERIFIED", *KEYS.values()}  # Connect email owns these vault entries
+KEYS = {"imap_host": "IMAP_HOST", "imap_port": "IMAP_PORT", "imap_mode": "IMAP_MODE", "smtp_host": "SMTP_HOST", "smtp_port": "SMTP_PORT",
+        "smtp_mode": "SMTP_MODE", "smtp_user": "SMTP_USER", "cafile": "MAIL_CAFILE"}
+# Connect email owns these vault entries (hidden from the generic Vault list, like oauth.CLIENT_KEYS)
+MANAGED = {"EMAIL_PRESET", "IMAP_USER", "IMAP_PASS", "EMAIL_VERIFIED", "EMAIL_AUTH", "OAUTH_PROVIDER", "OAUTH_ACCOUNT",
+           "OAUTH_REFRESH", "OAUTH_REFRESH_EXPIRES", "OAUTH_NEEDS_SIGNIN", *KEYS.values()}
 HOST_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?")
+
+
+def _login(c: dict) -> tuple[str | None, bool]:
+    """(app password, a login is stored) for the stored connection c; the password is None with a provider sign-in."""
+    oauth = c.get("auth") == "oauth"
+    pw = None if oauth else setting("IMAP_PASS")
+    return pw, bool(c["user"] and (pw or (oauth and vault.get("OAUTH_REFRESH"))))
 
 
 def guess(user: str) -> str:
@@ -65,11 +92,17 @@ def guess(user: str) -> str:
 
 def status() -> dict:
     """The stored connection without the password: configured?, preset, address, servers, env vars that override it."""
+    from . import oauth
+
     c = util.mail_settings()
     p = PRESETS.get(c["preset"], {})
-    configured = bool(c["user"] and setting("IMAP_PASS"))
+    configured = _login(c)[1]
+    prov = (vault.get("OAUTH_PROVIDER") or "") if c.get("auth") == "oauth" else ""
     return c | {"configured": configured, "verified": configured and vault.get("EMAIL_VERIFIED") == _fingerprint(c),
-                "label": p.get("label", c["preset"]),
+                "label": p.get("label", c["preset"]), "oauth_provider": prov,
+                "needs_signin": (vault.get("OAUTH_NEEDS_SIGNIN") or "") if prov else "",
+                "refresh_expires": (vault.get("OAUTH_REFRESH_EXPIRES") or "") if prov else "",
+                "clients": oauth.client_status(),
                 "shadowed": [k for k in ("IMAP_USER", "IMAP_PASS", *KEYS.values()) if os.environ.get(k)],
                 "conflicts": conflicts(c)}
 
@@ -89,7 +122,8 @@ def conflicts(c: dict) -> list[str]:
 
 def _fingerprint(c: dict) -> str:
     """Which account + servers the last fully successful test() was for (a later change to any of them un-verifies)."""
-    return "|".join(str(c.get(k) or "").lower() for k in ("user", "imap_host", "imap_port", "smtp_host", "smtp_port", "smtp_user"))
+    fp = "|".join(str(c.get(k) or "").lower() for k in ("user", "imap_host", "imap_port", "smtp_host", "smtp_port", "smtp_user"))
+    return fp + ("|oauth" if c.get("auth") == "oauth" else "")  # app-password fingerprints stay as they were
 
 
 def _port(v, name: str) -> int:
@@ -107,8 +141,10 @@ def connect(preset: str, user: str, password: str | None = None, **overrides) ->
     p = PRESETS.get(preset)
     if p is None:
         raise SystemExit(f"unknown email provider '{preset}'. One of: {', '.join(PRESETS)}")
-    if p.get("unsupported"):
-        raise SystemExit(f"{p['label']}: {p['unsupported']}")
+    if p.get("oauth_only"):
+        raise SystemExit(f"{p['label']}: sign in with Microsoft (Setup > Connect email > Sign in with Microsoft, or "
+                         f"lodestar email signin microsoft). Microsoft accepts only that OAuth sign-in, no passwords, for "
+                         f"IMAP and SMTP.")
     user = (user or "").strip()
     if not EMAIL_RE.fullmatch(user):
         raise SystemExit(f"not an email address: {user[:80]}")
@@ -116,6 +152,13 @@ def connect(preset: str, user: str, password: str | None = None, **overrides) ->
     if unknown:
         raise SystemExit(f"unknown email setting(s): {', '.join(sorted(unknown))}")
     v = {k: str(overrides.get(k) or "").strip() or p.get(k, "") for k in KEYS}
+    if v["cafile"] and not os.path.isfile(v["cafile"]):
+        raise SystemExit(f"certificate file not found: {v['cafile'][:200]}")
+    v["imap_mode"] = str(v["imap_mode"] or "ssl").lower()
+    if v["imap_mode"] not in ("ssl", "starttls"):
+        raise SystemExit("IMAP mode is ssl (port 993) or starttls (port 143, or 1143 for Proton Mail Bridge)")
+    if v["imap_mode"] == "ssl":
+        v["imap_mode"] = ""  # the default; nothing stored
     v["smtp_mode"] = str(v["smtp_mode"] or "ssl").lower()
     if v["smtp_mode"] not in ("ssl", "starttls"):
         raise SystemExit("SMTP mode is ssl (port 465) or starttls (port 587)")
@@ -133,6 +176,11 @@ def connect(preset: str, user: str, password: str | None = None, **overrides) ->
     held = [(vault.get(n) or "").lower() for n in ("IMAP_USER", "IMAP_HOST", "SMTP_HOST", "SMTP_USER")]
     if not password and held != [str(x).lower() for x in (user, v["imap_host"], v["smtp_host"], v["smtp_user"])]:
         vault.delete("IMAP_PASS")  # one account's app password never goes to another address or server
+    if (vault.get("EMAIL_AUTH") or "") == "oauth":  # one way to sign in at a time: the app password route now
+        from . import oauth
+
+        oauth.disconnect()  # revokes a Google sign-in, best effort
+    vault.set("EMAIL_AUTH", "password")
     vault.delete("EMAIL_VERIFIED")  # a (re)connect counts as working only after its own test passes
     vault.set("EMAIL_PRESET", preset)
     vault.set("IMAP_USER", user)
@@ -148,8 +196,26 @@ def connect(preset: str, user: str, password: str | None = None, **overrides) ->
     return status()
 
 
+def connect_oauth(preset: str, user: str) -> dict:
+    """After a provider sign-in (oauth.signin): that account's address and the preset's servers, no overrides."""
+    p = PRESETS[preset]
+    vault.set("EMAIL_PRESET", preset)
+    vault.set("IMAP_USER", user)
+    for k, name in KEYS.items():
+        if p.get(k) and k in ("imap_host", "imap_port", "imap_mode", "smtp_host", "smtp_port", "smtp_mode"):
+            vault.set(name, str(p[k]))
+        else:
+            vault.delete(name)
+    vault.delete("EMAIL_VERIFIED")
+    return status()
+
+
 def disconnect() -> dict:
-    """Forget the app password (the servers stay filled in for next time)."""
+    """Forget the app password, or the provider sign-in (the servers stay filled in for next time)."""
+    if util.mail_settings().get("auth") == "oauth":
+        from . import oauth
+
+        return oauth.disconnect() | status()
     vault.delete("IMAP_PASS")
     vault.delete("EMAIL_VERIFIED")
     return status()
@@ -159,6 +225,20 @@ def hint(e: BaseException, c: dict) -> str:
     """A plain next step for a failed IMAP/SMTP login."""
     msg = str(e).lower()
     p = PRESETS.get(c.get("preset") or "", {})
+    if c.get("auth") == "oauth":
+        if isinstance(e, SystemExit):  # needs sign-in, or the client is missing: the message is the next step
+            return str(e)
+        if "5.7.139" in msg or "smtpclientauthentication is disabled" in msg:
+            return ("Your organization has SMTP AUTH turned off for this mailbox: Lodestar can read mail but cannot send. "
+                    "Ask your admin to allow SMTP AUTH for your mailbox (Exchange admin center > mailbox > Email apps), "
+                    "or send from another account.")
+        if "authenticated but not connected" in msg:
+            return "Turn on IMAP in Outlook.com settings (Forwarding and IMAP), then test again."
+        if isinstance(e, (imaplib.IMAP4.error, smtplib.SMTPAuthenticationError)) and not isinstance(e, imaplib.IMAP4.abort):
+            who = "Microsoft" if (vault.get("OAUTH_PROVIDER") or "") == "microsoft" else "Google"
+            return f"Sign-in was refused with your {who} token: sign in again (Setup > Connect email > Sign in with {who})."
+        if isinstance(e, imaplib.IMAP4.abort):
+            return "The mail server dropped the connection: test again in a minute."
     if isinstance(e, socket.gaierror):
         return f"Could not find the server: check the host names ({c['imap_host']}, {c['smtp_host']}) and your internet connection."
     if isinstance(e, (TimeoutError, socket.timeout)):
@@ -167,8 +247,8 @@ def hint(e: BaseException, c: dict) -> str:
     if isinstance(e, ssl.SSLCertVerificationError):
         return "The server's certificate does not match that host name: check the host is exactly what your provider lists."
     if isinstance(e, (ssl.SSLError, ConnectionRefusedError)) or "starttls" in msg:
-        return ("The secure connection failed: wrong port or mode? IMAP uses 993; SMTP uses 465 with ssl or 587 with "
-                "starttls.")
+        return ("The secure connection failed: wrong port or mode? IMAP uses 993 with ssl (Proton Mail Bridge: 1143 with "
+                "starttls); SMTP uses 465 with ssl or 587 with starttls.")
     if "imap" in msg and ("not enabled" in msg or "disabled" in msg):
         return "IMAP access is turned off for this account: turn it on in your mail settings, then test again."
     if (any(s in msg for s in ("authenticationfailed", "application-specific password", "username and password not accepted",
@@ -179,10 +259,10 @@ def hint(e: BaseException, c: dict) -> str:
     return ""
 
 
-def _imap(c: dict, pw: str) -> str:
-    box = imaplib.IMAP4_SSL(c["imap_host"], port=c["imap_port"], ssl_context=util.tls_context(), timeout=util.MAIL_TIMEOUT)
+def _imap(c: dict, pw: str | None) -> str:
+    box = util.imap_open(c["imap_host"], c["imap_port"], c.get("imap_mode"))
     try:
-        box.login(c["user"], pw)
+        util.imap_login(box, c["user"], pw)
         box.select("INBOX", readonly=True)
         since = (datetime.now() - timedelta(days=7)).strftime("%d-%b-%Y")
         _, data = box.search(None, f"(SINCE {since})")
@@ -194,37 +274,68 @@ def _imap(c: dict, pw: str) -> str:
             pass
 
 
-def _smtp(c: dict, pw: str) -> str:
+def _smtp(c: dict, pw: str | None) -> str:
+    who = c["smtp_user"] if pw else c["user"]  # a provider sign-in logs in as the account address
     with util.smtp_open(c["smtp_host"], c["smtp_port"], c["smtp_mode"]) as s:
-        s.login(c["smtp_user"], pw)
-    return f"logged in as {c['smtp_user']} (nothing sent)"
+        util.smtp_login(s, who, pw)
+    return f"logged in as {who} (nothing sent)"
+
+
+def _kind(e: BaseException) -> str:
+    """'auth' (the sign-in was refused), 'net' (could not reach the server: never un-verifies) or 'other' (a setup
+    problem). Order matters: IMAP4.abort is an IMAP4.error, and every SMTPException is an OSError."""
+    if isinstance(e, imaplib.IMAP4.abort):  # a dropped connection
+        return "net"
+    if isinstance(e, (imaplib.IMAP4.error, smtplib.SMTPAuthenticationError, SystemExit)):
+        return "auth"
+    if isinstance(e, ssl.SSLCertVerificationError):  # wrong host name: a setup problem, not an outage
+        return "other"
+    if isinstance(e, (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError)):
+        return "net"
+    if isinstance(e, smtplib.SMTPException):  # any other SMTP refusal is real
+        return "other"
+    if isinstance(e, OSError):  # DNS, refused, timeout, ssl.SSLError
+        return "net"
+    return "other"
 
 
 def test() -> dict:
-    """Log in to IMAP (INBOX read-only) and SMTP (no send): {imap: {ok, detail}, smtp: {ok, detail}, hint}."""
-    c, pw = util.mail_settings(), setting("IMAP_PASS")
-    if not (c["user"] and pw):
+    """Log in to IMAP (INBOX read-only) and SMTP (no send): {imap: {ok, detail, kind?}, smtp: {...}, hint, reachable}.
+    Both sides ok marks the connection verified; a refused sign-in or setup problem un-verifies it; a network failure
+    alone leaves it as it was (an offline start must not disconnect a working mailbox)."""
+    from .connections import mail_result, record, redact
+
+    c = util.mail_settings()
+    pw, ready = _login(c)
+    if not ready:
         raise SystemExit("email is not connected: Setup > Connect email, or lodestar email connect")
     out, hints = {}, conflicts(c)  # the likeliest cause first, before any generic 'use an app password'
     for name, fn in (("imap", _imap), ("smtp", _smtp)):
         try:
             out[name] = {"ok": True, "detail": fn(c, pw)}
-        except Exception as e:
-            out[name] = {"ok": False, "detail": f"{type(e).__name__}: {e}"[:300].replace(pw, "***")}
+        except (Exception, SystemExit) as e:
+            msg = f"{type(e).__name__}: {e}"
+            out[name] = {"ok": False, "kind": _kind(e), "detail": redact(msg.replace(pw, "***") if pw else msg)[:300]}
             h = hint(e, c)
             if h and h not in hints:
                 hints.append(h)
-    if all(r["ok"] for r in out.values()):
+    kinds = {r.get("kind") for r in out.values() if not r["ok"]}
+    if not kinds:
         vault.set("EMAIL_VERIFIED", _fingerprint(c))
-    else:
+    elif kinds - {"net"}:
         vault.delete("EMAIL_VERIFIED")
-    return out | {"hint": " ".join(hints)}
+    out |= {"hint": " ".join(hints), "reachable": "net" not in kinds}
+    try:  # Getting started and doctor read this, whichever path ran the test
+        record("mail", None, mail_result(out), _fingerprint(c))
+    except Exception:  # ponytail: an unwritable connections.json must not hide the test's own answer
+        pass
+    return out
 
 
 def test_send(to: str | None = None) -> dict:
     """Send a short test message to your own configured address, never anyone else."""
     c = util.mail_settings()
-    if not (c["user"] and setting("IMAP_PASS")):
+    if not _login(c)[1]:
         raise SystemExit("email is not connected: Setup > Connect email, or lodestar email connect")
     if to and to.strip().lower() != c["user"].lower():
         raise SystemExit("a test email only goes to your own connected address")

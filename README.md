@@ -7,6 +7,9 @@ your inbox for interview / rejection / offer mail and updates a tracker automati
 boards, captures postings from your browser, keeps API keys and site passwords in the OS keyring, preps you for
 interviews, mirrors everything into Obsidian, and can pool several AI providers together on any task.
 
+**Link everything** (an AI key, your mailbox with Google / Microsoft sign-in and any 2-step method, or an app
+password): [docs/CONNECT.md](docs/CONNECT.md).
+
 ## Install (the app)
 
 Double-click **`install.bat`**. It creates `.venv`, installs Lodestar with the desktop extras, creates your data files
@@ -19,7 +22,7 @@ keeps monitoring even when the app is closed; `-NoShortcuts` skips the shortcuts
 macOS / Linux: `./install.sh [--schedule] [--every 30]` (desktop launcher on Linux, cron line with `--schedule`).
 Quick run without installing shortcuts: `start.bat` (or `./start.sh`). Developer install: `pip install -e .`.
 
-Docs: [docs/FEATURES.md](docs/FEATURES.md) (full inventory) · [docs/SETUP.md](docs/SETUP.md) · [docs/AUTOMATION.md](docs/AUTOMATION.md) (tool switches + approvals inbox) · [docs/COMMANDS.md](docs/COMMANDS.md) · [docs/CAPTURE.md](docs/CAPTURE.md) · [docs/RUNDOWN.md](docs/RUNDOWN.md)
+Docs: [docs/CONNECT.md](docs/CONNECT.md) (link keys and email) · [docs/FEATURES.md](docs/FEATURES.md) (full inventory) · [docs/SETUP.md](docs/SETUP.md) · [docs/AUTOMATION.md](docs/AUTOMATION.md) (tool switches + approvals inbox) · [docs/COMMANDS.md](docs/COMMANDS.md) · [docs/CAPTURE.md](docs/CAPTURE.md) · [docs/RUNDOWN.md](docs/RUNDOWN.md)
 
 Everything lives in `~/.lodestar/` (override with `LODESTAR_HOME`).
 
@@ -27,22 +30,23 @@ Everything lives in `~/.lodestar/` (override with `LODESTAR_HOME`).
 
 1. **Master resume.** Edit `~/.lodestar/profile.md`. Put *everything* in it; lodestar trims per job and never invents facts.
    Faster: `lodestar profile import resume.docx` or `lodestar profile linkedin export.zip`.
-2. **At least one AI key** (stored in Windows Credential Manager / Keychain, never on disk):
+2. **At least one AI key** (stored in Windows Credential Manager / Keychain, never on disk; verified at once without
+   spending tokens): Setup > Link an AI key in the app, or
    ```powershell
-   lodestar vault set ANTHROPIC_API_KEY      # prompts, hidden input
-   lodestar vault set OPENAI_API_KEY         # optional: more providers = better council
-   lodestar vault set GEMINI_API_KEY
-   lodestar providers --test
+   lodestar keys link anthropic              # prompts, hidden input
+   lodestar keys link openai                 # optional: more providers = better council
+   lodestar keys                             # what is linked and whether each key works
    ```
    Supported: anthropic, openai, gemini, groq, openrouter, mistral, ollama (set `OLLAMA_MODEL`).
    Override models with `<PROVIDER>_MODEL`, pick a default with `LODESTAR_PROVIDER`.
-3. **Connect your email** (optional; Gmail, Yahoo, iCloud, Fastmail, Zoho, AOL or a custom server, with an app
-   password): Setup > Connect email in the app, or
+3. **Connect your email** (optional): Sign in with Google or Microsoft (Gmail, Outlook.com, Hotmail, Live, Microsoft
+   365; any 2-step method works) or an app password (Gmail, Yahoo, iCloud, Fastmail, Zoho, AOL, Proton via Bridge or a
+   custom server). Setup > Connect email in the app; step by step in docs/CONNECT.md. With an app password:
    ```powershell
    lodestar email connect --user you@example.com    # prompts for the app password, hidden; then tests the login
    lodestar email test-send                         # a test email to yourself
    ```
-   Outlook / Microsoft 365 is not supported (Microsoft allows only OAuth sign-in). See docs/COMMANDS.md.
+   Sign-in instead: `lodestar email client google` then `lodestar email signin google` (or `microsoft`).
 4. **Check the install:** `lodestar doctor` (add `--live` for one real call per provider).
 
 ## Daily use

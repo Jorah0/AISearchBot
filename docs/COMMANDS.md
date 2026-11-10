@@ -62,33 +62,57 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 | `lodestar stories add --title T [--situation] [--task] [--action] [--result] [--metrics] [--tags conflict,ownership]` / `stories add --from-idea ID` | Save a story (title plus at least one STAR part; tags from leadership, conflict, failure, ambiguity, influence, ownership, customer, data-driven, teamwork, deadline). `--from-idea` turns an idea of the ideas `stories` topic into an incomplete story to finish. |
 | `lodestar ics ID --when "YYYY-MM-DD HH:MM" [--minutes 60]` | Calendar file for the interview plus a prep reminder 2 days before; also records the round. Email check creates this automatically when an interview mail carries a date and time. |
 
+## AI keys
+
+Step by step for every provider and mailbox: [CONNECT.md](CONNECT.md).
+
+| Command | What it does |
+|---|---|
+| `lodestar keys` / `lodestar keys list` | Each provider: linked (vault / env / no), last check (Verified, Failed, Couldn't reach, Not checked), when, the model in use; where to get a key when none is linked. |
+| `lodestar keys link NAME` | `NAME`: anthropic, openai, gemini, groq, openrouter, mistral, ollama (or the variable name, e.g. `ANTHROPIC_API_KEY`). Asks for the key without showing it, stores it in the keyring and verifies it at once with a call that spends no tokens (the provider's model list; OpenRouter's key info). Never prints the key. |
+| `lodestar keys check [NAME]` | Re-verify one key, or every linked key and the mailbox. |
+| `lodestar keys rm NAME` | Remove the key from the keyring (a key in `.env` or the environment stays: remove it there). |
+
+Every app start (`lodestar ui`, `app`, `desktop`) re-checks the linked keys and the mailbox once in the background;
+offline is "couldn't reach", never "invalid"; a quota or rate limit (HTTP 429) shows as Failed (quota) and keeps AI
+features on. `LODESTAR_NO_STARTUP_CHECK=1` turns that off.
+
 ## Connect your email
 
-Lodestar reads hiring replies over IMAP and sends only mail you approve over SMTP, as your own address. Use an **app
-password**, never your normal password; it is stored in the OS keyring only and no command, API route, log, export or
-backup returns it. In the app: Setup > **Connect email** (provider, address, app password, Advanced servers for Custom).
+Lodestar reads hiring replies over IMAP and sends only mail you approve over SMTP, as your own address. Two ways in:
+**Sign in with Google or Microsoft** (your usual 2-step check runs on their page; Lodestar keeps only a refresh token)
+or an **app password** (never your normal password). Either one is stored in the OS keyring only and no command, API
+route, log, export or backup returns it. In the app: Setup > **Connect email**. Full guide: [CONNECT.md](CONNECT.md).
 
 | Provider | IMAP | SMTP | App password |
 |---|---|---|---|
-| Gmail | imap.gmail.com:993 | smtp.gmail.com:465 ssl | needs 2-Step Verification; https://myaccount.google.com/apppasswords |
+| Gmail | imap.gmail.com:993 | smtp.gmail.com:465 ssl | Sign in with Google (your own client, CONNECT.md), or an app password: needs 2-Step Verification; https://myaccount.google.com/apppasswords |
 | Yahoo | imap.mail.yahoo.com:993 | smtp.mail.yahoo.com:465 ssl | Account Security > Generate app password |
 | iCloud | imap.mail.me.com:993 | smtp.mail.me.com:587 starttls | Apple Account > Sign-In and Security > App-Specific Passwords |
 | Fastmail | imap.fastmail.com:993 | smtp.fastmail.com:465 ssl | Settings > Privacy & Security > App passwords |
 | Zoho | imap.zoho.com:993 | smtp.zoho.com:465 ssl | turn on IMAP access; Accounts > Security > App Passwords (org/EU accounts: Custom) |
 | AOL | imap.aol.com:993 | smtp.aol.com:465 ssl | Account Security > Generate app password |
-| Outlook, Hotmail, Live, Microsoft 365 | not supported | | Microsoft accepts only OAuth sign-in for IMAP/SMTP; forward job mail to a supported mailbox |
+| Outlook.com, Hotmail, Live | outlook.office365.com:993 | smtp-mail.outlook.com:587 starttls | Sign in with Microsoft only (no app passwords); turn on IMAP in Outlook.com |
+| Microsoft 365 (work or school) | outlook.office365.com:993 | smtp.office365.com:587 starttls | Sign in with Microsoft (`--work`); sending needs SMTP AUTH allowed by your organization |
+| Proton Mail (via Bridge) | 127.0.0.1:1143 starttls | 127.0.0.1:1025 starttls | the Bridge password; `--cafile` with Bridge's exported certificate (not yet tested with a real Bridge) |
 | Custom | your host:port | your host:port, ssl (465) or starttls (587) | whatever your provider issues |
 
 | Command | What it does |
 |---|---|
-| `lodestar email connect [--preset P] [--user U] [--imap-host] [--imap-port] [--smtp-host] [--smtp-port] [--smtp-mode ssl\|starttls] [--smtp-user]` | Store the connection, prompt for the app password (hidden; Enter keeps the stored one, but only when the address and servers are unchanged: a new address, IMAP/SMTP host or SMTP login drops it, so one account's password never goes to another server), then test. The preset is guessed from the address when omitted. |
+| `lodestar email connect [--preset P] [--user U] [--imap-host] [--imap-port] [--imap-mode ssl\|starttls] [--smtp-host] [--smtp-port] [--smtp-mode ssl\|starttls] [--smtp-user] [--cafile PATH]` | Store the connection, prompt for the app password (hidden; Enter keeps the stored one, but only when the address and servers are unchanged: a new address, IMAP/SMTP host or SMTP login drops it, so one account's password never goes to another server), then test. The preset is guessed from the address when omitted. |
 | `lodestar email test` | Log in to IMAP (INBOX read-only, counts the last 7 days) and SMTP (sends nothing); a failure comes with a plain hint (app password / 2-Step Verification, wrong host, timeout, TLS port or mode, IMAP turned off). |
 | `lodestar email test-send` | Send a short test email to your own connected address (never anyone else). |
 | `lodestar email status` | Connected address, preset and servers (never the password); lists env vars that override the stored values, with a warning when an `IMAP_HOST` / `SMTP_HOST` in `.env` or the environment points somewhere other than the provider you chose (`email test` puts that first in its hint). |
-| `lodestar email disconnect` | Remove the stored app password (servers stay filled in). |
+| `lodestar email client google\|microsoft` | Store your own OAuth client (CONNECT.md sections 4, 5): Google asks for the client ID and secret (hidden), Microsoft for the Application (client) ID only. Kept across Disconnect. |
+| `lodestar email signin google\|microsoft [--work] [--hint ADDRESS] [--no-browser]` | Sign in on the provider's page in your browser (every 2-step method works there), then test IMAP and SMTP. `--work`: Microsoft 365. `--no-browser` prints the page to open. Waits up to 5 minutes. |
+| `lodestar email disconnect` | Remove the stored app password, or sign out (Google: the sign-in is revoked; Microsoft: says where to remove the app). Servers and your client stay. |
+| `--imap-mode ssl\|starttls` (on `email connect`) | IMAP over implicit TLS (993, the default) or STARTTLS (143; Proton Mail Bridge's default on 1143, which the Proton preset uses). Never falls back to plain text. |
+| `--cafile PATH` (on `email connect`) | Trust only this certificate file for IMAP and SMTP (Proton Mail Bridge's exported certificate); the host-name match is skipped only for a loopback IP. |
 
-Settings: `EMAIL_PRESET`, `IMAP_USER`, `IMAP_HOST`, `IMAP_PORT`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_MODE`, `SMTP_USER`
-(defaults to `IMAP_USER`) and the secret `IMAP_PASS`, all in the keyring vault. A value in the environment or `.env`
+Settings: `EMAIL_PRESET`, `IMAP_USER`, `IMAP_HOST`, `IMAP_PORT`, `IMAP_MODE` (`ssl` or `starttls`), `SMTP_HOST`, `SMTP_PORT`, `SMTP_MODE`, `SMTP_USER`
+(defaults to `IMAP_USER`), `MAIL_CAFILE`, `EMAIL_AUTH` (`password` or `oauth`) and the secrets `IMAP_PASS` or
+`OAUTH_REFRESH` (+ `OAUTH_PROVIDER`, `OAUTH_ACCOUNT`, `OAUTH_REFRESH_EXPIRES`, `OAUTH_NEEDS_SIGNIN`; your client in
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `MS_CLIENT_ID`), all in the keyring vault. Access tokens are never stored. A value in the environment or `.env`
 wins. Every outgoing message carries a `Message-ID` and `Date`. `lodestar doctor` shows the servers; `--live` also logs
 in once to each.
 
@@ -147,14 +171,20 @@ page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, w
 | `GET|POST /api/profile` | read / save the master resume |
 | `POST /api/vault` `{name,value,user}` / `{name,delete:true}` | store / remove a secret |
 | `GET /api/email/status` | `{status, presets}`: connected?, preset, address, servers, env overrides (never the password) |
-| `POST /api/email/connect` `{preset, user, password?, imap_host?, imap_port?, smtp_host?, smtp_port?, smtp_mode?, smtp_user?}` | store the connection (the password only when given; changing the address, a host or the SMTP login without one removes the stored password); returns the status (`configured: false` until a password is entered) |
-| `POST /api/email/test` | IMAP and SMTP login check: `{imap: {ok, detail}, smtp: {ok, detail}, hint}` |
+| `POST /api/email/connect` `{preset, user, password?, imap_host?, imap_port?, imap_mode?, smtp_host?, smtp_port?, smtp_mode?, smtp_user?, cafile?}` | store the connection (the password only when given; changing the address, a host or the SMTP login without one removes the stored password); returns the status (`configured: false` until a password is entered) |
+| `POST /api/email/test` | IMAP and SMTP login check: `{imap: {ok, detail, kind?}, smtp: {ok, detail, kind?}, hint, reachable}` (`kind`: auth, net or other). Every test (this route, the sign-in task, Re-check all, the startup check) stores its result, which Getting started and `doctor` show |
 | `POST /api/email/test_send` | a test email to your own address; any other `to` is refused |
-| `POST /api/email/disconnect` | remove the stored app password |
+| `POST /api/email/disconnect` | remove the stored app password, or sign out (`note` says where to remove a Microsoft app) |
+| `POST /api/email/client` `{provider, client_id, client_secret?}` | store your own OAuth client; returns `{clients: {google: {set}, microsoft: {set}}}`, never the values |
+| `POST /api/email/signin` `{provider, account?: personal\|work, login_hint?}` | starts the sign-in as a background task (`{task}`; poll `GET /api/tasks/ID`: `{status, test}`) |
+| `GET /api/email/signin` / `POST /api/email/signin_cancel` | the waiting sign-in's page link (`{pending, url, provider}`) / stop it |
+| `GET /api/keys` / `POST /api/keys/link\|check\|remove` `{name, key?}` | linked AI keys and their last check (never a key) / link and verify, re-check (`{}`: all, as a task), remove |
+| `GET /api/jobs/ID/files` | what a mail for this job may attach: `{files: [{name, size, mtime, type, blocked?}]}` (names and sizes only; no route serves a file's bytes). `blocked`: why sending it would be refused (it names your salary floor); the Inbox greys it out |
+| `GET /api/codes` / `POST /api/codes/check` / `POST /api/codes/ID/dismiss` | emailed sign-in codes from the last 15 minutes (memory only) / look in the mailbox now (inline, read-only, nothing marked read) / drop one. `GET /api/state` carries only `codes_count` |
 | `GET /api/mail?job=ID` / `?unmatched=1` | recorded mail: one job's, both ways, or incoming mail no job claims (`GET /api/state` carries `mail_unmatched`, `GET /api/jobs/ID` carries `mail`) |
 | `POST /api/mail/ID/link\|unlink\|dismiss\|track` | `{job_id}` file under a job (never sets the contact or trust) / undo your own link / drop unmatched mail / `{company?, title?}` add a job from it, without a contact (closes the Inbox's "track" proposal raised by the same mail; `link` does too) |
 | `POST /api/comp` `{op: set\|delete, title, city, low, high}` | edit your market-rate table |
-| `POST /api/open_folder` `{which: data\|exports\|backups\|applications\|log}` | reveal a folder in the file manager |
+| `POST /api/open_folder` `{which: data\|exports\|backups\|applications\|log}` / `{which: job, id, sub: attach\|mail\|""}` | reveal a folder in the file manager (a job's folder, its `attach/` or its saved `mail/`; never a file) |
 | `GET /api/analytics` | Insights: per-week series, response rate by source and by match band, funnel, variants, weekly goals |
 | `GET /api/offers` | live offers side by side (totals, best per row, market range, gap to your private salary floor) |
 | `POST /api/offers/ID` `{base, bonus_pct, sign_on, equity_value_estimate, vest_years, cliff_months, retirement_match_pct, remote, start_date, deadline, notes}` | record or edit a structured offer (whitelisted, validated; `""` clears; the job moves to `offer`; all fields empty records nothing, and clearing every field removes the offer) |

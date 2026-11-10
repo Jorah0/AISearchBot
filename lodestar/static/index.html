@@ -10,6 +10,7 @@
 <body>
 <div class="brand"><img src="/logo.svg" width="30" height="30" alt=""><div>Lodestar<small>the star you steer by</small></div></div>
 <div class="top"><div class="stats" id="stats"></div><span class="muted" id="loopStat" style="margin-left:14px"></span><div class="spacer"></div>
+  <button class="b ghost sm" id="codesPill" style="display:none" title="a sign-in code arrived by email" onclick="go('inbox');$('#codesPanel').open=true;codesLoad()">Codes</button>
   <button class="b ghost sm" onclick="run('email_check',{days:3},r=>toast((r.found||[]).length+' relevant email(s)'+(r.note?'\n'+r.note:''),r.note?'err':'ok'),this)">Check email</button>
   <button class="b ghost sm" onclick="run('watch_run',{},r=>toast((r.alerts||[]).length+' alert(s)','ok'),this)">Run watches</button>
 </div>
@@ -66,6 +67,10 @@
 <section id="inbox" class="inbox">
   <h2>Inbox</h2>
   <p class="sub">Actions Lodestar wants to take. Nothing is sent, moved, or added until you approve it. Set a tool to <b>auto</b> under Tools to skip this step for that tool.</p>
+  <details class="panel" id="codesPanel" ontoggle="if(this.open)codesLoad()"><summary><b>Emailed sign-in codes</b> <span class="muted" id="codesN"></span></summary>
+    <div class="row"><button class="b ghost sm" onclick="codesCheck(this)">Check for a code now</button></div>
+    <div id="codesList" role="status" aria-live="polite"></div>
+    <p class="muted">Codes that job sites email you, from senders that pass DKIM/DMARC, received in the last 15 minutes. They are kept in memory only, never saved, and Lodestar never enters them for you.</p></details>
   <div id="inboxList"></div>
   <h3>Unmatched mail</h3>
   <p class="sub">Relevant mail no tracked job claims. Linking files it under a job; it never sets the job's contact or makes the sender trusted.</p>
@@ -242,30 +247,46 @@
 <section id="setup">
   <h2>Setup</h2>
   <div class="panel" id="emailCard"><h3>Connect email</h3>
-    <p class="muted">Lodestar reads hiring replies over IMAP and sends only the mail you approve over SMTP. Use an app password, never your normal password; it stays in the OS keyring and is never shown again.</p>
+    <p class="muted">Lodestar reads hiring replies over IMAP and sends only the mail you approve over SMTP. Sign in with Google or Microsoft, or use an app password (never your normal password). Either one stays in the OS keyring and is never shown again. Step-by-step guide: docs/CONNECT.md.</p>
     <div class="row"><select id="eProv" aria-label="mail provider" onchange="emailPreset()"></select>
-      <input id="eUser" type="email" autocomplete="off" aria-label="email address" placeholder="you@example.com" style="width:240px" onchange="emailGuess()">
-      <input id="ePass" type="password" autocomplete="off" aria-label="app password" placeholder="app password" style="width:200px"></div>
-    <div id="eHelp" class="muted"></div>
+      <input id="eUser" type="email" autocomplete="off" aria-label="email address" placeholder="you@example.com" style="width:240px" onchange="emailGuess()"></div>
+    <div id="eOauth" style="display:none">
+      <div class="row"><button class="b" id="eSignin" onclick="emailSignin(this)">Sign in</button>
+        <span id="eAcct" class="muted" role="radiogroup" aria-label="Microsoft account type"><label><input type="radio" name="eAcct" value="personal" checked> Personal (Outlook.com, Hotmail, Live)</label> <label><input type="radio" name="eAcct" value="work"> Work or school (Microsoft 365)</label></span></div>
+      <div class="muted" id="eOauthNote"></div>
+      <details id="eClient"><summary class="muted" id="eClientSum">Set up client</summary>
+        <ol class="muted" id="eClientSteps"></ol>
+        <div class="row"><input id="eCid" autocomplete="off" class="grow" placeholder="Client ID" aria-label="OAuth client ID"><input id="eCsec" type="password" autocomplete="off" placeholder="Client secret" aria-label="OAuth client secret" style="width:200px"><button class="b ghost" onclick="emailClient(this)">Save client</button></div></details>
+      <div id="eWait" role="status" aria-live="polite"></div></div>
+    <details id="ePw" open><summary class="muted" id="ePwSum">App password</summary>
+      <div class="row"><input id="ePass" type="password" autocomplete="off" aria-label="app password" placeholder="app password" style="width:200px"></div>
+      <div id="eHelp" class="muted"></div></details>
     <details id="eAdv"><summary class="muted">Advanced: servers and ports</summary>
       <div class="row"><input id="eImapHost" aria-label="IMAP host" placeholder="IMAP host" style="width:200px"><input id="eImapPort" type="number" min="1" max="65535" aria-label="IMAP port" placeholder="993" style="width:80px">
+        <select id="eImapMode" aria-label="IMAP security"><option value="ssl">ssl (port 993)</option><option value="starttls">starttls (143; Proton Bridge 1143)</option></select>
         <input id="eSmtpHost" aria-label="SMTP host" placeholder="SMTP host" style="width:200px"><input id="eSmtpPort" type="number" min="1" max="65535" aria-label="SMTP port" placeholder="465" style="width:80px">
         <select id="eSmtpMode" aria-label="SMTP security" onchange="if (['465', '587', ''].includes($('#eSmtpPort').value)) $('#eSmtpPort').value = this.value === 'starttls' ? 587 : 465"><option value="ssl">ssl (port 465)</option><option value="starttls">starttls (port 587)</option></select>
-        <input id="eSmtpUser" autocomplete="off" aria-label="SMTP login" placeholder="SMTP login if not your address" style="width:200px"></div></details>
+        <input id="eSmtpUser" autocomplete="off" aria-label="SMTP login" placeholder="SMTP login if not your address" style="width:200px"></div>
+      <div class="row"><input id="eCafile" autocomplete="off" class="grow" aria-label="CA certificate file" placeholder="CA certificate file (Proton Bridge's exported .pem / .crt); empty = the system's"></div></details>
     <div class="row"><button class="b" id="eConnect" onclick="emailConnect(this)">Connect &amp; test</button>
       <button class="b ghost" id="eSend" onclick="emailSend(this)">Send me a test email</button>
       <button class="b ghost" id="eOff" onclick="emailDisconnect()">Disconnect</button></div>
     <div id="eStatus" role="status" aria-live="polite"></div></div>
   <div class="grid2">
-    <div class="panel"><h3>AI providers</h3><div id="prov"></div>
+    <div class="panel" id="keysCard"><h3>Link an AI key</h3>
+      <div class="row"><select id="kProv" aria-label="AI provider" onchange="keyHint()"></select><input id="kVal" type="password" autocomplete="off" class="grow" placeholder="paste the key" aria-label="API key"><button class="b" onclick="keyLink(this)">Link</button></div>
+      <div class="muted" id="kHint"></div>
+      <p class="muted">Each key is checked at once and again every time Lodestar starts, without spending tokens. Keys stay in the OS keyring and never come back to this page.</p>
+      <div id="kList" class="list" role="status" aria-live="polite"></div>
+      <div class="row"><button class="b ghost" onclick="run('keys_check',{},()=>toast('checked','ok'),this)">Re-check all</button></div>
       <div class="row"><button class="b ghost" onclick="run('providers_test',{},r=>show('provOut',r),this)">Test providers</button>
         <button class="b ghost" title="ids each provider offers; pin one under Tools > Preferences > models" onclick="run('models',{},r=>show('provOut',r),this)">List models</button>
         <button class="b ghost" title="default provider and council restricted to Ollama on this machine; picks a model it serves" onclick="run('providers_local',{},r=>toast(r.text,'ok'),this)">Local only (Ollama)</button></div><pre id="provOut" style="display:none"></pre>
       <div class="muted" id="usage"></div></div>
-    <div class="panel"><h3>Vault (OS keyring)</h3>
+    <div class="panel"><h3>Other secrets (OS keyring)</h3>
       <div class="row"><input id="vName" placeholder="ANTHROPIC_API_KEY / OBSIDIAN_VAULT" aria-label="vault entry name" style="width:240px"><input id="vUser" placeholder="username (optional)" aria-label="vault entry username" style="width:150px"><input id="vVal" type="password" class="grow" placeholder="secret" aria-label="secret"><button class="b" onclick="setVault()">Store</button></div>
       <div class="muted" id="vList"></div>
-      <p class="muted">Keys: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, MISTRAL_API_KEY. Local: OLLAMA_MODEL (or "Local only" above). Email: use Connect email above. Optional: OBSIDIAN_VAULT (folder for the Obsidian export), LODESTAR_NOTIFY_EMAIL (where alerts and the emailed digest go; the digest falls back to your connected mailbox).</p></div>
+      <p class="muted">AI keys and email have their own cards above. Local: OLLAMA_MODEL (or "Local only" above). Optional: OBSIDIAN_VAULT (folder for the Obsidian export), LODESTAR_NOTIFY_EMAIL (where alerts and the emailed digest go; the digest falls back to your connected mailbox).</p></div>
     <div class="panel"><h3>Market rates</h3>
       <p class="muted">Your own annual pay ranges by title keyword (and city). Lodestar never guesses pay: gap checks, offer evaluation and interview prep quote these plus figures stated in postings.</p>
       <div class="row"><input id="mTitle" placeholder="title keyword, e.g. data engineer" style="width:200px"><input id="mCity" placeholder="city (empty = any)" style="width:130px"><input id="mLow" type="number" min="0" placeholder="low" style="width:100px"><input id="mHigh" type="number" min="0" placeholder="high" style="width:100px"><button class="b" onclick="compOp({op:'set',title:$('#mTitle').value,city:$('#mCity').value,low:$('#mLow').value,high:$('#mHigh').value})">Record</button></div>

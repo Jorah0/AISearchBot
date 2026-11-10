@@ -2,6 +2,7 @@
 with de-dup, warm paths, touches from mail, due contacts on Today, referral asks, CLI and routes. The security rule
 under test: a contact (imported or typed) never makes mail trusted and never becomes a job's contact by itself.
 No network: mail and AI calls are faked and every patched attribute is put back."""
+import imaplib
 import contextlib
 import io
 import json
@@ -208,8 +209,8 @@ class Trust(Base):
                     return "OK", [b"9"]
                 return "OK", [(b"9", b"From: Jane <JANE@acme.com>\r\nSubject: hi\r\nDate: Mon, 02 Nov 2026 10:00:00 +0000\r\n"
                                      b"Content-Type: text/plain\r\n\r\nlunch?")]
-        real = (em.imaplib.IMAP4_SSL, em.setting, em.classify)
-        em.imaplib.IMAP4_SSL = lambda host, **kw: Box()
+        real = (imaplib.IMAP4_SSL, em.setting, em.classify)
+        imaplib.IMAP4_SSL = lambda host, **kw: Box()
         em.setting = lambda k, d=None: {"IMAP_USER": "me@x.com", "IMAP_PASS": "p"}.get(k, d)
         em.classify = lambda *a, **k: {"category": "other", "company": "", "title": "", "summary": ""}
         try:
@@ -217,7 +218,7 @@ class Trust(Base):
             self.assertIsNone(contacts.get(cid)["last_touch"])                  # a dry run changes nothing
             em.check(days=1)
         finally:
-            em.imaplib.IMAP4_SSL, em.setting, em.classify = real
+            imaplib.IMAP4_SSL, em.setting, em.classify = real
         self.assertEqual((contacts.get(cid)["last_touch"], contacts.get(other)["last_touch"]), ("2026-11-02", None))
         self.assertEqual(contacts.touch("jane@acme.com", "2026-10-01"), 0)     # never moved back
         self.assertEqual(contacts.touch("jane@acme.com", "2999-01-01"), 1)     # never in the future

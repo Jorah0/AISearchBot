@@ -10,7 +10,7 @@
 ## Project notes
 
 - **Product**: Lodestar. Package `lodestar/`; `jobbot` is a legacy script alias in `pyproject.toml`.
-- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (386 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
+- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (460 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
 - **Profile**: prompts read `resume.candidate_text(limit)` (master + profile-bank facts, fitted by section), never `profile_text()[:N]`. Free-form helpers (coach, ideas, mock) pass `strict=False`. Anything an employer reads (resume, letters, mail, form answers) passes `private=False` so the salary floor stays out; drafts pass `drafts.screen` (a counter-offer's cited figures go in `cited=`, the only exemption), employer-facing answer reads use `employer=True` (private answers never leave). Writes to profile.md go through `profile.write_master()` (snapshot + atomic).
 - **Mail trust** (`email_monitor._match` / `_thread`): trusted = aligned DKIM/DMARC + a *strong* tie + agreement with the stored contact. Strong = stored contact, a thread our mail vouches for (it answered trusted mail or went to the stored contact; job not rejected/withdrawn), or the registrable domain of the job's posting URL on the company site. A domain that only *names* the company (`names_company`, any suffix) is weak: filed, never trusted. Mail about an untracked company is never trusted. Manual links (`link_mail`, Track as new job) and replies to them never make a sender trusted. Never loosen this.
 - **Drafts**: AI draft options/rewrites go through `drafts.py` (`options`, `rewrite`, `use`): one AI call, `screen()` (salary-floor guard) on every text, untrusted mail fenced, mail kinds proposed with review (`apply.mail_proposal(review=True)`), recipient from the server. A send_email proposal answering unverified mail is flagged `unverified` and loses `new_status` (`approvals.propose`).
@@ -19,4 +19,21 @@
 - **Run**: `lodestar doctor` (add `--live` for one real AI call per provider), `lodestar desktop` (WebView2 window; falls back to the browser).
 - **Gotcha, icon**: write `.ico` frames as classic BMP. Pillow's PNG-compressed frames render in Explorer but garble in .NET `System.Drawing.Icon` (used by pywebview).
 - **Gotcha, installer**: changes to `install.ps1` only apply after it is re-run (regenerates the launcher and desktop shortcut).
-- **Gotcha, real calls**: no real AI or SMTP call has been verified yet; the tests use a faked HTTP layer.
+- **Gotcha, real calls**: no real AI, SMTP or OAuth sign-in has been verified yet; the tests use a faked HTTP layer.
+- **OAuth mail** (`oauth.py`): OAuth tokens live only in the keyring vault: the refresh token is stored (chunked when
+  long: the head names its pieces and a hash, so never a mixed or half token), access tokens stay in memory, nothing
+  in files, logs, exports or API answers. IMAP/SMTP log in through `util.imap_login` / `smtp_login` (XOAUTH2); every
+  IMAP connection opens through `util.imap_open` (IMAP_MODE ssl or starttls, never plain). Never weaken the sign-in
+  listener's state, Host or loopback checks, and the sign-in page always opens in the system browser.
+- **Mail check results**: `mailconn.test()` records its own result (`connections.mail_result`), so every path that
+  tests (Connect & test, the sign-in task, Re-check all, startup) updates Getting started and doctor.
+- **Attachments** (`mailfiles.py`): outgoing files only from the job's folder, through `mailfiles.resolve` (resume /
+  cover letter + the job's `attach/`; never private docs: .md/.json/.ics, `mail/`, `history/`), checked at
+  `approvals.propose` (review required), `_precheck` and `_send`; `attachable()` flags what the floor guard refuses.
+  Received files are saved only for job-filed mail and never opened or served.
+- **Codes** (`codes.py`): emailed sign-in codes are memory only: never written, logged, notified, put in `/api/state`
+  (only `codes_count`) or sent to an AI; `email_monitor._scan` runs `codes.mask` on subject and body before relevance,
+  classification and recording. Tests reset `codes._CODES`.
+- **Startup checks** (`connections.start_checks`): one daemon thread, catches `(Exception, SystemExit)`, never blocks
+  or stops startup; `LODESTAR_NO_STARTUP_CHECK=1` turns it off. Tests that touch mail settings pop them from
+  `os.environ` (the repo `.env` is loaded into the test process).

@@ -180,7 +180,7 @@ def _offline(kind: str, job, c: dict) -> list[dict]:
     elif kind == "counter":
         mail = apply.counter_template(job, apply.counter_figures(job["id"], c.get("cite")), " ".join(str(c.get("ask") or "").split())[:300])
     else:
-        raise SystemExit(f"{kind} options need an AI provider: store a key in Setup > Vault (or 'Local only (Ollama)')")
+        raise SystemExit(f"{kind} options need an AI provider: link a key in Setup > Link an AI key (or 'Local only (Ollama)')")
     return [{"label": "template", "tone": "plain", **mail, "recommended": True,
              "why": "No AI provider is configured: the plain template, filled in from the tracker."}]
 
@@ -253,7 +253,7 @@ def rewrite(text: str, instruction: str, kind: str = "email", subject: str | Non
     """{subject?, body}: the draft rewritten per a preset (shorter / warmer / formal / direct) or your own instruction.
     No profile goes in, only the draft; the result passes the salary-floor guard. Needs an AI provider."""
     if not ai.available():
-        raise SystemExit("rewriting needs an AI provider: store a key in Setup > Vault (or 'Local only (Ollama)')")
+        raise SystemExit("rewriting needs an AI provider: link a key in Setup > Link an AI key (or 'Local only (Ollama)')")
     how = PRESETS.get(str(instruction or "").strip().lower()) or " ".join(str(instruction or "").split())[:300]
     if not how or not str(text or "").strip():
         raise SystemExit("rewrite needs the draft and how to change it (shorter, warmer, formal, direct, or your own words)")
@@ -306,8 +306,14 @@ def use(kind: str, context: dict, choice: dict) -> dict:
         link(p["id"], job["id"], "referrer", keep_role=True)
         db.add_event(job["id"], "referral", f"referral ask drafted for {p['name']}")
     db.add_event(job["id"], f"{kind}_draft", mail["subject"])
+    files = None  # the tailored resume, pre-ticked and removable on the Inbox card; never on a reply to unverified mail
+    if kind in ("outreach", "referral") or (kind == "reply" and c["mail"]["trusted"]):
+        from .mailfiles import suggest
+
+        files = suggest(job) or None
     return apply.mail_proposal(job, mail, tool, summary.format(who=who, company=job["company"]), purpose=purpose,
-                               review=True, new_status=new_status, to=to, in_reply_to=in_reply_to, cited=cited)
+                               review=True, new_status=new_status, to=to, in_reply_to=in_reply_to, cited=cited,
+                               attachments=files)
 
 
 # ----------------------------------------------------------------------------- suggested emails

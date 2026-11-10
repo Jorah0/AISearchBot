@@ -10,7 +10,7 @@ from functools import lru_cache
 
 from . import ai, db, settings
 from .config import SNAPSHOTS
-from .util import fetch, fetch_json, notify, strip_html
+from .util import fetch, fetch_json, notify, robots_ok, strip_html
 
 GHOST_SHOW, GHOST_SKIP = 30, 60  # "possibly stale" chip from 30; auto_track leaves listings at 60+ alone
 # ponytail: withholds the 'Salary floor:' value (where profile.salary_floor reads it); the figure written elsewhere slips past
@@ -47,23 +47,8 @@ def _hits(label: str, new: list[dict]) -> list[str]:
 
 
 def _robots_ok(url: str, cache: dict) -> bool:
-    """robots.txt says a generic page may be fetched. One robots.txt per host per cycle (cache). 401/403 on robots.txt
-    means keep out, any other HTTP error means no rules (the urllib.robotparser convention)."""
-    from urllib.robotparser import RobotFileParser
-
-    u = urllib.parse.urlparse(url)
-    base = f"{u.scheme}://{u.netloc}"
-    if base not in cache:
-        rp = RobotFileParser()
-        try:
-            rp.parse(fetch(base + "/robots.txt", timeout=15).splitlines())
-        except urllib.error.HTTPError as e:
-            rp.disallow_all = e.code in (401, 403)
-            rp.allow_all = not rp.disallow_all
-        except Exception:  # ponytail: robots.txt unreachable; the page fetch itself reports the real problem
-            rp.allow_all = True
-        cache[base] = rp
-    return cache[base].can_fetch("lodestar", url)
+    """util.robots_ok through this module's fetch (moved there so research shares it)."""
+    return robots_ok(url, cache, fetch)
 
 
 def check_watches() -> list[str]:
@@ -765,7 +750,7 @@ def rank(listings: list[dict], provider: str | None = None, chunk: int = 15) -> 
     if not listings:
         return listings
     if not ai.available():  # never a silent 'no fits': unranked results must not read as judged and rejected
-        raise SystemExit("AI ranking needs an AI provider: store a key in Setup > Vault, or click 'Local only (Ollama)'")
+        raise SystemExit("AI ranking needs an AI provider: link a key in Setup > Link an AI key, or click 'Local only (Ollama)'")
     prof = FLOOR_RE.sub(r"\1 (withheld)", candidate_text(6000))
     errors = []
     for start in range(0, len(listings), chunk):

@@ -66,6 +66,7 @@ WATCH_MIGRATIONS = {"filters": "TEXT",  # JSON search filters of a saved search 
                     "last_error": "TEXT"}  # what the last run could not read (shown on the watch); NULL after a clean run
 ANSWER_MIGRATIONS = {"star": "TEXT",  # JSON STAR fields when the row is a story (interview.save_story); NULL = a form answer
                      "private": "INTEGER NOT NULL DEFAULT 0"}  # 1 = for you only: never put in an employer-facing prompt
+MAIL_MIGRATIONS = {"attachments": "TEXT"}  # JSON [{name, size, type, path?} | {name, skipped}] (mailfiles.py)
 BACKFILL_KEY = "backfill:fields-v1"
 CONTACTS_KEY = "backfill:contacts-v1"
 ATS_FEED_RE = re.compile(r"(greenhouse|lever|ashby):[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
@@ -75,7 +76,8 @@ def connect(path=None) -> sqlite3.Connection:
     c = sqlite3.connect(path or DB_PATH)
     c.row_factory = sqlite3.Row
     c.executescript(SCHEMA)
-    for table, cols in (("jobs", MIGRATIONS), ("watches", WATCH_MIGRATIONS), ("answers", ANSWER_MIGRATIONS)):
+    for table, cols in (("jobs", MIGRATIONS), ("watches", WATCH_MIGRATIONS), ("answers", ANSWER_MIGRATIONS),
+                        ("mail", MAIL_MIGRATIONS)):
         have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
         for col, typ in cols.items():
             if col in have:
@@ -506,7 +508,7 @@ def variant_stats() -> list[dict]:
 # (the real change logs its own 'status' / 'created' / sent-mail event). None of them restarts the follow-up clock.
 BOOKKEEPING = ("proposed", "rejected_proposal", "send_failed", "set_status", "add_job", "save_answer", "reply",
                "interview_date", "email_unverified", "followup_draft", "thanks_draft", "withdraw_draft", "counter_draft",
-               "reply_draft", "referral_draft", "outreach_draft", "checkin_draft", "referral")
+               "reply_draft", "referral_draft", "outreach_draft", "checkin_draft", "referral", "attachments")
 
 
 def needs_followup(days: int | None = None):
@@ -806,13 +808,15 @@ def delete_idea(iid: int) -> None:
 
 # --- mail (email_monitor records relevant mail it scans, approvals._send what it sends) -----------------------
 MAIL_COLS = ("message_id", "in_reply_to", "refs", "job_id", "direction", "from_addr", "to_addr", "subject", "sent_at",
-             "category", "summary", "snippet", "trusted", "linked_by", "company", "title")
+             "category", "summary", "snippet", "trusted", "linked_by", "company", "title", "attachments")
 
 
 def add_mail(**fields) -> None:
     """Deduped by Message-ID: the first record of a message wins (a rescan never relinks it)."""
+    att = fields.get("attachments")
     f = {k: fields.get(k) for k in MAIL_COLS} | {"trusted": int(bool(fields.get("trusted"))),
-                                                 "snippet": (fields.get("snippet") or "")[:1500]}
+                                                 "snippet": (fields.get("snippet") or "")[:1500],
+                                                 "attachments": json.dumps(att) if isinstance(att, list) and att else None}
     con().execute(f"INSERT OR IGNORE INTO mail({','.join(f)}) VALUES({','.join('?' * len(f))})", tuple(f.values()))
     con().commit()
 

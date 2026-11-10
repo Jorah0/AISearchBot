@@ -208,30 +208,44 @@ def research(job, provider: str | None = None):
     from urllib.parse import quote, urlparse
 
     from .resume import candidate_text
-    from .util import fetch, strip_html
+    from .util import fetch, robots_ok, strip_html
 
-    sources = []
+    sources, skipped, robots = [], [], {}
+
+    def read(u: str, api: bool = False) -> str | None:  # robots.txt first; NEVER_FETCH sites raise in fetch
+        # api: a published API meant for programs (Wikimedia REST), governed by its API policy and our User-Agent, not
+        # robots.txt (Wikipedia's robots.txt disallows /api/ for crawlers, which would always skip it)
+        if not api and not robots_ok(u, robots, fetch):
+            skipped.append(u)
+            return None
+        return fetch(u)
+
     if job["url"]:
         host = urlparse(job["url"]).netloc
         for u in (job["url"], f"https://{host}", f"https://{host}/about"):
             try:
-                sources.append((u, strip_html(fetch(u))[:5000]))
+                if (page := read(u)) is not None:
+                    sources.append((u, strip_html(page)[:5000]))
             except Exception:
                 pass
     try:  # Wikipedia summary: keyless, stable, and a good antidote to the search page being blocked
         import json as _json
 
-        wiki = _json.loads(fetch(f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(job['company'])}"))
-        if wiki.get("extract"):
-            sources.append((wiki.get("content_urls", {}).get("desktop", {}).get("page", "wikipedia"), wiki["extract"][:3000]))
+        if (page := read(f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(job['company'])}", api=True)) is not None:
+            wiki = _json.loads(page)
+            if wiki.get("extract"):
+                sources.append((wiki.get("content_urls", {}).get("desktop", {}).get("page", "wikipedia"), wiki["extract"][:3000]))
     except Exception:
         pass
     q = quote(f"{job['company']} company news engineering culture")
-    try:  # ponytail: html.duckduckgo.com needs no key; if it blocks us the pack is built from the other sources
-        sources.append((f"https://html.duckduckgo.com/html/?q={q}", strip_html(fetch(f"https://html.duckduckgo.com/html/?q={q}"))[:6000]))
+    try:  # ponytail: html.duckduckgo.com needs no key; its robots.txt usually keeps us out, then the other sources do
+        if (page := read(f"https://html.duckduckgo.com/html/?q={q}")) is not None:
+            sources.append((f"https://html.duckduckgo.com/html/?q={q}", strip_html(page)[:6000]))
     except Exception:
         pass
     corpus = (chr(10) * 2).join(f"SOURCE {u}" + chr(10) + t for u, t in sources) or "(nothing fetched)"
+    if skipped:  # named, never sent as content
+        corpus = "".join(f"SKIPPED {u}: robots.txt" + chr(10) for u in skipped) + chr(10) + corpus
     text = ai.ask(
         f"""Build an interview research pack for {job['company']} ({job['title']}) from the sources below plus what you
 reliably know. Mark anything not supported by the sources as "(unverified)". Sections: 1) what the company does and
@@ -313,7 +327,8 @@ def backup(out_dir: Path | None = None, keep: int = 7) -> Path:
     import sqlite3
     import tempfile
 
-    skip = {"backups", "snapshots", "cache", "__pycache__", "lodestar.log"}
+    skip = {"backups", "snapshots", "cache", "__pycache__", "lodestar.log",
+            "mail"}  # applications/*/mail/: received attachments, still in the mailbox (up to 25 MB a message)
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z, tempfile.TemporaryDirectory() as tmp:
         for p in HOME.rglob("*"):
             rel = p.relative_to(HOME)

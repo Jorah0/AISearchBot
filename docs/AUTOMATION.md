@@ -58,6 +58,15 @@ be refused (an email or a saved answer that names your salary floor, a slot that
 refused before the item is claimed, so it stays in the Inbox with the reason and nothing is sent or saved. Only one
 follow-up per job waits at a time: asking again returns the waiting one, and sending one closes any other.
 
+Attachments: an email card for a job shows its attachments as chips you can remove, plus "Add from this job's files"
+(the job's `resume.pdf` / `.docx`, `cover_letter.pdf` / `.docx`, and pdf, docx, png or jpg files in its `attach/`
+folder; nothing else, so interview prep, offer notes, research, gap checks, calendar files and received mail can never
+reach an employer). The list is checked when the item is proposed, again before the claim (a bad edit keeps the item
+pending) and again just before sending (a file that changed or vanished keeps it pending with the error). An attached
+resume or cover letter that names your salary floor is refused. `approvals.propose` refuses attachments unless the
+item waits for review, so a tool on auto can never mail a file. Drafts you ask for (outreach, referral asks, replies to
+verified mail) pre-tick your tailored resume; replies to unverified mail and every automatic draft carry none.
+
 A counter-offer (`lodestar offers counter`, Insights > Offers) is always proposed with review, even when
 `email_reply` is on auto, and never contains your salary floor, Preferences or offer notes. A competing figure you
 cite is sent by your choice, so it may equal your floor (the exact cited phrase is exempt from the floor check, in the
@@ -75,7 +84,12 @@ Executors are the only code that sends mail, changes status, or adds jobs on lod
 1. Email check: classify new mail, propose or apply status changes, capture the sender as the job's contact, write
    .ics for interviews with a stated time from a trusted sender (each also recorded as an interview round; a date
    without a time, often a reply-by date, or an unverified sender records only a timeline note), draft replies for
-   confirmations / assessments / interviews / offers.
+   confirmations / assessments / interviews / offers. A calendar invite (.ics) attached to the mail supplies the time
+   when the text states none; the same trust rule decides whether it becomes a round. Attachments of mail filed under
+   a job are saved under `applications/<job>/mail/` (kept types only, size capped, marked as downloaded from the
+   internet, never opened); mail no job claims lists their names only. Sign-in codes in authenticated mail from the
+   last 15 minutes go to the Inbox's Codes panel, in memory only (never saved, notified or sent to an AI): every
+   code-shaped token in a mail is replaced by `******` before the mail is classified or recorded.
 2. Watches: diff career pages (only where robots.txt allows; a disallowed page is skipped with one alert); new
    listings from saved searches (with their saved filters) and from watched companies' Greenhouse / Lever / Ashby
    boards (one request per company; a newly watched board's open roles are a baseline with one summary alert) are
@@ -94,8 +108,14 @@ Executors are the only code that sends mail, changes status, or adds jobs on lod
 4. Optional Obsidian sync and Friday digest (with your weekly goals' progress when you set any).
 5. Print how many actions are waiting in the inbox.
 
-Sending mail needs a connected mailbox (Setup > Connect email, or `lodestar email connect`). Without one, approvals of email items fail
-with a clear error and the draft stays visible so you can copy it.
+Sending mail needs a connected mailbox (Setup > Connect email: Sign in with Google / Microsoft or an app password; or
+`lodestar email signin google|microsoft` / `lodestar email connect`; see CONNECT.md). Without one, approvals of email
+items fail with a clear error and the draft stays visible so you can copy it. A signed-in mailbox whose sign-in expired
+stops the email check with "Sign-in expired: sign in again"; the rest of the cycle still runs.
+
+Every app start (`lodestar ui`, `app`, `desktop`) re-checks the linked AI keys and the mailbox once, in a background
+thread that never blocks or stops the start (`LODESTAR_NO_STARTUP_CHECK=1` turns it off). Offline reads as "couldn't
+reach" and never marks a working key or mailbox as broken.
 
 ## Contact capture
 

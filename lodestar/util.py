@@ -24,15 +24,23 @@ def redact_url(url) -> str:
     return u._replace(query="&".join(f"{k}=***" for k, _ in parse_qsl(u.query, keep_blank_values=True))).geturl()
 
 
+# ponytail: these sites' terms forbid automated access; the capture bookmarklet reads a page the user has open instead
+NEVER_FETCH = re.compile(r"(^|\.)(linkedin|indeed|glassdoor|ziprecruiter)\.[a-z]{2,3}(\.[a-z]{2})?$")
+
+
 def _check_url(url: str) -> None:
-    """SSRF guard: http(s) only, and the host must not resolve to loopback, link-local, or private ranges.
-    Set LODESTAR_ALLOW_PRIVATE_URLS=1 to watch an intranet careers page on purpose."""
+    """SSRF guard: http(s) only, never a NEVER_FETCH site, and the host must not resolve to loopback, link-local, or
+    private ranges. Set LODESTAR_ALLOW_PRIVATE_URLS=1 to watch an intranet careers page on purpose (it never opens the
+    NEVER_FETCH sites). Runs on the first URL and on every redirect hop."""
     import os
     from urllib.parse import urlparse
 
     u = urlparse(url)
     if u.scheme not in ("http", "https") or not u.hostname:
         raise ValueError(f"only http(s) URLs can be fetched: {redact_url(url)[:80]}")
+    if NEVER_FETCH.search(u.hostname.lower().rstrip(".")):
+        raise ValueError(f"Lodestar does not fetch pages from {u.hostname}: the site's terms forbid automated access. "
+                         "Use the capture bookmarklet on the page, or paste the description.")
     if os.environ.get("LODESTAR_ALLOW_PRIVATE_URLS") == "1":
         return
     _public_addrs(u.hostname, u.port or (443 if u.scheme == "https" else 80))
@@ -146,6 +154,29 @@ def fetch(url: str, timeout: int = 25, headers: dict | None = None, max_bytes: i
 
 def fetch_json(url: str, **kw):
     return json.loads(fetch(url, **kw))
+
+
+def robots_ok(url: str, cache: dict, get=None) -> bool:
+    """robots.txt says a generic page may be fetched. One robots.txt per host per cycle (cache). 401/403 on robots.txt
+    means keep out, any other HTTP error means no rules (the urllib.robotparser convention). get: the fetch to use
+    (callers pass their own so their tests can fake it)."""
+    import urllib.error
+    import urllib.parse
+    from urllib.robotparser import RobotFileParser
+
+    u = urllib.parse.urlparse(url)
+    base = f"{u.scheme}://{u.netloc}"
+    if base not in cache:
+        rp = RobotFileParser()
+        try:
+            rp.parse((get or fetch)(base + "/robots.txt", timeout=15).splitlines())
+        except urllib.error.HTTPError as e:
+            rp.disallow_all = e.code in (401, 403)
+            rp.allow_all = not rp.disallow_all
+        except Exception:  # ponytail: robots.txt unreachable; the page fetch itself reports the real problem
+            rp.allow_all = True
+        cache[base] = rp
+    return cache[base].can_fetch("lodestar", url)
 
 
 class _Text(HTMLParser):
@@ -265,12 +296,26 @@ def desktop_notify(title: str, body: str) -> bool:
         return False
 
 
-def tls_context():
+def tls_context(host: str | None = None):
     """Certificate-verifying TLS for IMAP/SMTP. imaplib and smtplib default to an unverified context, which would hand
-    the mailbox password to anyone able to intercept the connection."""
+    the mailbox password to anyone able to intercept the connection. MAIL_CAFILE (Proton Mail Bridge's exported
+    certificate, or a self-hosted server's own CA) replaces the system store: only that certificate is trusted. On a
+    loopback IP (Bridge on 127.0.0.1) the host-name match is skipped, since a self-signed Bridge certificate may name no
+    IP; the certificate itself is still required, so this pins it rather than bypassing verification."""
+    import ipaddress
+    import os
     import ssl
 
-    return ssl.create_default_context()
+    cafile = setting("MAIL_CAFILE")
+    if not (cafile and os.path.isfile(cafile)):
+        return ssl.create_default_context()
+    ctx = ssl.create_default_context(cafile=cafile)
+    try:
+        if ipaddress.ip_address(str(host or "")).is_loopback:
+            ctx.check_hostname = False  # verify_mode stays CERT_REQUIRED
+    except ValueError:  # a host name keeps the full check
+        pass
+    return ctx
 
 
 class run_lock:
@@ -314,28 +359,76 @@ def mail_settings() -> dict:
             "imap_host": setting("IMAP_HOST", "imap.gmail.com"), "imap_port": int(setting("IMAP_PORT") or 993),
             "smtp_host": setting("SMTP_HOST", "smtp.gmail.com"),
             "smtp_port": int(setting("SMTP_PORT") or (587 if mode == "starttls" else 465)),
-            "smtp_mode": mode, "smtp_user": setting("SMTP_USER") or user}
+            "imap_mode": (setting("IMAP_MODE") or "ssl").lower(),  # starttls: Proton Mail Bridge's default
+            "smtp_mode": mode, "smtp_user": setting("SMTP_USER") or user, "cafile": setting("MAIL_CAFILE") or "",
+            "auth": (setting("EMAIL_AUTH") or "password").lower()}  # oauth: signed in with Google or Microsoft
+
+
+def mail_login(get=None) -> tuple[str | None, bool]:
+    """(app password, a login is stored). The password is None when the mailbox signs in with Google or Microsoft
+    (XOAUTH2 with a token minted from the stored refresh token). get: the caller's setting lookup."""
+    get = get or setting
+    oauth = (get("EMAIL_AUTH") or "password").lower() == "oauth"
+    pw = None if oauth else get("IMAP_PASS")
+    return pw, bool(get("IMAP_USER") and (pw or (oauth and get("OAUTH_REFRESH"))))
+
+
+def imap_login(box, user: str, pw: str | None) -> None:
+    """Sign an open IMAP connection in: app password, or XOAUTH2 when the mailbox is connected by provider sign-in."""
+    if pw:
+        box.login(user, pw)
+    else:
+        from . import oauth
+
+        oauth.imap_auth(box, user)
+
+
+def smtp_login(s, user: str, pw: str | None) -> None:
+    """Same split for SMTP. With a provider sign-in the login name is the account address."""
+    if pw:
+        s.login(user, pw)
+    else:
+        from . import oauth
+
+        oauth.smtp_auth(s, user)
+
+
+def imap_open(host: str, port: int, mode: str | None = None):
+    """Certificate-verified IMAP: implicit TLS (ssl, port 993) or STARTTLS (Proton Mail Bridge on 1143 by default), with
+    the mail socket timeout. mode None: the stored IMAP_MODE. Every IMAP connection in lodestar opens here."""
+    import imaplib
+
+    if (mode or setting("IMAP_MODE") or "ssl").lower() != "starttls":
+        return imaplib.IMAP4_SSL(host, port=port, ssl_context=tls_context(host), timeout=MAIL_TIMEOUT)
+    box = imaplib.IMAP4(host, port, timeout=MAIL_TIMEOUT)
+    try:
+        box.starttls(ssl_context=tls_context(host))  # raises rather than falling back to plain text
+    except BaseException:
+        box.shutdown()
+        raise
+    return box
 
 
 def smtp_open(host: str, port: int, mode: str):
     """Certificate-verified SMTP: implicit TLS (ssl, port 465) or STARTTLS (port 587), with the mail socket timeout."""
     if mode != "starttls":
-        return smtplib.SMTP_SSL(host, port, context=tls_context(), timeout=MAIL_TIMEOUT)
+        return smtplib.SMTP_SSL(host, port, context=tls_context(host), timeout=MAIL_TIMEOUT)
     s = smtplib.SMTP(host, port, timeout=MAIL_TIMEOUT)
     try:
-        s.starttls(context=tls_context())  # raises SMTPNotSupportedError rather than falling back to plain text
+        s.starttls(context=tls_context(host))  # raises SMTPNotSupportedError rather than falling back to plain text
     except BaseException:
         s.close()
         raise
     return s
 
 
-def send_email(to: str, subject: str, body: str, in_reply_to: str | None = None) -> str:
-    """Send as the connected account over SMTP and return the Message-ID. The only outbound-mail path in lodestar."""
+def send_email(to: str, subject: str, body: str, in_reply_to: str | None = None, attachments=None) -> str:
+    """Send as the connected account over SMTP and return the Message-ID. The only outbound-mail path in lodestar.
+    attachments: Paths already validated by mailfiles.resolve (approvals._send)."""
     from email.utils import formatdate, make_msgid
 
-    c, pw = mail_settings(), setting("IMAP_PASS")
-    if not (c["user"] and pw):
+    c, (pw, ready) = mail_settings(), mail_login()
+    if not ready:
         raise RuntimeError("sending needs a connected mailbox: Setup > Connect email, or lodestar email connect")
     m = EmailMessage()
     m["Subject"], m["From"], m["To"] = subject, c["user"], to
@@ -343,7 +436,11 @@ def send_email(to: str, subject: str, body: str, in_reply_to: str | None = None)
     if in_reply_to:
         m["In-Reply-To"] = m["References"] = in_reply_to
     m.set_content(body)
+    if attachments:
+        from .mailfiles import attach
+
+        attach(m, attachments)
     with smtp_open(c["smtp_host"], c["smtp_port"], c["smtp_mode"]) as s:
-        s.login(c["smtp_user"], pw)
+        smtp_login(s, c["smtp_user"] if pw else c["user"], pw)
         s.send_message(m)
     return m["Message-ID"]

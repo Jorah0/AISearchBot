@@ -172,7 +172,9 @@ def cycle(a) -> None:
     STATUS["last_cycle"], STATUS["cycles"] = time.strftime("%H:%M"), STATUS["cycles"] + 1
     print(f"\n--- lodestar cycle {STATUS['last_cycle']} ---")
     STATUS["last_error"] = None  # the top bar shows this cycle's problem, not one fixed since
-    if getattr(a, "email", True) and not (setting("IMAP_USER") and setting("IMAP_PASS")):
+    from .util import mail_login
+
+    if getattr(a, "email", True) and not mail_login(setting)[1]:
         print("email: skipped (no mailbox connected: Setup > Connect email)")  # optional, so not a 'problem'
     elif getattr(a, "email", True):
         from . import email_monitor

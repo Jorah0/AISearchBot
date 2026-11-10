@@ -209,11 +209,12 @@ class Vault(Base):
                 with self.assertRaises(ValueError):
                     vault.set(name, secret)
             self.assertEqual(store, {})
-            for n in ("IMAP_USER", "IMAP_PASS", "EMAIL_PRESET", "IMAP_HOST", "SMTP_PORT", "OPENAI_API_KEY"):
+            for n in ("IMAP_USER", "IMAP_PASS", "EMAIL_PRESET", "IMAP_HOST", "SMTP_PORT", "OPENAI_API_KEY", "OBSIDIAN_VAULT"):
                 vault.set(n, "v")
         with patched(ai, available=lambda: []):
             names = [v["name"] for v in web.state()["vault"]]
-        self.assertEqual(names, ["OPENAI_API_KEY"])  # Connect email / Disconnect manage the rest
+        # Connect email / Disconnect manage the mail entries; linked AI keys show on the Link an AI key card
+        self.assertEqual(names, ["OBSIDIAN_VAULT"])
 
 
 class Prefs(Base):
@@ -242,7 +243,7 @@ class NoKey(Base):
         with patched(ai, available=lambda: [], setting=env()):
             with self.assertRaises(SystemExit) as e:
                 ai.default_provider()
-        self.assertIn("Setup > Vault", str(e.exception))
+        self.assertIn("Setup > Link an AI key", str(e.exception))
         self.assertIn("No AI provider configured", str(e.exception))
         with patched(ai, council_providers=lambda: []):
             with self.assertRaises(SystemExit) as e:
@@ -257,7 +258,7 @@ class NoKey(Base):
     def test_check_email_says_why_untied_mail_was_not_classified(self):  # ui-sweep-33
         with patched(email_monitor, check=lambda *a, **k: []), patched(ai, available=lambda: []):
             r = web._act("email_check", {})
-        self.assertIn("Setup > Vault", r["note"])
+        self.assertIn("Setup > Link an AI key", r["note"])
         with patched(email_monitor, check=lambda *a, **k: []), patched(ai, available=lambda: ["anthropic"]):
             self.assertEqual(web._act("email_check", {})["note"], "")
         self.assertIn("r.note?'\\n'+r.note:''", HTML)

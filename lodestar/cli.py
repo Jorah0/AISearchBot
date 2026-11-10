@@ -104,8 +104,9 @@ def cmd_init(a):
     db.con()
     print(f"Lodestar (lodestar) home: {HOME}\n")
     print(f"1. Edit your master resume:   {PROFILE}")
-    print("2. Add an AI key:             lodestar vault set ANTHROPIC_API_KEY   (or OPENAI_API_KEY, GEMINI_API_KEY, GROQ_API_KEY ...)")
-    print("3. Optional email:            lodestar email connect   (Gmail, Yahoo, iCloud, Fastmail, Zoho, AOL or custom)")
+    print("2. Link an AI key:            lodestar keys link anthropic   (or openai, gemini, groq, openrouter, mistral; checked at once)")
+    print("3. Optional email:            lodestar email connect   (app password: Gmail, Yahoo, iCloud, Fastmail, Zoho, AOL, Proton, custom)")
+    print("                              or lodestar email signin google|microsoft   (any 2-step method; docs/CONNECT.md)")
     print("4. Track a job:               lodestar jobs add \"Acme\" \"Backend Engineer\" --jd https://acme.com/jobs/123")
     print("5. Tailor + check fit:        lodestar resume tailor 1 ; lodestar resume gap 1 ; lodestar resume cover 1")
     print("6. Automate:                  lodestar run --every 30")
@@ -576,8 +577,9 @@ def cmd_email(a):
         user = (a.user or input("email address: ")).strip()
         preset = a.preset or mailconn.guess(user) or "custom"
         p = mailconn.PRESETS[preset]
-        if p.get("unsupported"):
-            raise SystemExit(f"{p['label']}: {p['unsupported']}")
+        if p.get("oauth_only"):
+            raise SystemExit(f"{p['label']}: Microsoft accepts no passwords for IMAP and SMTP. Sign in instead:\n"
+                             f"  lodestar email signin microsoft{' --work' if preset == 'm365' else ''} --hint {user}")
         print(f"{p['label']}: {p.get('steps', '')}" + (f"\n  {p['help']}" if p.get("help") else ""))
         keys = {k: getattr(a, k) for k in mailconn.KEYS if getattr(a, k, None)}
         pw = getpass.getpass("app password (not shown; Enter keeps the stored one): ")
@@ -597,12 +599,52 @@ def cmd_email(a):
         print(f"test email sent to {r['to']} ({r['message_id']}); check that inbox")
     elif a.op == "status":
         st = mailconn.status()
+        how = f"signed in with {st['oauth_provider'].title()} (OAuth)" if st["oauth_provider"] else "app password"
         print(f"{'connected' if st['configured'] else 'not connected'}: {st['user'] or '(no address)'} ({st['label'] or 'no preset'})"
-              f"\n  IMAP {st['imap_host']}:{st['imap_port']}  SMTP {st['smtp_host']}:{st['smtp_port']} {st['smtp_mode']}"
-              f" as {st['smtp_user'] or '-'}" + (f"\n  overridden by env: {', '.join(st['shadowed'])}" if st["shadowed"] else ""))
+              + (f", {how}" if st["configured"] else "")
+              + f"\n  IMAP {st['imap_host']}:{st['imap_port']}  SMTP {st['smtp_host']}:{st['smtp_port']} {st['smtp_mode']}"
+              f" as {(st['user'] if st['oauth_provider'] else st['smtp_user']) or '-'}"
+              + (f"\n  overridden by env: {', '.join(st['shadowed'])}" if st["shadowed"] else ""))
+        if st["needs_signin"]:
+            print(f"  needs sign-in: {st['needs_signin']}\n  lodestar email signin {st['oauth_provider']}")
+        if st["refresh_expires"]:
+            print(f"  WARNING: Google app in Testing: this sign-in stops working {st['refresh_expires']} UTC. Publish the app "
+                  "(docs/CONNECT.md step 6) and sign in again.")
     elif a.op == "disconnect":
-        mailconn.disconnect()
-        print("app password removed from the keyring (server settings kept)")
+        oauth_on = mailconn.status()["oauth_provider"]
+        r = mailconn.disconnect()
+        if oauth_on:
+            print("signed out: the sign-in is forgotten" + (" and revoked at Google" if r.get("revoked") else "")
+                  + " (server settings kept)")
+        else:
+            print("app password removed from the keyring (server settings kept)")
+        if r.get("note"):
+            print(r["note"])
+    elif a.op == "client":
+        from . import oauth
+
+        if a.provider == "google":
+            cid = input("Google OAuth client ID (ends in .apps.googleusercontent.com): ")
+            sec = getpass.getpass("client secret (not shown; Enter for none): ")
+        else:
+            cid, sec = input("Microsoft Application (client) ID: "), None
+        oauth.set_client(a.provider, cid, sec or None)
+        print(f"{a.provider} client stored in the keyring; next: lodestar email signin {a.provider}")
+    elif a.op == "signin":
+        import webbrowser
+
+        from . import oauth
+
+        def show(url):
+            print(("Visit this page to sign in" if a.no_browser else "Opening your browser to sign in... If it did not open, visit")
+                  + f":\n{url}\nWaiting up to 5 minutes (Ctrl-C to stop).", flush=True)
+            return False if a.no_browser else webbrowser.open(url)
+
+        st = oauth.signin(a.provider, "work" if a.work else "personal", a.hint or "", open_browser=show)
+        print(f"signed in as {st['signed_in_as']} ({st['label']})")
+        if st.get("expires_warning"):
+            print(f"WARNING: {st['expires_warning']}")
+        print(_mail_test_text(mailconn.test()))
     elif a.op == "check":
         found = email_monitor.check(a.days, dry=a.dry, provider=a.provider)
         print(f"\n{len(found)} relevant email(s)")
@@ -739,9 +781,59 @@ def cmd_alerts(a):
     print(ALERTS.read_text(encoding="utf-8")[-4000:] if ALERTS.is_file() else "(no alerts yet)")
 
 
+def cmd_keys(a):
+    """Link, check and remove AI keys. The key is read without echo and never printed."""
+    from . import connections
+
+    if a.op == "link":
+        name = connections.resolve(a.name)
+        key = None
+        if connections.REGISTRY[name]["key"]:
+            e = connections.REGISTRY[name]
+            print(f"Get a key: {e['get']}" + (f"  ({e['hint']})" if e["hint"] else ""))
+            key = getpass.getpass(f"{e['label']} key (not shown): ")
+        r = connections.link(name, key)
+        print(f"{r['label']}: {r['status']} - {r['detail']}")
+        for k in ("prefix_warning", "shadowed"):
+            if r.get(k):
+                print(f"  note: {r[k]}")
+    elif a.op == "check":
+        names = [connections.resolve(a.name)] if a.name else None
+        if names:
+            connections.check(names[0])
+        else:
+            connections.check_all()
+        _keys_table(connections.status(), names)
+    elif a.op == "rm":
+        connections.unlink(a.name)
+        print(f"removed {connections.resolve(a.name)}")
+    else:
+        _keys_table(connections.status())
+
+
+def _keys_table(st: dict, only: list[str] | None = None) -> None:
+    from .connections import local
+
+    for n, k in st["keys"].items():
+        if only and n not in only:
+            continue
+        linked = {"env": "env", "vault": "vault"}.get(k["source"], "yes") if k["linked"] else "no"
+        when = local(k["checked_at"]) if k["checked_at"] else "-"
+        print(f"{n:<11} linked={linked:<5} {k['status'] if k['linked'] else '-':<11} {when:<16} {k['model'] or '-'}")
+        if k["linked"] and k["detail"]:
+            print(f"{'':<11} {k['detail']}")
+        if not k["linked"]:
+            print(f"{'':<11} get a key: {k['get']}")
+    m = st.get("mail") or {}
+    if m.get("status") and m["status"] != "unchecked" and not only:
+        print(f"{'email':<11} {m['status']:<11} {local(m.get('checked_at', ''))}  {m.get('detail', '')}")
+
+
 def cmd_ui(a):
+    from . import connections
     from .web import serve
 
+    connections.start_checks()  # background, once: the server below comes up first
     serve(a.port, open_browser=not a.no_open)
 
 
@@ -751,10 +843,13 @@ def cmd_app(a):
 
     from .web import serve
 
+    from . import connections
+
     if not a.no_loop:
         a.once = False
         threading.Thread(target=cmd_run, args=(a,), daemon=True).start()
         print(f"monitor loop running every {a.every} min")
+    connections.start_checks()  # background, once: keys and mailbox re-verified after the server is up
     serve(a.port, open_browser=not a.no_open)
 
 
@@ -771,8 +866,11 @@ def cmd_desktop(a):
     from . import desktop
     from .web import start_server
 
+    from . import connections
+
     port = a.port or desktop.free_port()
     srv = start_server(port)
+    connections.start_checks()  # background, once; never blocks or crashes the window
     if not a.no_loop:
         a.once = False
         threading.Thread(target=cmd_run, args=(a,), daemon=True, name="lodestar-loop").start()
@@ -1216,6 +1314,15 @@ def build() -> argparse.ArgumentParser:
     s.add_argument("--no-open", action="store_true", help="don't open a browser")
     s.set_defaults(f=cmd_ui)
 
+    s = sub.add_parser("keys", help="link AI keys (verified at once, re-checked at every app start), check, remove")
+    v = s.add_subparsers(dest="op")
+    x = v.add_parser("list")
+    x = v.add_parser("link", help="NAME: anthropic, openai, gemini, groq, openrouter, mistral or ollama (or ANTHROPIC_API_KEY ...)")
+    x.add_argument("name")
+    x = v.add_parser("check"); x.add_argument("name", nargs="?")
+    x = v.add_parser("rm"); x.add_argument("name")
+    s.set_defaults(f=cmd_keys, op="list")
+
     s = sub.add_parser("vault", help="OS-keyring credential store (API keys, site logins, email)")
     v = s.add_subparsers(dest="op", required=True)
     x = v.add_parser("set"); x.add_argument("name"); x.add_argument("value", nargs="?"); x.add_argument("--user")
@@ -1312,11 +1419,20 @@ def build() -> argparse.ArgumentParser:
     x.add_argument("--user", help="your email address")
     for k in ("imap_host", "imap_port", "smtp_host", "smtp_port", "smtp_user"):
         x.add_argument("--" + k.replace("_", "-"), dest=k)
+    x.add_argument("--imap-mode", dest="imap_mode", choices=["ssl", "starttls"], help="starttls for Proton Mail Bridge's default")
     x.add_argument("--smtp-mode", dest="smtp_mode", choices=["ssl", "starttls"])
+    x.add_argument("--cafile", help="trust only this certificate file (Proton Mail Bridge's exported certificate)")
+    x = v.add_parser("client", help="store your own OAuth client for sign-in (docs/CONNECT.md)")
+    x.add_argument("provider", choices=["google", "microsoft"])
+    x = v.add_parser("signin", help="sign in with Google or Microsoft in your browser (any 2-step method), then test")
+    x.add_argument("provider", choices=["google", "microsoft"])
+    x.add_argument("--work", action="store_true", help="Microsoft 365 work or school account")
+    x.add_argument("--hint", help="your email address, to preselect the account")
+    x.add_argument("--no-browser", dest="no_browser", action="store_true", help="print the sign-in page instead of opening it")
     v.add_parser("test", help="log in to IMAP and SMTP (sends nothing)")
     v.add_parser("test-send", help="send a short test email to your own address")
     v.add_parser("status", help="connected address and servers (never the password)")
-    v.add_parser("disconnect", help="remove the stored app password")
+    v.add_parser("disconnect", help="remove the stored app password, or sign out (Google: revokes the sign-in)")
     x = v.add_parser("check", help="scan the mailbox for hiring mail: classify, file under jobs, propose replies"); x.add_argument("--days", type=int, default=3); x.add_argument("--dry", action="store_true", help="report only, change nothing")
     x = v.add_parser("reply", help="draft an email to the job's contact (waits in the Inbox)"); x.add_argument("id", type=int); x.add_argument("--intent", required=True, help="e.g. 'accept interview, propose Tue/Wed afternoons'")
     s.set_defaults(f=cmd_email)
