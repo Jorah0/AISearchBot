@@ -161,9 +161,13 @@ class Profile(E2ETestCase):
         self.upload("#pFile", "old-resume.md", RESUME_MD.encode(), "text/markdown")
         calls = len(self.ai_calls)
         self.run_click(self.page.locator("#profile .panel", has_text="Import an existing resume").get_by_role("button", name="Import"))
-        msg = self.expect_toast("saved old-resume.md:", "ok")
-        self.assertIn("(offline extraction)", msg)
+        msg = self.expect_toast("read old-resume.md (offline extraction):", "ok")
+        self.assertIn("nothing saved to your profile yet", msg)
         self.assertEqual(len(self.ai_calls), calls)  # offline only: the file never went to an AI provider
+        self.assertNotIn("Snowflake", self.names("skills"))  # staged: the bank waits for the review
+        review = self.page.locator("#pReview .review", has_text="old-resume.md")
+        self.run_click(review.get_by_role("button", name="Accept all new"))
+        self.expect_toast("applied:", "ok")
         self.assertIn("Snowflake", self.names("skills"))
         self.assertIn("Spanish", self.names("languages"))
         self.assertIn("Snowflake", self.page.text_content("#bSkills"))
@@ -183,7 +187,11 @@ class Profile(E2ETestCase):
         self.assertIn("Snowflake", str(self.ai_calls[-1]["messages"]))
         self.assertEqual(profile.master_text(), on_disk)
         self.run_click(self.page.locator("#profile .panel", has_text="Import an existing resume").get_by_role("button", name="Import"))
-        self.expect_toast("already saved old-resume.md", "ok")  # the same file again: no second copy
+        self.expect_toast("read old-resume.md", "ok")  # the same file again: no second copy, every fact a duplicate
+        review = self.page.locator("#pReview .review", has_text="old-resume.md")
+        self.assertEqual(review.locator("input[type=checkbox][id^=rv]:not([id^=rvMaster])").count(), 0)
+        self.run_click(review.get_by_role("button", name="Discard"))
+        self.expect_toast("import discarded: your profile is unchanged", "ok")
         self.assertEqual(sum(r["name"] == "old-resume.md" for r in self.bank()["resumes"]), 1)
         self.page.evaluate("loadProfile()")
 
@@ -193,9 +201,14 @@ class Profile(E2ETestCase):
         imp = self.page.locator("#profile .panel", has_text="Import an existing resume").get_by_role("button", name="Import")
         self.upload("#pFile", "ai-resume.txt", b"Pat Rivera\nSkills: Python, Kubernetes, Flink\n", "text/plain")
         self.run_click(imp)
-        self.assertIn("(AI extraction)", self.expect_toast("saved ai-resume.txt:", "ok"))
+        self.assertIn("(AI extraction)", self.expect_toast("read ai-resume.txt", "ok"))
+        review = self.page.locator("#pReview .review", has_text="ai-resume.txt")
+        cert = review.locator("tr", has_text="dbt Analytics Engineering")  # the AI named a cert the file never mentions
+        self.assertIn('not in file: name "dbt Analytics Engineering"', cert.text_content())
+        self.assertFalse(cert.locator("input[type=checkbox]").is_checked())  # flagged rows start unchecked
+        self.run_click(review.get_by_role("button", name="Accept all new"))
         self.assertTrue({"Kubernetes", "Flink"} <= set(self.names("skills")))
-        self.assertIn("dbt Analytics Engineering", self.names("certifications"))
+        self.assertNotIn("dbt Analytics Engineering", self.names("certifications"))
         self.assertIn("Kubernetes · platform", self.page.text_content("#bSkills"))
         # LinkedIn: a bad file, then the export zip (profile facts only; never an AI call)
         li = self.page.get_by_role("button", name="Import LinkedIn")
@@ -210,7 +223,8 @@ class Profile(E2ETestCase):
             "Skills.csv": "Name\nApache Iceberg\nTerraform\n",
             "Languages.csv": "Name,Proficiency\nFrench,Elementary proficiency\n"}), "application/zip")
         self.run_click(li)
-        self.expect_toast("saved Basic_LinkedInDataExport.zip:", "ok")
+        self.expect_toast("read Basic_LinkedInDataExport.zip", "ok")
+        self.run_click(self.page.locator("#pReview .review", has_text="Basic_LinkedInDataExport.zip").get_by_role("button", name="Accept all new"))
         self.assertEqual(len(self.ai_calls), calls)
         self.assertIn("Apache Iceberg", self.names("skills"))
         self.assertIn("French", self.names("languages"))
@@ -224,7 +238,8 @@ class Profile(E2ETestCase):
         self.upload("#pFile", "resume.docx", _docx("Pat Rivera", "Skills", "Python, SQL, Airflow"),
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         self.run_click(imp)
-        self.expect_toast("saved resume.docx:", "ok")
+        self.expect_toast("read resume.docx", "ok")
+        self.run_click(self.page.locator("#pReview .review", has_text="resume.docx").get_by_role("button", name="Accept all new"))
         self.run_click(audit)
         self.assertIn("File audit: resume.docx", self.page.text_content("#bAudit"))
         self.page.click("#bAudit summary:text('What a parser sees')")

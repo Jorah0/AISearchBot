@@ -57,8 +57,8 @@ for _m in pkgutil.iter_modules(lodestar.__path__):  # every module now, so the p
 from lodestar import (ai, approvals, codes, comp, connections, contacts, db, extras, interview, mailconn,  # noqa: E402
                       mailfiles, oauth, profile, resume, util, vault, web, web_monitor)
 
-TABS = ("board", "inbox", "contacts", "search", "monitor", "ideas", "answers", "coach", "insights", "profile", "tools",
-        "setup")
+TABS = ("board", "inbox", "contacts", "search", "monitor", "ideas", "answers", "coach", "insights", "profile", "studio",
+        "tools", "setup")
 FLOOR = "$165,000"
 PROFILE_MD = f"""# Pat Rivera
 Pat Rivera | Portland, OR | pat.rivera@example.com | linkedin.com/in/pat-rivera-example
@@ -173,8 +173,8 @@ FETCH_HOOK = """(() => {  // counts API requests in flight and background tasks 
       if (m[1] !== 'tasks' && j.task != null) ls.tasks.add(String(j.task));  // /api/run/* and /api/update/*
       if (m[1] === 'tasks' && j.status !== 'running') ls.tasks.delete(m[2]);
     }
-    const json = r.json.bind(r); let done = false;  // in flight until the app has read the body (api() always does)
-    r.json = () => json().finally(() => { if (!done) { done = true; ls.inflight--; } });
+    let done = false;  // in flight until the app has read the body (api() reads JSON; the viewer's files a blob or text)
+    for (const k of ['json', 'blob', 'text']) { const f = r[k].bind(r); r[k] = () => f().finally(() => { if (!done) { done = true; ls.inflight--; } }); }
     return r;
   };
 })();"""
@@ -285,6 +285,7 @@ class E2ETestCase(unittest.TestCase):
         cls._swap(extras.vault_root, lambda: cls.home / "obsidian-vault")
         cls._patch(resume, "_word", lambda: False)
         cls._patch(resume, "_soffice", lambda: None)
+        cls._patch(resume, "_browser", lambda: None)  # PDF export tests pin the print-page fallback
         if hasattr(os, "startfile"):
             cls._patch(os, "startfile", lambda path, *a, **kw: cls.opened.append(("folder", str(path))))
         else:  # web.py opens folders with open / xdg-open off Windows; every other process still runs

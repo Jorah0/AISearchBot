@@ -35,7 +35,7 @@ TOOLS = {
     # Autopilot asks once per job in the Inbox. Clicks and the CLI run steps whatever these say.
     "fit_check": ("Pipeline: judge fit for newly tracked jobs (JD coverage + AI verdict)", True, False),
     "research": ("Pipeline: build the company research pack from public pages", True, False),
-    "tailor": ("Pipeline: tailor the resume by bullet; only rewrites with no flags are applied", True, False),
+    "tailor": ("Pipeline: build the job's resume in the resume studio (your facts only, checked rewrites, one page) and use it", True, False),
     "cover_letter": ("Pipeline: write the cover letter from the tailored resume, research and fit check", True, False),
     "form_answers": ("Pipeline: draft answers to a job's form questions; asks you what it cannot know "
                      "(never eligibility or EEO)", True, False),
@@ -56,6 +56,8 @@ PREFS = {
     "signature": "",
     "desktop_notifications": False,  # OS toasts from the monitor loop: daily agenda, interview in 2 h, deadline tomorrow
     "resume_style": "classic",  # .docx / PDF look (resume.STYLES); a template.docx beside profile.md overrides it
+    "resume_look": {},  # the studio's default look (render.clean_style keys); "Make this my default look" writes it
+    "resume_request": "",  # what the pipeline's Tailor step asks the studio for (empty: a strong resume for the job)
     # private dealbreakers (comma lists): search results and watch hits drop these before ranking; never sent anywhere
     "excluded_companies": "",
     "excluded_title_words": "",
@@ -87,6 +89,8 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "signature": ("Email signature", "how drafted emails sign off; empty: your name"),
     "desktop_notifications": ("Desktop notifications", "daily agenda, interview in 2 hours, deadline tomorrow"),
     "resume_style": ("Resume style", "the look of .docx and PDF resumes"),
+    "resume_look": ("Studio look", "key=value, e.g. font=Georgia, accent=navy, paper=a4 (Studio > Make this my default look)"),
+    "resume_request": ("Tailor request", "what the pipeline's Tailor step asks the resume studio for, e.g. one page, lead with leadership"),
     "excluded_companies": ("Excluded companies (private)", "comma list dropped from search results and watches"),
     "excluded_title_words": ("Excluded title words (private)", "comma list: listings whose title has one are dropped"),
     "weekly_goals": ("Weekly goals", "goal=number, e.g. contacts=5 (also on the Insights tab)"),
@@ -199,6 +203,10 @@ def set_pref(key: str, value) -> None:
                     raise SystemExit(f"{key} takes " + ("goal=number, e.g. contacts=5" if key == "weekly_goals"
                                                         else "provider=model, e.g. openai=gpt-5"))
                 value = {**data["prefs"].get(key, {}), k.strip(): v.strip()}
+            if key == "resume_look":  # validated like a studio request: an unknown font or a bad colour is refused
+                from .render import clean_style
+
+                value = clean_style(value, strict=True)
             data["prefs"][key] = _goals(value) if key == "weekly_goals" else dict(value)
             save(data)
             return

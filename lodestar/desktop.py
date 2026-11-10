@@ -46,6 +46,8 @@ def open_window(port: int, title: str = "Lodestar") -> None:
                 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
             except Exception:
                 pass
+        if isinstance(getattr(webview, "settings", None), dict):
+            webview.settings["ALLOW_DOWNLOADS"] = True  # the document viewer's Download buttons (a blob link) save files
         webview.create_window(title, url, width=1320, height=860, min_size=(960, 640), text_select=True,
                               background_color="#0f1115")  # the UI's own dark tile, so no white flash on launch
         webview.start(icon=window_icon(), private_mode=False)  # the emblem: .ico on Windows, PNG on GTK / Qt

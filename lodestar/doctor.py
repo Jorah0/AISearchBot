@@ -31,6 +31,12 @@ def checks() -> list[tuple[str, str, str]]:
         wv = [p for p in (Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft" / "EdgeWebView" / "Application",
                           Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "EdgeWebView" / "Application") if p.is_dir()]
         out.append(("ok" if wv else "warn", "WebView2 runtime", "found" if wv else "not found; the desktop window falls back to the browser"))
+    from .resume import _browser, engine_name
+
+    eng = engine_name()
+    out.append(("ok" if eng else "warn", "PDF engine",
+                f"{eng} ({_browser()})" if eng in ("edge", "chrome", "chromium") else eng or
+                "none (no Edge, Chrome, Chromium, Word or LibreOffice): PDF export opens a print page in your browser"))
     try:
         test = HOME / ".doctor-write-test"
         test.write_text("x", encoding="utf-8")

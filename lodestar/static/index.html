@@ -27,6 +27,7 @@
   <button data-tab="coach"><span class="ico" aria-hidden="true">☺</span>Coach</button>
   <button data-tab="insights"><span class="ico" aria-hidden="true">▥</span>Insights</button>
   <button data-tab="profile"><span class="ico" aria-hidden="true">☰</span>Profile</button>
+  <button data-tab="studio"><span class="ico" aria-hidden="true">✎</span>Studio</button>
   <span class="sep"></span>
   <button data-tab="tools"><span class="ico" aria-hidden="true">⚙</span>Tools</button>
   <button data-tab="setup"><span class="ico" aria-hidden="true">⚑</span>Setup</button>
@@ -201,7 +202,8 @@
       <div class="row"><input id="ctrAsk" class="grow" maxlength="300" placeholder="what you ask for (optional), e.g. a base of 170,000" aria-label="Your ask">
         <label class="muted"><input type="checkbox" id="ctrTpl"> plain template, no AI</label><button class="b" onclick="draftCounter(this)">Draft counter-offer</button><button class="b ghost" onclick="counterOptions(this)" title="up to 3 drafts from one AI call, one recommended; the one you use waits in the Inbox for review">Options</button></div><div id="ctrOpts"></div>
       <div class="muted">The draft cites only the figures you tick, says "another offer" without naming the company, and always waits in the Inbox for your review.</div>
-      <pre id="ctrOut" style="display:none"></pre></details></div>
+      <pre id="ctrOut" style="display:none"></pre><button class="b ghost sm" id="ctrView" style="display:none" onclick="viewCounter()">View / format the draft</button></details>
+    <div class="row"><button class="b ghost sm" onclick="viewOfferNote()">View offer notes</button><span class="muted">offer.md of the job picked under "counter" (Evaluate offer in its drawer writes it)</span></div></div>
   <div class="panel"><h3>Activity log</h3>
     <p class="muted">A helper report for unemployment claims built from what Lodestar recorded; check your state's requirements. It makes no claim of compliance.</p>
     <div class="row"><label class="fld">from<input id="acFrom" type="date"></label><label class="fld">to<input id="acTo" type="date"></label>
@@ -217,6 +219,10 @@
   <div id="pCheck"></div>
   <div class="row"><input id="pAdj" class="grow" placeholder="adjust with AI, e.g. tighten to one page / emphasise leadership / rewrite summary for data roles"><button class="b ghost" onclick="adjustProfile(this)">Adjust</button><span class="muted">result replaces the editor; nothing is saved until you click Save</span></div>
   <textarea id="pText" aria-label="Master profile (markdown)"></textarea>
+  <div class="panel" id="masterCard"><h3>Master resume</h3>
+    <p class="muted">Built from your saved profile (Preferences left out) and kept up to date when it changes, offline. Resumes already tailored for a job are never rewritten: their drawer says when the profile changed.</p>
+    <div id="mStatus" class="muted">loading…</div><div id="mDiff"></div><div id="mWarn"></div>
+    <div class="row"><button class="b ghost sm" id="mPdf" onclick="openMaster('pdf')">Open PDF</button><button class="b ghost sm" id="mDocx" onclick="openMaster('docx')">Open DOCX</button><button class="b ghost sm" id="mView" onclick="openViewer({type:'master'})">View / format</button><button class="b ghost sm" onclick="api('/api/open_folder',{which:'resumes'}).then(r=>r.error&&toast('error: '+r.error,'err'))">Show folder</button><button class="b ghost sm" onclick="run('master_sync',{},m=>{renderMaster(m);toast(m.last_error?'master resume: '+m.last_error:'master resume updated',m.last_error?'err':'ok')},this)">Update now</button></div></div>
   <div class="panel" id="bankPanel"><h3>Profile bank</h3>
     <p class="muted">Every resume you import is kept, and its skills, languages, roles, education and certifications are pooled here with their source. Prompts read your master profile plus anything here it does not mention yet.</p>
     <div class="row"><b style="width:90px">LinkedIn</b><input id="liUrl" class="grow" placeholder="https://www.linkedin.com/in/your-name"><button class="b ghost sm" onclick="bankOp({op:'contact',field:'linkedin',value:$('#liUrl').value},'LinkedIn linked')">Link</button>
@@ -229,17 +235,39 @@
     <div class="row"><span style="width:90px"></span><input id="bLang" placeholder="add a language" style="width:200px"><input id="bLangLvl" placeholder="proficiency, e.g. Native / B2" style="width:180px"><button class="b ghost sm" onclick="bankOp({op:'add',kind:'languages',name:$('#bLang').value,detail:$('#bLangLvl').value},'language added')">Add</button></div>
     <div class="row"><b style="width:90px">Certifications</b><div id="bCerts" class="grow"></div></div>
     <div class="row"><span style="width:90px"></span><input id="bCert" placeholder="add a certification" style="width:200px"><input id="bCertIss" placeholder="issuer (optional)" style="width:180px"><button class="b ghost sm" onclick="bankOp({op:'add',kind:'certifications',name:$('#bCert').value,detail:$('#bCertIss').value},'certification added')">Add</button></div>
+    <div id="bMore"></div>
     <div class="muted" id="bCounts"></div>
     <div class="row"><button class="b ghost" onclick="rebuildMaster(this)">Rebuild master profile from bank</button><span class="muted">the current profile.md is snapshotted to profile-history/ first</span></div>
+    <div class="row"><button class="b ghost" onclick="run('profile_reread',{},r=>{loadReviews();toast('profile.md read into a review below: '+r.pending.items.length+' item(s)','ok')},this)">Re-read my master profile</button><span class="muted">reads profile.md into a review (fixes older one-line education entries, picks up roles you typed); nothing is saved until you apply it</span></div>
     <pre id="bOnFile" style="display:none"></pre>
     <details><summary class="muted">Saved resumes</summary><div id="bResumes" class="list"></div></details>
     <div class="row"><button class="b ghost" onclick="run('audit',{},r=>{$('#bAudit').innerHTML=auditHtml(r)},this)">Audit latest saved resume file</button><span class="muted">the newest .docx or .pdf you imported: header/footer contact, tables, text boxes, columns, small fonts, scans, and the text a parser sees</span></div>
     <div id="bAudit"></div></div>
   <div class="panel"><h3>Import an existing resume</h3>
-    <div class="row"><input type="file" id="pFile" accept=".docx,.pdf,.md,.txt"><button class="b ghost" onclick="importToBank('pFile',false,this)">Import</button><span class="muted">.docx, .pdf, .md, .txt · saved to the bank, facts extracted; a template profile is filled in automatically</span></div>
+    <div class="row"><input type="file" id="pFile" accept=".docx,.pdf,.md,.txt"><button class="b ghost" onclick="importToBank('pFile',false,this)">Import</button><span class="muted">.docx, .pdf, .md, .txt · every fact is read into a review below; nothing reaches your profile until you accept it. Personal details (date of birth, ID numbers, photo, pay, references) are never stored.</span></div>
+    <div id="pReview"></div>
     <textarea id="pImport" style="display:none; min-height:160px" placeholder="imported text appears here"></textarea>
     <div class="row" id="pImportActions" style="display:none"><button class="b" onclick="run('merge_profile',{text:$('#pImport').value,current:$('#pText').value},r=>{$('#pText').value=r.text;toast('merged into the editor; review, then Save','ok')},this)">Merge into my profile (AI)</button><button class="b ghost" onclick="$('#pText').value=$('#pImport').value;toast('replaced the editor; review, then Save','ok')">Replace profile with this text</button></div></div>
   <pre id="pOut" style="display:none"></pre>
+</section>
+
+<section id="studio">
+  <h2>Resume studio</h2>
+  <p class="sub">Describe the resume you want. It is made from your own facts only: employers, titles, dates, schools, certifications and contact details are copied from your profile, and every sentence the AI writes is checked against the facts it cites (a rewrite that adds a tool, number, title or link goes back to your words).</p>
+  <div class="panel">
+    <label for="sReq" class="muted">Request</label>
+    <textarea id="sReq" style="min-height:70px" placeholder="one page, emphasise leadership, modern with a navy accent, aimed at data PM roles, drop the 2015 job"></textarea>
+    <div class="row"><label class="muted">target <select id="sJob" onchange="$('#sJd').style.display=this.value?'none':''"><option value="">no job</option></select></label><input id="sJd" class="grow" placeholder="or paste a job description (optional)" aria-label="Job description to aim at"></div>
+    <details id="sMore"><summary class="muted">Requirements and formatting (left blank: the request, your saved look, then the template decide)</summary>
+      <div class="row" id="sLook"></div>
+      <div class="row"><span class="muted">sections, in order:</span></div><div id="sSections" class="list"></div>
+      <div class="row"><label class="muted"><input type="checkbox" id="sOnFile"> include facts from my other resumes</label><span class="muted">formats:</span><span id="sFormats"></span></div>
+      <details><summary class="muted">leave out entries</summary><div id="sDrop" class="list"></div></details>
+    </details>
+    <div class="row"><button class="b" id="sBuild" onclick="studioBuild(true,this)">Build</button><button class="b ghost" onclick="studioBuild(false,this)">Build without AI</button><span class="muted" id="sHint"></span></div>
+  </div>
+  <div class="panel" id="sResult" style="display:none"></div>
+  <div class="panel"><h3>Versions</h3><div class="row"><button class="b ghost sm" onclick="api('/api/open_folder',{which:'studio'}).then(r=>r.error&&toast('error: '+r.error,'err'))">Show folder</button></div><div id="sHist" class="list"></div></div>
 </section>
 
 <section id="tools">
@@ -344,6 +372,36 @@
 </main>
 
 <div id="drawer" role="dialog" aria-label="Details" inert></div>
+<div id="viewer" role="dialog" aria-modal="true" aria-labelledby="vwTitle" hidden>
+  <div class="vwbar">
+    <h3 id="vwTitle">Document</h3>
+    <select id="vwDoc" aria-label="Document of this job" onchange="vwPickDoc(this.value)" hidden></select>
+    <div class="tabs" id="vwTabs" role="group" aria-label="Show as">
+      <button data-t="preview" class="on" onclick="vwTab('preview')">Preview</button><button data-t="pdf" onclick="vwTab('pdf')">PDF</button><button data-t="docx" onclick="vwTab('docx')">DOCX</button><button data-t="txt" onclick="vwTab('txt')">TXT</button><button data-t="md" onclick="vwTab('md')">MD</button></div>
+    <label class="muted">zoom <select id="vwZoom" onchange="vwZoomAll()"><option value="width">fit width</option><option value="1">100%</option><option value="page">fit page</option></select></label>
+    <span id="vwPages" class="muted" role="status"></span>
+    <div class="spacer"></div>
+    <button class="b ghost sm" id="vwClose" onclick="closeViewer()" aria-label="Close the viewer">Close</button>
+  </div>
+  <div class="vwbar vwtools">
+    <button class="b ghost sm" onclick="vwPrint()">Print</button><button class="b ghost sm" onclick="vwOpen(this)" title="open the page (or the PDF) in its own window">Open in new window</button>
+    <span class="muted">Download</span><span id="vwDl" role="group" aria-label="Download"></span>
+    <label class="muted">compare with <select id="vwCmp" onchange="vwCompare(this.value)"><option value="">nothing</option></select></label>
+  </div>
+  <div class="vwbody">
+    <div class="vwmain">
+      <div id="vwLabel" class="muted"></div><div id="vwDiff" class="muted"></div>
+      <div class="vwpanes"><iframe id="vwFrame" sandbox="allow-same-origin allow-modals" title="Document preview"></iframe><iframe id="vwFrame2" sandbox="allow-same-origin" title="Compared document" hidden></iframe></div>
+      <iframe id="vwPdf" title="PDF as printed" hidden></iframe><pre id="vwText" hidden></pre>
+    </div>
+    <aside class="vwside">
+      <div class="tabs" role="group" aria-label="Panel"><button id="vwFmtTab" class="on" onclick="vwSide('fmt')">Format</button><button id="vwEditTab" onclick="vwSide('edit')">Edit text</button></div>
+      <div id="vwGuards"></div>
+      <div id="vwFmt"></div>
+      <div id="vwEdit" hidden></div>
+    </aside>
+  </div>
+</div>
 <div id="toast" role="status" aria-live="polite"></div>
 <script>window.LODESTAR_TOKEN = "__TOKEN__"; window.LODESTAR_CAPTURE = "__CAPTURE__";</script>
 <script src="/static/app.js"></script>

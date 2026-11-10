@@ -29,7 +29,12 @@ Everything lives in `~/.lodestar/` (override with `LODESTAR_HOME`).
 ## Setup (5 minutes)
 
 1. **Master resume.** Edit `~/.lodestar/profile.md`. Put *everything* in it; lodestar trims per job and never invents facts.
-   Faster: `lodestar profile import resume.docx` or `lodestar profile linkedin export.zip`.
+   Faster: `lodestar profile import resume.docx` or `lodestar profile linkedin export.zip` (every section is read into a
+   review you accept; personal details are never stored). `resumes/master.pdf` / `.docx` then follow your profile.
+   The **Studio** tab (or `lodestar resume build --request "one page, navy accent" --job 1`) makes a PDF / DOCX resume
+   from a request and formatting choices, using only your own facts.
+   Every generated document (resumes, letters, answers, prep, research, offer notes) opens in a paged viewer with the
+   real PDF, live formatting, side-by-side compare and downloads.
 2. **At least one AI key** (stored in Windows Credential Manager / Keychain, never on disk; verified at once without
    spending tokens): Setup > Link an AI key in the app, or
    ```powershell

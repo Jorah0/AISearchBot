@@ -196,6 +196,10 @@ def cycle(a) -> None:
         _step("obsidian sync", export_obsidian)
     _step("digest", lambda: _digest(a))
     _step("backup", _backup)
+    from . import studio
+
+    if studio.AUTO:  # the long-running commands: picks up profile edits made outside the app (offline, no AI)
+        _step("master resume", studio.sync_master)
     if getattr(a, "update", False):  # lodestar run / app / desktop (--no-update skips it); every update_every_hours
         _step("update check", updater.tick)
     pending = db.list_pending("pending")

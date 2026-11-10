@@ -183,3 +183,31 @@ table.log td, table.log th { font-size: 12px; padding: 4px 6px; }
 .chip.pq { color: var(--warn); border-color: var(--warn); } .chip.pe { color: var(--bad); border-color: var(--bad); }
 #apPill.on { border-color: var(--ok); color: var(--ok); }
 .reuse { margin: 6px 0; } .reuse ul { margin: 4px 0 0 18px; padding: 0; }
+
+/* ---- document viewer (viewer.py): paged sheets in a sandboxed frame, a formatting / edit panel beside it ---- */
+#viewer { position: fixed; inset: 0; z-index: 25; background: var(--bg); display: flex; flex-direction: column; overflow: auto; }
+#viewer[hidden] { display: none; }
+.vwbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.vwbar h3 { margin: 0; font-size: 15px; overflow-wrap: anywhere; min-width: 0; }
+.vwbar .tabs { margin: 0; }
+.vwbar .spacer { flex: 1; }
+#vwDl { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.vwbody { display: flex; flex: 1; min-height: 0; gap: 0; }
+.vwmain { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 8px; }
+.vwpanes { display: flex; gap: 8px; flex: 1; min-height: 0; }
+.vwpanes iframe, #vwPdf { flex: 1 1 0; min-width: 0; width: 100%; height: calc(100vh - 150px); min-height: 420px; border: 1px solid var(--line); border-radius: 8px; background: #e7e9ee; }
+.vwpanes[hidden], .vwpanes iframe[hidden], #vwPdf[hidden] { display: none; }
+#vwText { max-height: none; height: calc(100vh - 160px); margin: 0; }
+.vwside { width: 340px; flex: none; border-left: 1px solid var(--line); background: var(--panel); padding: 10px 12px; overflow: auto; max-height: calc(100vh - 100px); }
+.vwside label.fld { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--dim); margin-bottom: 6px; }
+.vwside textarea { width: 100%; box-sizing: border-box; min-height: 90px; font-size: 12px; }
+.vwrows .row { margin: 2px 0; padding: 2px 4px; border: 1px dashed transparent; border-radius: 6px; }
+.vwrows .row.drag { border-color: var(--acc); }
+.vwrows .grip { cursor: grab; color: var(--dim); }
+body.vwopen { overflow: hidden; }
+@media (max-width: 900px) {
+  .vwbody { flex-direction: column; }
+  .vwside { width: auto; border-left: 0; border-top: 1px solid var(--line); max-height: none; }
+  .vwpanes { flex-direction: column; }
+  .vwpanes iframe, #vwPdf { height: 70vh; min-height: 300px; }
+}

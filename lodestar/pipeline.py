@@ -63,6 +63,7 @@ class Stage:
     blocked: Callable | None = None  # (job, ctx) -> reason | None
     wait: Callable | None = None  # (job, ctx) -> (on: 'you' | 'employer', why) | None
     na: Callable | None = None  # (job, ctx) -> ('later' | 'skipped', why) | None: not due now (thank-you before a round)
+    stale: Callable | None = None  # (job, cur) -> why | None: a stale test of its own, beside reads (tailor's profile)
 
 
 REGISTRY: dict[str, Stage] = {}  # insertion order = pipeline order
@@ -123,13 +124,15 @@ def _shared_roots() -> dict:
     """The profile and stories fingerprints, read once per status() / advance(). '?' never makes anything stale."""
     from . import profile
 
+    revs = None
     try:
         m = profile.master_text()
         prof = "?" if profile.is_template(m) else _h(profile.drop_preferences(m) + json.dumps(profile.load(), sort_keys=True, default=str))
+        revs = profile.section_revs()  # tailor's own stale test: the sections its resume used (_profile_stale)
     except (Exception, SystemExit):
         prof = "?"
     rows = db.con().execute("SELECT id, updated_at FROM answers WHERE star IS NOT NULL ORDER BY id").fetchall()
-    return {"profile": prof, "stories": _h(json.dumps([[r["id"], r["updated_at"]] for r in rows]))}
+    return {"profile": prof, "stories": _h(json.dumps([[r["id"], r["updated_at"]] for r in rows])), "_revs": revs}
 
 
 def _load(v, default):
@@ -418,14 +421,28 @@ def _research(job, ctx):
 
 
 def _tailor(job, ctx):
-    """Tailor by bullet; only rewrites with no flag (and no drop) are applied. Pass 17 replaces this with the studio."""
-    from . import resume
+    """The resume studio builds this job's resume (pass 17): one AI plan citing your facts (resume_request, the studio
+    look, one page unless the look says otherwise), the no-invention guards, then use_for_job writes resume.md /
+    .docx / .pdf."""
+    from . import studio
 
-    data = resume.tailor_bullets(job, provider=ctx.provider)
-    ctx.spent += 1
-    r = resume.apply_bullets(job, accept=[x["id"] for x in data["proposals"] if x["accepted"]], docx=True)
-    return {"coverage": r["coverage"], "accepted": len(r["accepted"]), "docx": "resume.docx",
-            "flagged": sum(bool(x["flags"]) for x in data["proposals"])}
+    look = settings.pref("resume_look") or {}
+    v = studio.build(request=settings.pref("resume_request") or "", req={"pages": look.get("pages", 1)}, job_id=job["id"],
+                     provider=ctx.provider, use_ai=None)
+    ctx.spent += v.get("ai_calls") or 0
+    r = studio.use_for_job(v["vid"], job["id"])
+    return {"vid": v["vid"], "docx": "resume.docx", "pdf": "resume.pdf" if r.get("pdf") else None, "pages": v["pages"],
+            "warnings": len(v["warnings"]) + len(v["events"]), "profile_rev": v["profile_rev"], "coverage": r["coverage"]}
+
+
+def _profile_stale(job, cur) -> str | None:
+    """Tailor is stale exactly when the drawer shows 'profile changed': a profile section this resume used changed."""
+    from .profile import changed_sections
+
+    if cur.get("_revs") is None:
+        return None
+    ch = changed_sections(job["profile_rev"], cur["_revs"])
+    return f"your profile changed since this was built ({', '.join(ch)})" if ch else None
 
 
 def _letter(job, ctx):
@@ -697,8 +714,8 @@ for _st in (
           observe=_score_observe),
     Stage("research", "Research", ("saved", "interview"), needs=("score",), tool="research", ai=1, run=_research,
           observe=_doc("research.md"), blocked=_need_ai),
-    Stage("tailor", "Tailor resume", ("saved",), needs=("score",), reads=("jd", "profile"), tool="tailor", ai=1,
-          run=_tailor, observe=_doc("resume.md", docx="resume.docx"), blocked=_need_ai),
+    Stage("tailor", "Tailor resume", ("saved",), needs=("score",), reads=("jd",), tool="tailor", ai=1, run=_tailor,
+          observe=_doc("resume.md", docx="resume.docx"), blocked=_need_ai, stale=_profile_stale),
     Stage("letter", "Cover letter", ("saved",), needs=("tailor", "research"), reads=("tailor", "research", "score"),
           tool="cover_letter", ai=1, run=_letter, observe=_doc("cover_letter.md", docx="cover_letter.docx"), blocked=_need_ai),
     Stage("answers", "Form answers", ("saved",), needs=("score",), reads=("research", "tailor"), tool="form_answers", ai=1,
@@ -799,6 +816,8 @@ def _derive(job, s, row, is_done, running, cur, by, asks, run_tos, ctx, cutoff) 
             return "error", None, "interrupted (Lodestar closed while this ran): run it again"
         return "running", None, f"running since {row['updated_at'][:16]} UTC"
     if is_done:
+        if s.stale and (why := s.stale(job, cur)):
+            return "stale", None, why
         for r in s.reads if row.get("fp") != NONE_FP else ():  # nothing built yet cannot be out of date
             was, now = (row.get("inputs") or {}).get(r), cur.get(r)
             if was is not None and now and was != now and "?" not in (was, now):

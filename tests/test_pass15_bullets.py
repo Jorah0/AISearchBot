@@ -56,12 +56,14 @@ class Base(unittest.TestCase):
         self.snap = {p: p.read_bytes() for p in (PROFILE, profile.BANK) if p.is_file()}
         PROFILE.write_text(MASTER, encoding="utf-8")
         profile.BANK.unlink(missing_ok=True)
-        self.real = (ai.ask, ai.ask_json, resume._word, resume._soffice, subprocess.run, settings.pref("resume_style"))
+        self.real = (ai.ask, ai.ask_json, resume._word, resume._soffice, subprocess.run, settings.pref("resume_style"),
+                     resume._browser)
+        resume._browser = lambda: None  # no headless Edge here: these tests pin the Word / LibreOffice / HTML paths
         self.prompts = []
         ai.ask_json = lambda p, *a, **k: self.prompts.append(p) or json.loads(json.dumps(REPLY))
 
     def tearDown(self):
-        ai.ask, ai.ask_json, resume._word, resume._soffice, subprocess.run, style = self.real
+        ai.ask, ai.ask_json, resume._word, resume._soffice, subprocess.run, style, resume._browser = self.real
         settings.set_pref("resume_style", style)
         db._local.con.close()
         db._local.con = self._con
@@ -210,11 +212,12 @@ class Web(unittest.TestCase):
         saved_con = getattr(db._local, "con", None)
         db._local.con = db.connect()
         snap = {p: p.read_bytes() for p in (PROFILE, profile.BANK) if p.is_file()}
-        real = (ai.ask_json, resume._word, resume._soffice, webbrowser.open)
+        real = (ai.ask_json, resume._word, resume._soffice, webbrowser.open, resume._browser)
         PROFILE.write_text(MASTER, encoding="utf-8")
         ai.ask_json = lambda *a, **k: json.loads(json.dumps(REPLY))
         opened = []
         resume._word, resume._soffice, webbrowser.open = (lambda: False), (lambda: None), opened.append
+        resume._browser = lambda: None
         jid = db.add_job("Bulweb", "Data Engineer", jd=JD)
         port = desktop.free_port(8900); srv = web.start_server(port)
         try:
@@ -243,7 +246,7 @@ class Web(unittest.TestCase):
             self.assertTrue(opened and opened[0].startswith("file:"))
         finally:
             srv.shutdown()
-            ai.ask_json, resume._word, resume._soffice, webbrowser.open = real
+            ai.ask_json, resume._word, resume._soffice, webbrowser.open, resume._browser = real
             shutil.rmtree(resume.app_dir(db.get_job(jid)), ignore_errors=True)
             db.delete_job(jid)
             for p in (PROFILE, profile.BANK):

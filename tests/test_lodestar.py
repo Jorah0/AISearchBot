@@ -932,7 +932,7 @@ Target roles: backend | Salary floor: 150k
         from lodestar import ai, profile
         orig = ai.ask_json
         try:
-            ai.ask_json = lambda prompt, system=None, provider=None: {"contact": {"name": "Jane Doe"}, "skills": [{"name": "Rust"}],
+            ai.ask_json = lambda prompt, system=None, provider=None, **k: {"contact": {"name": "Jane Doe"}, "skills": [{"name": "Rust"}],
                                                                     "experience": [{"title": "CTO", "company": "Initech", "bullets": ["Grew team"]}]}
             facts, used = profile.extract("Jane Doe\njane@example.com\nSkills\nPython", use_ai=True)
             self.assertTrue(used); self.assertEqual(facts["contact"]["email"], "jane@example.com")  # regex fills the AI's blank

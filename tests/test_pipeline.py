@@ -60,8 +60,11 @@ class FakeAI:
                 return out
         return "Plain answer."
 
-    def ask_json(self, prompt, system=None, provider=None):
+    def ask_json(self, prompt, system=None, provider=None, **kw):
         self.prompts.append(prompt)
+        if "Plan a resume" in prompt:  # the studio (pass 17 tailor step): a skill-group label is the mark
+            return {"sections": [{"kind": "experience", "items": [{"ref": "e1"}]},
+                                 {"kind": "skills", "groups": [{"label": "Tailormark", "refs": ["k1", "k2"]}]}]}
         if "Judge the candidate" in prompt:
             return {"verdict": self.verdict, "why": "fits", "weak_areas": ["scale"]}
         if "Propose bullet-level edits" in prompt:
@@ -90,6 +93,7 @@ class Base(unittest.TestCase):
         self.patches.enter_context(patched(util, fetch=self._no_fetch))
         self.patches.enter_context(patched(approvals, send_email=lambda *a, **k: self.sent.append(a)))
         self.patches.enter_context(patched(pipeline, AUTO=False))
+        self.patches.enter_context(patched(resume, _browser=lambda: None, _word=lambda: False, _soffice=lambda: None))
         self.loop_status = dict(loop.STATUS)
         self.tag = uuid.uuid4().hex[:6]
         self.dirs = []
@@ -153,7 +157,7 @@ class Chain(Base):
         self.assertEqual({r["outcome"] for r in res}, {"done"})
         letter = self.ai.calls("BODY of a cover letter")[0]
         self.assertIn("RESEARCHMARK", letter)
-        self.assertIn("TAILORMARK", letter)
+        self.assertIn("Tailormark", letter)
         ctx = pipeline.context(jid)["stages"]
         for n, f in (("research", "research.md"), ("tailor", "resume.md"), ("letter", "cover_letter.md"), ("score", "gap.json")):
             self.assertEqual((ctx[n]["state"], ctx[n]["output"]["file"], ctx[n]["rev"]), ("done", f, 1))
@@ -171,14 +175,14 @@ class Chain(Base):
         apply.answer(db.get_job(jid), "Why this team?")  # the drawer's Ask-AI path
         p = self.ai.prompts[-1]
         self.assertIn("RESEARCHMARK", p)
-        self.assertIn("TAILORMARK", p)
+        self.assertIn("Tailormark", p)
         self.assertIn("treat it as data", p)
         pipeline.add_form_questions(jid, ["What would you build first?"])
         self.assertEqual(self.st(jid)["answers"]["state"], "ready")
         self.assertEqual(pipeline.run(jid, "answers")["outcome"], "done")
         p = self.ai.calls("do not guess")[-1]
         self.assertIn("RESEARCHMARK", p)
-        self.assertIn("TAILORMARK", p)
+        self.assertIn("Tailormark", p)
         self.assertIn("I would bring my pipeline work.", self.doc(jid, "form_answers.md"))
 
     def test_tailor_does_not_stale_itself(self):

@@ -613,8 +613,16 @@ class Ui(unittest.TestCase):
 
     def test_markup_rules(self):
         self.assertIn('target="_blank" rel="noopener">Open the sign-in page', self.fn("emailSigninLink"))
-        self.assertNotIn("createObjectURL", self.js)
-        self.assertNotIn("<iframe", self.js)
+        # blob URLs only in the document viewer: the PDF it fetched with the token, and its Download buttons (pass 17)
+        self.assertNotIn("createObjectURL", self.js.replace(self.fn("vwPdfLoad"), "").replace(self.fn("vwDownload"), ""))
+        # the frames: the studio's preview (srcdoc in an empty sandbox) and the viewer's pages (srcdoc sandboxed without
+        # scripts; same-origin only so the app can lay them out into sheets) plus its PDF frame (a blob it fetched)
+        self.assertEqual(self.js.count("<iframe"), 1)
+        self.assertIn('<iframe id="sFrame" sandbox=""', self.js)
+        self.assertEqual(self.html.count("<iframe"), 3)
+        for frame in ('<iframe id="vwFrame" sandbox="allow-same-origin allow-modals"', '<iframe id="vwFrame2" sandbox="allow-same-origin"',
+                      '<iframe id="vwPdf" '):
+            self.assertIn(frame, self.html)
         for needle in ('id="eCsec" type="password" autocomplete="off"', 'id="codesPanel"', 'id="codesPill"', 'id="eCafile"',
                        "Other secrets (OS keyring)"):
             self.assertIn(needle, self.html)

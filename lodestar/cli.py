@@ -427,6 +427,69 @@ def cmd_sponsors(a):
         print(f"removed {db.clear_sponsors()} rows")
 
 
+def _item_label(it: dict) -> str:
+    v = it["incoming"]
+    if not isinstance(v, dict):
+        return f"{it.get('field') or it['kind']}: {str(v)[:70]}"
+    bits = [v.get(f) for f in ("title", "role", "name", "degree", "heading", "label") if v.get(f)][:1]
+    bits += [v.get(f) for f in ("company", "organization", "school", "issuer", "venue", "event", "url") if v.get(f)][:1]
+    dates = " - ".join(x for x in (v.get("start"), v.get("end")) if x) or v.get("date") or ""
+    return " - ".join(map(str, bits)) + (f" ({dates})" if dates else "")
+
+
+def _print_review(p: dict) -> None:
+    print(f"import {p['id']}: {p['file']} ({'AI' if p['used_ai'] else 'offline'} extraction)")
+    for it in p["items"]:
+        mark = "[x]" if it["default"] else "[ ]" if it["status"] != "duplicate" else "   "
+        print(f"  {mark} {it['id']:<4} {it['status']:<9} {it['kind']:<14} {_item_label(it)}")
+        for f, (mine, new) in (it.get("fields") or {}).items():
+            print(f"{'':<36}{f}: yours {mine!r} | incoming {new!r}")
+        for fl in it["flags"]:
+            print(f"{'':<36}! {fl}")
+    if p.get("dropped"):
+        print("not stored: " + ", ".join(f"{d['label']}" + (f" (line {d['line']})" if d.get("line") else "") for d in p["dropped"])
+              + ". Lodestar never puts personal details like these in a resume.")
+    if p.get("unread"):
+        print("lines not read into the profile: " + " | ".join(p["unread"][:10]))
+    for n in p.get("notes") or []:
+        print(n)
+
+
+def _take(text: str | None) -> dict:
+    out = {}
+    for part in (text or "").split(","):
+        if part.strip():
+            k, _, v = part.partition("=")
+            out[k.strip()] = v.strip()
+    return out
+
+
+def _apply_review(pid: str, a) -> None:
+    from . import profile
+
+    r = profile.apply_import(pid, a.accept, _take(a.take), not a.no_master)
+    got = ", ".join(f"{n} {k}" for k, n in r["added"].items()) or "nothing new"
+    print(f"applied {pid}: added {got}; {r['updated']} updated; profile.md {'updated' if r['master_changed'] else 'unchanged'}")
+    for n in r["notes"]:
+        print(f"  note: {n}")
+    _sync_master()
+
+
+def _sync_master() -> None:
+    """After a command that changed the profile: rebuild the master resume once (offline)."""
+    from . import studio
+
+    try:
+        m = studio.sync_master()
+    except (Exception, SystemExit) as e:
+        return print(f"master resume not updated: {e}")
+    if m.get("last_error"):
+        print(f"master resume not updated: {m['last_error']}")
+    elif m.get("files"):
+        main = m["files"].get("pdf") or m["files"].get("html") or m["files"].get("docx")
+        print(f"master resume: {main}" + (f" ({'; '.join(m.get('diff') or [])})" if m.get("diff") else ""))
+
+
 def cmd_profile(a):
     from . import profile
 
@@ -434,15 +497,30 @@ def cmd_profile(a):
         print(profile.summary_text())
     elif a.op in ("import", "linkedin"):
         src = Path(a.file)
-        r = profile.import_file(src.read_bytes(), src.name, "linkedin" if a.op == "linkedin" else "resume", a.provider,
-                                False if a.no_ai else None)
-        got = ", ".join(f"{n} {k}" for k, n in r["added"].items() if n) or "nothing new"
-        print(f"{'saved' if r['new_file'] else 'already saved'}: resumes/{r['resume']['file']}")
-        print(f"added to the bank: {got}  ({'AI' if r['used_ai'] else 'offline'} extraction)")
-        if r["seeded_master"]:
-            print(f"profile.md was still the template, so it was built from the bank: {profile.PROFILE}")
+        p = profile.stage_import(src.read_bytes(), src.name, "linkedin" if a.op == "linkedin" else "resume", a.provider,
+                                 False if a.no_ai else None)
+        _print_review(p)
+        if a.accept:
+            _apply_review(p["id"], a)
         else:
-            print("profile.md left as is; `lodestar profile rebuild` regenerates it from the bank (old copy kept)")
+            print(f"nothing saved to the bank yet: lodestar profile review {p['id']} --accept new  (or all, none, i1,i3)")
+    elif a.op == "review":
+        if a.pid and a.discard:
+            profile.discard_import(a.pid)
+            print(f"discarded {a.pid}")
+        elif a.pid and a.accept:
+            _apply_review(a.pid, a)
+        elif a.pid:
+            _print_review(profile._pending(a.pid))
+        else:
+            rows = profile.pending_imports()
+            for p in rows:
+                print(f"{p['id']}  {p['created']}  {p['file']}  ({len(p['items'])} items)")
+            print("" if rows else "no imports waiting for review")
+    elif a.op == "reread":
+        p = profile.reread_master()
+        _print_review(p)
+        print(f"lodestar profile review {p['id']} --accept new  applies it")
     elif a.op == "link":
         print(f"LinkedIn linked: {profile.link_linkedin(a.url)}")
         print(f"to import your LinkedIn profile, request 'Download your data' at {profile.LINKEDIN_EXPORT_URL}\n"
@@ -453,6 +531,56 @@ def cmd_profile(a):
         print(f"removed {profile.remove(a.kind, a.name)['removed']} {a.kind}")
     elif a.op == "rebuild":
         print(f"rebuilt {profile.rebuild_master()} from the bank (previous version in profile-history/)")
+    if a.op in ("add", "remove", "rebuild", "link"):
+        _sync_master()
+
+
+def _studio_cli(a) -> None:
+    """lodestar resume build / versions / open / catalogue: the AI resume studio."""
+    from . import profile, studio
+
+    if a.op == "catalogue":
+        print(studio.catalogue_text(profile.structured(), cap=0, contact=True))
+        return
+    if a.op == "versions":
+        for v in studio.versions():
+            print(f"{v['vid']}  {(str(v['pages']) + ' p') if v['pages'] else '? p':<4} {'AI' if v['used_ai'] else 'offline':<7} "
+                  f"{'job #' + str(v['job_id']) if v['job_id'] else '':<8} {(v['request'] or '')[:50]}"
+                  + ("  [profile changed since]" if v["profile_changed"] else ""))
+        return
+    if a.op == "open":
+        v = studio.version(a.vid)
+        ext = a.format or ("pdf" if "pdf" in v["files"] else "html")
+        if ext not in v["files"]:
+            raise SystemExit(f"version {a.vid} has no .{ext} (it has {', '.join(v['files'])})")
+        f = studio.file_path(a.vid, v["files"][ext])
+        from .web import _open_path
+
+        _open_path(f)
+        print(f)
+        return
+    req = {k: v for k, v in {"pages": a.pages, "template": a.style, "font": a.font, "size": a.size, "accent": a.accent,
+                             "margins": a.margins, "line_spacing": a.spacing, "paper": a.paper, "date_format": a.date_format,
+                             "contact_layout": a.contact, "sections": a.sections, "bullets_per_role": a.bullets,
+                             "drop": a.drop, "since": a.since, "formats": a.format, "density": a.density,
+                             "include_on_file": a.on_file or None}.items() if v is not None}
+    jd = read_source(a.jd) if a.jd else None
+    v = studio.build(a.request or "", req, a.job, jd, getattr(a, "from"), a.provider, False if a.no_ai else None)
+    d = studio.STUDIO / v["vid"]
+    print(f"version {v['vid']} ({'AI' if v['used_ai'] else 'offline'}; {v['pages'] or '?'} page(s); "
+          f"{v['engine'] or 'no PDF engine'})")
+    for name in v["files"].values():
+        print(f"  {d / name}")
+    if v.get("coverage"):
+        print(f"  JD coverage {v['coverage']['score']}%" + (f"; missing: {', '.join(v['coverage']['missing'][:8])}"
+                                                           if v["coverage"]["missing"] else ""))
+    for x in v["notes"] + v["events"] + v["warnings"]:
+        print(f"  - {x}")
+    if a.use_for_job:
+        if not v.get("job_id"):
+            raise SystemExit("--use-for-job needs --job ID")
+        r = studio.use_for_job(v["vid"], v["job_id"])
+        print(f"job #{v['job_id']}: resume.md, resume.docx" + (", resume.pdf" if r.get("pdf") else "") + " now come from this version")
 
 
 def cmd_resume(a):
@@ -462,6 +590,24 @@ def cmd_resume(a):
     if op == "profile":
         print(PROFILE)
         return
+    if op == "master":
+        from . import studio
+
+        m = studio.sync_master(force=True) if a.rebuild else studio.master_status()
+        m = studio.master_status() if a.rebuild else m
+        for ext, f in (m.get("files") or {}).items():
+            print(f"{ext:<5} {f}")
+        print(f"built {m.get('built') or 'never'} with {m.get('engine') or '-'}"
+              + (f", {m['pages']} page(s)" if m.get("pages") else "") + (" | STALE: the profile changed since" if m.get("stale") else ""))
+        for line in (m.get("diff") or [])[:12]:
+            print(f"  {line}")
+        for w in m.get("warnings") or []:
+            print(f"  warning: {w}")
+        if m.get("last_error"):
+            print(f"  problem: {m['last_error']}")
+        return
+    if op in ("build", "versions", "open", "catalogue"):
+        return _studio_cli(a)
     if op == "review":
         print(resume.review(read_source(a.file) if a.file else resume.profile_text(), a.provider))
         return
@@ -507,6 +653,7 @@ def cmd_resume(a):
 
             write_master(text)
             print(f"profile {'merged and ' if a.merge else ''}saved: {PROFILE} (previous version in profile-history/)")
+            _sync_master()
         else:
             print(text)
             print("\n(nothing saved; add --save, or --merge --save to fold it into your master profile)")
@@ -526,6 +673,7 @@ def cmd_resume(a):
                 from .profile import write_master
 
                 write_master(new)
+                _sync_master()
             else:
                 resume.save_doc(job, target.name, new)  # the old version moves to history/; resume.md is re-scored
             print(f"saved {target}")
@@ -774,6 +922,9 @@ def cmd_run(a):
     """The automation loop (see loop.py): email -> watches -> follow-ups -> reminders -> sync/digest/backup."""
     from . import loop, updater
 
+    from . import studio
+
+    studio.AUTO = True  # the master resume follows profile edits (never set by web.start_server)
     updater.startup()  # an interrupted update is rolled back first; then later updates know this process runs
     loop.run(a)
 
@@ -832,9 +983,9 @@ def _keys_table(st: dict, only: list[str] | None = None) -> None:
 
 def cmd_ui(a):
     from . import connections, updater
-    from . import pipeline
+    from . import pipeline, studio
 
-    pipeline.AUTO = True  # answering a question resumes its step in a thread (never set by web.start_server)
+    pipeline.AUTO = studio.AUTO = True  # answering a question resumes its step in a thread (never set by web.start_server)
     from .web import serve
 
     updater.startup()
@@ -845,9 +996,9 @@ def cmd_ui(a):
 def cmd_app(a):
     """The personal workbot: monitor loop in a background thread + web UI in the foreground, one process."""
     import threading
-    from . import pipeline
+    from . import pipeline, studio
 
-    pipeline.AUTO = True  # answering a question resumes its step in a thread (never set by web.start_server)
+    pipeline.AUTO = studio.AUTO = True  # question answers resume steps; profile edits rebuild the master resume
 
     from .web import serve
 
@@ -916,9 +1067,9 @@ def cmd_update(a):
 def cmd_desktop(a):
     """The desktop app: server + monitor loop in this process, the UI in a native window. What the shortcut runs."""
     import threading
-    from . import pipeline
+    from . import pipeline, studio
 
-    pipeline.AUTO = True  # answering a question resumes its step in a thread (never set by web.start_server)
+    pipeline.AUTO = studio.AUTO = True  # question answers resume steps; profile edits rebuild the master resume
 
     from . import desktop, web
     from .web import start_server
@@ -1518,6 +1669,30 @@ def build() -> argparse.ArgumentParser:
     x.add_argument("file", help="a job id (its tailored resume.md) or a markdown file")
     x.add_argument("--pdf", action="store_true"); x.add_argument("--style", choices=settings.CHOICES["resume_style"], help="default: pref resume_style")
     v.add_parser("profile", help="print master profile path")
+    x = v.add_parser("master", help="the master resume built from your profile (resumes/master.pdf/.docx/.md/.txt)")
+    x.add_argument("--rebuild", action="store_true", help="rebuild it now")
+    x = v.add_parser("build", help="the resume studio: a version from a request + requirements (AI plan citing your facts, "
+                                   "or offline with --no-ai), as PDF / DOCX / MD / TXT / HTML in studio/<id>/")
+    x.add_argument("--request", help="what you want, in words: 'one page, lead with leadership, navy accent'")
+    x.add_argument("--job", type=int, help="target this tracked job (its JD)"); x.add_argument("--jd", help="or a JD: file, URL or text")
+    x.add_argument("--from", metavar="VID", help="refine this version with --request")
+    x.add_argument("--pages", type=int, choices=(0, 1, 2), help="page limit (0: none)")
+    x.add_argument("--style", choices=settings.CHOICES["resume_style"], help="template")
+    x.add_argument("--font"); x.add_argument("--size", type=float, help="body pt (9.5-12)")
+    x.add_argument("--accent", help="#rrggbb or navy, blue, teal, green, burgundy, gray, black")
+    x.add_argument("--margins", type=float, help="inches (0.4-1.25)"); x.add_argument("--spacing", type=float, help="line spacing (1.0-1.5)")
+    x.add_argument("--paper", choices=("letter", "a4")); x.add_argument("--date-format", dest="date_format", help="Mar 2021 | March 2021 | 03/2021 | 2021-03 | 2021")
+    x.add_argument("--contact", choices=("one_line", "two_lines", "centered")); x.add_argument("--density", choices=("compact", "normal", "airy"))
+    x.add_argument("--sections", help="comma list in order, e.g. summary,experience,skills,education")
+    x.add_argument("--bullets", type=int, help="bullets per role (0: all)"); x.add_argument("--drop", help="fact ids to leave out, e.g. e3,p2 (resume catalogue)")
+    x.add_argument("--since", type=int, metavar="YEAR", help="leave out entries that ended before this year")
+    x.add_argument("--on-file", dest="on_file", action="store_true", help="also use facts from your other resumes")
+    x.add_argument("--format", help="comma list of pdf, docx, md, txt, html (default pdf,docx)")
+    x.add_argument("--no-ai", dest="no_ai", action="store_true", help="offline: your profile as written, no request")
+    x.add_argument("--use-for-job", dest="use_for_job", action="store_true", help="make it the job's resume.md / .docx / .pdf")
+    v.add_parser("versions", help="studio versions, newest first")
+    x = v.add_parser("open", help="open a studio version's file"); x.add_argument("vid"); x.add_argument("--format", choices=("pdf", "docx", "md", "txt", "html"))
+    v.add_parser("catalogue", help="your facts with the ids the studio and --drop use")
     s.set_defaults(f=cmd_resume)
 
     s = sub.add_parser("match", help="JD coverage: which of the posting's keywords your resume mentions (no AI; not an ATS verdict)")
@@ -1528,10 +1703,15 @@ def build() -> argparse.ArgumentParser:
     s = sub.add_parser("profile", help="profile bank: saved resumes, skills, languages, LinkedIn import")
     v = s.add_subparsers(dest="op", required=True)
     v.add_parser("show", help="what the bank holds: contact, skills, languages, roles, saved resumes")
-    for name, what in (("import", "a resume (.docx/.pdf/.md/.txt): saves the original, extracts facts into the bank"),
+    for name, what in (("import", "a resume (.docx/.pdf/.md/.txt): saves the original, reads its facts into a review"),
                        ("linkedin", "LinkedIn 'Download your data' .zip, or the profile 'Save to PDF' file")):
         x = v.add_parser(name, help=what); x.add_argument("file")
-        x.add_argument("--no-ai", action="store_true", help="offline extraction only (contact, skills, languages)")
+        x.add_argument("--no-ai", action="store_true", help="offline extraction only (never sent to an AI provider)")
+        _review_args(x)
+    x = v.add_parser("review", help="imports waiting for review: list, show one, apply (--accept) or --discard")
+    x.add_argument("pid", nargs="?"); _review_args(x)
+    x.add_argument("--discard", action="store_true", help="drop it: the bank and profile.md stay as they are")
+    v.add_parser("reread", help="re-read profile.md into a review (fixes older bank entries, picks up typed roles)")
     x = v.add_parser("link", help="store your LinkedIn profile URL"); x.add_argument("url")
     for name in ("add", "remove"):
         x = v.add_parser(name, help=f"{name} a skill / language / certification by hand")
@@ -1852,8 +2032,20 @@ def build() -> argparse.ArgumentParser:
     return ap
 
 
+def _review_args(x) -> None:
+    x.add_argument("--accept", help="new (new + changed, unflagged), all, none, or item ids like i1,i3: apply now")
+    x.add_argument("--take", help="for conflicts: i4=incoming,i7=both (default mine)")
+    x.add_argument("--no-master", action="store_true", help="bank only: leave profile.md as it is")
+
+
 def main(argv=None):
     from . import log
+
+    for stream in (sys.stdout, sys.stderr):  # a piped cp1252 console must not crash on 'ﬂ' or an accent in a resume
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
 
     a = build().parse_args(argv)
     args = list(argv or sys.argv[1:])

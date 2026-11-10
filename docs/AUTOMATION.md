@@ -119,6 +119,12 @@ Executors are the only code that sends mail, changes status, or adds jobs on lod
    process (app, desktop window, loop) is running.
 7. Print how many actions are waiting in the inbox.
 
+The master resume (`resumes/master.*`, pass 17) is rebuilt offline, without AI, when profile.md or the profile bank
+changed: about 20 seconds after the last save while the app runs, and in each cycle of `lodestar run` / `app` /
+`desktop` for edits made outside the app. It only reads saved files and only writes `resumes/master*`, so it never
+touches text you are editing, and it never rewrites a resume already tailored for a job (the drawer shows "Profile
+changed since this resume was made" instead, only when a section that resume used changed).
+
 Sending mail needs a connected mailbox (Setup > Connect email: Sign in with Google / Microsoft or an app password; or
 `lodestar email signin google|microsoft` / `lodestar email connect`; see CONNECT.md). Without one, approvals of email
 items fail with a clear error and the draft stays visible so you can copy it. A signed-in mailbox whose sign-in expired
@@ -137,7 +143,7 @@ Each tracked job moves through 13 steps (`pipeline.py`), shown in the job drawer
 |---|---|---|---|
 | Fit check | JD coverage + AI verdict (asks for the JD when there is none) | fit_check | yes |
 | Research | company research pack from public pages | research | yes |
-| Tailor resume | tailor by bullet; only rewrites with no flags are applied | tailor | yes |
+| Tailor resume | the resume studio builds the job's resume from your facts (pref `resume_request`, your look, one page; every AI rewrite checked) and uses it | tailor | yes |
 | Cover letter | from the tailored resume, research and fit check | cover_letter | yes |
 | Form answers | the job's form questions: closed-form ones from your answers, open-ended ones drafted | form_answers | yes (never eligibility or EEO) |
 | Apply | you send it and click Mark applied | none | no |
@@ -153,7 +159,8 @@ Each tracked job moves through 13 steps (`pipeline.py`), shown in the job drawer
 confirmation), stale, blocked (no AI provider), error (with Retry), running, todo (an earlier step first), later (a
 later status), skipped (by you, or n/a). A step reads earlier steps' results (the letter reads the tailored resume and
 the research pack; form answers read both; prep reads the next round). When something a done step was built from
-changes (the JD, your profile, the resume, the research, your stories, a new round) the step reads **stale**: it is
+changes (the JD, your profile, the resume, the research, your stories, a new round) the step reads **stale** (Tailor
+resume: only when a profile section that resume used changed, the drawer's 'profile changed' badge): it is
 never redone on its own, only by Re-run (or Run to with "include stale steps"). Work done by hand is adopted as done.
 
 **Questions**: a step that lacks a fact asks once (Inbox > Questions for you, the drawer, `lodestar pipeline

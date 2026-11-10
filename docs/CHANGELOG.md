@@ -1,5 +1,65 @@
 # Changelog (development passes, newest first)
 
+## Pass 17, part 3 (2026-11-10): a viewer and formatting for every document
+
+**Document viewer**
+- The master resume, studio versions, tailored resumes, cover letters, form answers, offer notes, interview prep,
+  research and a counter-offer draft all open in one viewer: real pages (Letter or A4, your margins, page numbers),
+  zoom, page count and an over-the-limit marker, the actual PDF Edge prints, a Word-layout preview, the exact TXT and
+  MD, print, open in a new window, download every format, and compare two versions side by side.
+- A formatting panel with a live preview: template, font, sizes, accent, margins, line and paragraph spacing, page
+  size and limit, density, date format, bullet style, contact line, headings, and sections you drag to reorder or hide;
+  letters get date line, recipient and signature options. Kept per document; "Save as my default look" and "Reset to
+  template".
+- Edit any section beside the page (click a heading to jump there). Exports re-check the salary floor every time, and
+  resume lines your profile does not support ask before export.
+- Download buttons now work in the desktop window too.
+
+## Pass 17, part 2 (2026-11-10): the AI resume studio
+
+**Studio tab**
+- Describe the resume you want ("one page, lead with leadership, navy accent, drop the 2015 job"), aim it at a
+  tracked job or a pasted job description, and set any formatting: template, font (ATS-safe list), size, accent,
+  margins, line spacing, paper, date format, contact line, heading case, density, page limit, sections in order with
+  show / hide, bullets per role, entries to leave out, formats. You get PDF (printed with Edge), DOCX, plain text and
+  markdown, a preview, the page count, JD coverage and the ATS checks.
+- The AI only chooses and rewords: employers, titles, dates, schools, degrees, certifications and contact details are
+  copied from your profile, and any sentence it writes that adds a number, a tool, a title, a link or personal data
+  goes back to your own words. You see each such correction.
+- Over the page limit, the AI shortens once, then the oldest bullets and optional sections are cut until it fits.
+- Refine a version with a follow-up ("shorter"); every version is kept with Open and Delete; "Use for this job" makes
+  it the job's resume; "Make this my default look" keeps the look. Works without AI too (Build without AI).
+- `lodestar resume build / versions / open / catalogue`; the drawer has "Build in Studio".
+
+**Pipeline**
+- The Tailor resume step now uses the studio, and reads stale only when a part of your profile that resume used
+  changed (the same rule as the drawer badge).
+
+## Pass 17, part 1 (2026-11-10): full resume import and the profile-synced master resume
+
+**Import with review**
+- An imported resume (or LinkedIn export) is read into a review instead of straight into your profile. Each fact
+  shows as new, changed, conflict or duplicate, with the line it came from; you accept them one by one or with
+  "Accept all new", and choose keep mine / use incoming / add separately for conflicts.
+- Every section is kept now: awards, publications, volunteering, patents, talks, links, interests and any other
+  section, plus locations, technologies, honors, credential ids and expiry dates.
+- Plain-text resumes are read much better offline: "Title | Company | City | dates" lines, two-line headers,
+  "Title at Company", degrees with field and school, certifications with issuer and id.
+- Facts read by AI are checked against the file; anything not found there is flagged and starts unchecked.
+- Personal details (date of birth, ID numbers, photo, pay, references and the like) are never stored or sent to an AI.
+- Accepted facts are also written into profile.md, in the right section, with one snapshot. Saving the editor after
+  an import changed profile.md is refused instead of erasing the imported lines. "Re-read my master profile" fixes
+  older one-line education entries.
+
+**Master resume**
+- resumes/master.pdf / .docx / .md / .txt follow your profile automatically (offline, a few seconds after a change),
+  with a "what changed" line and warnings for sections that may be private. Profile tab > Master resume.
+- A tailored resume shows "Profile changed since this resume was made" only when a section it used changed; it is
+  never rewritten on its own.
+- PDFs are printed with Microsoft Edge (or Chrome) when no Word or LibreOffice is installed, so Export PDF writes a
+  real PDF on every Windows 11 machine; ligatures are off so parsers read the text correctly.
+- `lodestar doctor` names the PDF engine; CLI output no longer crashes on accented characters in a piped console.
+
 ## Pass 16.5 (2026-11-10): step-by-step pipeline automation
 
 **Pipeline**

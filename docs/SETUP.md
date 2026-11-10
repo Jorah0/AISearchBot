@@ -26,18 +26,25 @@ email or form answer.
 lodestar never invents facts, so anything not in this file cannot appear in a tailored resume.
 You can also edit it in the UI (Profile tab) and get an AI review there.
 
-Faster start: import what you already have. Each import keeps the original file and pools its facts (contact,
-skills, spoken languages, roles, education, certifications, projects) in the **profile bank**, tagged with where
-they came from. While profile.md is still the template it is written from the bank automatically.
+Faster start: import what you already have. Each import keeps the original file and reads every section (contact,
+skills, spoken languages, roles, education, certifications, projects, awards, publications, volunteering, patents,
+talks, links, interests and the rest) into a **review**: you accept the facts you want into the **profile bank** and
+profile.md (personal details such as date of birth, ID numbers, photos and pay are never stored). While profile.md is
+still the template it is written from the bank automatically.
 
 ```bash
-lodestar profile import ~/Documents/resume.docx      # or .pdf / .md / .txt  (--no-ai: offline parse only)
+lodestar profile import ~/Documents/resume.docx --accept new   # or .pdf / .md / .txt  (--no-ai: offline parse only)
 lodestar profile link https://www.linkedin.com/in/your-name
 lodestar profile linkedin ~/Downloads/Basic_LinkedInDataExport.zip   # or the profile's "Save to PDF"
 lodestar profile show                                 # what the bank holds
 lodestar profile add skills "Terraform" --detail Tools
 lodestar profile rebuild                              # regenerate profile.md from the bank (old copy kept)
 ```
+
+PDF export needs nothing extra on Windows 11: Lodestar prints PDFs with Microsoft Edge in the background (headless,
+with a throwaway profile). On macOS and Linux it uses Chrome, Edge or Chromium when installed, else Microsoft Word or
+LibreOffice, else it opens a print page in your browser. `LODESTAR_BROWSER` can point at any Chromium-based browser.
+Your master resume (`~/.lodestar/resumes/master.pdf` and `.docx`) is kept in step with your profile automatically.
 
 LinkedIn: its API does not give third-party apps your positions or skills, and scraping profiles breaks its terms, so
 Lodestar uses what LinkedIn hands you. Request **Settings → Data privacy → Get a copy of your data**

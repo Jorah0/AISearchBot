@@ -241,11 +241,11 @@ def ask(prompt: str, system: str | None = None, provider: str | None = None, **k
     return chat([{"role": "user", "content": prompt}], system=system, provider=provider, **kw)
 
 
-def ask_json(prompt: str, system: str | None = None, provider: str | None = None):
+def ask_json(prompt: str, system: str | None = None, provider: str | None = None, **kw):
     from .util import extract_json
 
     sys_ = (system or "") + "\nReply with valid JSON only. No prose, no markdown fences."
-    return extract_json(ask(prompt, system=sys_, provider=provider))
+    return extract_json(ask(prompt, system=sys_, provider=provider, **kw))
 
 
 def list_models(name: str) -> list[str]:

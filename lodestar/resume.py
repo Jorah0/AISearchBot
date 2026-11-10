@@ -182,10 +182,15 @@ def _save_resume(job, text: str, before: int, note: str = "") -> tuple[Path, int
     """Write a new resume.md (the old one moves to history/), record its variant, re-score coverage and log the delta."""
     from .extras import resume_hash
 
+    from .profile import used_revs
+
     out = write_doc(app_dir(job) / "resume.md", text)
     h = resume_hash(text)
-    db.update_job(job["id"], resume_hash=h)
+    # the profile sections this resume draws on, as they are now: the drawer's 'profile changed' badge compares them
+    db.update_job(job["id"], resume_hash=h, profile_rev=json.dumps(used_revs(text), sort_keys=True))
     db.add_event(job["id"], "resume", f"{out} variant={h}" + (f" ({note})" if note else ""))
+    if not job["jd"]:  # a resume for a job with no description yet (studio): no coverage to re-score
+        return out, before
     after = coverage(job, text)["score"]
     db.add_event(job["id"], "coverage", f"coverage {before} -> {after}")
     return out, after
@@ -266,6 +271,70 @@ def _numbers(s: str) -> set[str]:
     return {n.replace(",", "") for n in NUM_RE.findall(s or "")}
 
 
+TITLE_WORDS = re.compile(r"(?i)\b(?:director|vp|vice president|head of|chief|manager|lead|principal|senior|staff|founder|"
+                         r"cto|ceo|cfo|coo)\b")
+TOKEN_RE = re.compile(r"[A-Za-z0-9][\w.+#/&-]*[\w+#]|[A-Za-z]")
+PERSONAL_TEXT = re.compile(r"(?i)\b(?:citizen(?:ship)?|green card|visa status|nationality|married|divorced|date of birth|"
+                           r"born in|years old|religio\w*|ethnicity|disabilit\w*|gender|pregnan\w*|ssn|passport)\b")
+
+
+def _new_terms(text: str, base: str) -> list[str]:
+    """Names in `text` that `base` never mentions: a token capitalised mid-sentence, or one that looks technical (an
+    inner capital, a digit, '.', '+' or '#'). The lexicon-free half of the guard: 'Dagster' is in no skills list."""
+    from .profile import _mentioned
+
+    out = []
+    for sent in re.split(r"(?<=[.!?;:])\s+", text):
+        for i, t in enumerate(TOKEN_RE.findall(sent)):
+            t = t.rstrip(".")
+            if not t or re.fullmatch(r"[\d.,%$€£+xX-]*\d[\d.,%$€£+kKmMbBxX-]*", t):
+                continue  # a number: the new-number check judges those
+            if (re.search(r"[A-Z]", t[1:]) or re.search(r"\d|[.+#]", t) or (i and t[0].isupper())) and not _mentioned(t, base):
+                out.append(t)
+    return list(dict.fromkeys(out))
+
+
+def check_rewrite(originals, proposed: str, facts: str, scope: str | None = None, jd_missing=(), declared=(),
+                  title: str = "", allow_numbers=()) -> dict:
+    """The no-invention guard every AI rewrite of your own text passes (bullet tailoring, the studio's bullets, headline,
+    summary and skill-group labels). originals: the text(s) it rewrites, the only source of its numbers. facts: the
+    whole profile; scope: what this text may draw on instead (the studio: the cited bullets + the entry's title and
+    technologies, so a tool used at another employer cannot move here). Flags, any of which reverts the rewrite:
+    unsupported (an added skill / cert / degree or missing JD keyword not in scope), new number (incl. years and
+    dates), new title (a seniority word), new degree, new term (a name or tool the scope never mentions; no JD
+    exemption), new link (URL, email, phone), personal (personal data or a pay figure)."""
+    from . import ats
+    from .lint import EMAIL
+    from .profile import URL_RE, _mentioned, _phone
+
+    orig = "\n".join([originals] if isinstance(originals, str) else originals)
+    base = facts if scope is None else scope
+    found = [t for t in jd_missing if ats.mentions(t, proposed)]
+    found += sorted(ats.claims_in(proposed) - ats.claims_in(orig)) if proposed != orig else []
+    added = list(dict.fromkeys(ats.canonical(t) for t in [*declared, *found]
+                               if isinstance(t, str) and t.strip() and ats.mentions(t, proposed) and not ats.mentions(t, orig)))
+    unsupported = [t for t in added if not ats.mentions(t, base)]
+    numbers = _numbers(proposed) - _numbers(orig)
+    new_numbers = sorted(numbers - {str(n) for n in allow_numbers})
+    titles = sorted({m.lower() for m in TITLE_WORDS.findall(proposed)} - {m.lower() for m in TITLE_WORDS.findall(orig + " " + title)})
+    degrees = {x[0] for x in ats.lexicon()["terms"] if x[1] == "education"}
+    new_degree = [t for t in unsupported if t in degrees]
+    terms = [t for t in _new_terms(proposed, base + "\n" + orig + "\n" + title) if not any(ats.mentions(u, t) for u in added)]
+    links = [x for x in [*URL_RE.findall(proposed), *EMAIL.findall(proposed), _phone(proposed)] if x and x not in orig]
+    personal = [m for m in PERSONAL_TEXT.findall(proposed) if not _mentioned(m, orig)]
+    personal += [m for m in salary_mentions(proposed) if m not in orig]
+    flags = (["unsupported"] if unsupported else []) + (["new number"] if new_numbers else []) \
+        + (["new title"] if titles else []) + (["new degree"] if new_degree else []) + (["new term"] if terms else []) \
+        + (["new link"] if links else []) + (["personal"] if personal else [])
+    why = "; ".join(x for x in (f"unsupported {', '.join(unsupported)}" if unsupported else "",
+                                f"new number {', '.join(new_numbers)}" if new_numbers else "",
+                                f"new title {', '.join(titles)}" if titles else "", f"new term {', '.join(terms)}" if terms else "",
+                                "new link" if links else "", "personal data or pay" if personal else "") if x)
+    return {"flags": flags, "added": added, "unsupported": unsupported, "new_numbers": new_numbers, "titles": titles,
+            "terms": terms, "why": why, "computed": sorted(numbers & {str(n) for n in allow_numbers}),
+            "marks": sorted({s for t in added for s in ats.spans(t, proposed)})}
+
+
 def _employer_copy(text: str) -> str:
     """A finished resume from tailoring source text: no "On file" prompt section, and the master's '# Master Resume'
     title becomes the candidate's name (from the contact line). It is copied out verbatim, so Preferences are stripped
@@ -335,17 +404,12 @@ THE WHOLE RESUME (for facts only):
         proposed = "" if drop else " ".join(str(r.get("proposed") or "").split()).lstrip("-*• ") or orig
         declared = [t for t in r.get("added_terms") or [] if isinstance(t, str)] if isinstance(r.get("added_terms"), list) else []
         # undeclared additions count too: posting keywords, and any skill, cert or degree the original did not name
-        found = [k["term"] for k in missing if ats.mentions(k["term"], proposed)]
-        found += sorted(ats.claims_in(proposed) - ats.claims_in(orig)) if proposed != orig else []
-        added = list(dict.fromkeys(ats.canonical(t) for t in declared + found
-                                   if t.strip() and ats.mentions(t, proposed) and not ats.mentions(t, orig)))
-        unsupported = [t for t in added if not ats.mentions(t, facts)]
-        new_numbers = sorted(_numbers(proposed) - _numbers(orig))
-        flags = (["unsupported"] if unsupported else []) + (["new number"] if new_numbers else [])
-        marks = sorted({s for t in added for s in ats.spans(t, proposed)})
-        rows.append(b | {"proposed": proposed, "drop": drop, "changed": proposed != orig, "added_terms": added,
-                         "marks": marks, "reason": str(r.get("reason") or "")[:300], "flags": flags,
-                         "unsupported": unsupported, "new_numbers": new_numbers,
+        g = check_rewrite(orig, proposed, facts, jd_missing=[k["term"] for k in missing], declared=declared, title=b["role"]) \
+            if proposed != orig else {"flags": [], "added": [], "unsupported": [], "new_numbers": [], "marks": []}
+        flags = g["flags"]
+        rows.append(b | {"proposed": proposed, "drop": drop, "changed": proposed != orig, "added_terms": g["added"],
+                         "marks": g["marks"], "reason": str(r.get("reason") or "")[:300], "flags": flags,
+                         "unsupported": g["unsupported"], "new_numbers": g["new_numbers"],
                          "accepted": proposed != orig and not flags and not drop})  # a drop starts unchecked: you choose
     rows.sort(key=lambda x: (x["group"], rank.get(x["id"], 10**6 + x["id"])))
     data = {"job": job["id"], "base": base or "", "created": datetime.now().isoformat(timespec="seconds"),
@@ -618,9 +682,17 @@ STYLES = {
 }
 
 
-def _style(name: str | None) -> dict:
+def _style(name: str | dict | None) -> dict:
+    """A preset by name; no name: your saved studio look (pref resume_look) when there is one, else the resume_style
+    preset. A style dict is used as given."""
     from . import settings
 
+    if isinstance(name, dict):
+        return name
+    if not name and (look := settings.pref("resume_look")):
+        from .render import as_preset
+
+        return as_preset(look)
     return STYLES.get(name or settings.pref("resume_style"), STYLES["classic"])
 
 
@@ -671,7 +743,7 @@ def _apply_style(doc, s: dict) -> None:
             sec.left_margin = sec.right_margin = sec.top_margin = sec.bottom_margin = Inches(s["margin"])
 
 
-def export_docx(md_path: str | Path, style: str | None = None) -> Path:
+def export_docx(md_path: str | Path, style: str | dict | None = None) -> Path:
     """Markdown -> .docx (headings, bullets, paragraphs) in the chosen style (default: the resume_style preference)."""
     from docx import Document
 
@@ -691,8 +763,10 @@ def export_docx(md_path: str | Path, style: str | None = None) -> Path:
     return out
 
 
-def export_html(md_path: str | Path, style: str | None = None) -> Path:
-    """Markdown -> a plain single-column HTML page with print CSS, for printing to PDF from a browser."""
+def export_html(md_path: str | Path, style: str | dict | None = None, printable: bool = True) -> Path:
+    """Markdown -> a plain single-column HTML page with print CSS. printable: a Print button and an auto print() for the
+    last-resort fallback (opened in your browser); the headless PDF engine gets the page without any script. Ligatures
+    are off (Chromium otherwise writes 'ﬂ' into the PDF's text layer, which parsers mis-read)."""
     from html import escape
 
     s, body, in_list = _style(style), [], False
@@ -709,10 +783,13 @@ def export_html(md_path: str | Path, style: str | None = None) -> Path:
     css = (f"body{{font-family:{s['font']},Arial,sans-serif;font-size:{s['size']}pt;line-height:1.3;max-width:7.5in;margin:24px auto;color:#000}}"
            f"h1,h2,h3{{color:{color};margin:{'6px 0 1px' if s.get('tight') else '12px 0 4px'}}}h1{{font-size:1.8em}}h2{{font-size:1.25em;"
            f"border-bottom:1px solid #999}}h3{{font-size:1.05em}}p,li{{margin:{'1px' if s.get('tight') else '3px'} 0}}ul{{padding-left:18px}}"
-           f"@page{{margin:{s.get('margin', 0.75)}in}}@media print{{.noprint{{display:none}}body{{margin:0}}}}")
+           f"body{{font-variant-ligatures:none}}@page{{size:{s.get('paper', 'letter')};margin:{s.get('margin', 0.75)}in}}"
+           "@media print{.noprint{display:none}body{margin:0;max-width:none}}")
+    button = ("<p class=\"noprint\"><button onclick=\"print()\">Print / Save as PDF</button> Choose 'Save as PDF' as the "
+              "printer.</p>\n") if printable else ""
+    script = "\n<script>addEventListener('load',()=>setTimeout(print,400))</script>" if printable else ""
     page = (f"<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{escape(title)}</title><style>{css}</style></head>"
-            "<body><p class=\"noprint\"><button onclick=\"print()\">Print / Save as PDF</button> Choose 'Save as PDF' as the printer.</p>\n"
-            + "\n".join(body) + "\n<script>addEventListener('load',()=>setTimeout(print,400))</script></body></html>\n")
+            f"<body>{button}" + "\n".join(body) + f"{script}</body></html>\n")
     out = Path(md_path).with_suffix(".html")
     out.write_text(page, encoding="utf-8")
     return out
@@ -745,19 +822,108 @@ def _soffice() -> str | None:
     return shutil.which("soffice") or shutil.which("libreoffice") or (str(win) if sys.platform.startswith("win") and win.is_file() else None)
 
 
-def export_pdf(md_path: str | Path, style: str | None = None, open_html: bool = True) -> dict:
-    """Markdown -> .docx -> PDF with what this computer has: Microsoft Word (COM), else LibreOffice (headless), else an
-    HTML print page opened in the system browser (print it to PDF there). Returns {path, method, note, tried}."""
+BROWSERS = {  # headless Chromium engines, first found wins (LODESTAR_BROWSER overrides)
+    "win": [(r"Microsoft\Edge\Application\msedge.exe", "edge"), (r"Google\Chrome\Application\chrome.exe", "chrome"),
+            (r"Chromium\Application\chrome.exe", "chromium")],
+    "darwin": [("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge", "edge"),
+               ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "chrome"),
+               ("/Applications/Chromium.app/Contents/MacOS/Chromium", "chromium")],
+}
+
+
+def _browser() -> str | None:
+    """A headless-capable Chromium (Edge, Chrome, Chromium): LODESTAR_BROWSER, then the usual install folders
+    (Program Files, Program Files (x86), per-user LOCALAPPDATA on Windows; /Applications on macOS), then PATH."""
+    from .config import setting
+
+    if (own := str(setting("LODESTAR_BROWSER") or "").strip()) and Path(own).is_file():
+        return own
+    if sys.platform.startswith("win"):
+        roots = [os.environ.get(v) for v in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA")]
+        for rel, _ in BROWSERS["win"]:
+            for root in filter(None, roots):
+                if (p := Path(root) / rel).is_file():
+                    return str(p)
+    for path, _ in BROWSERS.get(sys.platform, []):
+        if Path(path).is_file():
+            return path
+    for name in ("msedge", "microsoft-edge", "google-chrome", "chrome", "chromium", "chromium-browser"):
+        if found := shutil.which(name):
+            return found
+    return None
+
+
+def engine_name(path: str | None = None) -> str:
+    """edge / chrome / chromium for a browser path; word / libreoffice / '' when only those (or nothing) exist."""
+    if path := path or _browser():
+        low = Path(path).name.lower()
+        return "edge" if "edge" in low else "chromium" if "chromium" in low else "chrome"
+    return "word" if _word() else "libreoffice" if _soffice() else ""
+
+
+class NoEngine(RuntimeError):
+    """No headless browser, or it wrote no PDF; str() says what was tried."""
+
+
+def pdf_from_html(html: Path, pdf: Path, browser: str | None = None) -> dict:
+    """Print a page to PDF with headless Edge / Chrome / Chromium. The browser prints into a fresh temp folder (with its
+    own throwaway profile), and the result is moved onto `pdf` only when it is a real PDF: the exit code is never
+    trusted (Edge exits 0 when it cannot write a locked target). A locked target raises SystemExit 'close it'.
+    -> {path, method, tried}; raises NoEngine when there is no browser or it wrote nothing."""
+    import tempfile
+
+    exe = browser or _browser()
+    if not exe:
+        raise NoEngine("no Edge, Chrome or Chromium found")
+    tmp = tempfile.mkdtemp(prefix="lodestar-pdf-")
+    try:
+        return _print_pdf(exe, Path(tmp), Path(html), pdf)
+    finally:  # the browser's helper processes hold the profile for a moment after it exits: retry, never leave it
+        import time
+
+        for _ in range(50):
+            shutil.rmtree(tmp, ignore_errors=True)
+            if not os.path.exists(tmp):
+                break
+            time.sleep(0.1)
+
+
+def _print_pdf(exe: str, tmp: Path, html: Path, pdf: Path) -> dict:
+    from .updater import _proc
+
+    method = engine_name(exe)
+    out = tmp / "out.pdf"
+    cmd = [exe, "--headless=new", "--disable-gpu", "--no-pdf-header-footer", "--no-first-run", "--no-default-browser-check",
+           "--disable-extensions", f"--user-data-dir={tmp / 'profile'}", f"--print-to-pdf={out}", html.resolve().as_uri()]
+    try:  # ponytail: 60 s like Word's limit; a timed-out browser is killed with its whole process tree
+        code, _, err = _proc(cmd, tmp, 60)
+    except (OSError, SystemExit) as e:
+        raise NoEngine(f"{method}: {e}") from None
+    data = out.read_bytes() if out.is_file() else b""
+    if not data.startswith(b"%PDF") or len(data) < 1024:
+        raise NoEngine(f"{method}: no PDF written (exit {code}) {err.strip()[:160]}".strip())
+    part = pdf.with_name(pdf.name + ".tmp")
+    part.write_bytes(data)
+    try:
+        os.replace(part, pdf)
+    except PermissionError:
+        part.unlink(missing_ok=True)
+        raise SystemExit(f"{pdf.name} is open in another program: close it, then export again") from None
+    return {"path": str(pdf), "method": method, "tried": [f"{method}: exit {code}"]}
+
+
+def page_count(pdf: Path) -> int | None:
+    """Pages of a PDF by the same regex lint.audit uses (no pypdf needed); None without a file."""
+    try:
+        return max(1, len(re.findall(rb"/Type\s*/Page(?!s)", Path(pdf).read_bytes())))
+    except OSError:
+        return None
+
+
+def office_pdf(docx: Path, pdf: Path, tried: list) -> dict | None:
+    """A .docx -> PDF with Microsoft Word (COM) or LibreOffice when either is installed; failures go into `tried`."""
     import subprocess
 
-    md = Path(md_path)
-    if not md.is_file():
-        raise SystemExit(f"no {md.name} yet: tailor a resume first")
-    docx, pdf, tried = export_docx(md, style), md.with_suffix(".pdf"), list[str]()
-    try:
-        pdf.unlink(missing_ok=True)  # a stale file must not pass for a fresh conversion
-    except OSError:
-        raise SystemExit(f"{pdf.name} is open in another program: close it and export again") from None
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     if _word():
         env = {**os.environ, "LS_IN": str(docx.resolve()), "LS_OUT": str(pdf.resolve())}
@@ -771,17 +937,44 @@ def export_pdf(md_path: str | Path, style: str | None = None, open_html: bool = 
             tried.append(f"Microsoft Word: {e}")
     if so := _soffice():
         try:
-            r = subprocess.run([so, "--headless", "--convert-to", "pdf", "--outdir", str(md.parent.resolve()), str(docx.resolve())],
+            r = subprocess.run([so, "--headless", "--convert-to", "pdf", "--outdir", str(pdf.parent.resolve()), str(docx.resolve())],
                                capture_output=True, text=True, timeout=120, creationflags=flags)
             if pdf.is_file():
                 return {"path": str(pdf), "method": "libreoffice", "note": "converted with LibreOffice", "tried": tried}
             tried.append(f"LibreOffice: {(r.stderr or r.stdout or 'no PDF written').strip()[:200]}")
         except (OSError, subprocess.SubprocessError) as e:
             tried.append(f"LibreOffice: {e}")
+    return None
+
+
+def export_pdf(md_path: str | Path, style: str | dict | None = None, open_html: bool = True) -> dict:
+    """Markdown -> PDF with what this computer has: headless Edge / Chrome / Chromium on the HTML page (every Windows 11
+    has Edge), else Microsoft Word (COM) or LibreOffice on the .docx, else an HTML print page opened in the system
+    browser (print it to PDF there). Returns {path, method, note, tried}."""
+    md = Path(md_path)
+    if not md.is_file():
+        raise SystemExit(f"no {md.name} yet: tailor a resume first")
+    docx, pdf, tried = export_docx(md, style), md.with_suffix(".pdf"), list[str]()
+    try:
+        pdf.unlink(missing_ok=True)  # a stale file must not pass for a fresh conversion
+    except OSError:
+        raise SystemExit(f"{pdf.name} is open in another program: close it and export again") from None
+    if _browser():
+        page = export_html(md, style, printable=False)  # no print script: the browser prints it itself
+        try:
+            r = pdf_from_html(page, pdf)
+            page.unlink(missing_ok=True)
+            return r | {"note": f"printed with {'Microsoft Edge' if r['method'] == 'edge' else r['method'].title()} "
+                                "(headless)", "tried": tried}
+        except NoEngine as e:
+            tried.append(str(e))
+    if r := office_pdf(docx, pdf, tried):
+        return r
     html = export_html(md, style)
     if open_html:
         import webbrowser
 
         webbrowser.open(html.as_uri())  # the system browser, also from the desktop window: its print dialog saves PDFs
     return {"path": str(html), "method": "html", "tried": tried,
-            "note": "no Word or LibreOffice found: opened a print page in your browser; choose 'Save as PDF' as the printer"}
+            "note": "no PDF engine found (Edge, Chrome, Word or LibreOffice): opened a print page in your browser; choose "
+                    "'Save as PDF' as the printer"}

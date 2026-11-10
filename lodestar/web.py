@@ -66,8 +66,10 @@ def _bank_view() -> dict:
     from . import profile
 
     master = profile.master_text()
-    return {"bank": profile.load(), "template": profile.is_template(master), "on_file": profile.extras_text(master),
-            "linkedin_export_url": profile.LINKEDIN_EXPORT_URL}
+    bank = profile.load()
+    return {"bank": bank, "template": profile.is_template(master), "on_file": profile.extras_text(master),
+            "linkedin_export_url": profile.LINKEDIN_EXPORT_URL, "titles": profile.TITLES,
+            "labels": {k: [profile.entry_label(k, e) for e in bank[k]] for k in profile.FIELDS}}
 
 
 def _bases() -> list[dict]:
@@ -157,8 +159,25 @@ def _do(action: str, p: dict):
             if not raw or len(raw) > 15_000_000:
                 raise ValueError("empty file or larger than 15 MB")
             source = "linkedin" if p.get("linkedin") or str(p.get("name", "")).lower().endswith(".zip") else "resume"
+            if p.get("review"):  # staged: nothing reaches the bank or profile.md until the review is applied
+                return {"pending": profile.stage_import(raw, p.get("name") or "resume.txt", source, prov, p.get("ai"))}
             imported = profile.import_file(raw, p.get("name") or "resume.txt", source, prov, p.get("ai"))
             return imported | _bank_view()
+        case "profile_reread":  # profile.md itself into a review (fixes v1 entries); offline
+            from . import profile
+
+            return {"pending": profile.reread_master()}
+        case "studio_build":  # {request?, req?, id?, jd?, parent?, ai?}: one studio version (ai false: offline)
+            from . import studio
+
+            return studio.build(p.get("request") or "", p.get("req") if isinstance(p.get("req"), dict) else None,
+                                p.get("id") or None, p.get("jd") or None, p.get("parent") or None, prov,
+                                None if p.get("ai") is None else bool(p.get("ai")))
+        case "master_sync":  # Update now: rebuild the master resume from the saved profile
+            from . import studio
+
+            studio.sync_master(force=True)
+            return studio.master_status()
         case "profile_rebuild":
             from . import profile
 
@@ -425,14 +444,40 @@ def _filters(p: dict) -> dict:
     return clean_filters(**{k: p.get(k) for k in FILTER_KEYS})
 
 
-def _job_view(j, idx=None) -> dict:
+def _job_view(j, idx=None, revs=None) -> dict:
     """A tracked job for the board: its row plus a sponsor hint, the people you know there and, while it is still only
-    saved, stale signals. idx: contacts.warm_index(), built once per board."""
+    saved, stale signals. idx: contacts.warm_index(), built once per board. revs: profile.section_revs(), read once per
+    board: profile_changed names the profile sections its resume.md drew on that changed since it was made."""
     from .contacts import warm
+    from .profile import changed_sections
     from .web_monitor import ghost_signals, sponsor_hint
 
+    changed = changed_sections(j["profile_rev"], revs) if revs is not None else []
     return dict(j) | {"ghost": ghost_signals(j) if j["status"] == "saved" else None, "sponsor": sponsor_hint(j["company"]),
-                      "warm": warm(j["company"], idx)}
+                      "warm": warm(j["company"], idx), "profile_changed": changed}
+
+
+def _studio_view() -> dict:
+    """GET /api/studio: the master card, the versions, the catalogue ids (the 'leave out' picker) and the form choices."""
+    from . import ai, render, settings, studio
+    from .resume import STYLES, engine_name
+
+    try:
+        from .profile import structured
+
+        doc = structured()
+        cat = [{"id": e["id"], "kind": k, "label": studio._label(k, e), "on_file": bool(e.get("on_file"))}
+               for k in ("experience", "projects", "education", "certifications", "volunteering", "awards", "publications",
+                         "patents", "speaking", "other") for e in doc.get(k) or []]
+        err = ""
+    except (Exception, SystemExit) as e:  # a floor leak or an empty profile: the tab still opens and says why
+        cat, err = [], str(e)
+    return {"master": studio.master_status(), "versions": studio.versions(), "catalogue": cat, "catalogue_error": err,
+            "engine": engine_name(), "ai": bool(ai.available()), "look": settings.pref("resume_look") or {},
+            "choices": {"template": list(STYLES), "font": list(render.FONTS), "accent": list(render.ACCENTS),
+                        "date_format": list(render.DATE_FORMATS), "sections": list(render.KINDS),
+                        "formats": list(render.FORMATS), **{k: list(v) for k, v in render.CHOICES.items() if k != "date_format"}},
+            "defaults": render.full_style(render.clean_style(settings.pref("resume_look") or {}))}
 
 
 def start_task(action: str, params: dict) -> str:
@@ -536,6 +581,12 @@ def state() -> dict:
     from .contacts import ROLES, warm_index
 
     idx, conn = warm_index(), connections.status()
+    try:
+        from . import profile
+
+        revs = profile.section_revs()
+    except (Exception, SystemExit):  # an unreadable profile never costs the board
+        revs = None
     linked = {e["key"] for e in connections.REGISTRY.values() if e["key"]}  # shown on the Link an AI key card instead
     return {
         "version": __version__,
@@ -543,7 +594,7 @@ def state() -> dict:
         "connections": conn,
         "codes_count": len(codes.current()),  # the count only: a code never travels in the state
         "loop": dict(loop.STATUS),
-        "jobs": [_job_view(j, idx) for j in db.list_jobs()],
+        "jobs": [_job_view(j, idx, revs) for j in db.list_jobs()],
         "contact_roles": ROLES,
         "statuses": db.STATUSES,
         "doc_names": sorted(DOC_NAMES),  # the drawer offers Edit / Adjust for these only
@@ -731,8 +782,46 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"contact": dict(get(cid)), "jobs": contact_jobs(cid), "events": contact_events(cid)})
             elif path.startswith("/api/tasks/"):
                 self._json(TASKS.get(path.split("/")[3], {"status": "unknown"}))
-            elif path == "/api/profile":
-                self._json({"text": PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else ""})
+            elif path == "/api/profile":  # base: the stale-check token POST /api/profile hands back
+                from .profile import master_base
+
+                text = PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else ""
+                self._json({"text": text, "base": master_base(text)})
+            elif path == "/api/profile/imports":  # staged imports waiting for review
+                from .profile import pending_imports
+
+                self._json({"imports": pending_imports()})
+            elif path == "/api/studio":  # the master card, versions, the fact catalogue for the picker, the form's choices
+                self._json(_studio_view())
+            elif path.startswith("/api/studio/"):  # <vid>: plan.json + the preview page + the text | <vid>/file?name=
+                from urllib.parse import parse_qs
+
+                from . import studio
+
+                bits = path.split("/")
+                try:  # an unknown version or a name that is not one of its files: 404, never a path on disk
+                    v = studio.version(bits[3]) if len(bits) in (4, 5) else None
+                    f = (studio.file_path(bits[3], parse_qs(urlparse(self.path).query).get("name", [""])[0])
+                         if len(bits) == 5 and bits[4] == "file" else None)
+                except SystemExit as e:
+                    return self._json({"error": str(e)}, 404)
+                if f is not None:  # a version's own file as bytes (the viewer's PDF tab)
+                    body = f.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", {".pdf": "application/pdf", ".html": "text/html; charset=utf-8",
+                                                      ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+                                     .get(f.suffix, "text/plain; charset=utf-8"))
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Content-Disposition", f'attachment; filename="{f.name}"')
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if len(bits) != 4:
+                    return self._json({"error": "not found"}, 404)
+                read = lambda ext: (studio.file_path(v["vid"], v["files"][ext]).read_text(encoding="utf-8")  # noqa: E731
+                                    if ext in v["files"] else "")
+                self._json(v | {"html": read("html"), "md": read("md"), "txt": read("txt")})
             elif path == "/api/profile/bank":
                 self._json(_bank_view())
             elif path == "/api/keys":  # linked AI keys and their last check; never a key
@@ -907,11 +996,60 @@ class Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/companies/") and len(parts) == 4:
                 db.remove_company(int(parts[3]))
                 self._json({"ok": True})
-            elif path == "/api/profile":  # the old file is snapshotted to profile-history/ first
-                from .profile import write_master
+            elif path == "/api/profile":  # {text, base?}; the old file is snapshotted to profile-history/ first
+                from . import profile
 
-                write_master(p["text"])
-                self._json({"ok": True})
+                with profile._LOCK:  # the same lock an import holds while it writes profile.md
+                    if p.get("base") and p["base"] != profile.master_base():
+                        return self._json({"error": "profile.md changed since you opened it (an import added lines): "
+                                                    "reload, then redo your edit", "stale": True}, 409)
+                    profile.write_master(p["text"])
+                self._json({"ok": True, "base": profile.master_base()})
+            elif path.startswith("/api/profile/imports/") and len(parts) == 6:  # <pid>/apply {accept, take, to_master} | discard
+                from . import profile
+
+                pid, op = parts[4], parts[5]
+                if not profile.PID_RE.fullmatch(pid):
+                    raise ValueError("bad import id")
+                if op == "apply":
+                    take = p.get("take") if isinstance(p.get("take"), dict) else {}
+                    r = profile.apply_import(pid, p.get("accept") or "new", take, p.get("to_master", True) is not False)
+                    self._json(r | _bank_view())
+                elif op == "discard":
+                    profile.discard_import(pid)
+                    self._json({"ok": True})
+                else:
+                    raise ValueError(f"unknown import operation {op}")
+            elif path.startswith("/api/studio/") and len(parts) == 5:  # <vid>/open {file} | use {job_id} | delete | default_look
+                from . import studio
+
+                vid, op = parts[3], parts[4]
+                if op == "open":
+                    f = studio.file_path(vid, p.get("file"))
+                    _open_path(f)
+                    self._json({"ok": True, "path": str(f)})
+                elif op == "use":  # the job's resume becomes this version; the pipeline's Tailor step is held meanwhile
+                    jid = db.get_job(int(p.get("job_id") or 0))["id"]
+                    with pipeline.claimed(jid, "tailor"):
+                        self._json(studio.use_for_job(vid, jid))
+                elif op == "delete":
+                    studio.delete(vid)
+                    self._json({"ok": True})
+                elif op == "default_look":
+                    self._json({"look": studio.default_look(vid)})
+                else:
+                    raise ValueError(f"unknown studio operation {op[:20]}")
+            elif path == "/api/master/open":  # {ext}: open one master resume file in its default program
+                from . import studio
+
+                ext = str(p.get("ext") or "")
+                if ext not in {"pdf", "docx", "txt", "md", "html"}:
+                    raise ValueError("ext must be pdf, docx, txt, md or html")
+                f = studio.files().get(ext)
+                if not f:
+                    raise SystemExit(f"no master.{ext} yet: Update now builds it")
+                _open_path(Path(f))
+                self._json({"ok": True, "path": f})
             elif path == "/api/profile/bank":  # {op: add|remove|contact, kind, name, detail} / {op: contact, field, value}
                 from . import profile
 
@@ -920,6 +1058,8 @@ class Handler(BaseHTTPRequestHandler):
                     changed = profile.add(p["kind"], p["name"], p.get("detail", ""))["added"]
                 elif op == "remove":
                     changed = profile.remove(p["kind"], p["name"])["removed"]
+                elif op == "remove_at":  # {kind, index, label}: one role / education / ... entry
+                    changed = profile.remove_at(p["kind"], int(p["index"]), str(p.get("label") or ""))["removed"]
                 elif op == "contact":
                     profile.set_contact(p["field"], p.get("value", ""))
                 else:
@@ -938,7 +1078,8 @@ class Handler(BaseHTTPRequestHandler):
                     target = app_dir(db.get_job(int(p["id"]))) / sub
                 else:
                     target = {"data": HOME, "exports": HOME / "exports", "backups": HOME / "backups",
-                              "applications": HOME / "applications", "log": HOME / "lodestar.log"}[p.get("which", "data")]
+                              "applications": HOME / "applications", "log": HOME / "lodestar.log",
+                              "resumes": HOME / "resumes", "studio": HOME / "studio"}[p.get("which", "data")]
                 if target.suffix != ".log":
                     target.mkdir(parents=True, exist_ok=True)
                 elif not target.exists():
@@ -1096,6 +1237,36 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(pipeline.dismiss(qid))
                 else:
                     raise ValueError(f"unknown question operation {op}")
+            elif path.startswith("/api/view"):  # the document viewer (viewer.py): {ref, opts?, text?, ...}
+                from . import viewer
+
+                ref, opts, text = p.get("ref"), p.get("opts"), p.get("text")
+                text = None if text is None else str(text)
+                try:
+                    if path == "/api/view":  # {save?: keep opts for this document, compare?: another ref}
+                        self._json(viewer.view(ref, opts, text, bool(p.get("save")), p.get("compare")))
+                    elif path == "/api/view/file":  # {fmt, confirm?}: the file's bytes (download, the PDF tab)
+                        name, data, info = viewer.export(ref, str(p.get("fmt") or ""), opts, text, bool(p.get("confirm")))
+                        self.send_response(200)
+                        self.send_header("Content-Type", {"pdf": "application/pdf", "html": "text/html; charset=utf-8",
+                                                          "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+                                         .get(name.rsplit(".", 1)[-1], "text/plain; charset=utf-8"))
+                        self.send_header("Content-Length", str(len(data)))
+                        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+                        self.send_header("X-Content-Type-Options", "nosniff")
+                        self.send_header("X-Pages", str(info.get("pages") or ""))
+                        self.end_headers()
+                        self.wfile.write(data)
+                    elif path == "/api/view/open":  # {fmt}: written to exports/ and opened (Open in new window)
+                        out = viewer.open_file(ref, str(p.get("fmt") or "html"), opts, text, bool(p.get("confirm")))
+                        _open_path(Path(out))
+                        self._json({"ok": True, "path": out})
+                    elif path == "/api/view/save":  # {text}: a job document's edit, after the floor guard
+                        self._json(viewer.save_text(ref, text or ""))
+                    else:
+                        self._json({"error": "not found"}, 404)
+                except viewer.Unconfirmed as e:  # the fact guard: the UI asks, then sends confirm
+                    self._json({"error": str(e), "confirm": True}, 409)
             elif path.startswith("/api/run/"):
                 if parts[3] in ("pipeline_run", "pipeline_bulk"):
                     _check_pipeline(parts[3], p)
@@ -1108,6 +1279,18 @@ class Handler(BaseHTTPRequestHandler):
             # error message must still show
             names = ("password", "value", "client_secret") + (("key",) if path.startswith("/api/keys/") else ())
             self._json({"error": connections.redact(str(e), *(str(q.get(k) or "") for k in names))}, 400)
+
+
+def _open_path(target: Path) -> None:
+    """Open a file or folder in the system's default program (desktop convenience)."""
+    import os
+    import subprocess
+    import sys
+
+    if sys.platform.startswith("win"):
+        os.startfile(str(target))  # type: ignore[attr-defined]
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(target)])
 
 
 def start_server(port: int = 8765) -> ThreadingHTTPServer:

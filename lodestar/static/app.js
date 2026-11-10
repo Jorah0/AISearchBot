@@ -42,6 +42,7 @@ function go(tab) {
   if (tab === 'contacts') loadContacts();
   if (tab === 'insights') loadInsights();
   if (tab === 'setup') loadEmail();
+  if (tab === 'studio') loadStudio();
 }
 
 /* ---- background tasks ---- */
@@ -263,6 +264,10 @@ function closeDrawer() {
   }
   if (wasOpen) OPENER = null;
 }
+function profileBadge(id) {  // the profile sections this job's resume.md drew on changed since it was made
+  const ch = (S.jobs.find(x => x.id === id) || {}).profile_changed || [];
+  return ch.length ? `<div class="warnbox" id="jProfileChanged">Profile changed since this resume was made (${esc(ch.join(', '))}). It was not rewritten: it may already have been sent. Tailor again to use the new profile.</div>` : '';
+}
 async function openJob(id) {
   const d = await api('/api/jobs/' + id); if (d.error) return toast(d.error, 'err');
   cur = d; CT = null; const j = d.job, docs = Object.keys(d.docs);
@@ -283,15 +288,16 @@ ${roundsGroup(d)}
       <div class="muted">JD coverage is the share of the posting's keywords your current resume (tailored, else your profile) mentions: a guide for tailoring, not an ATS pass/fail. No AI involved.</div>
       <div id="jMatch"></div><div id="jCheck"></div></div>
 
-    <div class="group"><h4>Documents</h4><div class="row">
+    <div class="group"><h4>Documents</h4>${profileBadge(j.id)}<div class="row">
       <button class="b" onclick="jobRun('gap',{},this)">Gap check (coverage + AI verdict)</button>
       <button class="b" onclick="jobRun('tailor',{docx:true,base:baseOpt()},this)">Tailor resume (+docx)</button>
       <button class="b" onclick="tailorBullets(this)">Tailor by bullet</button>
+      <button class="b ghost" onclick="studioFor(${j.id})" title="the resume studio: a request + formatting, PDF and DOCX, checked against your facts">Build in Studio</button>
       <button class="b" onclick="jobRun('cover',{docx:true,tone:$('#jTone').value,words:$('#jWords').value},this)">Cover letter (+docx)</button>
       <button class="b ghost" onclick="draftOptions('cover',{id:${j.id},tone:$('#jTone').value,words:$('#jWords').value},'jOpts',this)" title="up to 3 letters from one AI call; Use this opens one in the editor">Cover options</button>
       <input id="jTone" placeholder="tone: confident, warm, specific" style="width:190px"><input id="jWords" type="number" min="100" max="800" placeholder="words (300)" style="width:100px">
-      <button class="b ghost" onclick="jobRun('prep',{},this)">Interview prep</button>
-      <button class="b ghost" onclick="jobRun('research',{},this)">Company research</button>
+      <button class="b ghost" onclick="jobRun('prep',{},this)">Interview prep</button>${'interview_prep.md' in d.docs ? `<button class="b ghost sm" onclick="viewJobDoc('interview_prep.md')" aria-label="View the interview prep">View</button>` : ''}
+      <button class="b ghost" onclick="jobRun('research',{},this)">Company research</button>${'research.md' in d.docs ? `<button class="b ghost sm" onclick="viewJobDoc('research.md')" aria-label="View the research pack">View</button>` : ''}
       <button class="b ghost" onclick="run('checklist',{id:${j.id}},r=>show('jOut',r.checklist.map(c=>(c.done?'[x] ':c.na?'[-] ':'[ ] ')+c.item+(c.na?' (n/a yet)':c.done?'':'   -> '+c.next)).join('\\n')),this)">Checklist</button>
       <label class="muted"><input type="checkbox" id="jCouncil"> council (all providers)</label></div>
       <div class="row">${S.bases.length ? `<label class="muted">tailor from <select id="jBase"><option value="">master profile</option>${S.bases.map(b => `<option value="${esc(b.id)}">saved: ${esc(b.name)} (${esc(b.added.slice(0, 10))})</option>`).join('')}</select></label>` : ''}
@@ -318,11 +324,11 @@ ${mailGroup(d)}
       <div class="row"><input id="jNote" class="grow" placeholder="add a note"><button class="b ghost sm" onclick="jobAdmin('note',{text:$('#jNote').value})">note</button></div>
       <div class="row"><input id="jCn" placeholder="contact name" style="width:160px" value="${esc(j.contact_name || '')}"><input id="jCe" class="grow" placeholder="contact email (replies, follow-ups and thank-yous go here)" value="${esc(j.contact_email || '')}"><button class="b ghost sm" onclick="api('/api/jobs/${j.id}/contact',{name:$('#jCn').value,email:$('#jCe').value}).then(r=>{if(r.error)return toast('error: '+r.error,'err');toast('contact saved (also filed under Contacts as recruiter)','ok');openJob(${j.id})})">set contact</button></div>
       <div class="row"><input id="jJd" class="grow" placeholder="set job description: URL or pasted text"><button class="b ghost sm" onclick="jobAdmin('jd',{source:$('#jJd').value})">set JD</button></div>
-      <div class="row"><button class="b ghost sm" onclick="jobRun('packet',{},this)">export packet (zip)</button><button class="b danger sm" onclick="if(confirm('Delete job #${j.id}?'))api('/api/jobs/${j.id}/delete',{}).then(()=>{closeDrawer();load()})">delete job</button></div></div>
+      <div class="row"><button class="b ghost sm" onclick="jobRun('packet',{},this)">export packet (zip)</button><button class="b ghost sm" onclick="viewPacket()">View documents</button><button class="b danger sm" onclick="if(confirm('Delete job #${j.id}?'))api('/api/jobs/${j.id}/delete',{}).then(()=>{closeDrawer();load()})">delete job</button></div></div>
 
     <div class="tabs" id="docTabs">${['timeline', 'description', ...docs].map((n, i) => `<button class="${i === 0 ? 'on' : ''}" onclick="showDoc('${n}',this)">${n}</button>`).join('')}</div>
     <pre id="docView"></pre>
-    <div class="row"><button class="b ghost sm" onclick="editDoc()">Edit document</button><input id="dAdj" class="grow" placeholder="adjust this document with AI: shorter / warmer / lead with X"><button class="b ghost sm" onclick="adjustDoc(this)">Adjust</button><button class="b ghost sm" onclick="reviewDoc(this)">Review</button></div>
+    <div class="row"><button class="b ghost sm" onclick="viewDoc()" title="paged preview, PDF / DOCX / TXT / MD, formatting, compare">View / format</button><button class="b ghost sm" onclick="editDoc()">Edit document</button><input id="dAdj" class="grow" placeholder="adjust this document with AI: shorter / warmer / lead with X"><button class="b ghost sm" onclick="adjustDoc(this)">Adjust</button><button class="b ghost sm" onclick="reviewDoc(this)">Review</button></div>
     <textarea id="docEdit" style="display:none; min-height:260px"></textarea><button class="b sm" id="docSave" style="display:none" onclick="saveDoc()">Save document</button>
     <div class="out"><h4 class="muted">AI output</h4><pre id="jOut">(run an action above)</pre></div>`;
   openDrawer('Job details');
@@ -453,7 +459,7 @@ function exportPdf(btn) {
   if (!cur.docs['resume.md']) return toast('no tailored resume yet: Tailor resume first, then Export PDF', 'err');
   run('export_pdf', { id }, r => {
     const t = `${r.method === 'html' ? 'print page (opened in your browser)' : 'PDF'}: ${r.path}\n${r.note}` + (r.tried.length ? '\n\ntried first:\n' + r.tried.join('\n') : '');
-    toast(r.method === 'html' ? 'opened a print page: Save as PDF from there' : 'PDF written with ' + (r.method === 'word' ? 'Microsoft Word' : 'LibreOffice'), 'ok');
+    toast(r.method === 'html' ? 'opened a print page: Save as PDF from there' : 'PDF written: ' + r.note, 'ok');  // the note names the engine (Edge, Chrome, Word, LibreOffice)
     openJob(id).then(() => { $('#jOut').textContent = t; });
   }, btn);
 }
@@ -1234,8 +1240,8 @@ async function emailDisconnect() {
 async function setVault() { const r = await api('/api/vault', { name: $('#vName').value, user: $('#vUser').value, value: $('#vVal').value }); toast(r.error || 'stored', r.error ? 'err' : 'ok'); $('#vVal').value = ''; load(); }
 
 /* ---- profile and coach ---- */
-let PROFILE_LOADED = '';  // last text loaded from / saved to disk: tells unsaved editor edits apart
-async function loadProfile() { $('#pText').value = PROFILE_LOADED = (await api('/api/profile')).text; }
+let PROFILE_LOADED = '', PROFILE_BASE = '';  // last text loaded from / saved to disk; its hash (the server's stale check)
+async function loadProfile() { const r = await api('/api/profile'); $('#pText').value = PROFILE_LOADED = r.text; PROFILE_BASE = r.base || ''; }
 function adjustProfile(btn) {
   const ins = $('#pAdj').value.trim(); if (!ins) return toast('type an instruction first', 'err');
   run('adjust', { text: $('#pText').value, instruction: ins, kind: 'master profile' }, r => { $('#pText').value = r.text; toast('adjusted; review, then Save', 'ok'); }, btn);
@@ -1250,6 +1256,8 @@ function renderBank(v) {
   $('#bLangs').innerHTML = b.languages.map((l, i) => chip('languages', i, l.name + (l.proficiency ? ' · ' + l.proficiency : ''))).join(' ') || '<span class="muted">none yet</span>';
   $('#bCerts').innerHTML = b.certifications.map((c, i) => chip('certifications', i, c.name + (c.issuer ? ' · ' + c.issuer : ''))).join(' ') || '<span class="muted">none yet</span>';
   $('#bCounts').textContent = `${b.experience.length} roles · ${b.education.length} education · ${b.certifications.length} certifications · ${b.projects.length} projects · ${b.resumes.length} saved resume(s)`;
+  $('#bMore').innerHTML = BANK_KINDS.filter(k => (b[k] || []).length).map(k => `<div class="row"><b style="width:90px">${esc((v.titles || {})[k] || 'Other')}</b><div class="grow">`
+    + b[k].map((e, i) => `<span class="pill">${esc(v.labels[k][i])} <button class="b ghost sm" aria-label="remove" onclick="bankRemoveAt('${k}',${i})">×</button></span>`).join(' ') + '</div></div>').join('');
   $('#bResumes').innerHTML = b.resumes.map(r => `<div>${esc(r.added.slice(0, 10))} <span class="pill">${esc(r.source)}</span>${esc(r.name)} <span class="muted">resumes/${esc(r.file)}</span></div>`).join('') || '<div class="muted">none yet</div>';
   $('#bOnFile').style.display = v.on_file ? '' : 'none'; $('#bOnFile').textContent = v.on_file;
 }
@@ -1264,18 +1272,16 @@ async function bankOp(body, okMsg) {
   if (body.op === 'add') ({ skills: ['#bSkill', '#bSkillCat'], languages: ['#bLang', '#bLangLvl'], certifications: ['#bCert', '#bCertIss'] }[body.kind] || []).forEach(s => { $(s).value = ''; });
 }
 function bankRemove(kind, i) { const it = BANK.bank[kind][i]; if (it) bankOp({ op: 'remove', kind, name: it.name }, 'removed ' + it.name); }
+const BANK_KINDS = ['experience', 'education', 'projects', 'awards', 'publications', 'volunteering', 'patents', 'speaking', 'links', 'interests', 'other'];
+function bankRemoveAt(kind, i) { const label = BANK.labels[kind][i]; bankOp({ op: 'remove_at', kind, index: i, label }, 'removed ' + label); }
 function importToBank(inputId, linkedin, btn) {
   const f = $('#' + inputId).files[0]; if (!f) return toast('choose a file first', 'err');
   const rd = new FileReader();
-  rd.onload = () => run('profile_import', { name: f.name, data: rd.result.split(',')[1], linkedin, ai: $('#pNoAi').checked ? false : undefined }, r => {
-    renderBank(r);
-    const got = Object.entries(r.added).filter(([, n]) => n).map(([k, n]) => n + ' ' + k).join(', ') || 'nothing new';
-    toast(`${r.new_file ? 'saved' : 'already saved'} ${f.name}: ${got} (${r.used_ai ? 'AI' : 'offline'} extraction)${r.seeded_master ? '; master profile filled in' : ''}`, 'ok');
-    if (r.seeded_master) {  // never clobber text typed into the editor but not saved yet
-      if ($('#pText').value === PROFILE_LOADED) loadProfile();
-      else toast('profile.md was filled in from the bank; your unsaved editor text was kept (Save would replace the filled-in file)', 'err');
-    }
-    if (!linkedin) { $('#pImport').value = r.text; $('#pImport').style.display = ''; $('#pImportActions').style.display = ''; }
+  rd.onload = () => run('profile_import', { name: f.name, data: rd.result.split(',')[1], linkedin, review: true, ai: $('#pNoAi').checked ? false : undefined }, r => {
+    const p = r.pending, todo = p.items.filter(i => i.status !== 'duplicate').length;
+    toast(`read ${f.name} (${p.used_ai ? 'AI' : 'offline'} extraction): ${todo} item(s) to review below; nothing saved to your profile yet`, 'ok');
+    loadReviews();
+    if (!linkedin) { $('#pImport').value = p.text; $('#pImport').style.display = ''; $('#pImportActions').style.display = ''; }
   }, btn);
   rd.readAsDataURL(f);
 }
@@ -1283,7 +1289,76 @@ function rebuildMaster(btn) {
   const dirty = $('#pText').value !== PROFILE_LOADED;
   if (!confirm('Replace profile.md with a version built from the bank? The saved file is snapshotted to profile-history/ first.' +
     (dirty ? '\n\nThe editor has UNSAVED changes; they are not in any snapshot and will be lost. Save first to keep them.' : ''))) return;
-  run('profile_rebuild', {}, r => { $('#pText').value = PROFILE_LOADED = r.text; renderBank(r); toast('master rebuilt from the bank', 'ok'); }, btn);
+  run('profile_rebuild', {}, r => { loadProfile(); renderBank(r); toast('master rebuilt from the bank', 'ok'); }, btn);
+}
+/* ---- import review: every fact read from a file waits here until accepted (profile.stage_import / apply_import) ---- */
+let REVIEWS = [];
+async function loadReviews() { const r = await api('/api/profile/imports'); if (!r.error) { REVIEWS = r.imports; renderReviews(); } }
+function itemLabel(it) {
+  const v = it.incoming;
+  if (v === null || typeof v !== 'object') return (it.field ? it.field + ': ' : '') + String(v ?? '');
+  const a = ['title', 'role', 'name', 'degree', 'heading', 'label'].map(f => v[f]).find(Boolean) || '';
+  const b = ['company', 'organization', 'school', 'issuer', 'venue', 'event', 'url'].map(f => v[f]).find(Boolean) || '';
+  const d = [v.start, v.end].filter(Boolean).join(' - ') || v.date || '';
+  return [a, b].filter(Boolean).join(' - ') + (d ? ` (${d})` : '') + ((v.bullets || []).length ? ` · ${v.bullets.length} bullet(s)` : '');
+}
+const STATUS_PILL = { new: 'ok', changed: 'ok', conflict: 'warn', duplicate: '' };
+function reviewHtml(p, n) {
+  const rows = p.items.map(it => {
+    const box = it.status === 'duplicate' ? '' : it.status === 'conflict' ? '' : `<input type="checkbox" id="rv${n}_${esc(it.id)}" ${it.default ? 'checked' : ''} aria-label="accept ${esc(itemLabel(it))}">`;
+    const pick = it.status !== 'conflict' ? '' : `<select id="rt${n}_${esc(it.id)}" aria-label="conflict choice"><option value="mine">keep mine</option><option value="incoming">use incoming</option>${it.fuzzy ? '<option value="both">add separately</option>' : ''}</select>`;
+    const fields = Object.entries(it.fields || {}).map(([f, [mine, inc]]) => `<div class="muted">${esc(f)}: yours <b>${esc(mine)}</b> · incoming <b>${esc(inc)}</b></div>`).join('')
+      + (it.status === 'conflict' && it.existing && !Object.keys(it.fields || {}).length ? `<div class="muted">yours: ${esc(typeof it.existing === 'object' ? itemLabel({ incoming: it.existing }) : it.existing)}</div>` : '');
+    const adds = Object.entries(it.adds || {}).map(([f, x]) => `<div class="muted">adds ${esc(f)}: ${esc(Array.isArray(x) ? x.join('; ') : x)}</div>`).join('');
+    return `<tr class="${it.flags.length ? 'flag' : ''}"><td>${box}${pick}</td><td><span class="pill ${STATUS_PILL[it.status] || ''}">${esc(it.status)}</span></td><td class="muted">${esc(it.kind)}</td>
+      <td>${esc(itemLabel(it))}${fields}${adds}${it.quote ? `<div class="muted">“${esc(it.quote)}”</div>` : ''}${it.flags.map(f => `<div class="flagtxt">${esc(f)}</div>`).join('')}</td></tr>`;
+  }).join('');
+  const dropped = (p.dropped || []).length ? `<div class="warnbox">Not stored: ${esc(p.dropped.map(d => d.label + (d.line ? ` (line ${d.line})` : '')).join(', '))}. Lodestar never puts personal details like these in a resume. If an application form asks for work authorization, save it in the answer bank.</div>` : '';
+  const unread = (p.unread || []).length ? `<details><summary class="muted">${p.unread.length} line(s) were not read into the profile</summary><pre>${esc(p.unread.join('\n'))}</pre></details>` : '';
+  const notes = (p.notes || []).map(x => `<div class="muted">${esc(x)}</div>`).join('');
+  return `<div class="panel review" id="review${n}"><h3>Review import: ${esc(p.file)}</h3><div class="muted">${esc(p.created.replace('T', ' '))} · ${p.used_ai ? 'AI' : 'offline'} extraction · flagged rows start unchecked; a conflict keeps yours unless you choose otherwise</div>
+    ${dropped}<table class="kw bul"><thead><tr><th>accept</th><th>status</th><th>kind</th><th>fact</th></tr></thead><tbody>${rows}</tbody></table>${unread}${notes}
+    <div class="row"><label class="muted"><input type="checkbox" id="rvMaster${n}" checked> also add to my master profile (profile.md)</label></div>
+    <div class="row"><button class="b sm" onclick="reviewApply(${n},'new',this)">Accept all new</button><button class="b ghost sm" onclick="reviewApply(${n},'sel',this)">Apply selected</button><button class="b ghost sm" onclick="reviewDiscard(${n},this)">Discard</button></div></div>`;
+}
+function renderReviews() { $('#pReview').innerHTML = REVIEWS.map(reviewHtml).join(''); }
+async function reviewApply(n, mode, btn) {
+  const p = REVIEWS[n], take = {}, conflicts = [];
+  p.items.filter(it => it.status === 'conflict').forEach(it => { const v = $(`#rt${n}_${it.id}`)?.value || 'mine'; take[it.id] = v; if (v !== 'mine') conflicts.push(it.id); });
+  const picked = mode === 'new' ? p.items.filter(it => it.default).map(it => it.id) : p.items.filter(it => $(`#rv${n}_${it.id}`)?.checked).map(it => it.id);
+  btn.disabled = true;
+  const r = await api(`/api/profile/imports/${encodeURIComponent(p.id)}/apply`, { accept: [...picked, ...conflicts], take, to_master: $('#rvMaster' + n).checked });
+  btn.disabled = false;
+  if (r.error) return toast('error: ' + r.error, 'err');
+  renderBank(r);
+  const got = Object.entries(r.added).map(([k, c]) => c + ' ' + k).join(', ') || 'nothing new';
+  toast(`applied: ${got}; ${r.updated} updated${r.master_changed ? '; profile.md updated' : ''}` + (r.notes.length ? ' | ' + r.notes.join(' | ') : ''), 'ok');
+  if (r.master_changed) {  // never clobber text typed into the editor but not saved yet
+    if ($('#pText').value === PROFILE_LOADED) loadProfile();
+    else toast('profile.md got the imported lines; your unsaved editor text was kept: copy it, Reload the page, then redo your edit', 'err');
+  }
+  loadReviews(); loadMaster();
+}
+async function reviewDiscard(n, btn) {
+  btn.disabled = true; const r = await api(`/api/profile/imports/${encodeURIComponent(REVIEWS[n].id)}/discard`, {}); btn.disabled = false;
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast('import discarded: your profile is unchanged', 'ok'); loadReviews();
+}
+/* ---- master resume (studio.py): built from the saved profile, offline ---- */
+async function loadMaster() { const r = await api('/api/studio'); if (!r.error) renderMaster(r.master); }
+function renderMaster(m) {
+  const f = m.files || {}, when = m.built ? m.built.replace('T', ' ').slice(0, 16) : '';
+  $('#mStatus').innerHTML = (when ? `Updated from your profile at ${esc(when)}` + (m.engine ? ` · ${esc(m.engine)}` : '') + (m.pages ? ` · ${m.pages} page(s)` : '') : 'Not built yet: Update now builds it')
+    + (m.stale && when ? ' <span class="chip stale">profile changed: updates shortly, or Update now</span>' : '');
+  $('#mDiff').innerHTML = (m.diff || []).length ? `<div class="muted">last change: ${esc(m.diff.join(' · '))}</div>` : '';
+  $('#mWarn').innerHTML = (m.last_error ? `<div class="warnbox">${esc(m.last_error)}</div>` : '') + (m.warnings || []).map(w => `<div class="warnbox">${esc(w)}</div>`).join('');
+  $('#mPdf').disabled = !f.pdf && !f.html; $('#mPdf').textContent = f.pdf || !f.html ? 'Open PDF' : 'Open print page'; $('#mDocx').disabled = !f.docx;
+  MASTER = m;
+}
+let MASTER = null;
+async function openMaster(ext) {
+  const e = ext === 'pdf' && MASTER && !(MASTER.files || {}).pdf ? 'html' : ext, r = await api('/api/master/open', { ext: e });
+  toast(r.error ? 'error: ' + r.error : 'opened ' + r.path, r.error ? 'err' : 'ok');
 }
 const editable = n => (S.doc_names || []).includes(n);  // coverage.json, gap.json, bullets.json are computed, not edited
 function openEditor(n, text) { const ed = $('#docEdit'); ed.value = text; ed.dataset.name = n; ed.dataset.open = '1'; ed.style.display = $('#docSave').style.display = ''; }
@@ -1313,10 +1388,10 @@ function reviewDoc(btn) {  // reviews the open document, unsaved edits included;
   run('review', { text }, r => { $('#jOut').textContent = r.text; }, btn);
 }
 async function saveProfile() {
-  const text = $('#pText').value, r = await api('/api/profile', { text });
+  const text = $('#pText').value, r = await api('/api/profile', { text, base: PROFILE_BASE });
   if (r.error) return toast('save failed: ' + r.error, 'err');
-  PROFILE_LOADED = text;
-  toast('profile saved (previous version kept in profile-history/)', 'ok'); loadBank();
+  PROFILE_LOADED = text; PROFILE_BASE = r.base || '';
+  toast('profile saved (previous version kept in profile-history/)', 'ok'); loadBank(); loadMaster();
 }
 function fillCoachJobs() {  // rebuilt on every refresh so jobs added later appear; keeps the selected job
   const keep = $('#cJob').value;
@@ -1487,7 +1562,9 @@ function counterOptions(btn) {
 function draftCounter(btn) {
   const id = Number($('#ctrJob').value); if (!id) return toast('record an offer first', 'err');
   const cite = CITE.filter((c, i) => $('#cite' + i)?.checked).map(c => c[0]);
-  run('counter', { id, cite, ask: $('#ctrAsk').value, template: $('#ctrTpl').checked }, r => { show('ctrOut', mailText(r)); }, btn);
+  run('counter', { id, cite, ask: $('#ctrAsk').value, template: $('#ctrTpl').checked }, r => {
+    show('ctrOut', mailText(r)); CTR = { id, cite, text: (r.draft || {}).body || '' }; $('#ctrView').style.display = CTR.text ? '' : 'none';
+  }, btn);
 }
 function activity(btn, fmt) {
   run('activity', { from: $('#acFrom').value, to: $('#acTo').value, fmt }, r => {
@@ -1667,6 +1744,7 @@ function drawerDirty() {  // a document editor that differs from the saved file,
 }
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex="0"]';
 document.addEventListener('keydown', e => {
+  if (!$('#viewer').hidden) return vwKey(e);  // the viewer sits above the drawer: its keys first
   const d = $('#drawer'); if (!d.classList.contains('open')) return;
   if (e.key === 'Escape') { if (!drawerDirty() || confirm('Close and discard what you typed in this drawer?')) closeDrawer(); return; }
   if (e.key !== 'Tab') return;
@@ -1677,4 +1755,402 @@ document.addEventListener('keydown', e => {
 window.addEventListener('beforeunload', e => {  // a reload or closed window must not drop an unsaved profile or document
   if (($('#pText').value !== PROFILE_LOADED) || ($('#drawer').classList.contains('open') && drawerDirty())) { e.preventDefault(); e.returnValue = ''; }
 });
-load(); loadProfile(); loadBank(); setInterval(load, 60000);
+/* ---- resume studio (studio.py): request + requirements -> a version (PDF / DOCX / MD / TXT), preview, history ---- */
+let STU = null, SV = null, SROWS = null, SDIRTY = false;  // GET /api/studio; the version on show; [[section, on]] in order; you changed them
+const LOOK = [['pages', 'pages', ['', '1', '2', '0']], ['template', 'template'], ['font', 'font'], ['size', 'size (pt)', 'num', 9.5, 12, 0.5],
+  ['accent', 'accent'], ['margins', 'margins (in)', 'num', 0.4, 1.25, 0.05], ['line_spacing', 'line spacing', 'num', 1, 1.5, 0.05],
+  ['paper', 'paper'], ['date_format', 'dates'], ['contact_layout', 'contact line'], ['heading_case', 'headings'], ['density', 'density'],
+  ['bullets_per_role', 'bullets per role', 'num', 0, 10, 1], ['since', 'leave out roles ended before', 'num', 1950, 2100, 1]];
+async function loadStudio() { const r = await api('/api/studio'); if (r.error) return toast('error: ' + r.error, 'err'); STU = r; renderStudio(); }
+function studioFor(id) { go('studio'); const pick = () => { if (STU) $('#sJob').value = String(id); $('#sJd').style.display = 'none'; $('#sReq').focus(); }; STU ? pick() : loadStudio().then(pick); }
+function renderStudio() {
+  const c = STU.choices, d = STU.defaults || {};
+  if (!$('#sLook').children.length) {  // built once: your picks survive a refresh
+    $('#sLook').innerHTML = LOOK.map(([k, label, kind, lo, hi, step]) => {
+      if (kind === 'num') return `<label class="muted">${label} <input id="sL_${k}" type="number" min="${lo}" max="${hi}" step="${step}" style="width:80px" placeholder="${esc(d[k] ?? '')}"></label>`;
+      const opts = Array.isArray(kind) ? kind.slice(1) : c[k] || [];
+      const extra = k === 'accent' ? '<option value="custom">custom…</option>' : '';
+      return `<label class="muted">${label} <select id="sL_${k}" ${k === 'accent' ? 'onchange="$(\'#sL_accentC\').style.display=this.value===\'custom\'?\'\':\'none\'"' : ''}><option value="">default${d[k] !== undefined && k !== 'pages' ? ' (' + esc(d[k]) + ')' : ''}</option>${opts.map(o => `<option value="${esc(o)}">${esc(o === '0' ? 'no limit' : o)}</option>`).join('')}${extra}</select></label>`
+        + (k === 'accent' ? '<input type="color" id="sL_accentC" aria-label="Custom accent colour" value="#1f3a5f" style="display:none">' : '');
+    }).join('');
+    $('#sFormats').innerHTML = c.formats.filter(f => f !== 'html').map(f => `<label class="muted"><input type="checkbox" class="sFmt" value="${f}" ${(d.formats || []).includes(f) ? 'checked' : ''}> ${f}</label>`).join(' ');
+  }
+  if (!SROWS) { const on = new Set(d.sections || c.sections); SROWS = [...(d.sections || c.sections), ...c.sections.filter(k => !on.has(k))].map(k => [k, on.has(k)]); renderSections(); }
+  const sel = $('#sJob').value;
+  $('#sJob').innerHTML = '<option value="">no job</option>' + (S ? S.jobs : []).filter(j => !['rejected', 'withdrawn', 'accepted'].includes(j.status))
+    .map(j => `<option value="${j.id}">${esc(j.company)} - ${esc(j.title)} (#${j.id})</option>`).join('');
+  $('#sJob').value = sel;
+  $('#sDrop').innerHTML = STU.catalogue.length ? STU.catalogue.map(e => `<label class="muted"><input type="checkbox" class="sDrop" value="${esc(e.id)}"> <b>${esc(e.id)}</b> ${esc(e.label)}${e.on_file ? ' <span class="chip">on file</span>' : ''}</label>`).join('<br>')
+    : `<span class="muted">${esc(STU.catalogue_error || 'no entries yet')}</span>`;
+  $('#sHint').textContent = STU.ai ? (STU.engine ? `PDF by ${STU.engine}` : 'no PDF engine: you get the page to print, plus .docx') : 'no AI provider: Build without AI uses your profile as written (Setup > Link an AI key to describe changes in words)';
+  $('#sBuild').disabled = !STU.ai;
+  $('#sHist').innerHTML = STU.versions.length ? STU.versions.map((v, i) => `<div class="row"><b>${esc(v.created.replace('T', ' ').slice(0, 16))}</b>
+    <span class="muted">${v.job_id ? 'job #' + v.job_id : 'general'} · ${v.pages ? v.pages + ' page(s)' : 'pages unknown'} · ${v.used_ai ? 'AI' : 'offline'}${v.parent ? ' · refined' : ''}</span>
+    <span class="grow">${esc((v.request || '(no request)').slice(0, 90))}</span>${v.profile_changed ? '<span class="chip stale">profile changed since</span>' : ''}
+    <button class="b ghost sm" onclick="openVersion(${i})">Open</button><button class="b ghost sm danger" onclick="deleteVersion(${i})">Delete</button></div>`).join('')
+    : '<div class="muted">no versions yet: Build makes the first</div>';
+}
+function renderSections() {
+  $('#sSections').innerHTML = SROWS.map(([k, on], i) => `<div class="row"><label class="muted"><input type="checkbox" class="sSec" value="${k}" ${on ? 'checked' : ''} onchange="SROWS[${i}][1]=this.checked;SDIRTY=true"> ${k}</label>
+    <button class="b ghost sm" aria-label="move ${k} up" onclick="moveSection(${i},-1)" ${i ? '' : 'disabled'}>↑</button><button class="b ghost sm" aria-label="move ${k} down" onclick="moveSection(${i},1)" ${i < SROWS.length - 1 ? '' : 'disabled'}>↓</button></div>`).join('');
+}
+function moveSection(i, dir) {
+  const j = i + dir; if (j < 0 || j >= SROWS.length) return;
+  [SROWS[i], SROWS[j]] = [SROWS[j], SROWS[i]]; SDIRTY = true; renderSections();
+  $$('#sSections .row')[j].querySelector(`button[aria-label$="${dir < 0 ? 'up' : 'down'}"]:not([disabled])`)?.focus();
+}
+function studioReq() {  // only what you set: blank fields leave the choice to the request, your saved look and the template
+  const req = {};
+  LOOK.forEach(([k]) => { const v = $('#sL_' + k).value; if (v !== '') req[k] = k === 'accent' && v === 'custom' ? $('#sL_accentC').value : v; });
+  if (SDIRTY) req.sections = SROWS.filter(r => r[1]).map(r => r[0]);
+  const fm = $$('.sFmt').filter(x => x.checked).map(x => x.value), dflt = (STU.defaults || {}).formats || [];
+  if (fm.join() !== dflt.join()) req.formats = fm.length ? fm : ['docx'];
+  const drop = $$('.sDrop').filter(x => x.checked).map(x => x.value); if (drop.length) req.drop = drop;
+  if ($('#sOnFile').checked) req.include_on_file = true;
+  return req;
+}
+function studioBuild(ai, btn) {
+  const id = $('#sJob').value, body = { request: ai ? $('#sReq').value : '', req: studioReq(), ai };
+  if (id) body.id = Number(id); else if ($('#sJd').value.trim()) body.jd = $('#sJd').value;
+  if (!ai && $('#sReq').value.trim()) toast('Build without AI ignores the request: it uses your profile as written', '');
+  run('studio_build', body, v => { showVersion(v); loadStudio(); toast(`version built: ${v.pages ? v.pages + ' page(s)' : 'page count unknown'}`, 'ok'); }, btn);
+}
+async function openVersion(i) { const v = await api('/api/studio/' + encodeURIComponent(STU.versions[i].vid)); if (v.error) return toast('error: ' + v.error, 'err'); showVersion(v); }
+async function deleteVersion(i) {
+  const v = STU.versions[i]; if (!confirm(`Delete the version of ${v.created.slice(0, 16)}? Its files go too.`)) return;
+  const r = await api(`/api/studio/${encodeURIComponent(v.vid)}/delete`, {}); if (r.error) return toast('error: ' + r.error, 'err');
+  if (SV && SV.vid === v.vid) { SV = null; $('#sResult').style.display = 'none'; }
+  toast('version deleted', 'ok'); loadStudio();
+}
+async function showVersion(v) {
+  if (!v.html) v = await api('/api/studio/' + encodeURIComponent(v.vid));  // a build result carries no page text
+  if (v.error) return toast('error: ' + v.error, 'err');
+  SV = v;
+  const f = v.files || {}, jobs = (S ? S.jobs : []).filter(j => !['rejected', 'withdrawn', 'accepted'].includes(j.status));
+  const warn = [...(v.notes || []).map(x => ['note', x]), ...(v.events || []).map(x => ['check', x]), ...(v.warnings || []).map(x => ['warning', x])];
+  $('#sResult').style.display = '';
+  $('#sResult').innerHTML = `<h3>Version ${esc(v.vid)}</h3>
+    <div class="muted">${v.pages ? v.pages + ' page(s)' : 'page count unknown'}${v.style && v.style.pages ? ' (limit ' + v.style.pages + ')' : ''} · ${v.engine ? 'PDF by ' + esc(v.engine) : 'no PDF engine'} · ${v.used_ai ? 'AI plan' : 'offline'}${v.coverage ? ' · JD coverage ' + esc(v.coverage.score) + '%' : ''}${v.parent ? ' · refined from ' + esc(v.parent) : ''}</div>
+    <div class="row">${['pdf', 'docx', 'txt', 'md', 'html'].filter(x => f[x]).map(x => `<button class="b ghost sm" onclick="studioOpen('${x}')">Open ${x === 'html' ? 'page' : x.toUpperCase()}</button>`).join('')}
+      <button class="b ghost sm" onclick="api('/api/open_folder',{which:'studio'}).then(r=>r.error&&toast('error: '+r.error,'err'))">Show folder</button>
+      <button class="b ghost sm" onclick="studioLook(this)">Make this my default look</button><button class="b ghost sm" onclick="openViewer({type:'studio',vid:SV.vid})">View / format</button></div>
+    <div class="row"><label class="muted">use for <select id="sUseJob">${jobs.map(j => `<option value="${j.id}" ${j.id === v.job_id ? 'selected' : ''}>${esc(j.company)} - ${esc(j.title)} (#${j.id})</option>`).join('')}</select></label><button class="b sm" onclick="studioUse(this)" ${jobs.length ? '' : 'disabled'}>Use for this job</button><span class="muted">replaces its resume.md / .docx / .pdf (the old ones go to history/)</span></div>
+    ${v.coverage && v.coverage.missing.length ? `<div class="muted">not covered: ${esc(v.coverage.missing.join(', '))}</div>` : ''}
+    <div id="sWarn">${warn.map(([k, x]) => `<div class="${k === 'warning' ? 'warnbox' : 'muted'}">${esc(k)}: ${esc(x)}</div>`).join('')}</div>
+    <details><summary class="muted">ATS checks (${(v.lint || []).length + Object.values(v.audit || {}).flat().length})</summary>${issuesHtml({ issues: [...(v.lint || []), ...Object.values(v.audit || {}).flat()] })}</details>
+    <iframe id="sFrame" sandbox="" title="Resume preview" style="width:100%;height:640px;border:1px solid var(--line);border-radius:8px;background:#fff"></iframe>
+    <div class="row"><input id="sRefine" class="grow" placeholder="refine this version: shorter / warmer summary / lead with the Kafka migration" ${STU && STU.ai ? '' : 'disabled title="needs an AI provider"'}><button class="b ghost" onclick="studioRefine(this)" ${STU && STU.ai ? '' : 'disabled'}>Refine</button></div>`;
+  $('#sFrame').srcdoc = v.html || '';  // sandbox without scripts: the page cannot reach the token
+}
+async function studioOpen(ext) { const r = await api(`/api/studio/${encodeURIComponent(SV.vid)}/open`, { file: SV.files[ext] }); toast(r.error ? 'error: ' + r.error : 'opened ' + r.path, r.error ? 'err' : 'ok'); }
+async function studioUse(btn) {
+  const jid = Number($('#sUseJob').value); btn.disabled = true;
+  const r = await api(`/api/studio/${encodeURIComponent(SV.vid)}/use`, { job_id: jid }); btn.disabled = false;
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast(`job #${jid} now uses this version` + (r.coverage && r.coverage.after ? ` (JD coverage ${r.coverage.before}% -> ${r.coverage.after}%)` : ''), 'ok'); load();
+}
+async function studioLook(btn) {
+  btn.disabled = true; const r = await api(`/api/studio/${encodeURIComponent(SV.vid)}/default_look`, {}); btn.disabled = false;
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast('saved as your default look', 'ok'); $('#sLook').innerHTML = ''; SROWS = null; SDIRTY = false; loadStudio();
+}
+function studioRefine(btn) {
+  const t = $('#sRefine').value.trim(); if (!t) return toast('say what to change first', 'err');
+  run('studio_build', { request: t, parent: SV.vid, req: studioReq() }, v => { showVersion(v); loadStudio(); toast('refined version built', 'ok'); }, btn);
+}
+/* ---- document viewer (viewer.py): every generated document as paged sheets (Letter / A4, your margins, page breaks
+   as printed), the PDF headless Edge prints, a Word-layout preview, the exact TXT / MD, compare, the formatting panel
+   (live, saved per document; Save as my default look; Reset to template) and section edits. The page sits in a frame
+   sandboxed without scripts; this page lays its blocks out into sheets and handles clicks on its headings ---- */
+let VW = null;  // {ref, opts, text (edited, else null), parts, tab, cmp, data (last /api/view), t (debounce), pdf, rows, ready}
+const VW_DOCS = ['resume.md', 'cover_letter.md', 'form_answers.md', 'interview_prep.md', 'research.md', 'offer.md', 'mock_interview.md'];
+const VW_LETTER = ['letter', 'counter'];
+const VW_LOOK = [['template', 'template'], ['font', 'font'], ['size', 'base size (pt)', 0.5], ['heading_size', 'heading size (x base)', 0.05],
+  ['accent', 'accent'], ['margins', 'margins (in)', 0.05], ['line_spacing', 'line spacing', 0.05], ['para_spacing', 'paragraph spacing (pt)', 1],
+  ['paper', 'page size'], ['pages', 'page limit (0: none)'], ['density', 'density'], ['date_format', 'dates'], ['bullet', 'bullets'], ['contact_layout', 'contact line'], ['heading_case', 'headings']];
+async function openViewer(ref) {
+  if (VW && VW.text !== null && !confirm('Drop your unsaved text edits in the viewer?')) return;
+  VW = { ref, opts: null, text: null, parts: [], tab: 'preview', cmp: null, data: null, t: null, pdf: null, rows: [], ready: false, focus: VW ? VW.focus : document.activeElement };
+  $('#vwFmt').innerHTML = $('#vwEdit').innerHTML = $('#vwText').textContent = $('#vwDiff').textContent = '';
+  $('#vwFrame2').hidden = true;
+  if (!(await vwLoad(false))) { VW = null; return; }
+  $('#vwDl').innerHTML = VW.data.formats.map(f => `<button class="b ghost sm" onclick="vwDownload('${f}',this)" aria-label="Download ${f.toUpperCase()}">${f.toUpperCase()}</button>`).join('');
+  $('#viewer').hidden = false; document.body.classList.add('vwopen');
+  vwTab('preview'); vwSide('fmt'); $('#vwClose').focus();
+}
+function closeViewer() {
+  if (!VW) return;
+  if (VW.text !== null && VW.data.save && !confirm('Close the viewer and drop your unsaved text edits?')) return;
+  if (VW.pdf) URL.revokeObjectURL(VW.pdf);
+  clearTimeout(VW.t);
+  const back = VW.focus; VW = null;
+  $('#viewer').hidden = true; document.body.classList.remove('vwopen'); $('#vwFrame').srcdoc = ''; $('#vwFrame2').srcdoc = ''; $('#vwPdf').removeAttribute('src');
+  if (back && back.isConnected) back.focus();
+}
+async function vwLoad(save) {
+  const body = { ref: VW.ref, save };
+  if (VW.opts) body.opts = VW.opts;
+  if (VW.text !== null) body.text = VW.text;
+  if (VW.cmp) body.compare = VW.cmp;
+  const me = VW, r = await api('/api/view', body);
+  if (VW !== me) return false;
+  if (r.error) { toast('error: ' + r.error, 'err'); return false; }
+  const first = !VW.data;
+  VW.data = r; VW.opts = JSON.parse(JSON.stringify(r.opts || {})); VW.ready = false;
+  $('#vwTitle').textContent = r.title;
+  const ds = $('#vwDoc'); ds.hidden = !r.docs.length;
+  ds.innerHTML = r.docs.map(d => `<option value="${esc(d.name)}" ${VW.ref.name === d.name ? 'selected' : ''}>${esc(d.name)}</option>`).join('');
+  if (first) $('#vwCmp').innerHTML = '<option value="">nothing</option>' + r.compare.map((c, i) => `<option value="${i}">${esc(c.label)}</option>`).join('');
+  if (first) vwBuildFmt();
+  if (VW.text === null) vwBuildEdit();
+  vwGuards(r.guards);
+  $('#vwFrame').srcdoc = r.html;  // its load event lays it out into sheets
+  $('#vwFrame2').hidden = !r.other; $('#vwDiff').textContent = r.other ? `${r.other.title} (right) -> this document: ${r.diff.join(' · ')}` : '';
+  if (r.other) $('#vwFrame2').srcdoc = r.other.html;
+  if (VW.tab === 'pdf') vwPdfLoad(); else if (VW.tab === 'txt' || VW.tab === 'md') vwTextShow();
+  return true;
+}
+function vwSoon(save, rebuild) {  // the live preview: one request after you stop changing things for a moment
+  clearTimeout(VW.t);
+  VW.t = setTimeout(async () => { if (!VW) return; VW.t = null; await vwLoad(save); if (rebuild && VW) vwBuildFmt(); }, 300);
+}
+function vwPaginate(fr, look, limit) {  // the page's blocks into Letter / A4 sheets; returns the page count
+  const d = fr.contentDocument; if (!d || !d.body || !d.body.children.length) return 0;
+  const W = look.paper === 'a4' ? 8.27 : 8.5, H = look.paper === 'a4' ? 11.69 : 11, m = look.margins;
+  const css = d.createElement('style');
+  css.textContent = `@media screen{html{background:#e7e9ee}body{max-width:none;margin:0;padding:12px 0}
+    .sheet{position:relative;width:${W}in;height:${H}in;padding:${m}in;box-sizing:border-box;background:#fff;margin:0 auto 4px;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+    .sheet>.pg{height:100%;overflow:hidden}.pgno{text-align:center;font:11px Arial,sans-serif;color:#555;margin:0 0 14px}
+    .sheet.over{outline:3px solid #c0392b}.pgno.over{color:#c0392b;font-weight:bold}h1,h2{cursor:pointer}a{pointer-events:none}}
+    @media print{.pgno{display:none}.sheet{width:auto;height:auto;padding:0;margin:0;box-shadow:none;outline:0;break-after:page}
+    .sheet:last-of-type{break-after:auto}.sheet>.pg{height:auto;overflow:visible}body{zoom:1!important}}`;
+  d.head.appendChild(css);
+  const nodes = [...d.body.children]; d.body.textContent = '';
+  let pg = null, carried = 0;
+  const sheet = () => { const s = d.createElement('div'); s.className = 'sheet'; pg = d.createElement('div'); pg.className = 'pg'; s.appendChild(pg); d.body.appendChild(s); carried = 0; };
+  const fits = () => pg.scrollHeight <= pg.clientHeight + 1;
+  const place = el => {
+    pg.appendChild(el); if (fits()) return;
+    if (el.tagName === 'UL' && el.children.length > 1) {  // a list breaks between its bullets
+      const rest = d.createElement('ul');
+      while (!fits() && el.children.length > 1) rest.prepend(el.lastElementChild);
+      if (fits()) { sheet(); place(rest); return; }
+      el.append(...rest.children);
+    }
+    if (pg.children.length - carried <= 1) return;  // alone on its sheet: larger than a page, so it is cut off
+    el.remove();
+    const carry = [];  // a heading never ends a sheet: it moves on with what follows it
+    while (pg.children.length > 1 && /^H[1-3]$/.test(pg.lastElementChild.tagName)) carry.unshift(pg.removeChild(pg.lastElementChild));
+    sheet(); carry.forEach(c => pg.appendChild(c)); carried = carry.length; place(el);
+  };
+  sheet(); nodes.forEach(place);
+  const sheets = [...d.querySelectorAll('.sheet')], n = sheets.length;
+  sheets.forEach((s, i) => {
+    const over = limit && i >= limit, no = d.createElement('div');
+    no.className = 'pgno' + (over ? ' over' : ''); no.textContent = `Page ${i + 1} of ${n}` + (over ? ` · over the ${limit}-page limit` : '');
+    s.classList.toggle('over', !!over); s.after(no);
+  });
+  return n;
+}
+function vwFrameLoaded(second) {
+  const fr = $(second ? '#vwFrame2' : '#vwFrame');
+  if (!VW || !VW.data || (second && !VW.data.other)) return;
+  const n = vwPaginate(fr, second ? VW.data.other.look : VW.data.look, second ? 0 : VW.data.limit);
+  if (!second) {
+    VW.pages = n;
+    fr.contentDocument?.querySelectorAll('h1, h2').forEach(h => h.addEventListener('click', () => vwJump(h.tagName === 'H1' ? '' : h.textContent)));
+    vwPagesText(); VW.ready = true;
+  }
+  vwZoomAll();
+}
+$('#vwFrame').addEventListener('load', () => vwFrameLoaded(false));
+$('#vwFrame2').addEventListener('load', () => vwFrameLoaded(true));
+window.addEventListener('resize', () => { if (VW && VW.data) vwZoomAll(); });
+function vwPagesText() {
+  const n = VW.pages || 0, lim = VW.data.limit, over = lim && n > lim;
+  $('#vwPages').innerHTML = `${n} page${n === 1 ? '' : 's'}` + (over ? ` <span class="pill warn" id="vwOver">over the ${lim}-page limit</span>` : '')
+    + (VW.pdfPages ? ` · PDF: ${VW.pdfPages} page${VW.pdfPages === 1 ? '' : 's'}` : '');
+}
+function vwZoomAll() {
+  const v = $('#vwZoom').value;
+  [['#vwFrame', VW.data.look], ['#vwFrame2', VW.data.other && VW.data.other.look]].forEach(([s, look]) => {
+    const fr = $(s), d = fr.contentDocument; if (fr.hidden || !look || !d || !d.body) return;
+    const W = (look.paper === 'a4' ? 8.27 : 8.5) * 96, H = (look.paper === 'a4' ? 11.69 : 11) * 96, fw = (fr.clientWidth - 28) / W;
+    const z = v === 'width' ? fw : v === 'page' ? Math.min(fw, (fr.clientHeight - 48) / H) : 1;
+    d.body.style.zoom = Math.max(0.15, Math.min(z, 3)).toFixed(3);
+  });
+}
+function vwTab(t) {
+  VW.tab = t;
+  $$('#vwTabs button').forEach(b => { const on = b.dataset.t === t; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+  const paged = t === 'preview' || t === 'docx', paper = VW.data.look.paper === 'a4' ? 'A4' : 'Letter';
+  $('.vwpanes').hidden = !paged; $('#vwPdf').hidden = t !== 'pdf'; $('#vwText').hidden = paged || t === 'pdf';
+  $('#vwLabel').textContent = { preview: `Paged as printed: ${paper} sheets with your margins. Click a heading to edit that section.`,
+    docx: 'Word layout preview; Word may differ slightly. Download DOCX for the file itself.', pdf: 'Printing the PDF…',
+    txt: 'The exact text of the TXT download (what an ATS text box gets).', md: 'The exact markdown of the MD download.' }[t];
+  if (t === 'pdf') vwPdfLoad(); else if (!paged) vwTextShow(); else vwZoomAll();
+}
+function vwTextShow() { $('#vwText').textContent = VW.tab === 'md' ? VW.data.md : VW.data.txt; }
+function vwSide(w) {
+  $('#vwFmt').hidden = w !== 'fmt'; $('#vwEdit').hidden = w !== 'edit';
+  $('#vwFmtTab').classList.toggle('on', w === 'fmt'); $('#vwEditTab').classList.toggle('on', w === 'edit');
+  $('#vwFmtTab').setAttribute('aria-pressed', String(w === 'fmt')); $('#vwEditTab').setAttribute('aria-pressed', String(w === 'edit'));
+}
+async function vwFile(fmt, sure) {  // one format's bytes: {blob, name, pages}; null after an error (shown) or a declined confirm
+  const body = { ref: VW.ref, fmt, opts: VW.opts, confirm: !!sure };
+  if (VW.text !== null) body.text = VW.text;
+  const r = await fetch('/api/view/file', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lodestar-Token': TOKEN }, body: JSON.stringify(body) });
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 409 && j.confirm) return confirm(j.error + '\n\nExport anyway?') ? vwFile(fmt, true) : null;
+    toast('error: ' + (j.error || 'HTTP ' + r.status), 'err'); return null;
+  }
+  const name = (/filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '') || [])[1] || 'document.' + fmt;
+  return { blob: await r.blob(), name, pages: Number(r.headers.get('X-Pages')) || null };
+}
+async function vwDownload(fmt, btn) {
+  btn.disabled = true;
+  try {
+    const f = await vwFile(fmt); if (!f) return;
+    const a = document.createElement('a'); a.href = URL.createObjectURL(f.blob); a.download = f.name;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    toast('downloaded ' + f.name, 'ok');
+  } finally { btn.disabled = false; }
+}
+async function vwPdfLoad() {
+  const me = VW, seq = VW.seq = (VW.seq || 0) + 1;
+  $('#vwLabel').textContent = 'Printing the PDF…';
+  const f = await vwFile('pdf', true);
+  if (VW !== me || seq !== VW.seq) return;
+  if (!f) { $('#vwLabel').textContent = 'No PDF (see the message): the Preview tab shows the same page.'; return; }
+  if (VW.pdf) URL.revokeObjectURL(VW.pdf);
+  VW.pdf = URL.createObjectURL(f.blob); VW.pdfPages = f.pages; $('#vwPdf').src = VW.pdf; vwPagesText();
+  $('#vwLabel').textContent = `The PDF as printed${VW.data.engine ? ' by ' + VW.data.engine : ''}: ${f.name}${f.pages ? ', ' + f.pages + ' page' + (f.pages === 1 ? '' : 's') : ''}`;
+}
+function vwPrint() { $('#vwFrame').contentWindow.print(); }  // the sheets, with the page's own @page size and margins
+async function vwOpen(btn) {
+  const body = { ref: VW.ref, fmt: VW.tab === 'pdf' ? 'pdf' : VW.tab === 'docx' ? 'docx' : 'html', opts: VW.opts, confirm: true };
+  if (VW.text !== null) body.text = VW.text;
+  btn.disabled = true; const r = await api('/api/view/open', body); btn.disabled = false;
+  toast(r.error ? 'error: ' + r.error : 'opened ' + r.path, r.error ? 'err' : 'ok');
+}
+function vwCompare(i) { VW.cmp = i === '' ? null : VW.data.compare[Number(i)].ref; vwLoad(false); }
+function vwPickDoc(name) { openViewer({ type: 'job', id: VW.ref.id, name }); }
+function vwGuards(g) {
+  $('#vwGuards').innerHTML = (g.blocked ? `<div class="warnbox">${esc(g.blocked)}</div>` : '')
+    + (g.facts || []).map(x => `<div class="warnbox">not in your profile: ${esc(x)}</div>`).join('') + (g.personal || []).map(x => `<div class="warnbox">${esc(x)}</div>`).join('');
+}
+function vwBuildFmt() {
+  const d = VW.data, c = d.choices, L = d.look;
+  const sel = (k, label) => `<label class="fld">${label}<select id="vw_${k}" onchange="vwSet('${k}',this.value)">${c[k].map(x => `<option value="${esc(x)}" ${String(L[k]) === String(x) ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></label>`;
+  const num = (k, label, step) => `<label class="fld">${label}<input id="vw_${k}" type="number" min="${c.ranges[k][0]}" max="${c.ranges[k][1]}" step="${step}" value="${esc(L[k] ?? '')}" ${k === 'para_spacing' ? 'placeholder="from density"' : ''} oninput="vwNum(this,'${k}')"></label>`;
+  const named = Object.entries(c.accent).find(([, hex]) => hex.toUpperCase() === String(L.accent).toUpperCase());
+  const accent = `<label class="fld">accent<span class="row"><select id="vw_accent" onchange="vwAccent()">${Object.keys(c.accent).filter(k => k !== 'grey').map(k => `<option ${named && named[0] === k ? 'selected' : ''}>${k}</option>`).join('')}<option value="custom" ${named ? '' : 'selected'}>custom</option></select><input type="color" id="vw_accentC" aria-label="Custom accent colour" value="${esc(String(L.accent).toLowerCase())}" oninput="$('#vw_accent').value='custom';vwAccent()"></span></label>`;
+  const lt = VW.opts.letter || {};
+  $('#vwFmt').innerHTML = VW_LOOK.map(([k, label, step]) => k === 'accent' ? accent : step ? num(k, label, step) : sel(k, label)).join('')
+    + (d.sections.length ? '<h4>Sections <span class="muted">(drag, or the arrows; untick to hide)</span></h4><div class="vwrows" id="vwRows"></div>' : '')
+    + (VW_LETTER.includes(d.kind) ? `<h4>Letter</h4><label class="muted"><input type="checkbox" id="vwLDate" ${lt.date === false ? '' : 'checked'} onchange="vwLetter()"> date line</label>
+      <label class="fld">recipient block (blank: as written)<textarea id="vwLRec" rows="3" oninput="vwLetter()">${esc(lt.recipient || '')}</textarea></label>
+      <label class="fld">signature (blank: as written)<textarea id="vwLSig" rows="2" oninput="vwLetter()">${esc(lt.signature || '')}</textarea></label>` : '')
+    + `<div class="row"><button class="b sm" onclick="vwSaveLook(this)">Save as my default look</button><button class="b ghost sm" onclick="vwReset()">Reset to template</button></div>
+      <div class="muted">Changes apply to this document and are kept for it. The default look is where every document starts (studio versions, the master resume, letters, notes).</div>`;
+  vwRowsRender();
+}
+function vwSet(k, v) {
+  if (k === 'template') VW.opts.look = { template: v };  // a template resets this document's other look choices
+  else { VW.opts.look = VW.opts.look || {}; if (v === '' || v == null) delete VW.opts.look[k]; else VW.opts.look[k] = v; }
+  vwSoon(true, k === 'template');
+}
+function vwNum(el, k) {  // half-typed numbers wait; a value in range goes live
+  if (el.value === '' && k === 'para_spacing') return vwSet(k, '');
+  const v = el.validity; if (el.value === '' || v.badInput || v.rangeUnderflow || v.rangeOverflow) return;
+  vwSet(k, Number(el.value));
+}
+function vwAccent() { const s = $('#vw_accent').value; vwSet('accent', s === 'custom' ? $('#vw_accentC').value : s); }
+function vwLetter() { VW.opts.letter = { date: $('#vwLDate').checked, recipient: $('#vwLRec').value, signature: $('#vwLSig').value }; vwSoon(true); }
+function vwRowsRender() {
+  const el = $('#vwRows'); if (!el) return;
+  const all = VW.data.sections, hide = new Set(VW.opts.hide || []), order = (VW.opts.order || []).filter(t => all.includes(t));
+  VW.rows = [...order, ...all.filter(t => !order.includes(t))];
+  el.innerHTML = VW.rows.map((t, i) => `<div class="row" draggable="true" data-i="${i}"><span class="grip" aria-hidden="true">⠿</span><label class="muted grow"><input type="checkbox" ${hide.has(t) ? '' : 'checked'} onchange="vwShowSec(${i},this.checked)"> ${esc(t)}</label>
+    <button class="b ghost sm" aria-label="move ${esc(t)} up" onclick="vwMove(${i},-1)" ${i ? '' : 'disabled'}>↑</button><button class="b ghost sm" aria-label="move ${esc(t)} down" onclick="vwMove(${i},1)" ${i < VW.rows.length - 1 ? '' : 'disabled'}>↓</button></div>`).join('');
+  $$('#vwRows .row').forEach(r => {
+    r.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', r.dataset.i); r.classList.add('drag'); });
+    r.addEventListener('dragend', () => r.classList.remove('drag'));
+    r.addEventListener('dragover', e => e.preventDefault());
+    r.addEventListener('drop', e => { e.preventDefault(); vwDrop(Number(e.dataTransfer.getData('text/plain')), Number(r.dataset.i)); });
+  });
+}
+function vwDrop(from, to) {
+  if (from === to || !(from >= 0) || !(to >= 0)) return;
+  const rows = [...VW.rows], [x] = rows.splice(from, 1); rows.splice(to, 0, x);
+  VW.opts.order = rows; vwRowsRender(); vwSoon(true);
+}
+function vwMove(i, dir) {
+  const j = i + dir; if (j < 0 || j >= VW.rows.length) return;
+  vwDrop(i, j); $$('#vwRows .row')[j]?.querySelector(`button[aria-label$="${dir < 0 ? 'up' : 'down'}"]:not([disabled])`)?.focus();
+}
+function vwShowSec(i, on) { const h = new Set(VW.opts.hide || []); if (on) h.delete(VW.rows[i]); else h.add(VW.rows[i]); VW.opts.hide = [...h]; vwSoon(true); }
+async function vwSaveLook(btn) {
+  const L = VW.data.look, value = Object.fromEntries(VW_LOOK.map(([k]) => [k, L[k]]).filter(([k, v]) => k !== 'pages' && v !== undefined && v !== null && v !== ''));
+  btn.disabled = true; const r = await api('/api/prefs', { key: 'resume_look', value }); btn.disabled = false;
+  if (r.error) return toast('error: ' + r.error, 'err');
+  VW.opts.look = {}; await vwLoad(true); if (VW) vwBuildFmt();
+  toast('saved as your default look: every document starts from it', 'ok');
+}
+async function vwReset() {
+  VW.opts = { look: { template: VW.data.look.template } };
+  await vwLoad(true); if (VW) vwBuildFmt();
+  toast('back to the ' + VW.data.look.template + ' template for this document', 'ok');
+}
+function vwParts(md) {  // the text cut before each '## ' heading: one editor per section (a letter is one part)
+  const out = [[]];
+  md.split('\n').forEach(ln => { if (/^##\s/.test(ln) && out[out.length - 1].some(x => x.trim())) out.push([]); out[out.length - 1].push(ln); });
+  return out.map(p => p.join('\n'));
+}
+function vwBuildEdit() {
+  const d = VW.data, parts = VW.parts = vwParts(d.md);
+  $('#vwEdit').innerHTML = `<div class="muted">${d.save ? 'Save document keeps your edits (the old version goes to history/).' : 'Edits change what you preview and export here; the document itself is not changed.'} Every export re-runs the salary-floor guard${d.kind === 'resume' ? ' and checks changed lines against your profile' : ''}.</div>`
+    + parts.map((p, i) => { const m = /^##\s+(.*)/.exec(p), t = m ? m[1].trim() : VW_LETTER.includes(d.kind) ? 'Letter' : i ? 'Text' : 'Header';
+      return `<div class="vwsec" data-title="${esc(i ? t : '')}"><label class="fld">${esc(t)}<textarea data-i="${i}" rows="${Math.min(14, p.split('\n').length + 1)}" oninput="vwEditPart(${i},this.value)">${esc(p)}</textarea></label></div>`; }).join('')
+    + `<div class="row">${d.save ? '<button class="b sm" onclick="vwSaveText(this)">Save document</button>' : ''}<button class="b ghost sm" onclick="vwDiscard()">Discard edits</button></div>`;
+}
+function vwEditPart(i, v) { VW.parts[i] = v; VW.text = VW.parts.join('\n'); vwSoon(false); }
+function vwJump(title) {  // a click on a heading in the page: its section's editor
+  vwSide('edit');
+  const box = $$('#vwEdit .vwsec').find(s => s.dataset.title.trim().toLowerCase() === title.trim().toLowerCase()) || $('#vwEdit .vwsec');
+  const ta = box && box.querySelector('textarea'); if (ta) { ta.scrollIntoView({ block: 'nearest' }); ta.focus(); }
+}
+async function vwSaveText(btn) {
+  btn.disabled = true; const r = await api('/api/view/save', { ref: VW.ref, text: VW.text ?? VW.data.md }); btn.disabled = false;
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast('saved ' + VW.ref.name + (r.facts.length ? ' (check: ' + r.facts.length + ' line(s) your profile does not support)' : ''), r.facts.length ? '' : 'ok');
+  VW.text = null; await vwLoad(false);
+  if (cur && VW && cur.job.id === VW.ref.id) openJob(cur.job.id);
+}
+function vwDiscard() { VW.text = null; vwLoad(false); }
+function vwKey(e) {  // Esc closes, Tab stays inside (aria-modal)
+  if (e.key === 'Escape') { e.preventDefault(); closeViewer(); return; }
+  if (e.key !== 'Tab') return;
+  const f = $$('#viewer ' + FOCUSABLE.split(', ').join(', #viewer ') + ', #viewer iframe').filter(x => x.offsetParent !== null); if (!f.length) return;
+  const at = document.activeElement, first = f[0], last = f[f.length - 1];
+  if (!$('#viewer').contains(at) || (e.shiftKey && at === first) || (!e.shiftKey && at === last)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+}
+/* entry points: the drawer's documents, the master card, Insights offers (offer notes, the counter draft), the studio */
+function viewDoc() {
+  const n = $('#docTabs button.on')?.textContent;
+  if (!VW_DOCS.includes(n)) return toast('pick a document tab first (resume.md, cover_letter.md, ...)', 'err');
+  openViewer({ type: 'job', id: cur.job.id, name: n });
+}
+function viewJobDoc(name) {
+  if (!(name in cur.docs)) return toast(`no ${name} yet for this job`, 'err');
+  openViewer({ type: 'job', id: cur.job.id, name });
+}
+function viewPacket() {
+  const n = VW_DOCS.find(x => x in cur.docs); if (!n) return toast('no documents yet: tailor a resume or write a cover letter first', 'err');
+  openViewer({ type: 'job', id: cur.job.id, name: n });
+}
+function viewOfferNote() { const id = Number($('#ctrJob').value); if (!id) return toast('record an offer first', 'err'); openViewer({ type: 'job', id, name: 'offer.md' }); }
+let CTR = null;  // the last counter-offer draft (its job and cited figures: the only figures it may name)
+function viewCounter() { if (CTR) openViewer({ type: 'text', kind: 'counter', job: CTR.id, cite: CTR.cite, text: CTR.text, title: 'Counter-offer draft' }); }
+load(); loadProfile(); loadBank(); loadReviews(); loadMaster(); setInterval(load, 60000);

@@ -78,7 +78,8 @@ MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "T
               "source": "TEXT", "posted_at": "TEXT", "deadline": "TEXT", "excitement": "INTEGER", "tags": "TEXT",
               "match_score": "INTEGER", "next_action": "TEXT", "next_action_at": "TEXT",
               "ats_skip": "TEXT",  # JSON list: keywords marked "not mine" for JD coverage (toggle_ats_skip)
-              "ats_feed": "TEXT"}  # 'greenhouse:acme' when tracked from a public job-board feed (code-set, not a user field)
+              "ats_feed": "TEXT",  # 'greenhouse:acme' when tracked from a public job-board feed (code-set, not a user field)
+              "profile_rev": "TEXT"}  # JSON {section: hash} of the profile sections resume.md drew on (profile.used_revs)
 WATCH_MIGRATIONS = {"filters": "TEXT",  # JSON search filters of a saved search (web_monitor.clean_filters)
                     "last_error": "TEXT"}  # what the last run could not read (shown on the watch); NULL after a clean run
 ANSWER_MIGRATIONS = {"star": "TEXT",  # JSON STAR fields when the row is a story (interview.save_story); NULL = a form answer

@@ -44,7 +44,7 @@ Global option: `-p/--provider NAME` picks the AI provider for one command (anthr
 | `lodestar resume review [file]` | Brutal critique of your master profile or any file; the AI is given the lint results. |
 | `lodestar resume lint [file] [--job ID]` | Offline line checks: weak openers, bullets without a number, pronouns, passive hint, repeated verbs, long/short bullets, cliches, missing email/phone/sections, employment gaps (info). Default: the master profile. |
 | `lodestar resume audit file.docx\|.pdf` | File checks a parser trips on (contact in header/footer, tables, text boxes, images, columns, fonts under 10 pt, non-standard headings, scanned PDFs, size, file name) and the plain text a parser sees. |
-| `lodestar resume export ID\|file.md [--pdf] [--style classic\|modern\|compact]` | Markdown (a job id means its `resume.md`) to .docx in the chosen style; `--pdf` converts with Microsoft Word, else LibreOffice, else opens an HTML print page in your browser, and says which it used. |
+| `lodestar resume export ID\|file.md [--pdf] [--style classic\|modern\|compact]` | Markdown (a job id means its `resume.md`) to .docx in the chosen style; `--pdf` prints with headless Edge / Chrome, else Microsoft Word, else LibreOffice, else opens an HTML print page in your browser, and says which it used. |
 | `lodestar resume profile` | Print the master profile path. |
 | `lodestar outreach ID [--person "Name, title"] [--channel linkedin\|email]` | Short note asking for a conversation or referral. |
 | `lodestar email reply ID --intent "..."` | Reply draft to the company. |
@@ -199,7 +199,7 @@ page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, w
 |---|---|
 | `lodestar tools list` | every automated tool with its enabled / auto switches, plus preferences |
 | `lodestar tools enable\|disable\|auto\|manual NAME` | flip a switch |
-| `lodestar tools set KEY VALUE` | preferences: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, weekly_target (applications/week, used by idea crafting), provider, council_providers, council_judge, signature, desktop_notifications (true/false), resume_style (classic, modern, compact), excluded_companies, excluded_title_words, weekly_goals (`goal=number`), activity_weekly_min, update_mode (off / notify / auto), update_every_hours, update_channel (commits / releases), update_origin, update_manifest_url, autopilot (true/false: the monitor loop runs pipeline steps), autopilot_ai_per_cycle, autopilot_ai_per_day, autopilot_jobs_per_cycle, models (`provider=model`; also written by self-healing model selection). Whole numbers are range-checked: followup_days 1-90, auto_track_min_score 0-100, weekly_target 0-200, activity_weekly_min 0-100, update_every_hours 1-720, autopilot_ai_per_cycle and autopilot_ai_per_day 0-500, autopilot_jobs_per_cycle 0-50 |
+| `lodestar tools set KEY VALUE` | preferences: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, weekly_target (applications/week, used by idea crafting), provider, council_providers, council_judge, signature, desktop_notifications (true/false), resume_style (classic, modern, compact), resume_look (`key=value`: the studio's default look, validated like the requirements form), resume_request (what the pipeline's Tailor step asks the studio for), excluded_companies, excluded_title_words, weekly_goals (`goal=number`), activity_weekly_min, update_mode (off / notify / auto), update_every_hours, update_channel (commits / releases), update_origin, update_manifest_url, autopilot (true/false: the monitor loop runs pipeline steps), autopilot_ai_per_cycle, autopilot_ai_per_day, autopilot_jobs_per_cycle, models (`provider=model`; also written by self-healing model selection). Whole numbers are range-checked: followup_days 1-90, auto_track_min_score 0-100, weekly_target 0-200, activity_weekly_min 0-100, update_every_hours 1-720, autopilot_ai_per_cycle and autopilot_ai_per_day 0-500, autopilot_jobs_per_cycle 0-50 |
 | `lodestar inbox [--all] [-v]` | actions waiting for approval (`-v` shows the drafted email / payload) |
 | `lodestar approve ID... [--subject] [--body FILE] [--to]` | execute, optionally editing the email first |
 | `lodestar reject ID... [--reason]` | discard |
@@ -357,16 +357,161 @@ in Diagnostics until a later update succeeds.
 | Command | What it does |
 |---|---|
 | `lodestar profile show` | Contact, skills, spoken languages, role/education/certification/project counts, saved resumes |
-| `lodestar profile import <file> [--no-ai]` | Keep the original (.docx/.pdf/.md/.txt) in `resumes/`, extract its facts into the bank; fills profile.md if it is still the template |
+| `lodestar profile import <file> [--no-ai] [--accept new\|all\|none\|i1,i3] [--take i4=incoming,i7=both] [--no-master]` | Keep the original (.docx/.pdf/.md/.txt) in `resumes/` and read every fact into a review (see "Profile import review" below); without `--accept` nothing reaches the bank |
 | `lodestar profile linkedin <export.zip or profile.pdf>` | LinkedIn "Download your data" archive or "Save to PDF"; only profile facts are kept |
 | `lodestar profile link <url>` | Store your LinkedIn profile URL (rendered resumes, autofill) |
 | `lodestar profile add skills\|languages\|certifications <name> [--detail X]` | Add by hand (category / proficiency / issuer) |
 | `lodestar profile remove skills\|languages\|certifications <name>` | Remove from the bank |
 | `lodestar profile rebuild` | Regenerate profile.md from the bank; the old file goes to `profile-history/` |
+| `lodestar profile review [ID] [--accept ...] [--take ...] [--no-master] [--discard]` | Imports waiting for review: list them, show one, apply it or drop it |
+| `lodestar profile reread` | Read profile.md itself into a review (fixes older one-line education entries, picks up roles typed into it) |
 
 The Profile tab has the same as a "Profile bank" panel: LinkedIn link and import, skill and language chips, saved
 resumes, rebuild. Web API: `GET /api/profile/bank`, `POST /api/profile/bank {op: add|remove|contact, ...}`,
-`POST /api/run/profile_import {name, data: base64, linkedin?, ai?}`, `POST /api/run/profile_rebuild`.
+`POST /api/run/profile_import {name, data: base64, linkedin?, ai?, review?}`, `POST /api/run/profile_rebuild`.
+
+## Profile import review (pass 17)
+
+Every import (resume file, LinkedIn zip or profile PDF, or `lodestar profile reread` of profile.md) is a review first:
+nothing reaches the bank or profile.md until you accept it. The bank now keeps every resume section: contact,
+summary, skills, languages, experience (with location and technologies), education (with honors), certifications
+(issuer, date, expiry, credential id, link), projects, awards, publications, volunteering, patents, speaking, links,
+interests and any other section under its own heading. Each entry keeps the line it was read from (`evidence`).
+
+- **Not stored**: date of birth, age, gender, marital status, children, nationality, religion, ethnicity, ID /
+  passport / social security numbers, health, height and weight, photos, political affiliation, pay lines, a
+  References section and any Preferences span. They are removed before any parser or AI provider sees the text (and
+  from the saved `.txt`); the review names what was dropped (labels and line numbers, never the values).
+- **AI reading is checked**: every company, title, school, degree, name, contact value, link, date, bullet and
+  quote the AI returns must be found in the file; anything else is flagged ("not in file", "bullet 2
+  reworded" with the verbatim line offered) and starts unchecked. Offline reading is verbatim; a guessed title /
+  company split or a lost end date (`2019 -`, never turned into "Present") is flagged too.
+- **Statuses**: new, changed (fills empty fields or adds bullets), conflict (a field differs, or the same company
+  with another title and overlapping dates: keep mine / use incoming / add separately), duplicate (records the
+  source). "Accept all new" takes new and changed items that are not flagged.
+- **profile.md**: accepted facts go into their section (`## Work History` counts as Experience; a missing section is
+  added before Preferences) in one save with one snapshot; "use incoming" re-renders that role's header. Untick
+  "also add to my master profile" (`--no-master`) to keep them in the bank only.
+- Lines the offline reader could not place are listed ("lines not read"). Reviews older than 30 days are dropped.
+- The editor's Save sends the hash of the text it loaded: when an import changed profile.md since, the save is
+  refused (409) instead of erasing the imported lines.
+
+Web API: `POST /api/run/profile_import {..., review: true}` -> `{pending}`, `GET /api/profile/imports`,
+`POST /api/profile/imports/<id>/apply {accept, take?, to_master?}` and `/discard`, `POST /api/run/profile_reread`,
+`GET /api/profile` -> `{text, base}`, `POST /api/profile {text, base?}` (409 when stale),
+`POST /api/profile/bank {op: remove_at, kind, index, label}`.
+
+## Master resume (pass 17)
+
+`~/.lodestar/resumes/master.md/.txt/.docx/.pdf` (or `.html` with no PDF engine) is your master profile as a resume
+(Preferences and "On file" left out), in the `resume_style` preset. It is rebuilt offline (no AI) about 20 seconds
+after profile.md or the bank changes while the app runs, by the monitor loop, and at the end of CLI commands that
+change the profile. `master.json` keeps the fingerprint it was built from, the engine, page count, what changed
+("+2 bullets in Acme Corp", "skills +Rust"), the last 20 builds and warnings (a `## Notes`-style section that may be
+private, a personal-data line). A PDF open in another program stops the build with "close master.pdf" and the old
+files stay. Resumes already tailored for a job are never rewritten; their drawer shows "Profile changed since this
+resume was made (Experience)" only when a section that resume used changed.
+
+| Command | What it does |
+|---|---|
+| `lodestar resume master [--rebuild]` | Status of the master resume (files, engine, pages, last change, warnings), or rebuild it now |
+
+Profile tab: the "Master resume" card (Open PDF, Open DOCX, Show folder, Update now). Web API: `GET /api/studio`
+-> `{master}`, `POST /api/run/master_sync`, `POST /api/master/open {ext}`, `POST /api/open_folder {which: resumes}`;
+`GET /api/state` jobs carry `profile_changed` (section names).
+
+## Resume studio (pass 17)
+
+Describe the resume you want ("one page, lead with leadership, modern with a navy accent, drop the 2015 job") and add
+requirements; the studio makes it from your own facts only. One AI call plans it by citing fact ids from your profile
+(`lodestar resume catalogue`): employers, titles, dates, schools, degrees, certifications, contact details and links
+are copied from the profile by id, never written by the AI, and the AI's own words (headline, summary, bullet text,
+skill-group labels) each pass the no-invention guard: a rewrite that adds a number (dates and years included), a
+skill or tool its own role never mentions (a tool used at another employer does not count), a seniority word, a
+degree, a name the profile never mentions, a link, email or phone, or personal data or pay goes back to your words,
+and the summary is checked sentence by sentence. The one computed number allowed is "N years" from your earliest
+role's start; the version notes say so. A bullet may only cite bullets of its own role. The job description and the
+request are fenced as data; contact values never reach the AI.
+
+The plan is rendered deterministically: the HTML page (also the preview) is printed to PDF by headless Edge
+(else Chrome / Chromium, else Word or LibreOffice from the .docx; with none of them you get the page to print), and
+the .docx, master-format .md (re-importable) and ATS plain .txt come from the same blocks. Every output then passes
+the salary-floor guard (a floor outside Preferences stops the build and writes nothing), lint, the file audit of the
+.docx and .pdf, and the page count: over the limit, the AI gets one "only remove or shorten" call, then the last
+bullet of the longest role (oldest first) and then optional sections are cut, at most 8 renders; still over is a
+warning. Each build is a version in `~/.lodestar/studio/<id>/` (the files + `plan.json`: request, requirements, plan,
+style, every guard event, warnings, pages, engine, JD coverage). A follow-up ("shorter") refines a version with its
+plan; when your profile changed since, it builds fresh from the earlier requests instead (ids are positional). With
+no AI provider, Build without AI uses your profile as written (sections, bullets per role, leave-out and since
+filters, the page limit); a typed request without a provider is refused rather than ignored.
+
+Formatting (the requirements form, CLI flags, the pref `resume_look`): template (classic, modern, compact), font (an
+ATS-safe list: Calibri, Arial, Helvetica, Verdana, Tahoma, Georgia, Cambria, Garamond, Times New Roman, Book Antiqua),
+size 9.5-12 pt, accent (#rrggbb or navy, blue, teal, green, burgundy, gray, black), margins 0.4-1.25 in, line spacing
+1.0-1.5, paper letter / a4, date format, contact line (one line, two lines, centered), headings (upper, title),
+density (compact, normal, airy), page limit (1, 2, none), sections in order with show / hide, bullets per role,
+formats (pdf, docx, md, txt; the page is always kept). A value from the AI that is not allowed is dropped with a
+note; one you typed is refused. Single column, no tables, text boxes or header contact: each format passes the file
+audit. "Make this my default look" saves the version's look as `resume_look`.
+
+| Command | What it does |
+|---|---|
+| `lodestar resume build [--request TEXT] [--job ID \| --jd FILE\|URL\|TEXT] [--from VID] [--pages 0\|1\|2] [--style T] [--font F] [--size PT] [--accent C] [--margins IN] [--spacing X] [--paper letter\|a4] [--date-format F] [--contact L] [--density D] [--sections a,b] [--bullets N] [--drop e3,p2] [--since YEAR] [--on-file] [--format pdf,docx,md,txt] [--no-ai] [--use-for-job]` | Build a studio version and print its files, JD coverage, notes, guard events and warnings; `--from` refines a version; `--use-for-job` makes it the job's resume |
+| `lodestar resume versions` | Studio versions, newest first (pages, AI or offline, job, request; "profile changed since") |
+| `lodestar resume open VID [--format pdf\|docx\|md\|txt\|html]` | Open a version's file |
+| `lodestar resume catalogue` | Your facts with the ids the studio, `--drop` and the plan use |
+
+Studio tab: request box, target (a tracked job or a pasted JD), "Requirements and formatting" (every setting above,
+section order with up / down buttons, leave out entries, include facts from your other resumes), Build and Build
+without AI; the result shows pages, engine, coverage, the AI's notes (as text), every guard event and warning, the ATS
+checks, a sandboxed preview (srcdoc, no scripts), Open PDF / DOCX / TXT / MD / page, Show folder, Make this my default
+look, Use for this job (resume.md through the usual save: history, variant, coverage, the sections used for the
+'profile changed' badge; .docx / .pdf copied in) and Refine; Versions lists every build with Open and Delete. The
+drawer's "Build in Studio" opens the tab aimed at that job. Web API: `GET /api/studio` -> `{master, versions,
+catalogue, engine, ai, look, choices, defaults}`, `GET /api/studio/<id>` (plan.json + html + md + txt),
+`GET /api/studio/<id>/file?name=` (one of its files, for the viewer), `POST /api/run/studio_build {request?, req?,
+id?, jd?, parent?, ai?}`, `POST /api/studio/<id>/open {file}` | `use {job_id}` | `delete` | `default_look`,
+`POST /api/open_folder {which: studio}`. Ids and file names are checked: no path ever comes from the request.
+
+The pipeline's Tailor step (pass 16.5) now runs the studio for the job (pref `resume_request`, your look, one page
+unless the look says otherwise) and Use for this job; it reads stale exactly when the drawer's 'profile changed'
+badge shows (a section that resume used changed), and after a JD change as before.
+
+## Document viewer and formatting (pass 17)
+
+Every generated document opens in one viewer: the master resume (Profile > Master resume > View / format), studio
+versions (Studio > a version > View / format), a job's resume.md, cover_letter.md, form_answers.md, interview_prep.md,
+research.md, offer.md and mock_interview.md (drawer: View / format on a document tab, View next to Interview prep and
+Company research, Admin > View documents for the whole packet), Insights offer notes (View offer notes) and an unsaved
+counter-offer draft (View / format the draft).
+
+- **Preview**: true pages (Letter or A4 sheets with your margins, page breaks as printed, "Page 1 of 2" under each),
+  zoom (fit width / 100% / fit page), the page count, and an over-the-limit marker on every sheet past the page limit.
+  Click a heading to jump to that section's editor.
+- **PDF**: the file headless Edge (or Chrome) prints from the same page, shown in the browser's PDF viewer (fetched
+  with the page token, never a plain link). **DOCX**: the same pages, labelled "Word layout preview; Word may differ
+  slightly". **TXT / MD**: the exact text of those downloads.
+- Print (the sheets), Open in new window (the page or the PDF, written to `~/.lodestar/exports/` and opened), Download
+  PDF / DOCX / TXT / MD / HTML, and Compare with another version side by side (the master, studio versions, a job
+  document's earlier versions from history/), with what changed in words.
+- **Format** panel, live: template, font (ATS-safe list), base size, heading size, accent (named or any colour), margins,
+  line spacing, paragraph spacing, page size, page limit, density, date format, bullet style (disc, circle, square,
+  dash, none), contact line, heading case, sections (drag or the arrows to reorder, untick to hide); for letters the
+  date line, the recipient block and the signature. Changes are kept for that document (`~/.lodestar/viewer.json`);
+  "Save as my default look" writes pref `resume_look` (where every document starts); "Reset to template" drops this
+  document's look. A studio version opens in its own look.
+- **Edit text** panel: one editor per section. Edits change the preview and the exports; Save document keeps them for
+  a job's documents (the old version goes to history/). Every export re-runs the salary-floor guard (resumes, letters,
+  form answers and counter drafts are refused; your private notes are not checked) and, for resumes, checks each
+  changed line against your profile (a new number, tool, title or link asks "Export anyway?" first).
+
+One renderer path: markdown (or a studio version's resolved document) -> render.py blocks -> the HTML page (the preview
+and the PDF), python-docx and plain text. Web API (token-protected like every route): `POST /api/view {ref, opts?, text?,
+save?, compare?}` -> `{title, kind, html, txt, md, look, opts, sections, limit, pages, guards, compare, docs, choices}`,
+`POST /api/view/file {ref, fmt, opts?, text?, confirm?}` (the bytes; `X-Pages` for a PDF; 409 when the fact guard asks),
+`POST /api/view/open {ref, fmt}`, `POST /api/view/save {ref, text}`. A ref is `{type: master}`, `{type: studio, vid}`,
+`{type: job, id, name, hist?}` or `{type: text, kind: letter|counter|notes, text, job?, cite?}`; names are checked
+against the known documents, so no path comes from the request.
 
 ## Tracker board, Today and notifications (pass 15)
 
@@ -441,9 +586,10 @@ would still contain "Salary floor" stops with a message. The whole-document "Tai
 Styles (preference `resume_style`, the drawer's "style" select or Tools > Preferences): `classic` (the previous look,
 Calibri 10.5), `modern` (Arial, navy headings, 0.8" margins), `compact` (Calibri 10, tight spacing, 0.6" margins). All
 are single column with no tables, text boxes, headers or footers, and pass the file audit. A `template.docx` beside
-`profile.md` still overrides them. "Export PDF" (`lodestar resume export ID --pdf`) uses Microsoft Word over COM
-(Windows, 2-minute timeout), else LibreOffice (`soffice --headless`), else writes `resume.html` with print CSS and opens
-it in the system browser (also from the desktop window) to print to PDF. `POST /api/run/bullets {id, base?}`,
+`profile.md` still overrides them. "Export PDF" (`lodestar resume export ID --pdf`) prints with headless Microsoft
+Edge (else Chrome or Chromium; `LODESTAR_BROWSER` points at another Chromium) using a throwaway profile, else
+Microsoft Word over COM (Windows, 2-minute timeout), else LibreOffice (`soffice --headless`), else writes
+`resume.html` with print CSS and opens it in the system browser (also from the desktop window) to print to PDF. `POST /api/run/bullets {id, base?}`,
 `/api/run/bullets_apply {id, accept: [ids]}` and `/api/run/export_pdf {id}`; `GET /api/state` includes `bases` (saved
 resumes) and `pref_choices`.
 
