@@ -135,7 +135,25 @@ Env vars and a `.env` file override the vault for any setting.
 
 Module map (28 modules, what each does): [docs/RUNDOWN.md, section 1](docs/RUNDOWN.md#1-what-it-is-made-of).
 
-Tests (offline): `python -m unittest discover -s tests -v`
+Tests (offline, 476): `python -m unittest discover -s tests -v`. Which test covers which feature: [docs/TESTS.md](docs/TESTS.md).
+
+### Browser tests
+
+End-to-end tests (120) drive the real UI in a browser (Playwright). Each test class gets a temp data folder with fictional
+seeded data, the real server on a free 127.0.0.1 port, and fakes for every outside service (AI, mail, OAuth, job sites,
+keyring): no network, and `~/.lodestar` is never touched.
+
+```sh
+pip install -e .[e2e]
+python -m unittest discover -s tests/e2e -p "e2e_*.py"
+```
+
+- Uses the installed Microsoft Edge by default; `LODESTAR_E2E_BROWSER=chromium` uses Playwright's Chromium
+  (`python -m playwright install chromium` first; CI does this).
+- `LODESTAR_E2E_HEADED=1` shows the browser so you can watch (slowed to 250 ms per step; `LODESTAR_E2E_SLOWMO=ms`).
+- Any console error or uncaught page error fails the test. A failing test leaves a screenshot and the page HTML in
+  `tests/e2e/_artifacts/` (gitignored).
+- Without Playwright or a browser the suite skips. Server-side coverage: `coverage run -m unittest discover -s tests/e2e -p "e2e_*.py"`.
 
 ## Run it on a schedule (Windows)
 

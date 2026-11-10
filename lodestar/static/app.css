@@ -84,6 +84,7 @@ a { color: var(--acc); text-decoration: none; }
 .list .chips { font-size: 11px; margin-top: 3px; display: flex; gap: 4px 6px; flex-wrap: wrap; }
 .col.drop { outline: 2px dashed var(--acc); outline-offset: -2px; }
 .today .row { margin: 0; gap: 6px; }
+#jobTable, #insWeeksTable, #insFunnel, #offerTable, #acOut { overflow-x: auto; }  /* a narrow window scrolls the table, not the page */
 table.jobs td { font-size: 12px; } table.jobs tr.late td:nth-child(2)::after { content: " quiet"; color: var(--warn); font-size: 10px; }
 table.jobs .th { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; padding: 0; }
 label.fld { display: flex; flex-direction: column; gap: 2px; color: var(--dim); font-size: 11px; }

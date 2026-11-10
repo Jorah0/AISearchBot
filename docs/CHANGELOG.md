@@ -1,5 +1,35 @@
 # Changelog (development passes, newest first)
 
+## Pass 16.3 (2026-11-09): browser test suite and full test list
+
+**Browser tests**
+- 120 tests now drive the real app in a browser: every tab, the Board, Today, the job drawer, Search, Monitor, Inbox,
+  Contacts, Insights, Profile, Answers and stories, Ideas, Coach, Setup and Tools. Each runs against its own throwaway
+  data folder with made-up data, and every outside service is faked: no AI, mail, sign-in or job-site call leaves the
+  machine, and your own `~/.lodestar` is never touched.
+- Run them with `pip install -e .[e2e]`, then `python -m unittest discover -s tests/e2e -p "e2e_*.py"`. They use the
+  Microsoft Edge you already have; CI runs them in Chromium. Without Playwright they are skipped, not failed.
+- Any console error fails a test, and a failing test leaves a screenshot and the page in `tests/e2e/_artifacts/`.
+
+**Full test list**
+- [TESTS.md](TESTS.md) lists every feature with the tests that cover it, by name. A check fails when a row names a
+  test that does not exist, when a test is listed nowhere, or when a row disappears. Combined coverage of both suites
+  is in TESTS.md too.
+
+**Fixed (found by the browser tests)**
+- Insights tables and the Board's table view no longer push the whole window sideways on a narrow window; the table
+  scrolls on its own.
+- A bad preference value now names the preference in the error instead of `***`.
+- A blank application-form question is refused before any AI call, and no empty "save answer" item reaches the Inbox.
+- When the mail server drops the connection during Connect & test, Setup now says so ("test again in a minute")
+  instead of telling you your app password was refused.
+
+**Test reliability**
+- Board drags now always move the card you meant (a long column could make the browser pick up a different card).
+- Tests wait for each tab's own data to load, which fixed a failure that only showed in Chromium.
+- Checks that could not fail now can: the token and Host protection, the 1280px layout, STARTTLS on custom mail
+  servers, "an AI call happened", and "an empty chat message sends nothing".
+
 ## Pass 16.2 (2026-11-07): connections - keys, email sign-in with 2-step verification, attachments
 
 How to link everything, step by step: [CONNECT.md](CONNECT.md).

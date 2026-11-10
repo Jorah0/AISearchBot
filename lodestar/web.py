@@ -948,7 +948,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "not found"}, 404)
         except BaseException as e:  # a pasted secret never comes back in an error string
             q = p if isinstance(p, dict) else {}
-            self._json({"error": connections.redact(str(e), *(str(q.get(k) or "") for k in ("key", "password", "value", "client_secret")))}, 400)
+            # "key" is a secret only on /api/keys/ (an AI key); /api/prefs uses it for the preference name, which an
+            # error message must still show
+            names = ("password", "value", "client_secret") + (("key",) if path.startswith("/api/keys/") else ())
+            self._json({"error": connections.redact(str(e), *(str(q.get(k) or "") for k in names))}, 400)
 
 
 def start_server(port: int = 8765) -> ThreadingHTTPServer:

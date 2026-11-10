@@ -220,6 +220,12 @@ class Hints(Mail):
         self.assertIn("port or mode", mailconn.hint(ssl.SSLError(1, "WRONG_VERSION_NUMBER"), c))
         self.assertIn("certificate", mailconn.hint(ssl.SSLCertVerificationError(1, "hostname mismatch"), c))
 
+    def test_a_dropped_connection_is_not_a_refused_password(self):  # IMAP4.abort is an IMAP4.error (found by the E2E suite)
+        for preset in ("gmail", "fastmail", "custom"):
+            h = mailconn.hint(imaplib.IMAP4.abort("socket error: EOF"), util.mail_settings() | {"preset": preset})
+            self.assertIn("dropped the connection", h)
+            self.assertNotIn("refused", h)
+
     def test_a_refused_login_reports_the_hint_and_hides_the_password(self):
         mailconn.connect("yahoo", "me@example.com", PW)
         self.imap_fail = imaplib.IMAP4.error(f"AUTHENTICATIONFAILED for {PW}")

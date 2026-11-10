@@ -19,6 +19,8 @@ def _sig() -> str:
 # ----------------------------------------------------------------------------- answer bank
 def answer(job, question: str, provider: str | None = None) -> dict:
     """Draft a form answer from the profile + prior answers; propose saving it (tool: answers)."""
+    if not str(question or "").strip():  # no AI call, and no "save answer" proposal with an empty question
+        raise SystemExit("type the application-form question first")
     prior = db.find_answers(question, limit=6, employer=True)  # never a private answer or one naming the floor
     seen_q = {a["question"] for a in prior}
     prior = prior + [a for a in db.list_answers(employer=True) if a["question"] not in seen_q][:10]  # the model picks what fits

@@ -237,8 +237,8 @@ def hint(e: BaseException, c: dict) -> str:
         if isinstance(e, (imaplib.IMAP4.error, smtplib.SMTPAuthenticationError)) and not isinstance(e, imaplib.IMAP4.abort):
             who = "Microsoft" if (vault.get("OAUTH_PROVIDER") or "") == "microsoft" else "Google"
             return f"Sign-in was refused with your {who} token: sign in again (Setup > Connect email > Sign in with {who})."
-        if isinstance(e, imaplib.IMAP4.abort):
-            return "The mail server dropped the connection: test again in a minute."
+    if isinstance(e, imaplib.IMAP4.abort):  # also an IMAP4.error, but a dropped connection, never a refused password
+        return "The mail server dropped the connection: test again in a minute."
     if isinstance(e, socket.gaierror):
         return f"Could not find the server: check the host names ({c['imap_host']}, {c['smtp_host']}) and your internet connection."
     if isinstance(e, (TimeoutError, socket.timeout)):

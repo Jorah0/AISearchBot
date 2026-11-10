@@ -117,6 +117,8 @@ def _context(kind: str, context: dict):
         c["mail"], job = dict(m), m["job_id"]
     if kind == "reply" and not c.get("mail") and not c.get("draft"):
         raise SystemExit("a reply needs the mail it answers (mail_id)")
+    if kind == "answer" and not str(c.get("question") or "").strip():
+        raise SystemExit("type the application-form question first")
     if kind == "referral":
         from .contacts import get
 

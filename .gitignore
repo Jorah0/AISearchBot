@@ -35,3 +35,7 @@ graphify-out/
 Thumbs.db
 *.spec
 .playwright-mcp/
+tests/e2e/_artifacts/
+.coverage
+.coverage.*
+htmlcov/
