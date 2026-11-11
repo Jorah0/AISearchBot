@@ -284,7 +284,8 @@ class Drawer(E2ETestCase):
         jid = self.ids["interview"]
         self.open_job(jid)
         n = len(interview.rounds(jid))
-        self.assertIn("Question bank: 2 question(s)", self.page.text_content("#drawer"))
+        self.idle()  # the practice set (Interview readiness > Questions) loads after the drawer opens
+        self.assertIn("You logged 2", self.page.text_content("#jQcounts"))
         self.page.click("#rForm summary")
         self.page.select_option("#r_kind", "onsite")
         self.page.fill("#r_at", "next tuesday-ish")  # bad: refused, nothing logged

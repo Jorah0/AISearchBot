@@ -197,6 +197,7 @@ def _docx_checks(data: bytes, add) -> None:
 
 
 def _odd_name(name: str) -> str | None:
+    name = Path(name).name  # the CLI passes a full path: its folders are not the file's name
     stem = Path(name).stem
     if len(name) > 60:
         return "a very long name"

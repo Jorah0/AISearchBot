@@ -36,12 +36,26 @@ def agenda(now: datetime | None = None) -> dict:
         "deadlines": sorted(deadlines, key=lambda i: i["when"]),
         # a job whose cadence is exhausted (ghosted close-out already offered) stops reappearing here
         "followups": [item(j, when=j["updated_at"][:10]) for j in db.needs_followup() if followup_step(j) != "done"],
-        "interviews": [{"id": i["job_id"], "company": i["company"], "title": i["title"], "when": f"{i['when']:%a %Y-%m-%d %H:%M}"}
-                       for i in upcoming_interviews(2)],
+        "interviews": [{"id": i["job_id"], "company": i["company"], "title": i["title"], "when": f"{i['when']:%a %Y-%m-%d %H:%M}",
+                        **_ready(i["job_id"])} for i in upcoming_interviews(2)],
         "contacts": [{"id": c["id"], "name": c["name"], "company": c["company"] or "", "when": c["next_touch"]} for c in due(today)],
         "emails": _suggested(now),
         "pending": len(db.list_pending("pending")),
     }
+
+
+def _ready(job_id: int) -> dict:
+    """{readiness: {score, band, tip}} for a Today interview item (tip: the top 'raise it' action); {} on any fault."""
+    from . import readiness
+
+    try:
+        r = readiness.readiness(db.get_job(job_id))
+    except (Exception, SystemExit) as e:
+        log.get("loop").warning("readiness #%s failed: %s", job_id, e)
+        return {}
+    top = r["raise"][0] if r["raise"] else None
+    return {"readiness": {"score": r["score"], "band": r["band"],
+                          "tip": f"{top['text']}, +{top['gain']}" if top else None, "action": top and top["action"]}}
 
 
 def _suggested(now: datetime) -> list[dict]:
@@ -186,6 +200,9 @@ def cycle(a) -> None:
     _step("posting check", web_monitor.recheck_postings)  # weekly: saved feed jobs whose posting vanished -> Inbox
     _step("follow-ups", lambda: _followups(a))
     _step("interview reminders", _reminders)
+    from . import readiness
+
+    _step("readiness", readiness.snapshot_due)  # one snapshot per round, from 2 h before to 24 h after it
     from . import pipeline
 
     _step("pipeline", lambda: pipeline.advance(a.provider))  # step states always; Autopilot runs only when switched on

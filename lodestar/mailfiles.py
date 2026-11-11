@@ -105,7 +105,7 @@ def _screen(p: Path, d: Path) -> None:
 
     texts = []
     if p.parent == d and p.stem in ("resume", "cover_letter") and (d / f"{p.stem}.md").is_file():
-        texts.append((d / f"{p.stem}.md").read_text(encoding="utf-8", errors="replace"))
+        texts.append((d / f"{p.stem}.md").read_text(encoding="utf-8-sig", errors="replace"))
     if p.suffix.lower() == ".docx":
         texts.append(_docx_text(p))
     if any(leaks(t) for t in texts):

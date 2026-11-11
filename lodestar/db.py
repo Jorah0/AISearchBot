@@ -71,6 +71,19 @@ CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY, key TEXT NOT NULL, 
 CREATE UNIQUE INDEX IF NOT EXISTS questions_open ON questions(key) WHERE status = 'open';
 CREATE TABLE IF NOT EXISTS question_waiters(qid INTEGER NOT NULL, job_id INTEGER NOT NULL, stage TEXT NOT NULL,
   PRIMARY KEY(qid, job_id, stage));
+-- interview practice sources per company (norm_company): the website you typed, text you pasted, public pages read
+CREATE TABLE IF NOT EXISTS company_sources(id INTEGER PRIMARY KEY, company TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('site','pasted','page')),
+  url TEXT,              -- site: the website; page: the fetched URL; pasted: where you read it (stored, never fetched)
+  label TEXT,            -- cleaned when stored (interview.clean_label): your note, or the page <title>
+  text TEXT,             -- pasted text (<= 20 000 chars) | page text (<= 8 000 chars)
+  status TEXT,           -- page: ok | robots (disallowed) | checked (the run marker) | error: ...
+  fetched_at TEXT, created_at TEXT DEFAULT (datetime('now')));
+CREATE INDEX IF NOT EXISTS company_sources_co ON company_sources(company);
+CREATE TABLE IF NOT EXISTS qsets(job_id INTEGER PRIMARY KEY, company TEXT, fp TEXT, built_at TEXT, ai_at TEXT,
+  data TEXT);            -- JSON: the stored AI part of the job's practice question set (interview.question_set)
+CREATE TABLE IF NOT EXISTS readiness_log(round_id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, at TEXT, score INTEGER,
+  parts TEXT, rv INTEGER, ts TEXT DEFAULT (datetime('now','localtime')));  -- readiness when a round happened (local ts)
 """
 MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "TEXT",  # ponytail: additive only
               # tracker fields (pass 15); every user write goes through set_fields
@@ -442,7 +455,7 @@ def delete_job(job_id: int) -> None:
     con().execute("DELETE FROM mock_sessions WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM offers WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM mail WHERE job_id=?", (job_id,))  # a reply to its sent mail then reads as unmatched
-    for t in ("pipeline", "pipeline_runs", "question_waiters"):
+    for t in ("pipeline", "pipeline_runs", "question_waiters", "qsets", "readiness_log"):  # company_sources stay
         con().execute(f"DELETE FROM {t} WHERE job_id=?", (job_id,))
     con().execute("UPDATE questions SET status='dismissed', answer='no longer needed', answered_at=? WHERE status='open' "
                   "AND NOT EXISTS (SELECT 1 FROM question_waiters w WHERE w.qid=questions.id)", (_now(),))

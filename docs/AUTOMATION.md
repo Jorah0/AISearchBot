@@ -152,7 +152,7 @@ Each tracked job moves through 13 steps (`pipeline.py`), shown in the job drawer
 | Confirmation | the application-received mail (confirmation number) | email step | observed |
 | Follow-up | the loop's follow-up cadence | followup | loop step |
 | Schedule | interview rounds (mail and the Rounds group) | email step | observed |
-| Interview prep | prep pack once an interview is booked | interview_prep | yes |
+| Interview prep | builds the job's sourced practice set (the company's own pages on their 30-day cache, one AI call within the run's budget), then the prep pack once an interview is booked | interview_prep | yes |
 | Thank-you | drafted after a round; always waits in the Inbox | thank_you | yes (draft only) |
 | Offer | offer evaluation | none | no |
 | Close | accepted, rejected or withdrawn | none | no |
@@ -191,6 +191,23 @@ run log, `lodestar pipeline log`), never to the job timeline, so the follow-up c
 document (fit check, research, tailored resume, cover letter, interview prep) does not move it either, by a click or
 a step. The Confirmation step counts only trusted confirmation mail, and only its reference is quoted in a follow-up.
 The Follow-up step says no follow-up is needed while an interview is booked.
+
+**Interview prep and the practice set.** The prep step first builds the job's practice set: the questions you logged
+for the company, the ones in your pasted notes, questions derived from the company's own public hiring and values
+pages, the job description's and the general bank. The pages come from the company's website: the job URL's host when
+it is registered under the company's name (never a job board, ATS or ATS customer subdomain), or the one you typed. Without one, the step asks "What is
+<company>'s website?" (a non-blocking question, shared by every job at that company; the step runs without the pages
+meanwhile). Pages are read with robots.txt respected, at most 12 requests per company (robots.txt and every redirect count; a
+redirect is followed only on the company's own site after its robots.txt), and reused for 30 days: under
+Autopilot a prep run never forces a re-read (only Refresh in the drawer or `lodestar interview questions ID --refresh`
+does). LinkedIn, Indeed, Glassdoor, ZipRecruiter, Blind and SimplyHired are never fetched, on any path or redirect,
+and a link you paste with your notes is stored as a citation, never opened. One AI call turns the material into
+questions; the code checks each quote against its source and sets the tag (the AI cannot claim a question is one you
+logged), and questions the AI says a company is "reported" to ask are off unless you turn on the `reported_questions`
+preference. A new paste, a newly logged question or a page refresh that changed the pages' text makes the prep step read
+stale (re-reading unchanged pages does not, and neither does the step's own first read); it is never redone on its own. Readiness (the drawer's 0-100 preparation score and its chance band) is computed live for you: it is never
+put into a step's output, an employer-facing draft, or an AI prompt (except "Explain my readiness", which sends the
+five preparation parts and never your fit score).
 
 ## Contact capture
 

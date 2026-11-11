@@ -257,7 +257,7 @@ class E2ETestCase(unittest.TestCase):
 
         cls._swap(ai.chat, chat)  # ai.ask, ask_json and council all go through chat
 
-        def fetch(url, timeout=25, headers=None, max_bytes=None):
+        def fetch(url, timeout=25, headers=None, max_bytes=None, follow=True):  # canned pages never redirect
             cls.urls.append(url)
             hit = next((v for k, v in FETCH.items() if k in url), None)
             return POSTING if hit is None else json.dumps(hit)

@@ -75,6 +75,7 @@ PREFS = {
     "autopilot_ai_per_cycle": 6,
     "autopilot_ai_per_day": 30,
     "autopilot_jobs_per_cycle": 3,
+    "reported_questions": False,  # practice questions the AI says a company is reported to ask (unverified)
 }
 PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "name": ("Your name", "signs drafted emails when no signature is set"),
@@ -105,6 +106,8 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "autopilot_ai_per_cycle": ("Autopilot AI calls per cycle", "at most this many AI calls in one monitor cycle (0-500)"),
     "autopilot_ai_per_day": ("Autopilot AI calls per day", "at most this many AI calls in any 24 hours, approved runs included (0-500)"),
     "autopilot_jobs_per_cycle": ("Autopilot jobs per cycle", "at most this many jobs advanced in one monitor cycle (0-50)"),
+    "reported_questions": ("Reported interview questions", "also practise questions the AI says a company is reported to "
+                           "ask (labelled 'reported, unverified'; off: only your logs, your pastes, the company's pages, the JD)"),
 }
 CHOICES = {"resume_style": ("classic", "modern", "compact"),  # prefs limited to a fixed set of values
            "provider": ("", *PROVIDERS),  # "" = the first configured one

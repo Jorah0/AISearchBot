@@ -171,9 +171,10 @@
 <section id="coach">
   <h2>Coach</h2>
   <div class="panel">
-    <div class="row" style="margin-top:0"><select id="cMode" aria-label="Coach mode" onchange="resetChat()"><option value="coach">Career coach</option><option value="mock">Mock interview for…</option></select><select id="cJob" aria-label="Job for the mock interview" onchange="resetChat()" style="display:none"></select><span class="muted" id="cHint">Coach sees your profile and tracker. Mock interview asks one question at a time; type "done" for a scored debrief.</span></div>
+    <div class="row" style="margin-top:0"><select id="cMode" aria-label="Coach mode" onchange="resetChat()"><option value="coach">Career coach</option><option value="mock">Mock interview for…</option></select><select id="cJob" aria-label="Job for the mock interview" onchange="resetChat()" style="display:none"></select><select id="cFocus" aria-label="Focus of the mock interview" style="display:none"><option value="">any focus</option></select><span class="muted" id="cHint">Coach sees your profile and tracker. Mock interview asks one question at a time, picked by Lodestar from the company's sourced questions (where each came from is shown under it); type "done" for a scored debrief.</span></div>
     <div class="chat" id="chat"><div class="msg ai">Ask me anything about your search. I can see your profile and tracker.</div></div>
     <div class="mock-sum muted" id="mockSum" style="display:none"></div>
+    <div class="mock-sum muted" id="mockReady" style="display:none"></div>
     <div class="row"><input id="cIn" class="grow" placeholder="e.g. Which of my applications should I follow up on first?" onkeydown="if(event.key==='Enter')sendChat()"><button class="b ghost" id="cMic" onclick="dictate()" aria-label="Dictate" title="Dictate (browser speech recognition)">🎤</button><button class="b" id="cGo" onclick="sendChat()">Send</button><label class="muted" id="cSpeakL" style="display:none"><input type="checkbox" id="cSpeak" onchange="if(!this.checked)window.speechSynthesis?.cancel()"> speak replies</label><label class="muted"><input type="checkbox" id="cCouncil"> council (all providers)</label></div></div>
   <div class="panel" id="mockTrend" style="display:none"><h3>Mock interview trend</h3><div id="trendSvg"></div>
     <p class="muted">STAR average (0-2) per scored session, oldest left. Each answer in a mock interview gets a card: the STAR rubric needs an AI provider; word count, estimated speaking time (~140 words a minute against a 60-120 second target), repeated words and the posting's keywords you used are computed offline. Words per minute appear only when you dictate the answer.</p></div>
@@ -191,6 +192,9 @@
     <div class="panel"><h3>Response rate by source</h3><div id="insSource"></div></div>
     <div class="panel"><h3>Does tailoring pay off? Response rate by match score</h3><div id="insBand"></div></div></div>
   <div class="panel"><h3>Funnel and resume variants</h3><div id="insFunnel"></div></div>
+  <div class="panel" id="readyPanel"><h3>Readiness vs results</h3>
+    <p class="muted">Your interview rounds with a readiness snapshot (taken from 2 hours before to 24 hours after each round while Lodestar runs) and a result, counted per readiness band. Plain counts from your own interviews: not a probability, and they never move the bands.</p>
+    <div id="insReady"></div></div>
   <div class="panel" id="offerPanel"><h3>Offers</h3>
     <p class="muted">Live offers (status offer or accepted) side by side. Bonus, match and equity are estimates (target bonus, a match you contribute enough to get, equity at your own estimate with no growth, vesting monthly after the cliff). The salary-floor row is private: it is shown here only and never goes into anything sent to an employer.</p>
     <div id="offerTable"></div>

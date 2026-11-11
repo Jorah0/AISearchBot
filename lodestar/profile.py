@@ -139,7 +139,7 @@ def is_template(text: str) -> bool:
 
 
 def master_text() -> str:
-    return PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else ""
+    return PROFILE.read_text(encoding="utf-8-sig") if PROFILE.is_file() else ""
 
 
 def snapshot_master(keep: int = 30) -> Path | None:
@@ -541,7 +541,9 @@ MASTER_ROLE_RE = re.compile(r"^(.+?)\s+(?:-|–|—|at|@)\s+(.+?)(?:\s*\(([^()]*
 def _role_header(header: str, kind: str) -> dict:
     """'### Title - Company (start - end)' (the master format) or any other role line."""
     m = MASTER_ROLE_RE.match(header)
-    if not m or not (m[3] is None or DATE_RE.search(m[3]) or CURRENT_RE.search(m[3])):
+    # the master format keeps its dates in parentheses: 'Title | Acme | Jan 2021 - Present' is another layout, whose
+    # date dash must not split title from company (the company read as 'Present')
+    if not m or not (m[3] is None or DATE_RE.search(m[3]) or CURRENT_RE.search(m[3])) or (m[3] is None and DATE_RE.search(header)):
         return _role(header, kind)
     start = end = ""
     if m[3]:

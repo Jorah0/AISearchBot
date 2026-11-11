@@ -29,7 +29,7 @@ STUCK_MINUTES = 30  # a 'running' row this old: Lodestar closed while it ran (re
 CLICK_BUDGET = 8  # AI calls one clicked run may spend (the answers stage drafts at most this many labels)
 CLOSED = ("accepted", "rejected", "withdrawn")
 LIVE = ("saved", "applied", "screening", "interview", "offer")
-ROOTS = ("jd", "profile", "stories")  # fingerprints that are not stages
+ROOTS = ("jd", "profile", "stories", "questions")  # fingerprints that are not stages (questions: interview.qset_fp)
 # the two intake steps before a job exists: global loop steps, documented here and not registered per job
 GLOBAL = {"discover": "saved searches, page watches and company boards (loop step 'watches', Search tab)",
           "shortlist": "auto_track proposes strong fits for the Board (Inbox add_job), or you track a listing"}
@@ -133,6 +133,16 @@ def _shared_roots() -> dict:
         prof = "?"
     rows = db.con().execute("SELECT id, updated_at FROM answers WHERE star IS NOT NULL ORDER BY id").fetchall()
     return {"profile": prof, "stories": _h(json.dumps([[r["id"], r["updated_at"]] for r in rows])), "_revs": revs}
+
+
+def _questions_fp(job) -> str:
+    """The practice-question sources of the job (logged questions, pastes, company pages, JD): '?' when unreadable."""
+    from . import interview
+
+    try:
+        return interview.qset_fp(job)
+    except (Exception, SystemExit):
+        return "?"
 
 
 def _load(v, default):
@@ -363,6 +373,7 @@ class Ctx:
         self.partial = partial or {}
         self.budget, self.spent, self.origin, self.provider = budget, 0, origin, provider
         self.waiting, self.ai_ok = False, None
+        self.read_now = {}  # root -> fingerprint, for a root this stage itself moved (prep reading the company pages)
 
     def out(self, name) -> dict:
         return (self.rows.get(name) or {}).get("output") or {}
@@ -618,16 +629,29 @@ def _schedule_wait(job, ctx):
 
 
 def _prep(job, ctx):
-    from . import interview
+    """The sourced practice set first (company pages on their 30-day cache, never a forced refetch; one AI call when the
+    budget has room for it and the pack), then the prep pack whose prompt carries the set with its source tags.
+    No readiness in the output: ctx.out('prep') is readable by the thank-you stage, which writes employer mail."""
+    from . import extras, interview
+    from .web_monitor import norm_company
 
     for c in interview.story_prompt(job)["missing"][:2]:  # optional: prep runs anyway, a story added later stales it
         ctx.ask(f"A STAR story for {c}: what happened, what you did, the result", "story", blocking=False,
                 why=f"the posting stresses {c} and no story of yours is tagged with it", apply_to=f"story:{c}")
+    if not extras._site_for(job):  # optional too: without it the set has no company-page questions
+        ctx.ask(f"What is {job['company']}'s website? Lodestar reads its public hiring and values pages (robots.txt "
+                "respected).", "text", blocking=False, why="practice questions from the company's own pages",
+                apply_to=f"company:{norm_company(job['company'])}:site")
+    build = ctx.budget - ctx.spent >= 2 and _ai_ok(ctx)
+    qs = interview.question_set(job, build=build, provider=ctx.provider)
+    ctx.read_now["questions"] = qs["fp"]  # the sources the set was built from, after this run read the company pages
+    ctx.spent += int(build)
     interview.prep(job, provider=ctx.provider)
     ctx.spent += 1
     r = db.con().execute("SELECT id FROM interviews WHERE job_id=? AND at >= ? ORDER BY at LIMIT 1",
                          (job["id"], f"{datetime.now():%Y-%m-%d}")).fetchone()
-    return {"round_id": r["id"] if r else None}
+    return {"round_id": r["id"] if r else None,
+            "qset": {"n": len(qs["questions"]), "by_source": qs["by_source"], "fp": qs["fp"]}}
 
 
 def _utc(at: str) -> str:
@@ -728,7 +752,7 @@ for _st in (
     Stage("schedule", "Schedule", ("screening", "interview"), needs=("apply",), observe=_schedule_observe,
           wait=_schedule_wait),
     Stage("prep", "Interview prep", ("interview",), needs=("research",),
-          reads=("research", "tailor", "schedule", "score", "stories"), tool="interview_prep", ai=1, run=_prep,
+          reads=("research", "tailor", "schedule", "score", "stories", "questions"), tool="interview_prep", ai=2, run=_prep,
           observe=_doc("interview_prep.md"), blocked=_need_ai),
     Stage("thanks", "Thank-you", ("interview",), needs=("schedule",), tool="thank_you", ai=1,  # done per round: no reads
           run=_thanks, observe=_thanks_observe, na=_thanks_na, wait=_thanks_wait),
@@ -769,7 +793,7 @@ def _relevance(job, s: Stage) -> tuple | None:
 def _status(job_id: int, save: bool = True, shared: dict | None = None) -> tuple[list[dict], dict]:
     job = db.get_job(job_id)
     rows = _rows(job_id)
-    cur = {**(shared or _shared_roots()), "jd": _h(job["jd"] or "")}
+    cur = {**(shared or _shared_roots()), "jd": _h(job["jd"] or ""), "questions": _questions_fp(job)}
     asks = {r["stage"]: r for r in db.con().execute(
         "SELECT w.stage, q.id, q.text FROM question_waiters w JOIN questions q ON q.id=w.qid WHERE w.job_id=? AND "
         "q.status='open' AND q.blocking=1 ORDER BY q.id DESC", (job_id,)).fetchall()}
@@ -822,7 +846,8 @@ def _derive(job, s, row, is_done, running, cur, by, asks, run_tos, ctx, cutoff) 
             was, now = (row.get("inputs") or {}).get(r), cur.get(r)
             if was is not None and now and was != now and "?" not in (was, now):
                 what = REGISTRY[r].label.lower() if r in REGISTRY else {"jd": "the job description", "profile": "your profile",
-                                                                        "stories": "your stories"}[r]
+                                                                        "stories": "your stories",
+                                                                        "questions": "the question sources"}[r]
                 return "stale", None, f"{what} changed since this was built (from {r} {was[:6] or 'none'})"
         if new := _new_labels(row.get("output") or {}) if s.name == "answers" else []:
             return "ready", None, f"{len(new)} form question(s) not answered yet"
@@ -1008,6 +1033,7 @@ def run(job_id: int, stage: str, origin: str = "user", provider: str | None = No
             if "fp" not in out and s.observe:
                 out = {**(s.observe(db.get_job(job_id), ctx) or {}), **out}
             outcome, detail = "done", out.get("file") or "done"
+            inputs.update({k: v for k, v in ctx.read_now.items() if k in inputs})
             _finish(job_id, stage, "done", out, inputs, out.get("fp") or _h(json.dumps(out, sort_keys=True, default=str)),
                     origin, ok=True)
     except Skipped as x:
@@ -1125,6 +1151,10 @@ def _apply_target(target: str, job_id: int, text: str) -> None:
         from_job_contact(job_id, db.get_job(job_id)["contact_name"] or "", text)
     elif target.startswith("offer:"):
         db.set_offer(job_id, **{target.split(":", 1)[1]: text})
+    elif target.startswith("company:") and target.endswith(":site"):  # shared by every job at that company
+        from .interview import set_site
+
+        set_site(db.get_job(job_id), text)
     elif target.startswith("story:"):
         from .interview import save_story
 

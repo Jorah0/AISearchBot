@@ -628,7 +628,7 @@ def cmd_resume(a):
             p = resume.app_dir(db.get_job(a.job)) / "resume.md"
             if not p.is_file():
                 raise SystemExit(f"job #{a.job} has no tailored resume yet: lodestar resume tailor {a.job}")
-            text = p.read_text(encoding="utf-8")
+            text = p.read_text(encoding="utf-8-sig")
         else:
             text = _file_text(a.file) if a.file else resume.profile_text()
         r = lint(text)
@@ -667,7 +667,7 @@ def cmd_resume(a):
             kind = "cover letter" if "cover" in target.name else "resume"
         else:
             target, kind = PROFILE, "master profile"
-        new = resume.adjust_text(target.read_text(encoding="utf-8"), a.instruction, kind, a.provider)
+        new = resume.adjust_text(target.read_text(encoding="utf-8-sig"), a.instruction, kind, a.provider)
         if a.save:
             if target == PROFILE:
                 from .profile import write_master
@@ -850,16 +850,20 @@ def cmd_watch(a):
 def cmd_interview(a):
     from . import interview
 
+    if a.op == "calibration":
+        return _print_record()
     job = db.get_job(a.id)
+    if a.op in ("questions", "sources", "paste", "site", "unsource", "readiness"):
+        return _interview_sources(a, job)
     if a.op == "prep":
         print(f"wrote {interview.prep(job, a.council, a.provider)}")
     elif a.op == "mock":
-        interview.mock(job, a.provider)
+        interview.mock(job, a.provider, a.focus)
     elif a.op == "log":
         f = {k: v for k, v in (("round", a.round), ("kind", a.kind), ("at", a.at), ("interviewers", a.interviewers),
                                ("notes", a.notes), ("outcome", a.outcome)) if v is not None}
         if a.questions_file:
-            f["questions_asked"] = Path(a.questions_file).read_text(encoding="utf-8")
+            f["questions_asked"] = Path(a.questions_file).read_text(encoding="utf-8-sig")
         r = interview.get_round(interview.log_round(job["id"], **f))
         print(f"round {r['round']} of #{job['id']} {job['company']} saved ({r['kind']}, {r['at'] or 'no date'}, {r['outcome']}, "
               f"{len((r['questions_asked'] or '').splitlines())} question(s))")
@@ -872,6 +876,74 @@ def cmd_interview(a):
                 print(f"      Q: {q}")
             if r["notes"]:
                 print(f"      notes: {r['notes'][:300]}")
+
+
+def _interview_sources(a, job):
+    """interview questions / sources / paste / site / unsource / readiness."""
+    from . import interview
+
+    if a.op == "questions":
+        s = interview.question_set(job, refresh=a.refresh and not a.offline, offline=a.offline, provider=a.provider)
+        print(f"Practice questions for #{job['id']} {job['company']} - {job['title']}"
+              + (" (stale: sources changed; --refresh)" if s["stale"] else ""))
+        print(f"  {s['emphasis_text']}")
+        print("  sources: " + ", ".join(f"{k} {n}" for k, n in s["by_source"].items() if n))
+        if s["ai_error"]:
+            print(f"  {s['ai_error']}")
+        if s["dropped"]:
+            print(f"  {len(s['dropped'])} AI question(s) dropped: " + "; ".join(sorted({d['why'] for d in s['dropped']})))
+        for c in interview.QCOMP:
+            rows = [e for e in s["questions"] if e["competency"] == c]
+            if rows:
+                print(f"\n{c}:")
+                for e in rows:
+                    print(f"  - {e['q']}\n      [{e['chip']}] {e['label']}")
+    elif a.op == "sources":
+        s = interview.sources(job)
+        print(f"Question sources for {s['company']}: website {s['site']['url'] + ' (' + s['site']['label'] + ')' if s['site'] else 'none (lodestar interview site ID URL)'}")
+        print(f"  pages ({s['counts']['pages']} read" + (f", last check {s['last_check']}" if s["last_check"] else "") + "):")
+        for p in s["pages"]:
+            print(f"    #{p['id']:<5} {p['status'] if p['status'] != 'robots' else 'skipped: robots.txt disallows':<10} {p['url']}  {p['label'] or ''}")
+        print(f"  pastes ({s['counts']['pastes']}):")
+        for p in s["pastes"]:
+            print(f"    #{p['id']:<5} {p['created_at'][:10]}  {p['label']}" + (f"  <{p['url']}>" if p["url"] else ""))
+    elif a.op == "paste":
+        text = a.text if a.text is not None else sys.stdin.read() if a.file in (None, "-") else Path(a.file).read_text(encoding="utf-8-sig")
+        print(interview.PASTE_NOTICE)
+        print(f"saved paste #{interview.add_paste(job, a.label, text, a.url)} for {job['company']} "
+              "(the practice set reads stale until rebuilt: lodestar interview questions ID --refresh)")
+    elif a.op == "site":
+        r = interview.set_site(job, a.url)
+        print(f"{job['company']} website: {r['site'] or 'cleared'}")
+    elif a.op == "unsource":
+        interview.delete_source(job, a.sid)
+        print(f"removed source #{a.sid}")
+    else:
+        from .readiness import readiness
+
+        r = readiness(job)
+        print(f"#{job['id']} {job['company']} - {job['title']}: readiness {r['score']}/100 (preparation)")
+        print(r["chance"]["label"])
+        if r["chance"]["funnel"]:
+            print(r["chance"]["funnel"])
+        print(f"  {r['stage']}")
+        for k, v in r["parts"].items():
+            print(f"  {k:<10} {v['s']:>3}/100  (weight {v['w']})  " + "; ".join(v["chips"]))
+        print("  raise it:" if r["raise"] else "  nothing obvious left to raise it")
+        for x in r["raise"]:
+            print(f"    +{x['gain']}  {x['text']}")
+
+
+def _print_record():
+    from .readiness import calibration
+
+    c = calibration()
+    print(f"Your record (readiness vs results): {c['state']}")
+    for b, row in c["table"].items():
+        print(f"  {b:<7} {row['lo']:>3}-{row['hi']:<3} passed {row['passed']} of {row['total']}")
+    print(f"  {c['caveat']}")
+    if c["note"]:
+        print(f"  {c['note']}")
 
 
 def cmd_questions(a):
@@ -1168,7 +1240,7 @@ def cmd_inbox(a):
 def cmd_approve(a):
     from . import approvals
 
-    edits = {k: v for k, v in (("subject", a.subject), ("body", Path(a.body).read_text(encoding="utf-8") if a.body else None), ("to", a.to)) if v}
+    edits = {k: v for k, v in (("subject", a.subject), ("body", Path(a.body).read_text(encoding="utf-8-sig") if a.body else None), ("to", a.to)) if v}
     for pid in a.ids:
         r = approvals.approve(pid, edits)
         print(f"#{pid} {r['status']}: {r.get('result', '')}")
@@ -1252,7 +1324,7 @@ def cmd_pipeline(a):
         r = pipeline.dismiss(a.qid)
         print(f"left for you; resumed: {', '.join(f'#{j} {s}' for j, s in r['resumed']) or 'nothing waiting'}")
     elif a.op == "add-questions":
-        lines = (sys.stdin.read() if a.file == "-" else Path(a.file).read_text(encoding="utf-8")).splitlines()
+        lines = (sys.stdin.read() if a.file == "-" else Path(a.file).read_text(encoding="utf-8-sig")).splitlines()
         print(f"#{a.id}: {pipeline.add_form_questions(a.id, lines, 'cli')} new form question(s)")
     elif a.op == "autopilot":
         if a.mode in ("on", "off"):
@@ -1324,7 +1396,7 @@ def cmd_draft(a):
         approvals.edit(a.pending, r.get("subject"), r["body"])
         print(f"Subject: {r.get('subject', '')}\n\n{r['body']}\n\n-> inbox #{a.pending} updated; still waiting for your approval")
     elif a.file:
-        print(drafts.rewrite(Path(a.file).read_text(encoding="utf-8"), a.how, "email", None, a.provider)["body"])
+        print(drafts.rewrite(Path(a.file).read_text(encoding="utf-8-sig"), a.how, "email", None, a.provider)["body"])
     else:
         raise SystemExit("rewrite what: --pending ID (an Inbox email) or --file FILE")
 
@@ -1806,18 +1878,33 @@ def build() -> argparse.ArgumentParser:
     v.add_parser("clear", help="remove all imported sponsor data")
     s.set_defaults(f=cmd_sponsors)
 
-    from .interview import COMPETENCIES, KINDS, OUTCOMES
+    from .interview import COMPETENCIES, KINDS, OUTCOMES, QCOMP
 
     s = sub.add_parser("interview", help="prep pack, live mock interview with a score card per answer, interview rounds")
     v = s.add_subparsers(dest="op", required=True)
     x = v.add_parser("prep", help="interview prep pack for one job (needs AI)"); x.add_argument("id", type=int); x.add_argument("--council", action="store_true")
     x = v.add_parser("mock", help="one question at a time; each answer gets a score card (STAR rubric needs AI)"); x.add_argument("id", type=int)
+    x.add_argument("--focus", choices=QCOMP, help="practise one competency")
     x = v.add_parser("log", help="log an interview round (again with --round N to update that round)"); x.add_argument("id", type=int)
     x.add_argument("--round", type=int, help="round number (default: the next one)")
     x.add_argument("--kind", choices=KINDS); x.add_argument("--at", help='"YYYY-MM-DD HH:MM" (or just the date)')
     x.add_argument("--interviewers"); x.add_argument("--notes"); x.add_argument("--outcome", choices=OUTCOMES)
     x.add_argument("--questions-file", help="text file, one question you were asked per line")
     x = v.add_parser("rounds", help="a job's rounds with the questions asked"); x.add_argument("id", type=int)
+    x = v.add_parser("questions", help="the sourced practice set, grouped by competency, each with where it came from")
+    x.add_argument("id", type=int); x.add_argument("--refresh", action="store_true", help="re-read the company's pages + one AI build")
+    x.add_argument("--offline", action="store_true", help="never call the AI")
+    x = v.add_parser("sources", help="the company's question sources: website, pages read (status), your pastes"); x.add_argument("id", type=int)
+    x = v.add_parser("paste", help="store interview reports you read yourself (never fetched); --file F, --text T or stdin")
+    x.add_argument("id", type=int); x.add_argument("--label", required=True, help='where from, e.g. "Glassdoor reviews, read 2026-11-05"')
+    x.add_argument("--url", help="link to where you read it (a citation: stored, never opened)")
+    x.add_argument("--file", help="text file, or - for stdin"); x.add_argument("--text")
+    x = v.add_parser("site", help="the company website (its public hiring / values pages are read; robots.txt respected)")
+    x.add_argument("id", type=int); x.add_argument("url", help="https://... (empty string clears it)")
+    x = v.add_parser("unsource", help="delete one paste or page of that job's company"); x.add_argument("id", type=int); x.add_argument("sid", type=int)
+    x = v.add_parser("readiness", help="readiness 0-100 (preparation), the chance estimate band, the top 3 ways to raise it")
+    x.add_argument("id", type=int)
+    v.add_parser("calibration", help="your record: readiness vs round results, as plain counts")
     s.set_defaults(f=cmd_interview)
     s = sub.add_parser("questions", help="your question bank: logged at this company, then similar titles, then ~30 behavioural")
     s.add_argument("id", type=int, nargs="?", help="job id (without: every question you logged)")

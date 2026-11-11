@@ -16,7 +16,7 @@ UNMAPPED: set[str] = set()  # tests deliberately named in no row (none today)
 # Every row ID, pinned: deleting a row fails. Numbered areas run 1..N with no gap; a Planned feature that gets built
 # moves from PLANNED into a row (raise N or add the name here).
 NUMBERED = {"tracker-sourcing": 35, "profile-resume-ai": 40, "mail-people-interviews": 44, "connections": 23, "ui-sweep": 66,
-            "pipeline": 16}
+            "pipeline": 16, "interview": 19}
 NAMED = set("""outcomes-platform-insights-analytics outcomes-platform-insights-ui outcomes-platform-weekly-goals
 outcomes-platform-offers-record outcomes-platform-comp-total outcomes-platform-offers-compare outcomes-platform-market-rates
 outcomes-platform-counter-offer outcomes-platform-offer-evaluation outcomes-platform-activity-log outcomes-platform-digest-text
@@ -37,7 +37,7 @@ profile-resume-ai-41 profile-resume-ai-42 mail-people-interviews-45
 mail-people-interviews-46 mail-people-interviews-47 ui-sweep-67 ui-sweep-68 ui-sweep-70 ui-sweep-71 ui-sweep-72
 outcomes-platform-planned-pipeline outcomes-platform-planned-ai-history outcomes-platform-restore
 outcomes-platform-planned-paydata outcomes-platform-planned-e2e""".split())
-PLANNED_ID = re.compile(r"\b(?:(?:tracker-sourcing|profile-resume-ai|mail-people-interviews|connections|ui-sweep|pipeline)-\d+"
+PLANNED_ID = re.compile(r"\b(?:(?:tracker-sourcing|profile-resume-ai|mail-people-interviews|connections|ui-sweep|pipeline|interview)-\d+"
                         r"|outcomes-platform-[a-z0-9-]*[a-z0-9])\b")
 
 

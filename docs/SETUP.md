@@ -2614,7 +2614,8 @@ Click a card (or a company name in the table) to open the drawer. From top to bo
   next action and its due date; **Save details**. An empty field clears it.
 - **People**: contacts you know at this company (warm paths), linking them to the job with a role, and asking for a
   referral (the email always waits in the Inbox).
-- **Interview rounds**: rounds with time, interviewers, notes and questions asked; the question bank.
+- **Interview readiness** (screening, interview, offer): the 0-100 preparation score, the chance estimate band (not a probability), the parts with their reasons, Raise it, Question sources and Questions (above, Interview prep and mock interviews).
+- **Interview rounds**: rounds with time, interviewers, notes and questions asked.
 - **Match**: **Compute JD coverage** (no AI), **Check resume**, **Audit resume.docx**.
 - **Documents**: **Gap check (coverage + AI verdict)**, **Tailor resume (+docx)**, **Tailor by bullet**, **Build in
   Studio**, **Cover letter (+docx)**, **Cover options**, **Interview prep**, **Company research**, **Checklist**, a
@@ -3360,9 +3361,15 @@ template you get `your master profile is still the template: fill in ...profile.
 
 **Mock interview.** One question at a time; type `done` to finish.
 
-- App: Coach tab > choose **Mock interview for…** and the job. The microphone button (**Dictate**) uses your browser's
-  speech recognition; **speak replies** reads questions aloud.
-- Terminal: `lodestar interview mock 3`.
+- App: Coach tab > choose **Mock interview for…** and the job, and optionally a **focus** (one competency, e.g.
+  conflict). The microphone button (**Dictate**) uses your browser's speech recognition; **speak replies** reads
+  questions aloud.
+- Terminal: `lodestar interview mock 3` (`--focus conflict`).
+
+Lodestar picks every question from the job's sourced practice set (below), and the AI interviewer asks it word for
+word. Under each question a chip says where it came from: `logged · round 2`, `pasted · Glassdoor reviews (you)`,
+`Acme page` with a link to the page, `job description`, `reported, unverified` or `general`; hover it for the full
+source and quote. Your logged and pasted questions and the company's own pages come first whenever any are left.
 
 After each answer you get a score card. With an AI provider: situation, task, action and result (0-2 each),
 relevance and specificity (0-2), whether a number backs the result, one fix and a rewrite that only reorders your own
@@ -3371,6 +3378,41 @@ minute against a 60-120 second target), the most repeated words and the posting 
 only when you dictated. Without a provider the questions come from your question bank in order and there is no
 rubric or debrief. The transcript is saved to `applications\<job>\mock_interview.md`; sessions and cards go to the
 `mock_sessions` table, and the Coach tab shows a **Mock interview trend** across sessions.
+
+**Practice questions and their sources.** Each job has a practice set, best-founded first: questions **you logged**
+in a round at this company > questions in **notes you pasted** > questions derived from **the company's own public
+pages** (how we hire, values, culture) > the **job description** > **reported, unverified** (what the AI says the
+company is known to ask; off unless you run `lodestar tools set reported_questions true`) > the **general** bank.
+The drawer's **Interview readiness > Question sources** panel (shared by every job at the company) shows the counts,
+the **Company website** (taken from the job URL when its host names the company, or typed by you; job boards and ATS
+hosts are refused), the pages read (with "skipped: robots.txt disallows" where the site says no), your pastes with
+**Delete**, and **Paste what you read**: where it is from, an optional link (stored as a citation, never opened)
+and the text. Lodestar never opens Glassdoor, Blind, LinkedIn or Indeed pages; paste what you read there yourself.
+**Refresh** re-reads the company's pages (robots.txt respected, at most 12 requests) and makes one AI call that turns
+your notes, the pages and the JD into questions; the code checks every quote against its source, and the questions it
+drops are listed with why. **Questions (N)** lists the set by competency, with how often the company's material
+mentions each one (counts, never percentages).
+
+```powershell
+lodestar interview questions 3 --refresh          # the set with sources (--offline: never the AI)
+lodestar interview paste 3 --label "Glassdoor reviews, read 2026-11-05" --file notes.txt
+lodestar interview site 3 https://www.acme.com    # the company website
+lodestar interview sources 3                      # website, pages, pastes
+```
+
+**Readiness.** Drawer > **Interview readiness** (shown once a job is at screening, interview or offer, or has a round
+or a mock) scores your **preparation** for that job from 0 to 100: mock answer quality (30 points), the competencies
+the company's material stresses that you have practised (20), STAR stories for the four most mentioned ones (15), the
+company's own questions practised (15) and the prep pack and research (10). Each part has a bar with its number and
+the reasons; **Raise it** lists the three actions that would add the most points with a button each (Practise opens
+the mock on that competency). Next to the score sits a **chance estimate band** (low, fair, good, strong), always "from
+your preparation; not a probability": Lodestar does not know how the company decides or who else applied, so it never
+shows a percentage. Once 8 of your rounds have a recorded result, your own record (rounds passed per band, as plain
+counts) is shown beside it and in **Insights > Readiness vs results**; it never moves the band. **Explain my
+readiness** asks the AI for advice on the breakdown (never your fit score); **What should I practise next?** shows the
+top raise-it row without AI. Today shows the readiness of an interview in the next 48 hours, and under 60 its top tip.
+After each mock answer the Coach shows the new readiness. Readiness never goes into anything an employer reads or a
+pipeline step's output. Terminal: `lodestar interview readiness 3`, `lodestar interview calibration`.
 
 ### Offers, the comp table and counter-offers
 

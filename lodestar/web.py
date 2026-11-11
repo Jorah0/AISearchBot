@@ -111,6 +111,49 @@ def _pipe_run(jid: int, p: dict, prov) -> list[dict]:
     return []  # nothing ready: an error for one job (pipeline_run), a skip in a bulk run
 
 
+def _check_mock(p: dict) -> None:
+    """The mock's client values, checked before the task starts: asked = up to 100 question keys of at most 300
+    characters, focus one of interview.QCOMP, qkey a string (looked up server-side, never trusted)."""
+    from .interview import QCOMP
+
+    a = p.get("asked") or []
+    if not isinstance(a, list) or len(a) > 100 or any(not isinstance(x, str) or len(x) > 300 for x in a):
+        raise ValueError("asked: up to 100 question keys of at most 300 characters")
+    if p.get("focus") and p["focus"] not in QCOMP:
+        raise ValueError(f"focus must be one of {', '.join(QCOMP)}")
+    if p.get("qkey") is not None and (not isinstance(p["qkey"], str) or len(p["qkey"]) > 300):
+        raise ValueError("qkey must be a question key")
+
+
+def _ready_short(job) -> dict | None:
+    """{score, band, label} after a scored answer; None when it cannot be computed (the card still stands)."""
+    from . import readiness
+
+    try:
+        r = readiness.readiness(job)
+    except (Exception, SystemExit):
+        return None
+    return {"score": r["score"], "band": r["band"], "chance": r["chance"]["band"],
+            "practised": r["parts"]["practised"]["chips"][0].lstrip("· ") if r["parts"]["practised"]["chips"] else "",
+            "label": f"Readiness for #{job['id']} {job['company']}: {r['score']} · chance estimate "
+                     f"{r['chance']['band'].capitalize()} (not a probability)"}
+
+
+def _job_extras(job) -> dict:
+    """GET /api/jobs/<id>: the readiness breakdown and a summary of the practice set (counts, never the questions)."""
+    from . import readiness
+    from .interview import question_set
+
+    try:
+        s = question_set(job)
+        r = readiness.readiness(job, s)
+    except (Exception, SystemExit) as e:
+        log.get("web").warning("readiness #%s failed: %s", job["id"], e)
+        return {"readiness": None, "qset": None}
+    return {"readiness": r, "qset": {k: s[k] for k in ("by_source", "built_at", "ai_at", "stale", "emphasis_text", "ai_error")}
+            | {"dropped": len(s["dropped"])}}
+
+
 def _check_pipeline(action: str, p: dict) -> None:
     """Checked before the task starts, so a bad request is a 400 and not a failed background task."""
     for k in ("stage", "to"):
@@ -241,13 +284,28 @@ def _do(action: str, p: dict):
             if not job:
                 raise ValueError("pick a job to interview for (add one on the Board first)")
             msgs = p["messages"]
-            reply = interview.mock_turn(job, msgs, prov)
+            _check_mock(p)
+            turn = interview.mock_next(job, msgs, p.get("asked") or (), p.get("focus") or None, prov)
+            reply = turn["reply"]
             if msgs and str(msgs[-1].get("content", "")).strip().lower() == "done":  # the debrief: keep it with the job
                 return {"reply": reply, "path": str(interview.save_mock(job, [*msgs, {"role": "assistant", "content": reply}]))}
+            out = {"reply": reply, "question": turn["question"]}  # the server's pick, with its source label
             if len(msgs) >= 2 and msgs[-2].get("role") == "assistant" and msgs[-1].get("role") == "user":  # an answer
-                return {"reply": reply, "card": interview.score_answer(job, msgs[-2].get("content"), msgs[-1].get("content"),
-                                                                       p.get("seconds"), p.get("session"), prov)}
-            return {"reply": reply}
+                out["card"] = interview.score_answer(job, msgs[-2].get("content"), msgs[-1].get("content"), p.get("seconds"),
+                                                     p.get("session"), prov, qkey=p.get("qkey"))
+                out["readiness"] = _ready_short(job)
+            return out
+        case "qset":  # {id, refresh?}: read the company's pages (refresh: refetch) + one AI build of the practice set
+            if not job:
+                raise ValueError("pick a job")
+            s = interview.question_set(job, build=True, refresh=bool(p.get("refresh")), provider=prov)
+            return {k: s[k] for k in ("by_source", "dropped", "ai_error", "stale", "ai_at", "emphasis_text")}
+        case "readiness_explain":  # the five preparation parts only (never the fit cap or fit chips), as advice
+            from . import readiness
+
+            if not job:
+                raise ValueError("pick a job")
+            return {"text": readiness.explain(job, prov)}
         case "council":
             if p.get("messages"):  # coach chat in council mode: same profile, tracker and conversation as plain chat
                 convo = "\n\n".join(f"{m['role'].upper()}: {m['content']}" for m in p["messages"][-12:])
@@ -614,6 +672,7 @@ def state() -> dict:
         "stories": interview.stories(),
         "competencies": interview.COMPETENCIES,
         "round_kinds": interview.KINDS,
+        "qcomp": interview.QCOMP,  # the mock's Focus choices
         "round_outcomes": interview.OUTCOMES,
         "mock_sessions": interview.sessions(),
         "ideas": [ideas_merged(r) for r in db.list_ideas()],
@@ -733,6 +792,22 @@ class Handler(BaseHTTPRequestHandler):
                 from .mailfiles import attachable
 
                 self._json({"files": attachable(db.get_job(int(path.split("/")[3])))})  # names and sizes, never bytes
+            elif path.startswith("/api/jobs/") and len(path.split("/")) == 5 and path.split("/")[4] in ("questions", "qsources"):
+                from . import interview
+
+                try:
+                    job = db.get_job(int(path.split("/")[3]))
+                except (ValueError, SystemExit) as e:
+                    return self._json({"error": str(e) or "bad job id"}, 400)
+                if path.endswith("/qsources"):  # the company's sources: site, pages with status, pastes (preview)
+                    return self._json(interview.sources(job))
+                s = interview.question_set(job)  # the full set: every string is escaped client-side
+                self._json({k: s[k] for k in ("questions", "emphasis", "emphasis_text", "hits", "dropped", "by_source",
+                                              "stale", "built_at", "ai_at", "ai_error", "site")})
+            elif path == "/api/readiness/calibration":  # your record: evidence table, state, caveat (Insights)
+                from . import readiness
+
+                self._json(readiness.calibration())
             elif path == "/api/codes":  # emailed sign-in codes, memory only (codes.py)
                 self._json({"codes": codes.current()})
             elif path.startswith("/api/jobs/"):
@@ -745,7 +820,7 @@ class Handler(BaseHTTPRequestHandler):
                             "rounds": interview.rounds(job["id"]), "bank": interview.question_bank(job, False)[:30],
                             "stress": interview.story_prompt(job), "mail": [dict(r) for r in db.list_mail(job["id"])],
                             "pipeline": pipeline.status(job["id"]), "questions": pipeline.questions(job=job["id"]),
-                            "runs": pipeline.log_runs(job["id"], 10)})
+                            "runs": pipeline.log_runs(job["id"], 10), **_job_extras(job)})
             elif path == "/api/questions":  # ?all=1 (answered and dismissed too) &job=ID
                 from urllib.parse import parse_qs
 
@@ -924,6 +999,19 @@ class Handler(BaseHTTPRequestHandler):
                     from .interview import log_round
 
                     out["round_id"] = log_round(jid, **{str(k): v for k, v in p.items()})
+                elif op == "qsources":  # {op: paste, label, text, url?} | {op: delete, sid} | {op: site, url}
+                    from . import interview
+
+                    j, what = db.get_job(jid), p.get("op")
+                    if what == "paste":
+                        out["sid"] = interview.add_paste(j, p.get("label"), p.get("text"), p.get("url"))
+                    elif what == "delete":
+                        interview.delete_source(j, int(p.get("sid")))  # another company's source: refused
+                    elif what == "site":
+                        out |= interview.set_site(j, p.get("url"))
+                    else:
+                        raise ValueError("op is paste, delete or site")
+                    out["sources"] = interview.sources(j)
                 elif op == "delete":
                     db.delete_job(jid)
                 else:
@@ -1270,6 +1358,10 @@ class Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/run/"):
                 if parts[3] in ("pipeline_run", "pipeline_bulk"):
                     _check_pipeline(parts[3], p)
+                if parts[3] == "mock":
+                    _check_mock(p)
+                if parts[3] in ("qset", "readiness_explain"):
+                    db.get_job(int(p.get("id")))
                 self._json({"task": start_task(parts[3], p)})
             else:
                 self._json({"error": "not found"}, 404)

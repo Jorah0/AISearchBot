@@ -151,12 +151,16 @@ async function moveJob(id, status) {  // a drag or the drawer's move button (a s
   }
   if (cur && cur.job.id === id) openJob(id);  // also resets the drawer select after a cancelled move
 }
+let TODAY_ACT = [];  // the Today interview tips' actions; their buttons carry an index
 function renderToday() {
   const t = S.today, el = $('#today');
   const item = (i, label, cls = '') => `<button class="b ghost sm ${cls}" onclick="openJob(${i.id})">${esc(label)} · #${i.id} ${esc(i.company)} - ${esc(i.title)}</button>`;
+  TODAY_ACT = [];  // an interview within 48 h with readiness under 60: its top 'raise it' tip as a second button (no band here: no room for its qualifier)
+  const tip = i => i.readiness && i.readiness.score < 60 && i.readiness.tip && i.readiness.action
+    ? `<button class="b ghost sm tip" onclick="raiseAct(TODAY_ACT[${TODAY_ACT.push({ id: i.id, a: i.readiness.action }) - 1}].a,this,${Number(i.id)})">${esc(i.readiness.tip)}</button>` : '';
   const parts = [...t.actions.map(i => item(i, (i.overdue ? 'overdue ' + i.when : 'today') + ': ' + i.what, i.overdue ? 'due' : '')),
     ...t.deadlines.map(i => item(i, i.days === 0 ? 'deadline today' : `deadline in ${i.days}d`, 'due')),
-    ...t.interviews.map(i => item(i, 'interview ' + i.when)), ...t.followups.map(i => item(i, 'follow up')),
+    ...t.interviews.map(i => item(i, 'interview ' + i.when + (i.readiness ? ' · readiness ' + i.readiness.score : '')) + tip(i)), ...t.followups.map(i => item(i, 'follow up')),
     ...(t.contacts || []).map(c => `<button class="b ghost sm" onclick="openContact(${Number(c.id)})">get in touch (due ${esc(c.when)}) · ${esc(c.name)}${c.company ? ' (' + esc(c.company) + ')' : ''}</button>`)];
   const em = (t.emails || []).map((s, i) => `<div class="row"><span class="chip ${s.priority === 1 ? 'due' : ''}">${esc(dueText(s.due))}</span><span>${esc(s.reason)} · #${Number(s.job_id)} ${esc(s.company)}${s.to ? ' → ' + esc(s.to) : ''}</span>
     <button class="b ghost sm" onclick="suggestDraft(${i},this)">Draft options</button><button class="b ghost sm" onclick="suggestDismiss(${i})">Dismiss for now</button></div>`);
@@ -282,6 +286,7 @@ async function openJob(id) {
 ${pipelineGroup(d)}
 ${detailsForm(j)}
 ${peopleGroup(d)}
+${readinessGroup(d)}
 ${roundsGroup(d)}
 
     <div class="group"><h4>Match</h4>
@@ -337,6 +342,7 @@ ${mailGroup(d)}
   renderBullets(savedBullets(d), false);
   stageLine();
   showDoc('timeline', $('#docTabs button'));
+  if ($('#jQsrc')) await loadQsrc(j.id);
 }
 function showDoc(n, btn) {
   $$('#docTabs button').forEach(b => b.classList.remove('on')); if (btn) btn.classList.add('on');
@@ -559,7 +565,7 @@ let ROUNDS = [], STRESS = { stressed: [], missing: [] };  // rows stay in JS; bu
 const R_FIELDS = ['round', 'kind', 'at', 'interviewers', 'notes', 'questions_asked', 'outcome'];
 function roundsGroup(d) {
   ROUNDS = d.rounds || []; STRESS = d.stress || STRESS;
-  const st = STRESS, bank = d.bank || [];
+  const st = STRESS;
   const prompt = st.stressed.length ? `<div class="muted">This posting stresses ${esc(st.stressed.join(', '))}.${st.missing.length
     ? ` No story tagged ${esc(st.missing.join(', '))} yet: worth preparing one before the interview? <button class="b ghost sm" onclick="newStory(STRESS.missing[0])">Add a story</button>`
     : ' You have a story tagged with each.'}</div>` : '';
@@ -578,9 +584,7 @@ function roundsGroup(d) {
       <label class="fld">questions you were asked, one per line<textarea id="r_questions_asked" style="min-height:90px"></textarea></label>
       <label class="fld">notes<textarea id="r_notes" style="min-height:60px"></textarea></label>
       <div class="row"><button class="b sm" onclick="saveRound()">Save round</button><span class="muted" id="rMode"></span></div></details>
-    ${bank.length ? `<details><summary class="muted">Question bank: ${bank.length} question(s) logged at this company or for similar titles</summary>
-      <ul class="muted qs">${bank.map(x => `<li>${esc(x.q)} <span class="pill">${esc(x.source)}</span>${esc(x.where)}</li>`).join('')}</ul></details>` : ''}
-    <div class="muted">A round with a time reminds you like a calendar file (upcoming interviews, Today). Prep packs and mock interviews ask the questions logged here first.</div></div>`;
+    <div class="muted">A round with a time reminds you like a calendar file (upcoming interviews, Today). Prep packs and mock interviews ask the questions logged here first (all practice questions: Interview readiness > Questions).</div></div>`;
 }
 function editRound(i) {
   const r = ROUNDS[i]; if (!r) return;
@@ -597,6 +601,139 @@ async function deleteRound(i) {
   const r = ROUNDS[i]; if (!r || !confirm(`Delete round ${Number(r.round)} and the questions logged with it?`)) return;
   const res = await api(`/api/rounds/${Number(r.id)}/delete`, {}); if (res.error) return toast('error: ' + res.error, 'err');
   toast('round deleted', 'ok'); await load(); openJob(cur.job.id);
+}
+
+/* ---- interview readiness and sourced practice questions (lodestar/readiness.py, interview.question_set) ---- */
+// Readiness is preparation only; the chance is a band, always "not a probability". Every string from the server is
+// escaped; buttons carry indexes into RD / QSRC, never text.
+let RD = null, QSRC = null, QSET = null;  // the open job's readiness, its company's sources, its practice set
+const cap = s => s ? s[0].toUpperCase() + s.slice(1) : '';
+const SRC_NAME = { logged: 'you logged it', pasted: 'your pasted notes', company: "the company's own page", jd: 'the job description', reported: 'reported, unverified', general: 'general question' };
+const PART_NAME = { answers: 'Mock answers', coverage: 'Competencies covered', stories: 'STAR stories', practised: "Company's questions practised", prep: 'Prep pack and research' };
+function srcChip(e) {  // where a question came from: always a text label (never colour alone); its full label in the tooltip
+  if (!e) return '';
+  const u = e.source === 'company' ? safeUrl(e.url) : '';
+  return `<span class="src src-${esc(e.source)}" title="${esc(e.label || SRC_NAME[e.source] || '')}">${esc(e.chip || SRC_NAME[e.source] || e.source)}${e.source === 'reported' ? ' ⓘ' : ''}</span>`
+    + (u ? ` <a href="${esc(u)}" target="_blank" rel="noopener noreferrer" title="${esc(u)}" aria-label="open the company page">↗</a>` : '');
+}
+function mentions(hits, c, co) {  // counts with their source, never a percentage (interview.mentions)
+  const h = (hits || {})[c] || {}, k = Object.keys(h); if (!k.length) return '';
+  if (k.length === 1 && k[0] === 'jd') return `the job description mentions it ${Number(h.jd)} time${h.jd === 1 ? '' : 's'}`;
+  const n = Object.values(h).reduce((a, b) => a + Number(b), 0);
+  return `${n} mention${n === 1 ? '' : 's'} in ${co}'s material`;
+}
+const RAISE_BTN = { practise: 'Practise', stories: 'Open stories', prep: 'Run prep', sources: 'Refresh sources' };
+function readinessGroup(d) {
+  const j = d.job, r = d.readiness; RD = r; QSRC = QSET = null;
+  const show = ['screening', 'interview', 'offer'].includes(j.status) || (d.rounds || []).length || (S.mock_sessions || []).some(s => s.job_id === j.id);
+  if (!show) return '';
+  if (!r) return `<div class="group" id="jReady"><h4>Interview readiness</h4><div class="muted">Readiness could not be worked out for this job right now (the log has the reason).</div></div>`;
+  const ch = r.chance;
+  const parts = Object.entries(r.parts).map(([k, p]) => `<div class="ready-row"><span>${esc(PART_NAME[k] || k)} <span class="muted">${Number(p.w)} pts</span></span>
+      <meter min="0" max="100" low="40" high="60" optimum="100" value="${Number(p.s)}" aria-label="${esc(PART_NAME[k] || k)}: ${Number(p.s)} of 100"></meter><b>${Number(p.s)}</b>
+      <span class="muted chips">${p.chips.map(c => `<span>${esc(c)}</span>`).join('')}</span></div>`).join('');
+  const raise = r.raise.map((x, i) => `<div class="row raise"><span class="pill ok">+${Number(x.gain)}</span><span>${esc(x.text)}</span>${RAISE_BTN[x.action.do]
+    ? `<button class="b ghost sm" onclick="raiseAct(RD.raise[${i}].action,this)">${RAISE_BTN[x.action.do]}</button>` : ''}</div>`).join('')
+    || '<div class="muted">Nothing quick left: keep practising.</div>';
+  return `<div class="group" id="jReady"><h4>Interview readiness</h4>
+    <div class="row"><b class="ready-score" aria-label="Readiness (preparation): ${Number(r.score)} of 100">${Number(r.score)}/100</b><span class="muted">Readiness (preparation)</span>
+      <span id="jBand">Chance estimate: <b>${esc(cap(ch.band))}</b>, not a probability${ch.capped_by_fit ? ` <span class="muted">(capped by fit ${Number(ch.fit)})</span>` : ''}</span></div>
+    <div class="muted" id="jChance">${esc(ch.label)}</div>${ch.funnel ? `<div class="muted">${esc(ch.funnel)}</div>` : ''}
+    <div class="ready">${parts}</div>
+    <div class="muted">${esc(r.stage)} · ${ch.fit != null ? `fit ${Number(ch.fit)} · caps the chance band` : 'fit not scored yet'}</div>
+    <h4>Raise it</h4>${raise}
+    <div class="row"><button class="b ghost sm" onclick="explainReady(this)" title="one AI call over the five preparation parts (never your fit score); advice only, the score does not change">Explain my readiness</button>
+      <button class="b ghost sm" onclick="nextPractice()" title="the top 'raise it' row; no AI">What should I practise next?</button></div>
+    <pre id="jReadyOut" style="display:none"></pre>
+    <h4>Question sources <span class="muted">for ${esc(j.company)}, shared by its jobs</span></h4><div id="jQsrc" class="qsrc"><div class="muted">loading…</div></div>
+    <div id="jQlist"></div></div>`;
+}
+async function loadQsrc(id) {
+  const [s, q] = await Promise.all([api(`/api/jobs/${id}/qsources`), api(`/api/jobs/${id}/questions`)]);
+  if (!cur || cur.job.id !== id || !$('#jQsrc')) return;
+  if (s.error || q.error) { $('#jQsrc').innerHTML = `<div class="muted">${esc(s.error || q.error)}</div>`; return; }
+  QSRC = s; QSET = q; renderQsrc();
+}
+function renderQsrc() {
+  const s = QSRC, q = QSET, b = q.by_source, co = s.company, n = (x, w) => `${Number(x)} ${w}${Number(x) === 1 ? '' : 's'}`;
+  const counts = [`You logged ${Number(b.logged)}`, `You pasted ${n(s.counts.pastes, 'note')} (${n(b.pasted, 'question')})`,
+    `${esc(co)} pages ${Number(s.counts.pages)} (${n(b.company, 'question')})`, `JD ${Number(b.jd)}`, b.reported ? `Reported ${Number(b.reported)}` : '', `General ${Number(b.general)}`].filter(Boolean).join(' · ');
+  const st = p => p.status === 'ok' ? 'read' : p.status === 'robots' ? 'skipped: robots.txt disallows' : p.status;
+  const pages = s.pages.map(p => `<div class="row">${safeUrl(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.label || p.url)} ↗</a>` : esc(p.label || p.url)}
+      <span class="muted">${esc(st(p))}${p.fetched_at ? ' · ' + esc(String(p.fetched_at).slice(0, 16)) : ''}</span></div>`).join('')
+    || `<div class="muted">${s.site ? (s.last_check ? `No hiring or values pages found on the site (checked ${esc(String(s.last_check).slice(0, 16))}).` : 'Pages not read yet: Refresh reads them.') : 'Add the company website to read its hiring pages.'}</div>`;
+  const pastes = s.pastes.map((p, i) => `<div class="qpaste"><div class="row"><b>${esc(p.label)}</b><span class="muted">${esc(localTs(p.created_at, 10))}</span>
+      ${safeUrl(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer" title="a citation: Lodestar stores it and never opens it">source ↗</a>` : ''}
+      <button class="b danger sm" onclick="delQsrc(${i})" aria-label="${esc('Delete pasted notes: ' + p.label)}">Delete</button></div>
+    <div class="muted">${esc(p.preview)}${String(p.preview || '').length >= 200 ? '…' : ''}</div></div>`).join('');
+  const dropped = q.dropped || [];
+  $('#jQsrc').innerHTML = `<div class="muted" id="jQcounts">${counts}</div><div class="muted">${esc(q.emphasis_text)}</div>
+    <div class="row"><label class="fld">Company website<input id="qsSite" value="${esc(s.site ? s.site.url : '')}" placeholder="https://www.example.com" style="width:240px"></label>
+      <span class="muted">${s.site ? (s.site.label === 'you' ? 'typed by you' : 'from the job URL') : 'not set: no company pages are read'}</span><button class="b ghost sm" onclick="saveSite(this)">Save website</button></div>
+    ${pages}${pastes}
+    <details id="qsPaste"><summary class="muted">Paste what you read</summary><div class="muted">${esc(s.notice)}</div>
+      <div class="row"><label class="fld">Where from<input id="qsLabel" maxlength="120" placeholder="Glassdoor interview reviews, read 2026-11-05" style="width:260px"></label>
+        <label class="fld">Link (optional, stored, never opened)<input id="qsUrl" placeholder="https://..." style="width:200px"></label></div>
+      <label class="fld">Text<textarea id="qsText" maxlength="20000" style="min-height:90px" placeholder="the interview reports or notes you read"></textarea></label>
+      <div class="row"><button class="b sm" onclick="addPaste(this)">Save pasted notes</button></div></details>
+    <div class="row"><button class="b ghost sm" onclick="qsetRun(true,this)" title="re-read the company's public hiring and values pages (robots.txt, at most 12 requests) and build the set with one AI call">Refresh</button>
+      <span class="muted" id="jQbuilt">${q.ai_at ? 'last AI build ' + esc(String(q.ai_at).slice(0, 16)) : 'not built with AI yet'}${q.stale ? ' · sources changed since the last AI build' : ''}</span></div>
+    ${q.ai_error ? `<div class="warnbox">${esc(q.ai_error)}</div>` : ''}
+    ${dropped.length ? `<details><summary class="muted" id="jQdropped">${n(dropped.length, 'AI question')} dropped (why)</summary><ul class="muted qs">${dropped.map(x => `<li>${esc(x.q)}: ${esc(x.why)}</li>`).join('')}</ul></details>` : ''}`;
+  const groups = {};
+  q.questions.forEach(e => (groups[e.competency] = groups[e.competency] || []).push(e));
+  const order = Object.keys(groups).sort((a, c) => (q.emphasis[c] || 0) - (q.emphasis[a] || 0));
+  $('#jQlist').innerHTML = `<details id="jQs"><summary class="muted">Questions (${q.questions.length})</summary>`
+    + order.map(c => { const m = mentions(q.hits, c, co); return `<div class="qgroup"><b>${esc(c)}</b>${m ? ` <span class="muted">· ${esc(m)}</span>` : ''}
+      <ul class="qs">${groups[c].map(e => `<li>${esc(e.q)} ${srcChip(e)}</li>`).join('')}</ul></div>`; }).join('') + '</details>';
+}
+async function qsrcOp(body, msg) {
+  const id = cur.job.id, r = await api(`/api/jobs/${id}/qsources`, body);
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast(msg(r), 'ok'); await openJob(id); return r;
+}
+function addPaste() {
+  const label = $('#qsLabel').value.trim(), text = $('#qsText').value.trim(), url = $('#qsUrl').value.trim();
+  if (!label || !text) return toast('fill in where it is from and the text', 'err');
+  qsrcOp({ op: 'paste', label, text, url: url || undefined }, () => 'pasted notes saved; Refresh builds questions from them with AI');
+}
+function delQsrc(i) {
+  const p = QSRC && QSRC.pastes[i]; if (!p || !confirm(`Delete the pasted notes "${p.label}"? Questions taken from them go too.`)) return;
+  qsrcOp({ op: 'delete', sid: Number(p.id) }, () => 'pasted notes deleted');
+}
+function saveSite() { qsrcOp({ op: 'site', url: $('#qsSite').value.trim() }, r => r.site ? 'company website saved: ' + r.site : 'company website cleared'); }
+function qsetRun(refresh, btn, jid) {
+  const id = jid || cur.job.id;
+  run('qset', { id, refresh }, r => {
+    const d = (r.dropped || []).length;
+    toast(r.ai_error ? r.ai_error : 'question set built' + (d ? `: ${d} AI question${d === 1 ? '' : 's'} dropped (see why under Question sources)` : ''), r.ai_error ? 'err' : 'ok');
+    if (cur && cur.job.id === id) openJob(id);
+  }, btn);
+}
+function practise(id, focus) {  // Coach > Mock interview for this job, optionally on one competency
+  go('coach'); $('#cMode').value = 'mock'; resetChat(); $('#cJob').value = String(id); $('#cFocus').value = focus || ''; $('#cIn').focus();
+}
+async function raiseAct(a, btn, jid) {  // a 'raise it' action from the drawer or Today
+  jid = jid || cur.job.id;
+  if (a.do === 'practise') return practise(jid, a.focus);
+  if (a.do === 'stories') return newStory(a.tag);
+  if (!cur || cur.job.id !== jid) { go('board'); await openJob(jid); }
+  if (a.do === 'sources') return qsetRun(false, btn, jid);
+  const e = PIPE.find(x => x.name === 'prep');
+  if (a.do === 'prep') return e && ['ready', 'done', 'stale', 'error'].includes(e.state) ? pipeRun({ stage: 'prep', rerun: ['done', 'stale'].includes(e.state) }, btn) : jobRun('prep', {}, btn);
+  $('#jReady')?.scrollIntoView();
+}
+function openReady(id) { go('board'); openJob(id).then(() => $('#jReady')?.scrollIntoView()); }
+function explainReady(btn) { const id = cur.job.id; run('readiness_explain', { id }, r => { if (cur && cur.job.id === id) show('jReadyOut', r.text); }, btn); }
+function nextPractice() {
+  const x = RD && RD.raise[0];
+  show('jReadyOut', x ? `${x.text} (+${x.gain} points).` : 'Nothing quick left to raise it: keep practising with the mock interview.');
+}
+function renderReadyRecord(c) {  // Insights: your record as plain counts per band; never a probability
+  $('#insReady').innerHTML = `<div class="row"><span class="pill">${esc(c.state)}</span>${c.shown ? `<span class="muted">${Number(c.n)} rounds with a result, ${Number(c.passes)} passed</span>` : ''}</div>
+    <table class="kw"><thead><tr><th>readiness at the round</th><th>passed</th><th>rounds</th></tr></thead><tbody>`
+    + Object.entries(c.table).map(([b, r]) => `<tr><td>${esc(b)} (${Number(r.lo)}-${Number(r.hi)})</td><td>${Number(r.passed)}</td><td>${Number(r.total)}</td></tr>`).join('')
+    + `</tbody></table><div class="muted">${esc(c.caveat)}</div>${c.note ? `<div class="muted">${esc(c.note)}</div>` : ''}`;
 }
 
 /* ---- STAR stories: rows of the answer bank with structured fields (lodestar/interview.py) ---- */
@@ -1400,12 +1537,16 @@ function fillCoachJobs() {  // rebuilt on every refresh so jobs added later appe
   const keep = $('#cJob').value;
   $('#cJob').innerHTML = S.jobs.map(j => `<option value="${j.id}">#${j.id} ${esc(j.company)} - ${esc(j.title)}</option>`).join('');
   if (S.jobs.some(j => String(j.id) === keep)) $('#cJob').value = keep;
+  if ($('#cFocus').options.length < 2) $('#cFocus').insertAdjacentHTML('beforeend', (S.qcomp || []).map(c => `<option value="${esc(c)}">focus: ${esc(c)}</option>`).join(''));
 }
-let MOCK = { session: null, secs: 0 };  // the scored session of this mock interview; seconds dictated for the next answer
+// the scored session; seconds dictated for the next answer; keys of the questions asked (the server picks the next one);
+// the last question (its key goes with the answer, looked up server-side); competencies answered; the last readiness
+const newMock = () => ({ session: null, secs: 0, asked: [], last: null, comps: new Set(), ready: null });
+let MOCK = newMock();
 function resetChat() {
   const mock = $('#cMode').value === 'mock';
-  MOCK = { session: null, secs: 0 }; $('#mockSum').style.display = 'none'; $('#mockSum').textContent = '';
-  $('#cJob').style.display = $('#cSpeakL').style.display = mock ? '' : 'none';
+  MOCK = newMock(); $('#mockSum').style.display = $('#mockReady').style.display = 'none'; $('#mockSum').textContent = '';
+  $('#cJob').style.display = $('#cFocus').style.display = $('#cSpeakL').style.display = mock ? '' : 'none';
   window.speechSynthesis?.cancel();
   fillCoachJobs();
   chatHist = [];
@@ -1416,12 +1557,18 @@ function sendChat() {
   chatHist.push({ role: 'user', content: q }); $('#chat').insertAdjacentHTML('beforeend', `<div class="msg me">${esc(q)}</div>`);
   const council = $('#cCouncil').checked, mock = $('#cMode').value === 'mock';
   const action = mock ? 'mock' : council ? 'council' : 'chat';
-  const params = mock ? { id: $('#cJob').value, messages: chatHist, session: MOCK.session, seconds: MOCK.secs || undefined } : council ? { prompt: q, messages: chatHist } : { messages: chatHist };
+  const params = mock ? { id: $('#cJob').value, messages: chatHist, session: MOCK.session, seconds: MOCK.secs || undefined,
+    asked: MOCK.asked.slice(-100), focus: $('#cFocus').value || undefined, qkey: MOCK.last ? MOCK.last.key : undefined } : council ? { prompt: q, messages: chatHist } : { messages: chatHist };
   MOCK.secs = 0;
   run(action, params, r => {
     const a = council && !mock ? r.synthesis : r.reply; chatHist.push({ role: 'assistant', content: a });
-    if (r.card) { MOCK.session = r.card.session; $('#chat').insertAdjacentHTML('beforeend', cardHtml(r.card)); mockSummary(r.card); }
-    $('#chat').insertAdjacentHTML('beforeend', `<div class="msg ai">${esc(a)}</div>`); $('#chat').scrollTop = 1e9;
+    if (r.card) {
+      MOCK.session = r.card.session; if (r.card.competency) MOCK.comps.add(r.card.competency);
+      $('#chat').insertAdjacentHTML('beforeend', cardHtml(r.card)); mockSummary(r.card, r.readiness); mockReady(r.readiness);
+    }
+    if (r.question) { MOCK.asked.push(r.question.key); MOCK.last = r.question; }  // the server's pick, with where it came from
+    $('#chat').insertAdjacentHTML('beforeend', `<div class="msg ai">${esc(a)}</div>` + (r.question ? `<div class="msg-src">question source: ${srcChip(r.question)}</div>` : ''));
+    $('#chat').scrollTop = 1e9;
     if (mock && $('#cSpeak').checked && window.speechSynthesis) {  // browser text-to-speech: practise listening, then answer aloud
       const u = new SpeechSynthesisUtterance(a); u.lang = navigator.language || 'en-US'; speechSynthesis.speak(u);
     }
@@ -1449,13 +1596,22 @@ function cardHtml(c) {
       + (r.one_fix ? `<div><b>one fix:</b> ${esc(r.one_fix)}</div>` : '') + (r.suggested_rewrite ? `<details><summary>suggested rewrite</summary>${esc(r.suggested_rewrite)}</details>` : '')
       : `<div class="muted">no STAR rubric (${esc(c.rubric_error || 'needs an AI provider')}); the numbers above are offline</div>`)
     + (c.repeated.length ? `<div class="muted">repeated: ${esc(c.repeated.join(', '))}</div>` : '')
-    + (c.jd_keywords.length ? `<div class="muted">posting keywords used: ${esc(c.jd_keywords.join(', '))}</div>` : '') + '</div>';
+    + (c.jd_keywords.length ? `<div class="muted">posting keywords used: ${esc(c.jd_keywords.join(', '))}</div>` : '')
+    + (c.source ? `<div class="muted">question: ${esc(SRC_NAME[c.source] || c.source)}${c.competency ? ' · ' + esc(c.competency) : ''}</div>` : '') + '</div>';
 }
-function mockSummary(c) {
+function mockSummary(c, rd) {
   const a = c.averages, f = v => v == null ? '-' : v;
   $('#mockSum').style.display = '';
   $('#mockSum').textContent = `session #${c.session}: ${a.answers} answer(s), ${a.scored} scored · STAR average ${f(a.star)}/2 · relevance ${f(a.relevance)}/2 · specificity ${f(a.specificity)}/2`
-    + (a.metrics_used != null ? ` · numbers in ${Math.round(a.metrics_used * 100)}% of answers` : '') + ` · ${f(a.words)} words on average`;
+    + (a.metrics_used != null ? ` · numbers in ${Math.round(a.metrics_used * 100)}% of answers` : '') + ` · ${f(a.words)} words on average`
+    + (MOCK.comps.size ? ` · practised: ${[...MOCK.comps].join(', ')}` : '') + (rd && rd.practised ? ' · ' + rd.practised : '');
+}
+function mockReady(x) {  // readiness after a scored answer: preparation only, the band is never a probability
+  const el = $('#mockReady'), id = Number($('#cJob').value), j = S.jobs.find(v => v.id === id) || {};
+  if (!x) { el.style.display = 'none'; return; }
+  const prev = MOCK.ready; MOCK.ready = x.score; el.style.display = '';
+  el.innerHTML = `Readiness for #${id} ${esc(j.company)}: ${prev != null && prev !== x.score ? Number(prev) + ' -> ' : ''}${Number(x.score)} · chance estimate ${esc(cap(x.chance))} (not a probability)
+    <a href="#" onclick="openReady(${id});return false">see why</a>`;
 }
 function renderTrend() {
   const pts = (S.mock_sessions || []).filter(s => s.averages && s.averages.star != null);
@@ -1474,9 +1630,10 @@ let INS = null, OFF = null;  // server data stays in JS; markup carries only ind
 const pctx = v => Math.round(Number(v) * 100) + '%', num = v => Number(v || 0).toLocaleString();
 const SERIES = [['applications', 'applications'], ['interviews', 'interviews'], ['offers', 'offers'], ['contacts', 'people contacted'], ['mock_sessions', 'mock sessions']];
 async function loadInsights() {
-  const [a, o] = await Promise.all([api('/api/analytics?weeks=' + Number($('#insRange').value || 12)), api('/api/offers')]);
+  const [a, o, c] = await Promise.all([api('/api/analytics?weeks=' + Number($('#insRange').value || 12)), api('/api/offers'), api('/api/readiness/calibration')]);
   if (a.error || o.error) return toast('error: ' + (a.error || o.error), 'err');
   INS = a; OFF = o; renderInsights(); renderOffers();
+  if (c.error) $('#insReady').textContent = c.error; else renderReadyRecord(c);
   if (!$('#acFrom').value) { const t = new Date(), m = new Date(t); m.setDate(t.getDate() - (t.getDay() + 6) % 7); $('#acFrom').value = m.toLocaleDateString('en-CA'); $('#acTo').value = t.toLocaleDateString('en-CA'); }
   $('#acMin').value = S && S.prefs.activity_weekly_min ? S.prefs.activity_weekly_min : '';
 }

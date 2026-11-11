@@ -1,5 +1,64 @@
 # Changelog (development passes, newest first)
 
+## Pass 18 (2026-11-11): interview readiness and company-referenced questions
+
+Practise with the questions this company is known to ask, see how prepared you are for each interview, and get a
+plain chance estimate that never pretends to be a probability.
+
+**Questions the company is known to use**
+- Every practice question now says where it came from, best-founded first: a question you logged in one of your own
+  rounds, one in notes you pasted (for example interview reviews you read yourself), one based on the company's own
+  public hiring and values pages, one from the job description, and only then the general bank. Questions an AI
+  "reports" a company asks are off unless you turn on Settings > Reported interview questions, and are always labelled
+  "Reported, unverified".
+- Lodestar reads the company's own website for this: the job link's site when it is registered under the company's
+  name (never a job board or an applicant-tracking site), or the website you type in the drawer. It respects
+  robots.txt, makes at most 12 requests per company, and reuses what it read for 30 days. LinkedIn, Indeed, Glassdoor,
+  ZipRecruiter, Blind and SimplyHired are never opened; a link you paste with your notes is kept as a citation only.
+- One AI call turns your notes, the pages and the job description into questions, and Lodestar checks every one
+  against the exact words it quotes. The AI cannot claim you were asked something, or that the company asks it.
+- The drawer has a **Question sources** group (website, pages read, your pastes, a paste box, Refresh) and a
+  **Questions** list by competency. CLI: `lodestar interview questions / sources / paste / site / unsource`.
+
+**Mock interviews use them**
+- The mock interview picks each question itself, word for word from that set: your logged, pasted and company-page
+  questions first (the ones you have not answered in an earlier session before the ones you have), a motivation
+  opener, then the areas the company's material stresses most. Coach > Mock interview has a **Focus** choice, shows
+  where each question came from, and each score card says which question and area it scored.
+
+**Readiness and the chance estimate**
+- Each job in screening, interview or offer gets a readiness score from 0 to 100 that measures your preparation only:
+  your mock answers, which areas you have practised, your STAR stories, how many of the company's own questions you
+  have practised, and the prep and research packs. Every part shows its reasons, and **Raise it** lists the three
+  things that would add the most points.
+- The chance estimate is a band (low, fair, good or strong), never a percentage, and always says "not a probability".
+  Once 8 of your rounds have a recorded result (with at least 2 passed and 2 not), Insights shows your own record per
+  band as plain counts. Readiness never goes into anything an employer reads.
+- Today shows the readiness of an interview coming up, with the top tip when it is under 60. CLI:
+  `lodestar interview readiness ID` and `lodestar interview calibration`.
+
+**Fixes before release**
+- A company page that redirects to another site (often a job board) is no longer read as the company's own page;
+  a redirect is followed only on the company's site and only when that page's robots.txt allows it, and every redirect
+  counts toward the 12-request limit.
+- Job-board and applicant-tracking sites such as BambooHR, Recruitee, Breezy, Teamtailor, We Work Remotely or
+  AngelList are never taken for the company's website, even when the company's name appears in their address.
+- A company website on its own port (for example `http://acme.example:8080/`) is read on that port.
+- A prep pack can no longer show a question as "logged", "from the company's page" or "reported" unless the practice
+  set really holds it from that source; anything else reads [AI-written].
+- Deleting a paste (or changing the company website) also removes the practice questions built from it.
+- Refreshing the company's pages, when nothing on them changed, no longer marks the prep pack out of date, and the
+  prep step is no longer out of date straight after its own first run.
+- A logged "Why <Company>?" counts as a motivation question, so it is asked first; another company's "Why Orchid?" is
+  never asked. With a Focus that has run out of questions, the mock says so and never repeats the question it just
+  asked.
+- The "Prep pack and research" part now says when its points come from the company's own questions; with 8 or more
+  results but too few passes (or too few non-passes) the record says exactly what it is waiting for.
+- A resume saved with a byte-order mark by another editor keeps the name as its heading in the .docx, PDF and preview.
+- Carried over from pass 17.1: imported .md and .txt files saved by Notepad with a byte-order mark no longer start with
+  a stray character; a role written as "Title | Company | City | Jan 2021 - Present" keeps its company after a title
+  change; `lodestar resume audit` on master.docx no longer reports "a very long name".
+
 ## Pass 17.1 (2026-11-10): credential isolation and fixes
 
 **Upgrading with your own `LODESTAR_HOME`?** If you set `LODESTAR_HOME` to a folder other than `~/.lodestar`, your

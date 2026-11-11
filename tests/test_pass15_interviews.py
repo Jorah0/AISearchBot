@@ -160,9 +160,10 @@ class Questions(Base):
             interview.prep(db.get_job(a))
         finally:
             ai.ask = real
-        self.assertIn("QUESTIONS ACTUALLY ASKED", seen[0])
-        self.assertIn("How do you model churn?", seen[0])
-        self.assertIn("Design a pipeline for late data.", interview.mock_system(db.get_job(a)))
+        self.assertIn("PRACTICE QUESTIONS", seen[0])  # pass 18: the sourced set, each question with its tag
+        self.assertIn("How do you model churn? [logged: round 1 (other)]", seen[0])
+        self.assertIn("Design a pipeline for late data. [general]", seen[0])
+        self.assertNotIn("Design a pipeline for late data.", interview.mock_system(db.get_job(a)))  # the app picks questions
 
 
 class Stories(Base):

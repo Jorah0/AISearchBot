@@ -105,6 +105,18 @@ label.fld { display: flex; flex-direction: column; gap: 2px; color: var(--dim); 
 .group .item { border-top: 1px solid var(--line); padding: 6px 0; } .group .item .hd { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .inbox textarea { min-height: 150px; }
 
+/* ---- interview readiness and question sources (the chip text always names the source: never colour alone) ---- */
+.src { display: inline-block; border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; font-size: 11px; color: var(--dim); }
+.src-logged, .src-pasted, .src-company { border-color: var(--ok); color: var(--ok); }
+.src-reported { border-style: dashed; color: var(--warn); }
+.msg-src { font-size: 11px; color: var(--dim); align-self: flex-start; margin-top: -4px; }
+.ready-score { font-size: 22px; }
+.ready-row { display: grid; grid-template-columns: minmax(110px, 200px) minmax(50px, 1fr) 32px; gap: 2px 8px; align-items: center; margin: 6px 0; }
+.ready-row meter { width: 100%; } .ready-row .chips { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0 12px; }
+.qsrc, .qsrc a, .qpaste .muted, .qgroup li { overflow-wrap: anywhere; }
+.qpaste { border-left: 2px solid var(--line); padding-left: 8px; margin: 6px 0; }
+.qgroup { margin: 6px 0; }
+
 /* ---- chat ---- */
 .chat { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow: auto; padding: 4px; }
 .msg { padding: 9px 12px; border-radius: 10px; max-width: 78%; white-space: pre-wrap; }

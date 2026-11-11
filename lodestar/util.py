@@ -25,7 +25,7 @@ def redact_url(url) -> str:
 
 
 # ponytail: these sites' terms forbid automated access; the capture bookmarklet reads a page the user has open instead
-NEVER_FETCH = re.compile(r"(^|\.)(linkedin|indeed|glassdoor|ziprecruiter)\.[a-z]{2,3}(\.[a-z]{2})?$")
+NEVER_FETCH = re.compile(r"(^|\.)(linkedin|indeed|glassdoor|ziprecruiter|simplyhired|teamblind)\.[a-z]{2,3}(\.[a-z]{2})?$")
 
 
 def _check_url(url: str) -> None:
@@ -116,13 +116,20 @@ class _SafeRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # the 3xx surfaces as an HTTPError (Location in e.headers): the caller vets each hop itself
+
+
 _opener = urllib.request.build_opener(_SafeRedirect, _PinnedHTTPHandler, _PinnedHTTPSHandler)
+_opener_nofollow = urllib.request.build_opener(_NoRedirect, _PinnedHTTPHandler, _PinnedHTTPSHandler)
 FETCH_MAX_BYTES = 25_000_000  # a big Greenhouse feed with content=true runs a few MB; nothing we read needs more
 
 
-def fetch(url: str, timeout: int = 25, headers: dict | None = None, max_bytes: int | None = None) -> str:
+def fetch(url: str, timeout: int = 25, headers: dict | None = None, max_bytes: int | None = None, follow: bool = True) -> str:
     """GET url as text. timeout bounds each socket wait, and the whole read must finish within 4x timeout, so a server
-    that trickles a byte at a time cannot hold the loop; more than max_bytes (FETCH_MAX_BYTES) is refused."""
+    that trickles a byte at a time cannot hold the loop; more than max_bytes (FETCH_MAX_BYTES) is refused.
+    follow=False: a redirect raises HTTPError 3xx with its Location, for callers that check each hop (robots, host)."""
     import time
 
     _check_url(url)
@@ -130,7 +137,7 @@ def fetch(url: str, timeout: int = 25, headers: dict | None = None, max_bytes: i
     deadline = time.monotonic() + timeout * 4
     req = urllib.request.Request(url, headers={"User-Agent": UA, **(headers or {})})
     try:
-        with _opener.open(req, timeout=timeout) as r:
+        with (_opener if follow else _opener_nofollow).open(req, timeout=timeout) as r:
             buf = bytearray()
             while chunk := r.read(65536):
                 buf += chunk
@@ -156,16 +163,26 @@ def fetch_json(url: str, **kw):
     return json.loads(fetch(url, **kw))
 
 
+def origin(url: str) -> str:
+    """'scheme://host[:port]' with the default port dropped and the host lowercased: 'http://Acme.example:80/x' and
+    'http://acme.example/' are one origin (one robots.txt, one site)."""
+    import urllib.parse
+
+    u = urllib.parse.urlparse(str(url or ""))
+    host = (u.hostname or "").rstrip(".")
+    host = f"[{host}]" if ":" in host else host
+    port = u.port if u.port and u.port != {"http": 80, "https": 443}.get(u.scheme.lower()) else None
+    return f"{u.scheme.lower()}://{host}" + (f":{port}" if port else "")
+
+
 def robots_ok(url: str, cache: dict, get=None) -> bool:
     """robots.txt says a generic page may be fetched. One robots.txt per host per cycle (cache). 401/403 on robots.txt
     means keep out, any other HTTP error means no rules (the urllib.robotparser convention). get: the fetch to use
     (callers pass their own so their tests can fake it)."""
     import urllib.error
-    import urllib.parse
     from urllib.robotparser import RobotFileParser
 
-    u = urllib.parse.urlparse(url)
-    base = f"{u.scheme}://{u.netloc}"
+    base = origin(url)
     if base not in cache:
         rp = RobotFileParser()
         try:

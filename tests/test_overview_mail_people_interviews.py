@@ -258,7 +258,7 @@ class OfflineMock(Base):
             msgs = [{"role": "user", "content": "start"}, {"role": "assistant", "content": first["reply"]},
                     {"role": "user", "content": "I built a Python pipeline that cut load time by 40 percent."}]
             r = web._act("mock", {"id": jid, "messages": msgs})
-        self.assertEqual(r["reply"], bank[1]["q"])
+        self.assertEqual(r["reply"], interview.next_question(db.get_job(jid), [interview.qkey(bank[0]["q"])])["q"])  # pass 18
         self.assertIsNone(r["card"]["rubric"])
         self.assertGreater(r["card"]["words"], 5)
 

@@ -57,7 +57,7 @@ def profile_text() -> str:
     if not PROFILE.is_file():
         PROFILE.write_text(PROFILE_TEMPLATE, encoding="utf-8")
         raise SystemExit(f"Created {PROFILE}. Fill in your full history there, then rerun.")
-    return PROFILE.read_text(encoding="utf-8")
+    return PROFILE.read_text(encoding="utf-8-sig")
 
 
 def app_dir(job) -> Path:
@@ -137,7 +137,7 @@ def candidate_text(limit: int | None = None, strict: bool = True, private: bool 
 
 def _current_resume(job) -> str:
     p = app_dir(job) / "resume.md"
-    return p.read_text(encoding="utf-8") if p.is_file() else candidate_text(private=False)
+    return p.read_text(encoding="utf-8-sig") if p.is_file() else candidate_text(private=False)
 
 
 def coverage(job, text: str | None = None, save: bool = True) -> dict:
@@ -533,7 +533,7 @@ def cover_letter(job, use_council: bool = False, provider: str | None = None, to
     from .drafts import leaks, screen
 
     d = app_dir(job)
-    research = (d / "research.md").read_text(encoding="utf-8")[:2500] if (d / "research.md").is_file() else ""
+    research = (d / "research.md").read_text(encoding="utf-8-sig")[:2500] if (d / "research.md").is_file() else ""
     gapj = json.loads((d / "gap.json").read_text(encoding="utf-8")) if (d / "gap.json").is_file() else {}
     # the gap check is a private judgement (it weighs pay against the floor): only its items that name no floor go in
     gapj = {k: [x for x in v if not leaks(str(x))] if isinstance(v := gapj.get(k), list) else (None if leaks(str(v or "")) else v)
@@ -590,7 +590,7 @@ def merge_into_profile(uploaded: str, provider: str | None = None, current: str 
     """Fold an uploaded resume into the master profile structure without losing anything from either.
     `current` is the editor text (unsaved edits included); defaults to the file on disk."""
     if not current:
-        current = PROFILE.read_text(encoding="utf-8") if PROFILE.is_file() else PROFILE_TEMPLATE
+        current = PROFILE.read_text(encoding="utf-8-sig") if PROFILE.is_file() else PROFILE_TEMPLATE
     return ai.ask(
         f"""Merge the UPLOADED RESUME into the MASTER PROFILE below and return the complete merged profile in Markdown using
 exactly the master profile's section structure (Contact, Summary, Skills, Experience, Projects, Education,
@@ -736,7 +736,7 @@ def _style(name: str | dict | None) -> dict:
 
 def _blocks(md: str):
     """Markdown lines as (kind, heading level, text): kind is h, li or p. The .docx and the HTML read the same blocks."""
-    for line in md.splitlines():
+    for line in md.lstrip("﻿").splitlines():  # a BOM some editors write must not hide the name heading
         s = line.strip()
         if not s or s.startswith("```"):
             continue
@@ -791,7 +791,7 @@ def export_docx(md_path: str | Path, style: str | dict | None = None) -> Path:
     doc = Document(str(template)) if template.is_file() else Document()
     if not template.is_file():
         _apply_style(doc, _style(style))
-    for kind, level, text in _blocks(Path(md_path).read_text(encoding="utf-8")):
+    for kind, level, text in _blocks(Path(md_path).read_text(encoding="utf-8-sig")):
         if kind == "h":
             doc.add_heading(text, level=level)
         else:
@@ -809,7 +809,7 @@ def export_html(md_path: str | Path, style: str | dict | None = None, printable:
 
     s, body, in_list = _style(style), [], False
     title = "Resume"
-    for kind, level, text in _blocks(Path(md_path).read_text(encoding="utf-8")):
+    for kind, level, text in _blocks(Path(md_path).read_text(encoding="utf-8-sig")):
         if in_list != (kind == "li"):
             body.append("<ul>" if kind == "li" else "</ul>")
             in_list = kind == "li"

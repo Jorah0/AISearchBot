@@ -160,6 +160,9 @@ def doc_diff(old: str, new: str) -> list[str]:
             out += [f"{title} +{', '.join(added[:6])}"] if added else []
             out += [f"{title} -{', '.join(gone[:6])}"] if gone else []
             continue
+        same = [x for x in dict.fromkeys(added) if x in gone]  # same employer, new title: an edit, not a swap
+        added, gone = [x for x in added if x not in same], [x for x in gone if x not in same]
+        out += [f"{x}: {profile.KEYS[kind][-1]} edited" for x in same[:4]]
         out += [f"+ {title}: {x}" for x in added[:4]] + [f"- {title}: {x}" for x in gone[:4]]
         for k in kb.keys() & ka.keys():
             bo, bn = ka[k].get("bullets") or [], kb[k].get("bullets") or []
@@ -187,7 +190,7 @@ def _build(force: bool) -> dict:
     except SystemExit as e:  # a salary floor outside Preferences: never printed
         return _fail(m, str(e))
     style = settings.pref("resume_look") or settings.pref("resume_style")  # the look it is drawn in (no name: _style picks)
-    old_md = (RESUMES / "master.md").read_text(encoding="utf-8") if (RESUMES / "master.md").is_file() else ""
+    old_md = (RESUMES / "master.md").read_text(encoding="utf-8-sig") if (RESUMES / "master.md").is_file() else ""
     have = files()
     if not force and md == old_md and m.get("style") == style and "docx" in have and ("pdf" in have or "html" in have):
         return _write_meta(m | {"rev": rev, "last_error": ""})  # nothing employer-visible changed: no render
@@ -849,7 +852,7 @@ def use_for_job(vid, job_id) -> dict:
     from . import db, resume
 
     v, job, d = version(vid), db.get_job(int(job_id)), _vdir(vid)
-    md = (d / v["files"]["md"]).read_text(encoding="utf-8")
+    md = (d / v["files"]["md"]).read_text(encoding="utf-8-sig")
     before = resume.coverage(job, save=False)["score"] if job["jd"] else 0
     # the old resume.docx / .pdf move aside first: one open in another program stops here, before resume.md or the
     # job's variant changed, so the files mail attaches never disagree with the text

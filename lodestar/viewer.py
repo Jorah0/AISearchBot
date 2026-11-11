@@ -52,13 +52,13 @@ def source(ref) -> dict:
         f = profile.RESUMES / "master.md"
         if not f.is_file():
             raise SystemExit("no master resume yet: Profile > Master resume > Update now builds it")
-        return {"key": "master", "title": "Master resume", "kind": "resume", "md": f.read_text(encoding="utf-8"),
+        return {"key": "master", "title": "Master resume", "kind": "resume", "md": f.read_text(encoding="utf-8-sig"),
                 "base": "Resume"}
     if t == "studio":
         from . import studio
 
         v = studio.version(ref.get("vid"))
-        md = studio.file_path(v["vid"], v["files"]["md"]).read_text(encoding="utf-8")
+        md = studio.file_path(v["vid"], v["files"]["md"]).read_text(encoding="utf-8-sig")
         look = {k: x for k, x in (v.get("style") or {}).items() if k in (*studio.LOOK_KEYS, "bullet", "para_spacing", "pages")}
         return {"key": f"studio:{v['vid']}", "title": f"Studio version {v['vid']}", "kind": "resume", "md": md,
                 "doc": v.get("doc"), "base": "Resume", "vid": v["vid"], "look": look}  # it opens in its own look
@@ -80,7 +80,7 @@ def source(ref) -> dict:
         base = name.rsplit(".", 1)[0].replace("_", " ").title().replace(" ", "-")
         return {"key": f"job:{job['id']}:{name}" + (f":{hist}" if hist else ""), "kind": JOB_DOCS[name],
                 "title": f"{name}{' (earlier: ' + hist + ')' if hist else ''} · {job['company']}", "job": job, "name": name,
-                "md": path.read_text(encoding="utf-8", errors="replace"), "save": not hist, "hist": hist,
+                "md": path.read_text(encoding="utf-8-sig", errors="replace"), "save": not hist, "hist": hist,
                 "base": "Resume" if name == "resume.md" else "Cover-Letter" if name == "cover_letter.md" else base}
     if t == "text":  # a draft shown in place (the counter-offer draft): rendered and exported, never stored
         kind = ref.get("kind") if ref.get("kind") in ("letter", "counter", "notes") else "notes"

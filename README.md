@@ -79,6 +79,8 @@ lodestar resume review                # brutal critique of your master resume
 # interviews
 lodestar interview prep 1             # questions, STAR answers, gaps, questions to ask, pitch
 lodestar interview mock 1             # live mock interview with scored debrief
+lodestar interview questions 1        # practice questions with their source (logged, pasted, company pages, JD)
+lodestar interview readiness 1        # preparation score 0-100, chance band (never a percentage), what to do next
 
 # email
 lodestar email check --days 7 --dry   # see what it would classify, change nothing
@@ -191,7 +193,8 @@ one-click gap / tailor / cover / prep, free-API search with filters and AI ranki
 Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse) plus watched Greenhouse / Lever / Ashby company boards,
 watches and email checks, approvals inbox with unmatched mail (link, track, dismiss), mail filed per job (threaded
 replies, trusted / unverified), AI draft options with one recommended and rewrite chips (drawer, Inbox, Answers,
-Offers) and suggested emails on Today, contacts with warm paths, interview rounds and a question bank, insights with
+Offers) and suggested emails on Today, contacts with warm paths, interview rounds and a question bank, interview readiness with a chance band and
+practice questions sourced from your logs, your notes and the company's own pages, insights with
 weekly goals, offer comparison and an activity log, idea crafting, answer bank and STAR stories, profile editor and
 bank, coach chat with a scored mock interview (dictation), tool switches, Connect email (provider presets, login test,
 test send), provider and vault setup, Updates (off / notify / auto on an interval, Check now with the commit range and
