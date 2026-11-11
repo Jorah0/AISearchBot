@@ -93,11 +93,16 @@ COMPARE = ("base", "bonus", "sign_on", "match", "equity_year1", "year1_cash", "y
 
 def compare() -> dict:
     """Live offers (status offer / accepted) side by side: totals, the best value per row, your recorded market range,
-    and the gap to your private salary floor. For Lodestar's own views only: the floor never leaves them."""
-    from . import db
+    the cached public BLS figures (paydata) and the gap to your private salary floor. For Lodestar's own views only:
+    the floor never leaves them."""
+    from . import db, paydata
     from .profile import salary_floor
 
     floor, rows = salary_floor(), []
+    try:
+        pidx = paydata.index()
+    except (Exception, SystemExit):  # public figures are a bonus: never cost the comparison
+        pidx = {"on": False, "home": [], "rows": {}}
     for j in db.list_jobs():
         if j["status"] not in ("offer", "accepted"):
             continue
@@ -107,8 +112,11 @@ def compare() -> dict:
         m, base = lookup(j["title"], j["jd"] or ""), t["base"]
         if m and base:
             m["delta"] = base - m["low"] if base < m["low"] else base - m["high"] if base > m["high"] else 0
+        pd = paydata.for_job(j, pidx)  # public BLS figures from the cache, with where their base sits
+        if pd.get("pay") and base:
+            pd["base_band"] = paydata.band(base, pd["pay"])
         rows.append({"job_id": j["id"], "company": j["company"], "title": j["title"], "status": j["status"], "offer": o,
-                     "total": t, "market": m, "vs_floor": base - floor if floor and base else None})
+                     "total": t, "market": m, "paydata": pd, "vs_floor": base - floor if floor and base else None})
     best = {}
     for k in COMPARE:
         top = max((r["total"][k] for r in rows), default=0)

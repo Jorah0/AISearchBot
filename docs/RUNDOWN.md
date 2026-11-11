@@ -118,9 +118,9 @@ document is produced (`--council`) and as a standalone `council "<question>"` co
 - `.gitignore` excludes every personal artifact (profile, database, applications, alerts, snapshots, vault index,
   `.env`) and every development artifact (graph outputs, caches, build dirs), so the repo can be shared safely.
 
-## 6. Current state (2026-11-11, pass 19: AI recommendations, Full AI and AI helpers, after pass 18: interview readiness and company-referenced questions)
+## 6. Current state (2026-11-11, pass 20: browser extension, market pay data, command palette, restore from backup, after pass 19: AI recommendations, Full AI and AI helpers)
 
-743 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`), and 179 browser tests pass in Edge
+799 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`), and 199 browser tests pass in Edge
 (`python -m unittest discover -s tests/e2e -p "e2e_*.py"`); [TESTS.md](TESTS.md) maps every feature to its tests. Live-verified: installer (Desktop shortcuts; the Start Menu folder fix after the overview is checked statically only), desktop window (Edge
 WebView2), every UI route with token and Host checks, six free job sources, page watches, Obsidian export. Not yet
 exercised with real credentials: AI calls and key checks, Google / Microsoft sign-in, IMAP login and SMTP sending, Proton

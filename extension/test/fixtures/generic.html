@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Careers - Quillbrook Labs - Apply</title></head><body>
+<!-- Fictional application form on an unknown careers site (iCIMS-like: autocomplete tokens and labels only), with
+     honeypots and denylisted fields that must stay empty. Hand-built for tests: no real company, person or page. -->
+<form id="apply" action="/careers/apply" method="post">
+<h2>Your details</h2>
+<p><label for="g1">Given name</label><input id="g1" name="g1" autocomplete="given-name"></p>
+<p><label for="g2">Surname</label><input id="g2" name="g2" autocomplete="family-name"></p>
+<p><label for="g3">E-mail address</label><input id="g3" name="g3" type="email" autocomplete="email"></p>
+<p><label for="g4">Mobile</label><input id="g4" name="g4" type="tel"></p>
+<p><label for="g5">Most recent employer</label><input id="g5" name="g5"></p>
+<p><label for="g6">Current job title</label><input id="g6" name="g6"></p>
+<p><label for="g7">Personal website</label><input id="g7" name="g7" type="url"></p>
+<p><label for="g8">Desired salary</label><input id="g8" name="g8"></p>
+<p><label for="g9">Earliest start date</label><input id="g9" name="g9" type="date"></p>
+<p><label for="g10">Phone (we already have it)</label><input id="g10" name="g10" value="555-0100"></p>
+<h2>Questions</h2>
+<fieldset><legend>Are you willing to relocate?</legend><label><input type="radio" name="reloc" value="y"> Yes</label><label><input type="radio" name="reloc" value="n"> No</label></fieldset>
+<p><label for="g11">Why do you want to work here?</label><textarea id="g11" name="g11"></textarea></p>
+<p><label><input type="checkbox" name="consent"> I agree to the privacy notice</label></p>
+<h2>Do not fill</h2>
+<p><label for="d1">Social Security Number</label><input id="d1" name="d1"></p>
+<p><label for="d2">Date of birth</label><input id="d2" name="d2"></p>
+<p><label for="d3">Create a password</label><input id="d3" name="d3" type="password"></p>
+<input type="hidden" name="salary_expectation" id="h0">
+<p style="position:absolute;left:-9999px"><label for="h1">Email (leave blank)</label><input id="h1" name="h1"></p>
+<p><label for="h2">First name confirmation</label><input id="h2" name="h2" style="width:1px;height:1px;padding:0;border:0"></p>
+<p style="opacity:0"><label for="h3">Last name again</label><input id="h3" name="h3"></p>
+<p aria-hidden="true"><label for="h4">Your full name</label><input id="h4" name="h4"></p>
+<p><label for="h5">Location</label><input id="h5" name="h5" disabled></p>
+<p><label for="h6">LinkedIn</label><input id="h6" name="h6" readonly></p>
+<p style="display:none"><label for="h7">Website</label><input id="h7" name="h7"></p>
+<button type="submit">Send application</button>
+</form>
+</body></html>

@@ -212,8 +212,9 @@ def busy(include_update: bool = False) -> str | None:
     if db.list_pending("running"):
         return "an Inbox action is being sent"
     web = sys.modules.get("lodestar.web")
-    if web and any(t.get("status") == "running" and not str(t.get("action", "")).startswith("update")
-                   for t in list(web.TASKS.values())):  # the UI's own update task is not in the way
+    if web and any(t.get("status") == "running" and not str(t.get("action", "")).startswith(("update", "restore"))
+                   for t in list(web.TASKS.values())):  # the UI's own update or restore task is not in the way (a
+        # restore holds util.run_lock("restore"), which the lock files above report)
         return "a background action is running"
     return None
 

@@ -76,6 +76,12 @@ PREFS = {
     "autopilot_ai_per_day": 30,
     "autopilot_jobs_per_cycle": 3,
     "reported_questions": False,  # practice questions the AI says a company is reported to ask (unverified)
+    # capture/autofill bookmarklets: their ?t= token is readable by the page they run on. auto = on until a browser
+    # extension is paired (extension.bookmarklets_on), then off
+    "bookmarklets": "auto",
+    # public BLS pay figures per job (paydata.py): off = Lodestar never contacts api.bls.gov; on = the drawer fetches
+    # the job you open and the monitor loop fills the rest (at most one BLS query a cycle)
+    "market_pay": False,
 }
 PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "name": ("Your name", "signs drafted emails when no signature is set"),
@@ -108,10 +114,15 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "autopilot_jobs_per_cycle": ("Autopilot jobs per cycle", "at most this many jobs advanced in one monitor cycle (0-50)"),
     "reported_questions": ("Reported interview questions", "also practise questions the AI says a company is reported to "
                            "ask (labelled 'reported, unverified'; off: only your logs, your pastes, the company's pages, the JD)"),
+    "bookmarklets": ("Bookmarklets", "auto: on until a browser extension is paired, then off; on / off: always "
+                     "(the page a bookmarklet runs on can read its token)"),
+    "market_pay": ("Market pay (BLS)", "public BLS wage percentiles for each job's occupation and area; sends only "
+                   "occupation and area codes to api.bls.gov (25 queries a day, 500 with a free BLS_API_KEY)"),
 }
 CHOICES = {"resume_style": ("classic", "modern", "compact"),  # prefs limited to a fixed set of values
            "provider": ("", *PROVIDERS),  # "" = the first configured one
-           "update_mode": ("off", "notify", "auto"), "update_channel": ("commits", "releases")}
+           "update_mode": ("off", "notify", "auto"), "update_channel": ("commits", "releases"),
+           "bookmarklets": ("auto", "on", "off")}
 RANGES = {"followup_days": (1, 90), "auto_track_min_score": (0, 100), "weekly_target": (0, 200),
           "activity_weekly_min": (0, 100), "update_every_hours": (1, 720),
           "autopilot_ai_per_cycle": (0, 500), "autopilot_ai_per_day": (0, 500), "autopilot_jobs_per_cycle": (0, 50)}  # whole-number prefs: a negative followup_days would nudge every job each cycle

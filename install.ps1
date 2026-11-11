@@ -79,4 +79,5 @@ Write-Host "Installed." -ForegroundColor Green
 Write-Host "Next:  1) edit your master resume:  $dataDir\profile.md"
 Write-Host "       2) add an AI key:            $jb vault set ANTHROPIC_API_KEY   (or in the app's Setup tab)"
 Write-Host "       3) launch the 'Lodestar' shortcut, or:  $jb desktop"
+Write-Host "Browser extension (optional): edge://extensions or chrome://extensions > Developer mode > Load unpacked > $root\extension, then Setup > Browser extension > Pair a browser"
 Write-Host "Uninstall: powershell -ExecutionPolicy Bypass -File uninstall.ps1 [-Purge]"

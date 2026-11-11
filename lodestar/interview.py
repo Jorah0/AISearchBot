@@ -38,15 +38,16 @@ def _notes(job) -> str:
 
 def _pay(job) -> str:
     """Real pay figures only: what the posting states, your recorded market range, your Preferences (private)."""
-    from . import comp
+    from . import comp, paydata
     from .profile import preferences_text
     from .resume import salary_mentions
 
     jd = job["jd"] or ""
     m = comp.lookup(job["title"], jd)
     market = f"{m['low']}-{m['high']} ({m['city']})" if m else "none recorded"
+    bls = paydata.line(job)
     return (f"PAY FIGURES: stated in the posting: {', '.join(salary_mentions(jd)) or 'none stated'}; "
-            f"recorded market range: {market}.\n"
+            f"recorded market range: {market}" + (f"; {bls}" if bls else "") + ".\n"
             f"CANDIDATE PREFERENCES (private, includes the salary floor):\n{preferences_text() or '(none stated)'}")
 
 

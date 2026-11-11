@@ -588,9 +588,134 @@ def autofill_data() -> dict:
             "github": github, "website": website, "location": location or bank["location"], "answers": answers}
 
 
-# ----------------------------------------------------------------------------- backup + export
-def backup(out_dir: Path | None = None, keep: int = 7) -> Path:
-    """Zip profile, tracker, settings, answers, ideas and generated documents (not snapshots/caches). Keeps the last N."""
+EXT_EEO = {"gender": "EEO: gender", "sex": "EEO: sex", "race": "EEO: race", "hispanic": "EEO: hispanic or latino",
+           "veteran": "EEO: veteran status", "disability": "EEO: disability status"}  # pipeline.CANON keys
+
+
+def _unchanged_by_guard(text: str, any_line: bool) -> bool:
+    """True when the floor guard passes text through untouched. A refusal or ANY change (drop_preferences cuts a
+    '...preferences:' line silently) means the text is withheld, never sent trimmed."""
+    from .profile import employer_safe
+
+    try:
+        return employer_safe(text, any_line=any_line) == text
+    except (Exception, SystemExit):
+        return False
+
+
+def ext_autofill(questions: list[str], eeo: bool = False, salary: bool = False, url=None) -> dict:
+    """What the browser extension may type into the application form on the user's tab (docs/CAPTURE.md). Employer
+    facing: contact (autofill_data), work history and education (profile bank, else the master minus Preferences),
+    answers for the labels the page showed (pipeline.known: CANON keys, employer=True so private rows and rows naming
+    the floor never count, eligibility / EEO only when you wrote them; else the best pipeline.suggestions near match,
+    flagged 'suggested'), EEO and desired salary only when ticked on this click. Every text passes the floor guard
+    unchanged or is withheld (counted). Never read: Preferences, prefs, comp, offers, notes, mail, contacts, stories."""
+    from . import pipeline
+    from .profile import drop_preferences, extract_heuristic, is_template, load, master_text
+
+    if is_template(master_text()):  # the starter's placeholders ('Full Name') must never be typed into a form
+        raise SystemExit("your profile is still the starter template: fill it in (Profile tab), then press Fill again")
+    withheld = 0
+
+    def safe(text, any_line=True) -> bool:
+        nonlocal withheld
+        if _unchanged_by_guard(text, any_line):
+            return True
+        withheld += 1
+        return False
+
+    # SystemExit for a template profile: the route shows its message
+    out = {k: v if not v or safe(f"{k}: {v}", any_line=False) else "" for k, v in autofill_data().items() if k != "answers"}
+    bank = load()
+    master = None
+    if not bank["experience"] or not bank["education"]:  # a bank never filled by an import: the master's own entries
+        master = extract_heuristic(drop_preferences(master_text()))
+    exp = []
+    for e in bank["experience"] or master["experience"]:
+        row = {k: " ".join(str(e.get(k) or "").split())[:200] for k in ("title", "company", "location", "start", "end")}
+        row["description"] = "\n".join(str(b) for b in e.get("bullets") or [] if str(b).strip())[:2000]
+        if all(safe(f"{k}: {v}", any_line=False) for k, v in row.items() if v):
+            exp.append(row)
+    edu = []
+    for e in bank["education"] or master["education"]:
+        row = {k: " ".join(str(e.get(k) or "").split())[:200] for k in ("school", "degree", "field", "start", "end")}
+        if all(safe(f"{k}: {v}", any_line=False) for k, v in row.items() if v):
+            edu.append(row)
+    cur = next((e for e in exp if not e["end"] or re.fullmatch(r"(?i)present|current|now|today", e["end"])), exp[0] if exp else None)
+    out |= {"current_company": cur["company"] if cur else "", "current_title": cur["title"] if cur else "",
+            "experience": exp, "education": edu}
+
+    def allowed(text) -> bool:  # EEO and pay only when ticked on this click; private questions never
+        kind = pipeline.classify(text)
+        return (kind != "private" and (eeo or kind != "eeo")
+                and (salary or (kind != "salary" and pipeline.norm_q(text) != "Desired salary")))
+
+    def bank_q(answer_id) -> str:
+        r = db.con().execute("SELECT question FROM answers WHERE id=?", (answer_id,)).fetchone()
+        return r["question"] if r else ""
+
+    answers = {}
+    for label in questions:
+        if not allowed(label):
+            continue
+        hit, match = pipeline.known(label, employer=True), "exact"
+        if hit:
+            hit = {"answer": hit["answer"], "question": bank_q(hit["answer_id"])}
+        elif not pipeline.never_ai(label):  # near matches never stand in for an eligibility or EEO answer
+            hit, match = next(({"answer": s["answer"], "question": s["question"]} for s in pipeline.suggestions(label)
+                               if allowed(s["question"])), None), "suggested"
+        if hit and allowed(hit["question"]) and safe(f"{hit['question']}: {hit['answer']}"):
+            answers[label] = hit | {"match": match}
+    out["answers"] = answers
+    if eeo:
+        out["eeo"] = {}
+        for k, q in EXT_EEO.items():
+            hit = pipeline.known(q, employer=True)  # only an answer you wrote (pipeline.yours), never a private one
+            if hit and safe(f"{q}: {hit['answer']}"):
+                out["eeo"][k] = hit["answer"]
+    if salary:
+        hit = pipeline.known("Desired salary", employer=True)
+        if hit and safe(f"Desired salary: {hit['answer']}"):  # the floor's own figure is refused here
+            out["salary"] = hit["answer"]
+    from .web import http_only
+
+    u = http_only(url)
+    job = u and db.con().execute("SELECT * FROM jobs WHERE url=? AND status NOT IN ('rejected','withdrawn')", (u,)).fetchone()
+    if job:  # the file input stays yours: the panel names the job's tailored resume to upload
+        from .config import APPS_DIR
+        from .util import slug
+
+        d = APPS_DIR / f"{job['id']}-{slug(job['company'])}-{slug(job['title'])}"  # resume.app_dir, without creating it
+        files = [d / n for n in ("resume.pdf", "resume.docx", "resume.md") if (d / n).is_file()]
+        out["job"] = {"id": job["id"], "company": job["company"], "title": job["title"],
+                      "resume": str(files[0]) if files else ""}
+    out["withheld"] = withheld
+    return out
+
+
+# ----------------------------------------------------------------------------- backup + restore + export
+SKIP_DIRS = {"backups", "snapshots", "cache", "__pycache__", "procs",
+             "mail"}  # applications/*/mail/: received attachments, still in the mailbox (up to 25 MB a message)
+# .env may hold keys or IMAP_PASS in clear text; extension.json holds the paired browsers' secrets (a restore must never
+# bring back a revoked one); capture.token is the running server's bookmarklet token; update-state.json would make the
+# next start "finish" an update that is not happening: none goes in a zip, and a restore never touches them
+SKIP_NAMES = {".env", "extension.json", "capture.token", "update-state.json"}
+
+
+def in_backup(rel: Path) -> bool:
+    """A data-folder file (relative path) that backups carry, and so one a restore replaces or removes. Compared case-
+    folded: on Windows 'Extension.json' or 'Backups/x' in a zip IS extension.json or backups/ once written."""
+    parts = [s.lower() for s in rel.parts]
+    name = parts[-1]
+    return not (set(parts) & SKIP_DIRS or parts[0].startswith(".restore-") or name.startswith("lodestar.log")
+                or name.endswith((".lock", ".tmp", "-wal", "-shm", "-journal")) or name in SKIP_NAMES)
+
+
+def backup(out_dir: Path | None = None, keep: int = 7, prefix: str = "lodestar-backup") -> Path:
+    """Zip profile, tracker, settings, answers, ideas and generated documents (not snapshots/caches). Keeps the last N
+    zips with this prefix (a restore's safety copies, before-restore-*, rotate apart from the nightly ones)."""
+    import sqlite3
+    import tempfile
     import zipfile
 
     from .config import HOME
@@ -599,17 +724,11 @@ def backup(out_dir: Path | None = None, keep: int = 7) -> Path:
         raise SystemExit("keep must be at least 1 (the backup just made)")
     out_dir = out_dir or HOME / "backups"
     out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / f"lodestar-backup-{datetime.now():%Y%m%d-%H%M%S}.zip"  # seconds: two backups in the same minute both stay
-    import sqlite3
-    import tempfile
-
-    skip = {"backups", "snapshots", "cache", "__pycache__", "lodestar.log",
-            "mail"}  # applications/*/mail/: received attachments, still in the mailbox (up to 25 MB a message)
+    target = out_dir / f"{prefix}-{datetime.now():%Y%m%d-%H%M%S}.zip"  # seconds: two backups in the same minute both stay
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z, tempfile.TemporaryDirectory() as tmp:
         for p in HOME.rglob("*"):
             rel = p.relative_to(HOME)
-            if (not p.is_file() or set(rel.parts) & skip or p.name.startswith("lodestar.log") or p.suffix in (".lock", ".tmp")
-                    or p.name == ".env"):  # .env may hold keys or IMAP_PASS in clear text; secrets stay out of zips
+            if not p.is_file() or not in_backup(rel):
                 continue
             if p.suffix == ".db":  # SQLite online backup: a consistent snapshot even while the loop is writing
                 snap = Path(tmp) / p.name
@@ -620,11 +739,262 @@ def backup(out_dir: Path | None = None, keep: int = 7) -> Path:
                     src.close()
                     dst.close()
                 z.write(snap, str(rel))
-            elif not p.name.endswith(("-wal", "-shm", "-journal")):
+            else:
                 z.write(p, str(rel))
-    for old in sorted(out_dir.glob("lodestar-backup-*.zip"))[:-keep]:  # keep >= 1 (checked above): [:-0] would keep all
+    for old in sorted(out_dir.glob(f"{prefix}-*.zip"))[:-keep]:  # keep >= 1 (checked above): [:-0] would keep all
         old.unlink()
     return target
+
+
+def backups() -> list[dict]:
+    """The zips in the backups folder, newest first: Setup > Data offers these to restore (the page never names a path)."""
+    from .config import HOME
+
+    d = HOME / "backups"
+    files = [p for p in d.glob("*.zip") if p.is_file()] if d.is_dir() else []
+    return [{"name": p.name, "size": p.stat().st_size, "when": f"{datetime.fromtimestamp(p.stat().st_mtime):%Y-%m-%d %H:%M}"}
+            for p in sorted(files, key=lambda p: (p.stat().st_mtime, p.name), reverse=True)]
+
+
+def backup_file(name) -> Path:
+    """A backup the page picked, by bare name, inside the backups folder only."""
+    from .config import HOME
+
+    n = str(name or "")
+    p = HOME / "backups" / n
+    if not re.fullmatch(r"[\w.-]{1,120}\.zip", n) or not p.is_file():
+        raise SystemExit("pick a backup from the list (Refresh it if the file was moved)")
+    return p
+
+
+RESTORE_MAX_ZIP = 2_000_000_000  # the zip on disk
+RESTORE_MAX_TOTAL = 4_000_000_000  # everything in it, unpacked (a zip bomb stops here, before anything is written)
+RESTORE_MAX_FILE = 1_000_000_000
+RESTORE_MAX_FILES = 100_000
+RESTORE_NOTE = ("Not in backups, so left as they are: secrets in the OS keyring (AI keys, the mail sign-in, the vault), "
+                "paired browsers (extension) and .env. Restart Lodestar so every part reads the restored data.")
+_RUNNABLE = {".exe", ".dll", ".bat", ".cmd", ".com", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".scr", ".msi",
+             ".lnk", ".py", ".pyw", ".pyc", ".sh", ".jar", ".hta", ".cpl", ".reg"}  # never in a data folder
+_RESERVED = re.compile(r"(con|prn|aux|nul|com\d|lpt\d)(\..*)?", re.I)
+_SHORT = re.compile(r"[^.~]{1,6}~\d{1,6}(\.[^.]{1,3})?")  # an 8.3 short name: EXTENS~1.JSO opens extension.json on NTFS
+
+
+def restore_check(zip_path) -> dict:
+    """Validate a backup zip without writing anything: {files: [(ZipInfo, rel)], skipped: [names], total: bytes}.
+    Refuses (SystemExit) a file that is not a zip, one over the size caps, an unsafe or unexpected entry (absolute, drive,
+    '..', backslash, reserved or odd names, links, encrypted, programs, two names that differ only by case) and a zip
+    without lodestar.db at its root. Entries a backup never carries (.env, extension.json, procs/, logs) are skipped."""
+    import stat
+    import zipfile
+    from pathlib import PurePosixPath
+
+    p = Path(zip_path)
+    if not p.is_file():
+        raise SystemExit(f"no such file: {p}")
+    if p.stat().st_size > RESTORE_MAX_ZIP:
+        raise SystemExit(f"{p.name} is larger than {RESTORE_MAX_ZIP // 1_000_000} MB: not restored")
+    if not zipfile.is_zipfile(p):
+        raise SystemExit(f"{p.name} is not a zip file")
+    with zipfile.ZipFile(p) as z:
+        infos = z.infolist()
+    if len(infos) > RESTORE_MAX_FILES:
+        raise SystemExit(f"{p.name} holds more than {RESTORE_MAX_FILES} entries: not a Lodestar backup")
+    files, skipped, total, seen = [], [], 0, set()
+    for i in infos:
+        n = i.filename
+
+        def bad(why, n=n):
+            raise SystemExit(f"refused {p.name}: {why}: {n[:120]!r}; nothing was changed")
+
+        if n.endswith("/"):
+            continue  # a folder entry: folders come with their files
+        parts = n.split("/")
+        if ("\\" in n or ":" in n or n.startswith("/") or any(not s or s in (".", "..") for s in parts)
+                or any(ord(c) < 32 or c in '<>"|?*' for c in n) or any(s[-1] in ". " or _RESERVED.fullmatch(s) for s in parts)):
+            bad("unsafe path")
+        if any(_SHORT.fullmatch(s) for s in parts):
+            bad("a short (8.3) name, which can stand for another file")
+        if n.lower() == "lodestar.db" and n != "lodestar.db":
+            bad("the database under another spelling")
+        if stat.S_ISLNK(i.external_attr >> 16):
+            bad("a link")
+        if i.flag_bits & 1:
+            bad("an encrypted entry")
+        if not in_backup(Path(*parts)):
+            skipped.append(n)
+            continue
+        rel = PurePosixPath(n)
+        if rel.suffix.lower() in _RUNNABLE:
+            bad("a program or script, never part of a data folder")
+        if n.lower() in seen:
+            bad("two entries whose names differ only by case")
+        seen.add(n.lower())
+        if i.file_size > RESTORE_MAX_FILE:
+            bad(f"an entry larger than {RESTORE_MAX_FILE // 1_000_000} MB")
+        total += i.file_size
+        if total > RESTORE_MAX_TOTAL:
+            raise SystemExit(f"refused {p.name}: it unpacks to more than {RESTORE_MAX_TOTAL // 1_000_000} MB; nothing was changed")
+        files.append((i, rel))
+    if "lodestar.db" not in seen:
+        raise SystemExit(f"{p.name} is not a Lodestar backup (no lodestar.db at its top level)")
+    return {"files": files, "skipped": skipped, "total": total}
+
+
+def _move(src: Path, dst: Path) -> None:
+    """os.replace with brief retries: Windows refuses it while another thread has the file open (as settings.save)."""
+    import os
+    import time
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    for i in range(40):
+        try:
+            return os.replace(src, dst)
+        except PermissionError:
+            if i == 39:
+                raise
+            time.sleep(0.025)
+
+
+def restore_busy() -> str | None:
+    """Why a restore must wait: an update, a mail scan, an Inbox send or a background action in flight, or another
+    Lodestar process (the app, the desktop window, the loop) that would keep writing the old data."""
+    from . import updater
+
+    if why := updater.busy(include_update=True):
+        return why
+    if updater._others():
+        return ("another Lodestar process is running (the app, the desktop window or the loop): restore from Setup > "
+                "Data in that window, or close it first")
+    return None
+
+
+def _unpack(zip_path, plan: dict, stage: Path) -> None:
+    import zipfile
+
+    with zipfile.ZipFile(zip_path) as z:
+        for info, rel in plan["files"]:
+            out = stage.joinpath(*rel.parts)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            n = 0
+            with z.open(info) as src, open(out, "wb") as dst:
+                while chunk := src.read(1 << 20):
+                    n += len(chunk)
+                    if n > info.file_size:  # the header understated the size
+                        raise SystemExit(f"refused: {info.filename} is larger than its zip entry says; nothing was changed")
+                    dst.write(chunk)
+
+
+def _check_stage(stage: Path) -> dict:
+    """The staged database passes its integrity check, then opens with its schema and additive migrations (db.connect,
+    as at every start); settings.json parses. Returns row counts for the summary."""
+    import sqlite3
+
+    f = stage / "lodestar.db"
+    c = sqlite3.connect(f)
+    try:
+        check = c.execute("PRAGMA integrity_check").fetchone()[0]
+    except sqlite3.DatabaseError as e:
+        raise SystemExit(f"refused: the backup's database does not open ({e}); nothing was changed") from None
+    finally:
+        c.close()
+    if check != "ok":
+        raise SystemExit(f"refused: the backup's database is damaged ({check}); nothing was changed")
+    try:
+        c = db.connect(f)
+    except sqlite3.Error as e:
+        raise SystemExit(f"refused: the backup's database could not be brought up to date ({e}); nothing was changed") from None
+    try:
+        counts = {t: c.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in ("jobs", "contacts", "answers", "events")}
+    finally:
+        c.close()
+    if (stage / "settings.json").is_file():
+        try:
+            json.loads((stage / "settings.json").read_text(encoding="utf-8"))
+        except ValueError:
+            raise SystemExit("refused: the backup's settings.json is not valid JSON; nothing was changed") from None
+    return counts
+
+
+def restore(zip_path) -> dict:
+    """Put the data folder back to a backup zip (`lodestar restore`, Setup > Data). In order: refuse while anything is in
+    flight (restore_busy) or a loop cycle runs (loop.HOLD, held to the end so no cycle starts meanwhile); validate the
+    zip (restore_check); unpack into a staging folder and check it (_check_stage); take a safety backup of the data as
+    it is now (backups/before-restore-*.zip); then swap: every backed-up file moves aside, the staged ones move in,
+    and the database is copied in with SQLite's backup API (one step; open connections see the new data). Any failure
+    in the swap puts the moved files back. Never touches what backups never carry (keyring, extension.json, .env,
+    backups/, logs)."""
+    import shutil
+    import sqlite3
+
+    from . import config, loop
+    from .config import HOME
+    from .util import run_lock
+
+    config.full_ai_check("restores a backup")
+    if why := restore_busy():
+        raise SystemExit(f"restore refused: {why}; nothing was changed")
+    plan = restore_check(zip_path)
+    if not loop.HOLD.acquire(blocking=False):
+        raise SystemExit("restore refused: the monitor loop is in the middle of a cycle; try again when it finishes")
+    tag = uuid.uuid4().hex[:8]
+    stage, aside = HOME / f".restore-stage-{tag}", HOME / f".restore-old-{tag}"
+    done = False
+    try:
+        with run_lock("restore"):
+            _unpack(zip_path, plan, stage)
+            counts = _check_stage(stage)
+            safety = backup(prefix="before-restore")  # a refused zip leaves no safety copy behind: nothing changed
+            new = {Path(*r.parts) for _, r in plan["files"]} - {Path("lodestar.db")}
+            old = [r for r in (p.relative_to(HOME) for p in HOME.rglob("*") if p.is_file())
+                   if in_backup(r) and r != Path("lodestar.db")]
+            moved, placed = [], []
+            try:
+                for r in old:
+                    _move(HOME / r, aside / r)
+                    moved.append(r)
+                for r in sorted(new):
+                    _move(stage / r, HOME / r)
+                    placed.append(r)
+                db.release()  # this thread's connection; the other threads' see the copied pages
+                src, dst = sqlite3.connect(stage / "lodestar.db"), sqlite3.connect(db.DB_PATH, timeout=30)
+                try:
+                    src.backup(dst)
+                finally:
+                    src.close()
+                    dst.close()
+            except BaseException as e:
+                try:
+                    for r in placed:
+                        (HOME / r).unlink(missing_ok=True)
+                    for r in moved:
+                        _move(aside / r, HOME / r)
+                except OSError as back:  # the files stay in `aside` (kept below) and in the safety backup
+                    raise SystemExit(f"restore failed ({e}) and could not put every file back ({back}): your files are in "
+                                     f"{aside} and in the safety backup {safety}") from None
+                raise
+            done = True
+            for r in set(old) - new:  # folders the restore emptied (a job added after the backup)
+                for d in (HOME / r).parents:
+                    if d == HOME:
+                        break
+                    try:
+                        d.rmdir()
+                    except OSError:
+                        break
+            c = db.connect()  # the live database opens and its migrations run, as at the next start
+            try:
+                live = c.execute("PRAGMA integrity_check").fetchone()[0]
+            finally:
+                c.close()
+            if live != "ok":
+                raise SystemExit(f"the restored database reports {live}; the safety backup is {safety}")
+    finally:
+        loop.HOLD.release()
+        shutil.rmtree(stage, ignore_errors=True)
+        if done or not any(f.is_file() for f in aside.rglob("*")):  # never delete files a failed rollback left there
+            shutil.rmtree(aside, ignore_errors=True)
+    return {"from": Path(zip_path).name, "restored": len(new) + 1, "removed": len(set(old) - new),
+            "skipped": plan["skipped"][:20], "safety_backup": str(safety), "counts": counts, "note": RESTORE_NOTE}
 
 
 def csv_cell(v):

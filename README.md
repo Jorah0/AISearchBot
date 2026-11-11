@@ -116,6 +116,7 @@ lodestar jobs checklist 1 ; lodestar followup 1 ; lodestar thanks 1 --interviewe
 
 # operations
 lodestar usage ; lodestar backup ; lodestar export json ; lodestar providers models
+lodestar restore BACKUP.zip                   # back to a backup (a safety backup first; keyring secrets stay)
 lodestar update check ; lodestar update apply   # updates: commits + changelog first, then backup, tests, rollback on failure
 
 # ideas: brainstorm across every provider, rank, refine, track
@@ -156,11 +157,11 @@ Used your own `LODESTAR_HOME` before Pass 17.1? Link your keys and mailbox again
 
 Module map (37 modules, what each does): [docs/RUNDOWN.md, section 1](docs/RUNDOWN.md#1-what-it-is-made-of).
 
-Tests (offline, 644; browser, 155): `python -m unittest discover -s tests -v`. Which test covers which feature: [docs/TESTS.md](docs/TESTS.md).
+Tests (offline, 799; browser, 199): `python -m unittest discover -s tests -v`. Which test covers which feature: [docs/TESTS.md](docs/TESTS.md).
 
 ### Browser tests
 
-End-to-end tests (155) drive the real UI in a browser (Playwright). Each test class gets a temp data folder with fictional
+End-to-end tests (199) drive the real UI in a browser (Playwright). Each test class gets a temp data folder with fictional
 seeded data, the real server on a free 127.0.0.1 port, and fakes for every outside service (AI, mail, OAuth, job sites,
 keyring): no network, and `~/.lodestar` is never touched.
 
@@ -185,8 +186,10 @@ python -m unittest discover -s tests/e2e -p "e2e_*.py"
 ## Limits worth knowing
 
 - Email classification only sees mail that passes a keyword prefilter or comes from a tracked company, so cost stays low.
-- Job APIs are the free, keyless ones. LinkedIn / Indeed have no public API; use the Capture bookmarklet from the Setup tab
-  ([docs/CAPTURE.md](docs/CAPTURE.md)) on the posting you have open.
+- Job APIs are the free, keyless ones. LinkedIn / Indeed have no public API; capture the posting you have open with
+  the Lodestar browser extension (the `extension` folder, loaded unpacked in Edge or Chrome and paired from Setup >
+  Browser extension; it never captures or fills on LinkedIn, whose User Agreement bans such add-ons) or the Capture
+  bookmarklet ([docs/CAPTURE.md](docs/CAPTURE.md)).
 - Nothing auto-submits applications. That is deliberate: most sites ban it and it tanks response rates.
 
 ## Web UI
@@ -202,14 +205,15 @@ watches and email checks, approvals inbox with unmatched mail (link, track, dism
 replies, trusted / unverified), AI draft options with one recommended and rewrite chips (drawer, Inbox, Answers,
 Offers) and suggested emails on Today, contacts with warm paths, interview rounds and a question bank, interview readiness with a chance band and
 practice questions sourced from your logs, your notes and the company's own pages, insights with
-weekly goals, offer comparison and an activity log, idea crafting, answer bank and STAR stories, profile editor and
+weekly goals, offer comparison with opt-in public BLS market pay per job (board chip, drawer, counter-offer), and an activity log, idea crafting, answer bank and STAR stories, profile editor and
 bank, coach chat with a scored mock interview (dictation), tool switches, Connect email (provider presets, login test,
 test send), provider and vault setup, Updates (off / notify / auto on an interval, Check now with the commit range and
 changelog, Update now with a backup, the tests and a rollback, Restart in the desktop app, the update log; a top-bar
 badge when an update is out; an update cut off mid-way is rolled back at the next start), and an AI toolbar on every
 tab and card with your own content: Recommend, Apply suggestions, Full AI (never sends, submits, moves or adds a job,
 or touches settings) and Undo AI changes, with the change history in Setup > Data, plus a folded AI help menu per
-component. Full walkthrough and roadmap: [docs/RUNDOWN.md](docs/RUNDOWN.md).
+component. Ctrl+K (Cmd+K) opens a command palette for any tab, job, contact, document, setting or common action, and
+Setup > Data restores a backup (a safety backup first). Full walkthrough and roadmap: [docs/RUNDOWN.md](docs/RUNDOWN.md).
 
 Step-by-step pipeline: each job's drawer shows its steps (fit check, research, tailor, cover letter, form answers,
 apply, confirmation, follow-up, schedule, prep, thank-you, offer, close) with their state in words, **Run next step**

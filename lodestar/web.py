@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import __version__, advisor, ai, apply, approvals, codes, comp, connections, db, extras, log, loop, mailconn, oauth, pipeline, settings, vault
+from . import __version__, advisor, ai, apply, approvals, codes, comp, connections, db, extension, extras, log, loop, mailconn, oauth, paydata, pipeline, settings, vault
 from .config import ALERTS, PROFILE
 
 STATIC = Path(__file__).parent / "static"
@@ -84,6 +84,21 @@ def _docs(job) -> dict:
     d = app_dir(job)
     return {p.name: p.read_text(encoding="utf-8", errors="replace") for p in sorted(d.iterdir())
             if p.suffix in (".md", ".json", ".txt")}
+
+
+def _doc_index() -> list[dict]:
+    """[{label, ref}] for the command palette: viewer refs only (openViewer), never file contents or paths."""
+    from . import profile, studio
+    from .viewer import JOB_DOCS
+
+    out = [{"label": "Master resume", "ref": {"type": "master"}}] if (profile.RESUMES / "master.md").is_file() else []
+    out += [{"label": f"Studio version {v['vid']}" + (f" ({' '.join(str(v['request']).split())[:60]})" if v.get("request") else ""),
+             "ref": {"type": "studio", "vid": v["vid"]}} for v in studio.versions(30)]
+    for j in db.list_jobs():
+        d = extras._job_dir(j)  # never created here
+        out += [{"label": f"{n} · #{j['id']} {j['company']} - {j['title']}", "ref": {"type": "job", "id": j["id"], "name": n}}
+                for n in JOB_DOCS if (d / n).is_file()]
+    return out
 
 
 CLAIM = {"gap": "score", "research": "research", "tailor": "tailor", "bullets": "tailor", "bullets_apply": "tailor",
@@ -365,6 +380,19 @@ def _do(action: str, p: dict):
             out = apply.offer(job, p.get("salary", ""), p.get("bonus", ""), p.get("equity", ""), p.get("benefits", ""),
                               p.get("deadline", ""), p.get("notes", ""), prov)
             return {"path": str(out), "text": out.read_text(encoding="utf-8"), "docs": _docs(job)}
+        case "market_pay":  # {id, ai?}: AI occupation pick (on your click), then the job's next BLS figure; cache first
+            if not job:
+                raise ValueError("pick a job")
+            if not settings.pref("market_pay"):
+                raise SystemExit("market pay is off: turn it on first (Setup > Preferences, or the drawer's Market pay)")
+            if p.get("ai") and not paydata.match_ai(job, prov):
+                raise SystemExit("AI could not match an occupation: pick one from the list")
+            job, err, tried = db.get_job(job["id"]), None, set()
+            # BLS publishes nothing for the metro: the state is next, then national (one query each, all cached)
+            while not err and (nxt := paydata.for_job(job).get("next")) and tuple(nxt) not in tried and len(tried) < 3:
+                tried.add(tuple(nxt))
+                err = paydata.fetch([nxt]).get("error")
+            return {"pay": paydata.for_job(job), "error": err}
         case "counter":  # {id, cite: ['JOB_ID:field', ...], ask?, template?}: always waits in the Inbox
             if not job or not isinstance(p.get("cite", []), list):
                 raise ValueError("pick the offer to counter; cite is a list of JOB_ID:field")
@@ -430,6 +458,8 @@ def _do(action: str, p: dict):
             return {"rows": rows}
         case "backup":
             return {"path": str(extras.backup())}
+        case "restore":  # {name}: a zip in the backups folder (Setup > Data); the page never names a path
+            return extras.restore(extras.backup_file(p.get("name")))
         case "update_check":  # fetches the origin (up to 3 min): never on an HTTP thread
             from . import updater
 
@@ -508,17 +538,27 @@ def _filters(p: dict) -> dict:
     return clean_filters(**{k: p.get(k) for k in FILTER_KEYS})
 
 
-def _job_view(j, idx=None, revs=None) -> dict:
+def _job_view(j, idx=None, revs=None, pidx=None) -> dict:
     """A tracked job for the board: its row plus a sponsor hint, the people you know there and, while it is still only
     saved, stale signals. idx: contacts.warm_index(), built once per board. revs: profile.section_revs(), read once per
-    board: profile_changed names the profile sections its resume.md drew on that changed since it was made."""
+    board: profile_changed names the profile sections its resume.md drew on that changed since it was made.
+    pidx: paydata.index(), read once per board: the cached BLS market pay (never the network)."""
     from .contacts import warm
     from .profile import changed_sections
     from .web_monitor import ghost_signals, sponsor_hint
 
     changed = changed_sections(j["profile_rev"], revs) if revs is not None else []
     return dict(j) | {"ghost": ghost_signals(j) if j["status"] == "saved" else None, "sponsor": sponsor_hint(j["company"]),
-                      "warm": warm(j["company"], idx), "profile_changed": changed}
+                      "warm": warm(j["company"], idx), "profile_changed": changed, "pay": _pay_view(j, pidx)}
+
+
+def _pay_view(j, pidx=None) -> dict:
+    """paydata.for_job that never costs the board or the drawer."""
+    try:
+        return paydata.for_job(j, pidx)
+    except (Exception, SystemExit) as e:
+        log.get("web").warning("market pay #%s: %s", j["id"], e)
+        return {"state": "error"}
 
 
 def _studio_view() -> dict:
@@ -588,6 +628,33 @@ def split_title(page_title: str) -> tuple[str, str]:
     return t, ""
 
 
+def capture(p: dict) -> dict:
+    """The posting on the user's open tab -> a Board card (a user click, like a manual add: no approval). Used by the
+    bookmarklet (/api/capture: {title, url, desc}) and the extension (/api/ext/capture: + posting, the page's JSON-LD
+    JobPosting reduced to strings). Everything here is page-controlled: whitelisted keys, strings only, capped."""
+    from html import unescape
+
+    from .util import strip_html
+    from .web_monitor import jd_with_salary, listing_fields
+
+    raw = p.get("posting") if isinstance(p.get("posting"), dict) else {}
+    post = {k: str(raw.get(k) or "")[:n] for k, n in (("title", 300), ("company", 200), ("location", 200),
+                                                         ("posted_at", 40), ("salary", 200), ("description", 100_000))}
+    t_role, t_company = split_title(str(p.get("title") or ""))
+    title, company = post["title"].strip() or t_role, post["company"].strip() or t_company
+    url = http_only(p.get("url"))
+    d = post["description"]
+    desc = strip_html(unescape(d) if "&lt;" in d else d) if d.strip() else str(p.get("desc") or "")  # escaped JSON-LD HTML
+    jd = jd_with_salary({"salary": " ".join(post["salary"].split()), "desc": desc})[:12000]
+    dup = url and db.con().execute("SELECT 1 FROM jobs WHERE url=? AND status NOT IN ('rejected','withdrawn')",
+                                   (url,)).fetchone()  # add_job's own dedup predicate
+    # ponytail: the pre-check and the insert are not one transaction; two simultaneous captures of one URL can both say
+    # duplicate: false, and add_job still stores one card
+    jid = db.add_job(company or "Unknown company", title or "Unknown role", url, jd,
+                     f"captured from {str(p.get('url') or '')[:2048]}", **listing_fields(post))
+    return {"id": jid, "company": company, "title": title, "duplicate": bool(dup)}
+
+
 # ----------------------------------------------------------------------------- state
 def update_view() -> dict:
     """Setup > Updates and the top-bar badge, from the update log (no network): the last check still offers an update
@@ -652,13 +719,17 @@ def state() -> dict:
     except (Exception, SystemExit):  # an unreadable profile never costs the board
         revs = None
     linked = {e["key"] for e in connections.REGISTRY.values() if e["key"]}  # shown on the Link an AI key card instead
+    try:
+        pidx = paydata.index()
+    except (Exception, SystemExit):
+        pidx = {"on": False, "home": [], "rows": {}}
     return {
         "version": __version__,
         "setup": setup_status(conn),
         "connections": conn,
         "codes_count": len(codes.current()),  # the count only: a code never travels in the state
         "loop": dict(loop.STATUS),
-        "jobs": [_job_view(j, idx, revs) for j in db.list_jobs()],
+        "jobs": [_job_view(j, idx, revs, pidx) for j in db.list_jobs()],
         "contact_roles": ROLES,
         "statuses": db.STATUSES,
         "doc_names": sorted(DOC_NAMES),  # the drawer offers Edit / Adjust for these only
@@ -703,6 +774,8 @@ def state() -> dict:
                              "manual": s.run is None or s.name in pipeline.MANUAL} for s in pipeline.REGISTRY.values()],
         "questions": pipeline.questions(),  # open, blocking first (Inbox > Questions for you)
         "autopilot": {"spent": pipeline.spent_today(), "last": dict(pipeline.LAST)},
+        "extensions": extension.paired(),  # paired browsers for Setup; never a secret
+        "bookmarklets_on": extension.bookmarklets_on(),
     }
 
 
@@ -742,7 +815,8 @@ class Handler(BaseHTTPRequestHandler):
         from urllib.parse import parse_qs
 
         t = parse_qs(u.query).get("t", [""])[0]
-        return u.path in PUBLIC and bool(t) and secrets.compare_digest(t, CAPTURE_TOKEN)
+        return (u.path in PUBLIC and bool(t) and secrets.compare_digest(t, CAPTURE_TOKEN)
+                and extension.bookmarklets_on())  # pref 'bookmarklets' (auto: off once an extension is paired)
 
     def do_OPTIONS(self):
         if not self._host_ok():
@@ -828,7 +902,8 @@ class Handler(BaseHTTPRequestHandler):
                             "rounds": interview.rounds(job["id"]), "bank": interview.question_bank(job, False)[:30],
                             "stress": interview.story_prompt(job), "mail": [dict(r) for r in db.list_mail(job["id"])],
                             "pipeline": pipeline.status(job["id"]), "questions": pipeline.questions(job=job["id"]),
-                            "runs": pipeline.log_runs(job["id"], 10), **_job_extras(job)})
+                            "runs": pipeline.log_runs(job["id"], 10), "pay": _pay_view(job),
+                            "occupations": paydata.data()["occupations"], **_job_extras(job)})
             elif path.startswith("/api/advise"):  # the AI advisor (advisor.py): scopes | ?scope=&target= | history
                 from urllib.parse import parse_qs
 
@@ -864,6 +939,12 @@ class Handler(BaseHTTPRequestHandler):
                 from .contacts import ROLES, rows
 
                 self._json({"contacts": rows(), "roles": ROLES})
+            elif path == "/api/extension/paired":  # Setup polls this while a pairing code is on screen
+                self._json({"extensions": extension.paired()})
+            elif path == "/api/backups":  # Setup > Data: Restore from backup picks one of these
+                self._json({"backups": extras.backups()})
+            elif path == "/api/docs":  # the command palette's documents: the master, studio versions, each job's files
+                self._json({"docs": _doc_index()})
             elif path == "/api/analytics":  # Insights tab: weekly series, response rates, funnel, variants, goals
                 from urllib.parse import parse_qs
 
@@ -949,10 +1030,65 @@ class Handler(BaseHTTPRequestHandler):
         except BaseException as e:
             self._json({"error": str(e)}, 500)
 
+    EXT_ROUTES = ("/api/ext/pair", "/api/ext/ping", "/api/ext/capture", "/api/ext/autofill")
+
+    def _ext_post(self, path: str):
+        """The browser extension's routes, a closed table: signed with its own secret (extension.verify), never the page
+        token, never CORS headers (an extension page with host permission needs none; a web page gets no preflight
+        answer). Nothing under /api/ext/ falls through to the page routes."""
+        n = self.headers.get("Content-Length") or "0"
+        if not (n.isascii() and n.isdigit()) or int(n) > 1_000_000:
+            self.close_connection = True  # the body is left unread: drop the connection
+            return self._json({"error": "request body too large"}, 413)
+        raw = self.rfile.read(int(n))
+        if path not in self.EXT_ROUTES:
+            return self._json({"error": "not found"}, 404)
+        try:
+            if "application/json" not in (self.headers.get("Content-Type") or ""):
+                raise ValueError
+            p = json.loads(raw or b"{}")
+            if not isinstance(p, dict):
+                raise ValueError
+        except (ValueError, RecursionError):
+            return self._json({"error": "send a JSON object"}, 400)
+        origin = self.headers.get("Origin") or ""
+        if path == "/api/ext/pair":
+            try:
+                return self._json(extension.pair(p.get("code", ""), origin, str(p.get("label") or "")[:40])
+                                  | {"version": __version__})
+            except SystemExit as e:
+                return self._json({"error": str(e)}, 403)
+        port = self.server.server_address[1]  # the port we listen on: a relay on another port fails the signature
+        eid = extension.verify(self.headers.get("X-Lodestar-Ext"), origin, "POST", port, path, raw)
+        if not eid:
+            return self._json({"error": "not paired"}, 401)
+        if path != "/api/ext/ping" and extension.linkedin(p.get("url")):
+            return self._json({"error": extension.LINKEDIN}, 400)
+        try:
+            if path == "/api/ext/ping":
+                import time
+
+                t = int(time.time())
+                return self._json({"ok": True, "version": __version__, "ts": t, "proof": extension.proof(eid, f"pong\n{t}\n{port}")})
+            if path == "/api/ext/capture":
+                return self._json(capture(p))
+            qs = p.get("questions") if isinstance(p.get("questions"), list) else []
+            qs = list(dict.fromkeys(" ".join(q.split())[:200] for q in qs if isinstance(q, str) and q.strip()))[:100]
+            return self._json(extras.ext_autofill(qs, p.get("eeo") is True, p.get("salary") is True, p.get("url")))
+        except SystemExit as e:  # a user-facing message (template profile, Full AI on)
+            return self._json({"error": str(e)}, 400)
+        except Exception as e:
+            log.get("web").exception("extension route %s failed", path)
+            return self._json({"error": f"{type(e).__name__}: {e}"[:300]}, 500)
+
     def do_POST(self):
         path, p = urlparse(self.path).path, {}
         if not self._host_ok():
+            n = self.headers.get("Content-Length") or ""
+            self.rfile.read(min(int(n), 1_000_000) if n.isdigit() else 0)  # drained: an unread body resets the socket on Windows
             return self._json({"error": "bad host"}, 421)
+        if path.startswith("/api/ext/"):  # before _authed: these routes carry their own signature, never the page token
+            return self._ext_post(path)
         if not self._authed():
             n = self.headers.get("Content-Length") or ""
             self.rfile.read(min(int(n), 1_000_000) if n.isdigit() else 0)  # drained: an unread body resets the socket on Windows
@@ -981,10 +1117,11 @@ class Handler(BaseHTTPRequestHandler):
                 url = http_only(p.get("url") or (src if src.startswith("http") else None))
                 self._json({"id": db.add_job(company, title, url, jd, p.get("notes"), **listing_fields(p))})
             elif path == "/api/capture":  # bookmarklet: {title, url, desc} from the open tab
-                title, company = split_title(p.get("title", ""))
-                jid = db.add_job(company or "Unknown company", title or "Unknown role", http_only(p.get("url")),
-                                 (p.get("desc") or "")[:12000], f"captured from {p.get('url', '')}")
-                self._json({"id": jid, "company": company, "title": title})
+                self._json(capture(p))
+            elif path == "/api/extension/code":  # Setup > Browser extension > Pair a browser (page token)
+                self._json(extension.new_code() | {"port": self.server.server_address[1]})
+            elif path == "/api/extension/revoke":
+                self._json({"ok": extension.revoke(str(p.get("id") or ""))})
             elif path.startswith("/api/jobs/") and len(parts) == 5:
                 jid, op, out = int(parts[3]), parts[4], {"ok": True}
                 if op == "status":
@@ -1033,6 +1170,9 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         raise ValueError("op is paste, delete or site")
                     out["sources"] = interview.sources(j)
+                elif op == "soc":  # {soc: 'NN-NNNN' | 'none' | ''}: the BLS occupation for market pay (yours wins)
+                    paydata.set_soc(jid, p.get("soc"))
+                    out["pay"] = _pay_view(db.get_job(jid))
                 elif op == "delete":
                     db.delete_job(jid)
                 else:
@@ -1396,6 +1536,10 @@ class Handler(BaseHTTPRequestHandler):
                     advisor.helper_check(p.get("helper"), p.get("target"))
                 if parts[3] in ("pipeline_run", "pipeline_bulk"):
                     _check_pipeline(parts[3], p)
+                if parts[3] == "restore":  # a bad pick, a bad zip or something in flight: refused before a task starts
+                    if why := extras.restore_busy():
+                        raise SystemExit(f"restore refused: {why}; nothing was changed")
+                    extras.restore_check(extras.backup_file(p.get("name")))
                 if parts[3] == "mock":
                     _check_mock(p)
                 if parts[3] in ("qset", "readiness_explain"):

@@ -111,6 +111,12 @@ def checks() -> list[tuple[str, str, str]]:
     if mail and m.get("status") in ("verified", "failed", "unreachable"):
         out.append(({"verified": "ok", "failed": "fail"}.get(m["status"], "warn"), "email check",
                     f"{m['status']} {connections.local(m.get('checked_at', ''))}: {m.get('detail', '')}"))
+    from . import paydata
+
+    try:  # no network: the pref, the key's presence and today's query count
+        out.append(paydata.doctor_row())
+    except (Exception, SystemExit) as e:
+        out.append(("warn", "market pay", str(e)[:160]))
     from . import updater
 
     try:  # no network: the install kind, update preferences and the update log

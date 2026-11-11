@@ -1,6 +1,7 @@
-"""The automation cycle: email -> watches + companies -> weekly posting check -> follow-up cadence -> interview
+"""The automation cycle: email -> watches + companies -> market pay (BLS, when on) -> weekly posting check -> follow-up cadence -> interview
 reminders -> sync/digest/backup -> update check (updater.tick, on its own interval).
 `lodestar run`, `app` and `desktop` all drive this. Every automatic action still goes through approvals."""
+import threading
 import time
 from datetime import date, datetime, timedelta
 
@@ -8,6 +9,7 @@ from . import approvals, db, log, settings, updater  # updater.BOOT: an update a
 from .config import setting
 from .util import desktop_notify, notify
 
+HOLD = threading.Lock()  # held by run() for each cycle and by extras.restore for the whole restore
 STATUS = {"running": False, "every": None, "last_cycle": None, "cycles": 0, "last_error": None}  # read by the UI top bar
 CLOSED = ("accepted", "rejected", "withdrawn")
 
@@ -198,6 +200,10 @@ def cycle(a) -> None:
 
     _step("watches", web_monitor.check_watches)
     _step("posting check", web_monitor.recheck_postings)  # weekly: saved feed jobs whose posting vanished -> Inbox
+    if settings.pref("market_pay"):  # public BLS pay: cache first, at most one query a cycle, never the AI
+        from . import paydata
+
+        _step("market pay", lambda: paydata.fill(1))
     _step("follow-ups", lambda: _followups(a))
     _step("interview reminders", _reminders)
     from . import readiness
@@ -229,7 +235,8 @@ def run(a) -> None:
     try:
         while True:
             try:
-                cycle(a)
+                with HOLD:
+                    cycle(a)
             except (Exception, SystemExit) as e:  # anything the steps did not contain; the next cycle still runs
                 STATUS["last_error"] = f"{time.strftime('%H:%M')} cycle: {e}"
                 log.get("loop").exception("cycle failed")

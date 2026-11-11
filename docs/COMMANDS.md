@@ -156,7 +156,9 @@ in once to each.
 ## Web API (for the page and the bookmarklets)
 
 All on `http://127.0.0.1:<port>`, JSON in and out. Every route needs the per-launch `X-Lodestar-Token` header that the
-page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, with `?t=<~/.lodestar/capture.token>`.
+page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, with `?t=<~/.lodestar/capture.token>`
+(only while the `bookmarklets` pref allows it), and a paired browser extension calls `/api/ext/*` with its own signed
+header (no page token, no CORS; [CAPTURE.md](CAPTURE.md)).
 
 | Route | Purpose |
 |---|---|
@@ -175,8 +177,12 @@ page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, w
 | `POST /api/contacts/ID/edit\|delete\|link\|unlink` | edit fields (`""` clears) / remove / `{job_id, role}` link to a job (recruiter, hiring_manager, referrer, interviewer, other) / `{job_id}` unlink |
 | `POST /api/jobs` `{company,title,jd,url,notes,location?,posted_at?}` | add; source, workplace and pay are read from the notes and JD |
 | `POST /api/capture` `{title,url,desc}` | add from a browser page title (bookmarklet) |
+| `POST /api/extension/code` / `POST /api/extension/revoke` `{id}` | Setup > Browser extension: a new pairing code `{code, port, expires_in}` (replaces the live one) / revoke a paired browser |
+| `POST /api/ext/pair` `{code, label}` | extension only (Origin `chrome-extension://<id>`): a live code returns `{id, secret, version}` once; 403 otherwise |
+| `POST /api/ext/ping` / `capture` / `autofill` | extension only, signed (`X-Lodestar-Ext`): ping `{ok, version, ts, proof}`; capture `{title, url, desc, posting}` -> `{id, company, title, duplicate}`; autofill `{url, questions, eeo, salary}` -> contact fields, `current_company`, `current_title`, `experience`, `education`, `answers` `{label: {answer, question, match}}`, `eeo` / `salary` when asked, `job` when the URL is tracked, `withheld`. LinkedIn URLs are refused |
 | `POST /api/jobs/ID/status|note|jd|contact|delete` | update (`contact` takes `{email, name}` and also files the person under Contacts, linked as recruiter) |
 | `POST /api/jobs/ID/fields` `{deadline: "2026-12-01", tags: "a,b", ...}` | set tracker fields (same whitelist and validation as `jobs set`; `""` clears) |
+| `POST /api/jobs/ID/soc` `{soc: "15-1252" \| "none" \| ""}` | market pay: the job's BLS occupation (yours wins; `none` hides market pay, `""` = automatic); also set on same-title jobs whose occupation is unset or the AI's; returns `{pay}` (cache only) |
 | `POST /api/jobs/ID/skip` `{term}` | JD coverage: mark a keyword "not mine" for this job, or unmark it; returns `{coverage}` |
 | `POST /api/watches` `{url,keywords,search,location?,min_salary?,posted_within?,seniority?}` / `POST /api/watches/ID` | add / remove (filters apply to a saved search; re-adding one without any filter key keeps its saved filters; a page watch needs an http(s) URL) |
 | `POST /api/companies` `{source,name?,keywords?}` / `POST /api/companies/ID` | watch a company's Greenhouse / Lever / Ashby board / stop |
@@ -203,7 +209,24 @@ page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, w
 | `GET /api/update/status` / `GET /api/update/log?limit=50` | Setup > Updates, no network: install kind, version, `update_mode` / `update_every_hours` / `update_channel`, last check and update, `available` (the last check found one and no update since), `failed` (the last update failed or was refused), `restart_needed`, `restart` (the desktop app can relaunch), the last 20 log rows (`GET /api/state` carries the same as `update`) / the update log, newest first |
 | `POST /api/update/check` / `POST /api/update/apply` `{target}` | background tasks (`{task}`; poll `GET /api/tasks/ID`): the check (`{available, current, target, behind, commits, changelog, blocked, result}`) / the update to exactly the `target` that check showed (a moved origin is refused: check again): backup, fast-forward, tests and doctor, rollback; `{ok, result, backup}` |
 | `POST /api/update/restart` | desktop app only: relaunch `lodestar desktop` with the same arguments and close this window; refused while an update (any process), a mail scan, an Inbox send or a background action runs (`GET /api/update/status` `updating` is true while an update runs) |
-| `POST /api/run/ACTION` then `GET /api/tasks/ID` | background actions: tailor, cover, gap, prep, review, reply, outreach, ics, email_check, watch_run, search, chat, council, digest, obsidian, providers_test, providers_local, models, export (`{fmt: json or csv}`), auto_track, mock (`{messages, id, session?, seconds?, asked?: [up to 100 question keys], focus?, qkey?}`; returns the server-picked `question` with its source; an answer returns a score `card` and `readiness` `{score, band, chance, practised, label}`), packet, doctor (`{live}`), backup, match (`{id}`), lint (`{text}`), audit (`{id}`, or `{}` for the newest saved resume file), referral (`{id, contact_id}`), contacts_import (`{name, data: base64}`), counter (`{id, cite: ["JOB:field"], ask?, template?}`; always waits in the Inbox), activity (`{from, to, fmt?: csv\|html}`) |
+| `GET /api/backups` / `POST /api/run/restore` `{name}` | the zips in the backups folder (newest first); restore one by its bare name (refused before a task starts when the name, the zip or something in flight is wrong) |
+| `GET /api/docs` | the command palette's documents: `{label, ref}` viewer refs (the master resume once it exists, studio versions, each job's files), never paths or text |
+| `GET /api/extension/paired` | the paired browsers (`{extensions}`, never a secret): Setup polls it while a pairing code is on screen, then clears the used code |
+| `POST /api/run/ACTION` then `GET /api/tasks/ID` | background actions: tailor, cover, gap, prep, review, reply, outreach, ics, email_check, watch_run, search, chat, council, digest, obsidian, providers_test, providers_local, models, export (`{fmt: json or csv}`), auto_track, mock (`{messages, id, session?, seconds?, asked?: [up to 100 question keys], focus?, qkey?}`; returns the server-picked `question` with its source; an answer returns a score `card` and `readiness` `{score, band, chance, practised, label}`), packet, doctor (`{live}`), backup, match (`{id}`), lint (`{text}`), audit (`{id}`, or `{}` for the newest saved resume file), referral (`{id, contact_id}`), contacts_import (`{name, data: base64}`), counter (`{id, cite: ["JOB:field"], ask?, template?}`; always waits in the Inbox; `ID:market_median` / `ID:market_p75` cite the countered job's cached public BLS figure), market_pay (`{id, ai?}`: with `ai`, your AI picks the occupation from the bundled list; then the job's next uncached BLS figure, metro -> state -> national; returns `{pay, error}`; refused while the pref is off), activity (`{from, to, fmt?: csv\|html}`) |
+
+## Browser extension (pass 20)
+
+The `extension\` folder of the repo is the Lodestar extension for Edge and Chrome (Manifest V3; no store, no build step).
+
+| Step / command | What it does |
+|---|---|
+| `edge://extensions` (or `chrome://extensions`) > **Developer mode** > **Load unpacked** > `<repo>\extension` | Installs it. The id comes from the folder path: after moving the folder, load it again and pair again. |
+| Setup > **Browser extension** > **Pair a browser** | Shows a pairing string `<port>-<code>` (`POST /api/extension/code`), 5 minutes, single use. Type it in the extension's popup and press **Pair**; Setup then clears the used code and says `paired: <browser>`. |
+| Popup > **Capture this posting** / **Fill this form** | `POST /api/ext/capture` / `POST /api/ext/autofill` (signed). Fill never clicks, submits or ticks; see [SETUP.md](SETUP.md#browser-extension). |
+| Popup > **Unpair**; Setup > Browser extension > **Revoke** | Forget the pairing in this browser; end it in Lodestar (`POST /api/extension/revoke`). |
+| `lodestar tools set bookmarklets auto\|on\|off` | Bookmarklets: auto turns them off once a browser is paired. |
+| `node --test "extension/test/*.test.mjs"` | Matcher tests (Node's built-in runner, no npm packages) over the fixtures' descriptors. |
+| `.venv\Scripts\python.exe -m unittest discover -s tests/e2e -p "e2e_extension.py"` | Loads the unpacked extension in a Playwright-launched browser with a temp profile, pairs it with a temp-home server and fills the fixture forms. Set `LODESTAR_E2E_UPDATE=1` to rewrite `extension\test\fixtures\*.descriptors.json` after changing the scan. |
 
 ## Automation and approvals (see AUTOMATION.md)
 
@@ -211,7 +234,7 @@ page embeds. Outside scripts can only call `/api/capture` and `/api/autofill`, w
 |---|---|
 | `lodestar tools list` | every automated tool with its enabled / auto switches, plus preferences |
 | `lodestar tools enable\|disable\|auto\|manual NAME` | flip a switch |
-| `lodestar tools set KEY VALUE` | preferences: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, weekly_target (applications/week, used by idea crafting), provider, council_providers, council_judge, signature, desktop_notifications (true/false), resume_style (classic, modern, compact), resume_look (`key=value`: the studio's default look, validated like the requirements form), resume_request (what the pipeline's Tailor step asks the studio for), excluded_companies, excluded_title_words, weekly_goals (`goal=number`), activity_weekly_min, update_mode (off / notify / auto), update_every_hours, update_channel (commits / releases), update_origin, update_manifest_url, autopilot (true/false: the monitor loop runs pipeline steps), autopilot_ai_per_cycle, autopilot_ai_per_day, autopilot_jobs_per_cycle, reported_questions (true/false, default false: also practise questions the AI says a company is reported to ask, labelled "Reported, unverified"), models (`provider=model`; also written by self-healing model selection). Whole numbers are range-checked: followup_days 1-90, auto_track_min_score 0-100, weekly_target 0-200, activity_weekly_min 0-100, update_every_hours 1-720, autopilot_ai_per_cycle and autopilot_ai_per_day 0-500, autopilot_jobs_per_cycle 0-50 |
+| `lodestar tools set KEY VALUE` | preferences: name, availability, auto_track_min_score, followup_days, reply_to_confirmations, weekly_target (applications/week, used by idea crafting), provider, council_providers, council_judge, signature, desktop_notifications (true/false), resume_style (classic, modern, compact), resume_look (`key=value`: the studio's default look, validated like the requirements form), resume_request (what the pipeline's Tailor step asks the studio for), excluded_companies, excluded_title_words, weekly_goals (`goal=number`), activity_weekly_min, update_mode (off / notify / auto), update_every_hours, update_channel (commits / releases), update_origin, update_manifest_url, autopilot (true/false: the monitor loop runs pipeline steps), autopilot_ai_per_cycle, autopilot_ai_per_day, autopilot_jobs_per_cycle, reported_questions (true/false, default false: also practise questions the AI says a company is reported to ask, labelled "Reported, unverified"), bookmarklets (auto / on / off; auto: on until a browser extension is paired), market_pay (true/false, default false: public BLS pay figures per job; off = Lodestar never contacts api.bls.gov), models (`provider=model`; also written by self-healing model selection). Whole numbers are range-checked: followup_days 1-90, auto_track_min_score 0-100, weekly_target 0-200, activity_weekly_min 0-100, update_every_hours 1-720, autopilot_ai_per_cycle and autopilot_ai_per_day 0-500, autopilot_jobs_per_cycle 0-50 |
 | `lodestar inbox [--all] [-v]` | actions waiting for approval (`-v` shows the drafted email / payload) |
 | `lodestar approve ID... [--subject] [--body FILE] [--to]` | execute, optionally editing the email first |
 | `lodestar reject ID... [--reason]` | discard |
@@ -251,6 +274,7 @@ Web: Ideas tab (craft, status, refine), `GET /api/autofill` (data for the autofi
 |---|---|
 | `lodestar usage [--days 30]` | token counts per provider/model from `~/.lodestar/usage.jsonl` (every call is recorded) |
 | `lodestar backup [--out DIR] [--keep 7]` | zip of profile, tracker, settings, answers, ideas, documents (never `.env` or keyring secrets); keeps the newest N (at least 1); the `backup` tool does this nightly |
+| `lodestar restore ZIP [--yes]` | put the data folder back to a backup zip: checks it first (only files a backup holds; no absolute, `..` or drive paths, links or programs; size caps; `lodestar.db` must open, pass its integrity check and take the migrations), takes a safety backup (`backups/before-restore-*.zip`), then swaps everything in at once and removes files made since; asks unless `--yes`. Refused while the loop is mid-cycle, mail is sent or scanned, an update runs or another Lodestar process is open. Keyring secrets, paired browsers and `.env` are not in backups and stay |
 | `lodestar export json / csv [--out DIR]` | dump jobs, events, answers, ideas, pending, contacts, job_contacts, interviews, mock_sessions, offers, touches, mail, pipeline, pipeline_runs, questions, company_sources, qsets, readiness_log (CSV: one file per table, formula-safe cells) |
 | `lodestar providers models [NAME...]` | model ids each provider advertises; set `<PROVIDER>_MODEL` from the list |
 | `lodestar providers local` | local-only preset: default provider and council restricted to Ollama, and a model Ollama serves is pinned (UI: Setup > Local only) |
@@ -297,6 +321,9 @@ resume.md, cover_letter.md, interview_prep.md, research.md, offer.md, mock_inter
 |---|---|
 | `lodestar comp set "software engineer" austin 130000 170000` | record a market range (city optional; `*` = anywhere); gap checks, offer evaluations and interview prep quote it. Also in the UI: Setup > Market rates |
 | `lodestar comp list` / `comp lookup "title" [city]` | inspect the table |
+| `lodestar comp market ID [--soc NN-NNNN\|none\|auto] [--ai]` | public BLS pay for a tracked job (needs `lodestar tools set market_pay on`): the occupation and how it was matched, the area (metro, else state, else national; remote jobs use your home area), the 10th / 25th / median / 75th / 90th percentile and mean, where the posting's pay sits, and the honesty label; fetches what is not cached (one BLS query per area level). `--soc` sets your occupation (`none` hides it, `auto` removes your pick), `--ai` lets your AI pick from the bundled list |
+
+**Market pay (BLS OEWS, pass 20)**: `paydata.py` + `lodestar/data/oews.json` (50 occupations, a title crosswalk, 39 metros and 52 states, every code checked live against the BLS API on 2026-11-11). The board chip, the drawer's Market pay group, Insights > Offers (row "BLS market (median / 75th)" with where the base sits), the counter-offer (cite "BLS median / 75th for this job": the countered job only, refused when their base is already at or above it) and the private prompts (interview prep, gap check, offer evaluation) read the cache only. Only `paydata.fetch` calls BLS: v1 without a key (we allow 20 of the 25 queries a day, 4 jobs a query), v2 with `BLS_API_KEY` (400 of 500, 8 a query); a connection that never reached BLS gives its unit back; HTTP 429 or the "threshold" message stops for the day. A figure is cached until the next release (May Y data stays until June 1 of Y+2), a "not published" answer for 30 days. Search results and `min_salary` never use BLS figures.
 
 Follow-up cadence: a quiet application is nudged (and drafted, if a contact is known) every `followup_days`; after the
 third nudge the loop proposes closing it as ghosted (tool `followup`). Accepted interview slots are checked against
@@ -761,7 +788,7 @@ today) from the same events; the Friday digest lists the goals you set.
 grant's value, vesting years, cliff months, retirement match %, workplace, start date, deadline, notes. `comp.total`
 gives year-1 cash and total, 4-year cash and total, equity per year (even monthly vesting after the cliff) and the
 match, and names every estimate behind them. The compare table marks the best value per row and shows your recorded
-market range (`comp`) and the gap to your private salary floor; the floor row is shown only in Lodestar's own views.
+market range (`comp`), the cached public BLS median / 75th (market pay on) and the gap to your private salary floor; the floor row is shown only in Lodestar's own views.
 Offer evaluation (`offer`, the drawer's Evaluate offer) now reads the structured rows. **Counter-offer**: tick the
 competing figures to cite (another live offer's base, bonus %, sign-on, equity estimate or year-1 total); the draft
 (AI, or a plain template) says "another offer" without the company name, uses only `candidate_text(private=False)`,

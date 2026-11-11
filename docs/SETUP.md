@@ -46,6 +46,7 @@ supports them.
   - [Local models (Ollama)](#local-models-ollama)
   - [Choose models, the default provider and council providers](#choose-models-the-default-provider-and-council-providers)
   - [Other secrets (the vault)](#other-secrets-the-vault)
+  - [Market pay (BLS)](#market-pay-bls)
   - [Email: pick a way to connect](#email-pick-a-way-to-connect)
   - [Email with an app password](#email-with-an-app-password)
   - [Email with Sign in with Google (Gmail)](#email-with-sign-in-with-google-gmail)
@@ -80,6 +81,7 @@ supports them.
   - [Company boards (Greenhouse, Lever, Ashby)](#company-boards-greenhouse-lever-ashby)
   - [Stale signals and the weekly posting check](#stale-signals-and-the-weekly-posting-check)
   - [H-1B sponsor hints (optional)](#h-1b-sponsor-hints-optional)
+  - [Browser extension](#browser-extension)
   - [Capture and Autofill bookmarklets](#capture-and-autofill-bookmarklets)
   - [Adding jobs by hand](#adding-jobs-by-hand)
   - [Statuses](#statuses)
@@ -213,6 +215,9 @@ and Groq have free tiers; [Local models (Ollama)](#local-models-ollama) need no 
 - **Top bar**: **Check email**, **Run watches**, the monitor-loop status line, the **Autopilot** pill, and badges such
   as **Update available** or **Codes** when they apply.
 - **Job drawer**: the panel that opens when you click a card on the Board ([The job drawer](#the-job-drawer)). Esc closes it.
+- **Command palette**: Ctrl+K (Cmd+K on a Mac) anywhere. Type a few letters of a tab, job, contact, document or
+  setting, or an action (Add job, Check email, Run watches, Recommend on this tab, Open Today); arrows move, Enter
+  runs, Esc closes and gives focus back. The letters only need to appear in order.
 
 ### The safety rules
 
@@ -665,21 +670,23 @@ as `<step> skipped: <reason>` and shown in the top bar, and the next cycle runs 
 2. **Watches**: career pages and saved searches, plus watched Greenhouse, Lever and Ashby boards
    ([Saved searches (watches on a query)](#saved-searches-watches-on-a-query), [Company boards (Greenhouse, Lever, Ashby)](#company-boards-greenhouse-lever-ashby)). Strong fits are proposed
    through `auto_track`.
-3. **Posting check** (weekly): saved jobs from those boards whose posting vanished are proposed for `withdrawn`;
+3. **Market pay** (only with the `market_pay` preference on; off by default): the next missing public BLS figure
+   for your live jobs, at most one BLS query a cycle and never an AI call ([Market pay (BLS)](#market-pay-bls)).
+4. **Posting check** (weekly): saved jobs from those boards whose posting vanished are proposed for `withdrawn`;
    always via the Inbox ([Stale signals and the weekly posting check](#stale-signals-and-the-weekly-posting-check)).
-4. **Follow-ups**: every application quiet for `followup_days` gets a `FOLLOW UP:` alert; with a contact address and
+5. **Follow-ups**: every application quiet for `followup_days` gets a `FOLLOW UP:` alert; with a contact address and
    the `followup` tool on, a follow-up draft goes to the Inbox (a plain template without AI). After three follow-ups
    the loop proposes closing the job as ghosted instead of nudging forever ([Follow-up cadence](#follow-up-cadence)).
-5. **Interview reminders**: one alert per interview within 48 hours.
-6. **Pipeline**: refreshes every live job's step states; with Autopilot on, runs steps within the AI budgets
+6. **Interview reminders**: one alert per interview within 48 hours.
+7. **Pipeline**: refreshes every live job's step states; with Autopilot on, runs steps within the AI budgets
    ([The step-by-step pipeline](#the-step-by-step-pipeline)).
-7. **Desktop notifications**, if you turned them on ([Desktop notifications](#desktop-notifications)).
-8. **Obsidian sync**, only if the `obsidian_sync` tool is on ([Obsidian export](#obsidian-export)).
-9. **Digest**, weekly, if the `digest` tool is on ([The weekly digest](#the-weekly-digest)).
-10. **Backup**: one zip a night into `~/.lodestar/backups` (keeps 7).
-11. **Master resume**: rebuilt offline if your profile changed outside the app ([The master resume](#the-master-resume)).
-12. **Update check**, every `update_every_hours` (skipped with `--no-update`; [Auto-update](#auto-update)).
-13. Prints how many actions wait in the Inbox (``N action(s) waiting in `lodestar inbox` ``).
+8. **Desktop notifications**, if you turned them on ([Desktop notifications](#desktop-notifications)).
+9. **Obsidian sync**, only if the `obsidian_sync` tool is on ([Obsidian export](#obsidian-export)).
+10. **Digest**, weekly, if the `digest` tool is on ([The weekly digest](#the-weekly-digest)).
+11. **Backup**: one zip a night into `~/.lodestar/backups` (keeps 7).
+12. **Master resume**: rebuilt offline if your profile changed outside the app ([The master resume](#the-master-resume)).
+13. **Update check**, every `update_every_hours` (skipped with `--no-update`; [Auto-update](#auto-update)).
+14. Prints how many actions wait in the Inbox (``N action(s) waiting in `lodestar inbox` ``).
 
 When a cycle works you see a header like `--- lodestar cycle 18:43 ---` followed by the lines of the steps that had
 something to do. The app's top bar shows `monitor loop: every N min · last cycle HH:MM · N runs` and the last problem,
@@ -713,6 +720,7 @@ Setup > Data has buttons that open it: Open data folder, Open documents, Open ex
 | `comp.json` | Your market-rate table. |
 | `draft_options.json` | The last set of draft options, for `--pick`. |
 | `capture.token` | The bookmarklet token (delete it to revoke; drag the bookmarklets again afterwards). |
+| `extension.json` | Paired browser extensions and their signing secrets (owner-only; never in backups; Setup > Browser extension > Revoke). |
 | `viewer.json`, `cache/` | Document viewer formatting per document, and rendered PDFs it can reuse (`cache/view/`). |
 | `alerts.log` | Monitor alerts (Monitor tab > Alerts, `lodestar alerts`). |
 | `lodestar.log` | Rotating log (2 MB x 3) of commands, UI requests, alerts and failures. |
@@ -878,8 +886,38 @@ lodestar jobs packet 3                # one zip with every document, the posting
 Files go to `exports\` in the data folder unless you pass `--out`. An export is for reading; Lodestar cannot import
 it back. Use a backup to restore.
 
-**Restore.** There is no restore command: a backup zip holds the data folder's files at their relative paths, so
-you unzip it into the data folder.
+**Restore.** Setup > Data > **Restore from backup**: pick a zip from the list (the zips in the backups folder; put one
+from elsewhere there with **Open backups**, then **Refresh**), click **Restore** and confirm. Or:
+
+```powershell
+lodestar restore "$HOME\.lodestar\backups\lodestar-backup-20261101-021500.zip"         # shows what it holds, asks
+lodestar restore D:\Backups\lodestar-backup-20261101-021500.zip --yes                   # no question
+```
+
+What happens, in order:
+
+1. Refused while anything could write the old data meanwhile: the monitor loop in the middle of a cycle, an Inbox
+   send, a mail scan, a background action, an update, or another Lodestar process (close the other window, or restore
+   from it).
+2. The zip is checked before anything is written: only files a backup holds (programs and scripts are refused), no
+   absolute, drive or `..` paths, backslashes, links, reserved or short (8.3, like `EXTENS~1.JSO`) names, at most 2 GB
+   on disk and 4 GB unpacked, and a `lodestar.db` at its top level. Files a backup never carries (`.env`,
+   `extension.json`, `backups\`, logs) are skipped in any spelling (`Extension.json`, `.ENV`), since Windows treats
+   those as the same files.
+3. It is unpacked into a staging folder; its database must open, pass SQLite's integrity check and take this
+   version's migrations; `settings.json` must be valid.
+4. A safety backup of your data as it is now goes to `backups\before-restore-YYYYMMDD-HHMMSS.zip` (the newest 7 are
+   kept, apart from the nightly ones).
+5. The swap: your current files move aside, the backup's move in, files made since the backup are removed, and the
+   database is copied in in one step. If any of it fails, your files are put back.
+
+The result says how many files came back, the jobs, contacts and answers in the restored tracker, and where the
+safety backup is. Not in backups, so never touched by a restore: AI keys, the mail sign-in and other secrets in the OS
+keyring, paired browsers (the extension pairs again from Setup) and `.env`. Restart Lodestar afterwards so every part
+reads the restored data.
+
+**Restore by hand** (only when Lodestar itself will not start, so neither Setup nor `lodestar restore` can run): a
+backup zip holds the data folder's files at their relative paths, so you can unzip it into a fresh data folder.
 
 1. Close everything Lodestar: the window, the monitor console, any `lodestar` command. If you use the scheduled task,
    remove it for the moment (`lodestar schedule remove`) so it does not start during the restore.
@@ -1255,7 +1293,7 @@ Testing that calls work:
 | `lodestar doctor --live` | yes, a tiny amount | key checks, one IMAP and SMTP login, and one real call per provider |
 | `lodestar usage` (`--days 30`) | no | tokens per provider and model, from `usage.jsonl`; the Link an AI key card shows the same |
 
-**AI helpers (Setup and Tools):** **✦ AI help** > **Explain this setting** at the top of both tabs: pick a Setup card (email, Autopilot, keys, Ollama, models, secrets, market rates, bookmarklets, notifications, diagnostics, data, updates, tool switches) or a preference, and the AI explains it from this guide (`lodestar ai-help explain_setting autopilot`).
+**AI helpers (Setup and Tools):** **✦ AI help** > **Explain this setting** at the top of both tabs: pick a Setup card (email, Autopilot, keys, Ollama, models, secrets, market rates, browser extension, bookmarklets, notifications, diagnostics, data, updates, tool switches) or a preference, and the AI explains it from this guide (`lodestar ai-help explain_setting autopilot`).
 
 ### Other secrets (the vault)
 
@@ -1272,6 +1310,7 @@ Useful names (all read by Lodestar from the environment, `.env` or the vault, in
 | `<PROVIDER>_MODEL`, for example `OPENAI_MODEL` | pins a model for that provider |
 | `LODESTAR_PROVIDER` | default provider |
 | `OBSIDIAN_VAULT` | folder for the Obsidian export |
+| `BLS_API_KEY` | optional, free from data.bls.gov/registrationEngine: raises market pay lookups from 25 to 500 BLS queries a day; BLS expires it yearly, so renew it (see [Market pay (BLS)](#market-pay-bls)) |
 
 ```powershell
 lodestar vault set LODESTAR_NOTIFY_EMAIL you@example.com
@@ -1282,6 +1321,50 @@ lodestar vault rm SOME_NAME
 ```
 
 An empty or blank value is refused with one line. Spaces and line breaks around a value are trimmed.
+
+### Market pay (BLS)
+
+What it is for: public U.S. wage percentiles (10th, 25th, median, 75th, 90th and the mean) for each tracked job's
+occupation in its area, from the Bureau of Labor Statistics' Occupational Employment and Wage Statistics (OEWS). They
+show as a chip on the board card ("market median $150k (BLS May 2025, Portland)"), as the drawer's **Market pay (BLS)**
+group (a percentile strip with the posting's own pay drawn over it), as a row in Insights > Offers, as figures you can
+cite in a counter-offer, and in the private prompts of interview prep, the gap check and offer evaluation.
+
+It is **off by default**: until you turn it on, Lodestar never contacts api.bls.gov. Turn it on with **Turn on market
+pay** in any job's drawer, in Tools > Preferences (`market_pay`), or with `lodestar tools set market_pay on`. Then the
+drawer fetches the job you open (one try per job per page load; **Fetch BLS figures** tries again), and the monitor loop
+fills in the other live jobs, at most one BLS query a cycle.
+
+How a job is matched (always shown next to the figure, because a wrong occupation means a wrong number):
+
+- **Occupation**: your pick in the drawer (or `lodestar comp market ID --soc 15-1252`) wins; else a title keyword from
+  the bundled crosswalk (`lodestar/data/oews.json`, 50 occupations; SRE, DevOps, platform and cloud titles map to
+  "Computer Occupations, All Other", labelled "closest BLS group"; product manager has no BLS occupation and is left to
+  you); else the AI's pick from that fixed list, only when you click **Match occupation (AI)**. `none` hides market
+  pay for the job.
+- **Area**: the metro the location names (39 metros), else its U.S. state, else national. When BLS publishes no metro
+  figure for the occupation, the state is used, then national. Remote jobs use your home area (the location in your
+  profile's contact line), else national. A location outside the U.S., or a U.S. city without its state, gets no
+  figure: add the state ("Boise, ID").
+
+What leaves your computer: only BLS series IDs (an occupation code plus an area code, for example
+`OEUM004266000000015125213`) to api.bls.gov, plus your `BLS_API_KEY` when you stored one. Never your profile, the job's
+text, your salary floor or Preferences. From your IP address the IDs still reveal which occupations and metros you look
+at, and for remote jobs **your home metro or state**; a key, registered with your email, ties those queries to you.
+**Match occupation (AI)** sends the job title and the first 1,500 characters of the posting to your AI provider.
+
+Limits: without a key BLS allows 25 queries a day (Lodestar uses at most 20; one query covers 4 jobs); a free
+`BLS_API_KEY` (Setup > Other secrets) raises that to 500 (Lodestar uses 400; 8 jobs a query). BLS keys expire once a
+year: renew yours at data.bls.gov/registrationEngine. When the day's limit is reached, the cached figures stay and
+Lodestar waits until tomorrow; a query that never reached BLS (offline) does not count. A figure is cached in the
+`paydata` table until the next annual release (May Y figures stay until June 1 of Y+2); "not published" is asked again
+after 30 days. `lodestar doctor` shows the state, the key and today's query count.
+
+Honesty: the figure is what employers of every kind and size paid that occupation in that area, pooled from surveys
+over three years (it lags the market), base wages including commissions but not overtime, non-production bonuses,
+benefits or equity. It is not the company's pay band; big-tech pay often sits at or above the 75th-90th percentile.
+Source: U.S. Bureau of Labor Statistics; BLS.gov cannot vouch for the data or analyses derived from these data after
+the data have been retrieved from BLS.gov. Search results and the `min_salary` filter never use BLS figures.
 
 ### Email: pick a way to connect
 
@@ -2550,6 +2633,82 @@ Columns read: the employer (`Employer` or `Employer (Petitioner) Name`), `Fiscal
 column; denials are ignored. Approvals are summed per employer and fiscal year; importing a year again replaces that
 year. The match is loose and past approvals say nothing about a given role. The data is stored in the tracker
 database.
+
+### Browser extension
+
+**What it is for.** The Lodestar browser extension (Edge or Chrome) replaces the bookmarklets. **Capture this posting**
+sends the posting on your tab to the Board, reading the page's structured job data when it has some (real company,
+location, posting date and pay instead of a title split). **Fill this form** fills the **empty** fields of an
+application form: contact details and links, current company and title, work history and education, and answers from
+your answer bank for the questions the page shows. It never clicks, submits, presses Next, ticks a checkbox or
+uploads a file: radio buttons, dropdown widgets, file uploads and date pickers are listed as "needs you" with your
+stored answer.
+
+**Not on LinkedIn.** LinkedIn's User Agreement bans browser plugins and add-ons that scrape or copy its site, so the
+extension does nothing there (the server refuses LinkedIn pages too). Open the job on the company's own careers page.
+
+**Install (load unpacked, no store):**
+
+1. Open `edge://extensions` (or `chrome://extensions`) and turn on **Developer mode**.
+2. **Load unpacked** > pick the `extension` folder of your Lodestar install (the repo folder; a moved `-Exe` build
+   needs that folder copied along).
+3. Pin the Lodestar icon to the toolbar.
+
+**Pair it:** in Lodestar open **Setup** > **Browser extension** > **Pair a browser**. A pairing string such as
+`8765-K7QX-M2PD` appears with a 5-minute countdown. Click the extension's icon, type the string, press **Pair**. The
+string carries the port, so the code only ever goes to this Lodestar. Each code works once and dies after 5 wrong
+tries; press Pair a browser again for a new one. Once the browser pairs, Setup clears the code and shows
+"paired: Edge" (or Chrome) and the browser in the list.
+
+**Use it.** Open a posting or an application form, click the Lodestar icon:
+
+- The popup first finds Lodestar (the paired port, then 8765-8774) and shows "Lodestar 0.2.0 connected (port N)". The
+  buttons stay disabled until that check proves the answer came from your Lodestar.
+- **Capture this posting**: "Tracked #12: Company - Title", or "Already on your Board (#12)" for a URL you track.
+  Select the posting text first if the page is busy; a selection over 200 characters is sent instead of the page.
+- **Fill this form**: fills the empty fields, outlines them (blue from your profile, amber from your answers) and opens
+  a small panel at the bottom right of the page listing every field it filled, each with **Undo**, plus **Undo all**
+  and **Close** (Close keeps the values). Undo never touches a field you changed since. The popup lists what **needs
+  you**: radio buttons and dropdown widgets with your stored answer, the resume upload (the job's tailored resume when
+  the page's URL is a job you track), dates, and "I currently work here". Run Fill again on each step of a multi-step
+  form (Workday): it never presses Next, Add or Submit.
+- **include EEO answers** and **include desired salary** start unticked on every open and apply to that click only.
+- A form embedded from Greenhouse, Ashby or another ATS on a company's own site sits in a frame the extension cannot
+  reach; the popup offers **Open the form in its own tab**, where Fill works.
+
+**When it does not work:**
+
+| The popup says | Do this |
+|---|---|
+| Lodestar is not running | Start Lodestar. If it runs on a port above 8774, press Pair a browser and pair again (the string carries the port). |
+| Lodestar on port N does not know this browser | The browser was revoked in Setup, or another program answers on that port. Pair again, or press **Unpair**. The popup never forgets its pairing on its own. |
+| pairing code wrong or expired | Codes last 5 minutes, work once and die after 5 wrong tries. Press Pair a browser for a new one. |
+| Lodestar cannot run on this page | Browser pages (`edge://`, `chrome://`), the extension stores, the PDF viewer and `file://` pages are off limits to every extension. |
+| No form fields here that Lodestar can fill | The form is in a cross-origin frame (use Open the form in its own tab) or not on screen yet. |
+| your profile is still the starter template | Fill in your profile (Profile tab) first; the starter's placeholders are never typed into a form. |
+
+After the repo folder moves, Edge or Chrome shows the extension as missing: Load unpacked again from the new folder,
+pair again, and revoke the old entry in Setup.
+
+**What it sends.** Contact fields, work history and education from your profile (never the `## Preferences` section),
+and answer-bank answers matched by the same question keys the pipeline uses (for example every wording of "willing to
+relocate"). Anything marked private, interview stories, and text that names your salary floor never leave; an answer
+the floor guard would change is withheld, not trimmed. EEO answers (save them under `EEO: gender`, `EEO: race`,
+`EEO: hispanic or latino`, `EEO: veteran status`, `EEO: disability status`, typed by you and not private) go only
+when you tick **include EEO answers** on that click; a desired salary (an answer to `Desired salary`, never your
+floor) only when you tick **include desired salary**. Filling a form on a site you do not trust discloses what
+matches, as if you had typed it.
+
+**Security.** Pairing gives that browser its own secret, stored only in the extension's local storage and in
+`~/.lodestar/extension.json` (owner-only, never in backups). Every request is signed with it and must come from the
+extension's own origin, so a web page can neither call these routes nor read the secret, and the secret never works
+for the rest of the app. Each signature and the server's answer to the popup's ping name the port, so another program
+listening on one of the ports the popup tries cannot pass the popup's requests on to Lodestar and read the answers. The list under Pair a browser shows each paired browser with its last use; **Revoke** ends
+it. If the extension's folder moves, its id changes: pair again and revoke the old entry.
+
+**Bookmarklets** stay on until a browser is paired, then turn off (their token sits in a URL the page they run on can
+read). **Setup** > **Browser extension** > **Bookmarklets** (also `lodestar tools set bookmarklets on`) sets auto, on or
+off.
 
 ### Capture and Autofill bookmarklets
 
@@ -4191,8 +4350,6 @@ These are planned but not built yet. They are not in the app today and nothing i
 ([TESTS.md](TESTS.md) lists them under Planned):
 
 - An interview upgrade.
-- A browser extension, which would also capture application-form questions (the bookmarklets cover capture and autofill
-  today).
 - BLS market pay data (today Lodestar quotes only your own [market-rate table](#offers-the-comp-table-and-counter-offers) and pay stated in postings).
 - A Ctrl+K command palette.
 - A tested restore-from-backup (today you restore by unzipping a backup: [Backups, export and restore](#backups-export-and-restore)).

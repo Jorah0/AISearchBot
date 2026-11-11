@@ -926,9 +926,10 @@ SETTINGS = {"email": ("Connect email", "Email: pick a way to connect"), "autopil
             "models": ("Models, default provider and council", "Choose models, the default provider and council providers"),
             "vault": ("Other secrets (OS keyring)", "Other secrets (the vault)"),
             "market": ("Market rates", "Offers, the comp table and counter-offers"),
+            "extension": ("Browser extension", "Browser extension"),
             "bookmarklets": ("Browser bookmarklets", "Capture and Autofill bookmarklets"),
             "notifications": ("Desktop notifications", "Desktop notifications"), "diagnostics": ("Diagnostics", "lodestar doctor"),
-            "data": ("Data: backups, export, AI changes", "Backups, export and restore"), "updates": ("Updates", "Auto-update"),
+            "data": ("Data: backups, restore, export, AI changes", "Backups, export and restore"), "updates": ("Updates", "Auto-update"),
             "tools": ("Tools: enabled and auto", "The Inbox and approvals")}
 SETUP_DOC = Path(__file__).resolve().parent.parent / "docs" / "SETUP.md"
 

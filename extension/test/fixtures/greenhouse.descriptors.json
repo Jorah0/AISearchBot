@@ -1,0 +1,323 @@
+[
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 0,
+  "id": "first_name",
+  "label": "First Name",
+  "name": "job_application[first_name]",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 1,
+  "id": "last_name",
+  "label": "Last Name",
+  "name": "job_application[last_name]",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 2,
+  "id": "email",
+  "label": "Email",
+  "name": "job_application[email]",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 3,
+  "id": "phone",
+  "label": "Phone",
+  "name": "job_application[phone]",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "off",
+  "group": null,
+  "i": 4,
+  "id": "job_application_location",
+  "label": "Location (City)",
+  "name": "job_application[location]",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 5,
+  "id": "resume",
+  "label": "Resume/CV",
+  "name": "job_application[resume]",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "input",
+  "type": "file"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 6,
+  "id": "q_linkedin",
+  "label": "LinkedIn Profile",
+  "name": "job_application[answers_attributes][0][text_value]",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 7,
+  "id": "q_website",
+  "label": "Website",
+  "name": "job_application[answers_attributes][1][text_value]",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 8,
+  "id": "q_why",
+  "label": "Why do you want to work here?",
+  "name": "job_application[answers_attributes][2][text_value]",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "textarea",
+  "type": ""
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 9,
+  "id": "q_auth",
+  "label": "Are you legally authorized to work in the United States?",
+  "name": "job_application[answers_attributes][3][boolean_value]",
+  "options": [
+   {
+    "t": "Please select",
+    "v": ""
+   },
+   {
+    "t": "Yes",
+    "v": "1"
+   },
+   {
+    "t": "No",
+    "v": "0"
+   }
+  ],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "select",
+  "type": ""
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 10,
+  "id": "q_hear",
+  "label": "How did you hear about this job?",
+  "name": "job_application[answers_attributes][4][text_value]",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 11,
+  "id": "gender",
+  "label": "Gender",
+  "name": "job_application[gender]",
+  "options": [
+   {
+    "t": "Please select",
+    "v": ""
+   },
+   {
+    "t": "Male",
+    "v": "1"
+   },
+   {
+    "t": "Female",
+    "v": "2"
+   },
+   {
+    "t": "Decline To Self Identify",
+    "v": "3"
+   }
+  ],
+  "placeholder": "",
+  "qa": "",
+  "section": "U.S. Equal Employment Opportunity information",
+  "tag": "select",
+  "type": ""
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 12,
+  "id": "hispanic_ethnicity",
+  "label": "Are you Hispanic/Latino?",
+  "name": "job_application[hispanic_ethnicity]",
+  "options": [
+   {
+    "t": "Please select",
+    "v": ""
+   },
+   {
+    "t": "Yes",
+    "v": "Yes"
+   },
+   {
+    "t": "No",
+    "v": "No"
+   },
+   {
+    "t": "Decline To Self Identify",
+    "v": "Decline"
+   }
+  ],
+  "placeholder": "",
+  "qa": "",
+  "section": "U.S. Equal Employment Opportunity information",
+  "tag": "select",
+  "type": ""
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 13,
+  "id": "veteran_status",
+  "label": "Veteran Status",
+  "name": "job_application[veteran_status]",
+  "options": [
+   {
+    "t": "Please select",
+    "v": ""
+   },
+   {
+    "t": "I am not a protected veteran",
+    "v": "1"
+   },
+   {
+    "t": "I identify as one or more of the classifications of protected veteran",
+    "v": "2"
+   },
+   {
+    "t": "I don't wish to answer",
+    "v": "3"
+   }
+  ],
+  "placeholder": "",
+  "qa": "",
+  "section": "U.S. Equal Employment Opportunity information",
+  "tag": "select",
+  "type": ""
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 14,
+  "id": "disability_status",
+  "label": "Disability Status",
+  "name": "job_application[disability_status]",
+  "options": [
+   {
+    "t": "Please select",
+    "v": ""
+   },
+   {
+    "t": "Yes, I have a disability (or previously had a disability)",
+    "v": "1"
+   },
+   {
+    "t": "No, I do not have a disability",
+    "v": "2"
+   },
+   {
+    "t": "I do not want to answer",
+    "v": "3"
+   }
+  ],
+  "placeholder": "",
+  "qa": "",
+  "section": "U.S. Equal Employment Opportunity information",
+  "tag": "select",
+  "type": ""
+ }
+]

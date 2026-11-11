@@ -188,6 +188,44 @@ class SetupKeys(E2ETestCase):
         self.assertEqual(row.count(), 0)
         self.assertIn("data engineer", self.page.text_content("#compList"))
 
+    def test_extension_panel_pairs_lists_revokes_and_switches_the_bookmarklets(self):
+        from lodestar import extension
+
+        card = self.page.locator("#extCard")
+        self.assertEqual(card.locator("#extList").text_content(), "no browser paired")
+        self.assertTrue(self.page.is_visible("#bmLinks"))  # auto: on while nothing is paired
+        self.assertEqual(self.page.input_value("#extBm"), "auto")
+        self.run_click(card.get_by_role("button", name="Pair a browser"))
+        port, code = self.page.text_content("#extCode").split("-", 1)
+        self.assertTrue(self.base.endswith(f":{port}"))  # the pairing string carries this server's port
+        self.assertIn("left", self.page.text_content("#extLeft"))
+        extension.pair(code, "chrome-extension://" + "abcdefghijklmnop" * 2, "Edge <b>x</b>")  # what the popup sends
+        self.page.wait_for_function("document.getElementById('extCode').textContent === ''")  # the used code goes, unprompted
+        self.assertEqual(self.page.text_content("#extLeft"), "paired: Edge <b>x</b>")
+        self.assertEqual(card.locator("#extList > div").count(), 1)
+        self.reload_state()
+        row = card.locator("#extList > div")
+        self.assertEqual(row.count(), 1)
+        self.assertIn("Edge <b>x</b>", row.text_content())  # the label is escaped text
+        self.assertEqual(card.locator("#extList b").count(), 1)
+        self.assertNotIn(extension._load()["paired"][0]["secret"], self.page.content())
+        self.assertFalse(self.page.is_visible("#bmLinks"))  # auto: off once a browser is paired
+        self.assertIn("Off", self.page.text_content("#bmState"))
+        self.page.select_option("#extBm", "on")
+        self.idle()
+        self.assertTrue(self.page.is_visible("#bmLinks"))
+        self.answer(False)
+        row.get_by_role("button", name="Revoke").click()
+        self.idle()
+        self.assertEqual(len(extension.paired()), 1)  # cancelled
+        self.answer(True)
+        row.get_by_role("button", name="Revoke").click()
+        self.expect_toast("revoked Edge", "ok")
+        self.idle()
+        self.assertEqual(extension.paired(), [])
+        self.assertEqual(card.locator("#extList").text_content(), "no browser paired")
+        settings.set_pref("bookmarklets", "auto")
+
     def test_bookmarklets_vault_data_panel_and_about(self):
         self.allow_console()
         bm, af = self.page.get_attribute("#bm", "href"), self.page.get_attribute("#af", "href")

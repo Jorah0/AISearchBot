@@ -126,23 +126,25 @@ _opener_nofollow = urllib.request.build_opener(_NoRedirect, _PinnedHTTPHandler, 
 FETCH_MAX_BYTES = 25_000_000  # a big Greenhouse feed with content=true runs a few MB; nothing we read needs more
 
 
-def fetch(url: str, timeout: int = 25, headers: dict | None = None, max_bytes: int | None = None, follow: bool = True) -> str:
-    """GET url as text. timeout bounds each socket wait, and the whole read must finish within 4x timeout, so a server
-    that trickles a byte at a time cannot hold the loop; more than max_bytes (FETCH_MAX_BYTES) is refused.
+def fetch(url: str, timeout: int = 25, headers: dict | None = None, max_bytes: int | None = None, follow: bool = True,
+          data: bytes | None = None) -> str:
+    """GET url as text; a POST of `data` when given (urllib never re-sends a body on a redirect). timeout bounds each
+    socket wait, and the whole read must finish within 4x timeout, so a server that trickles a byte at a time cannot
+    hold the loop; more than max_bytes (FETCH_MAX_BYTES) is refused.
     follow=False: a redirect raises HTTPError 3xx with its Location, for callers that check each hop (robots, host)."""
     import time
 
     _check_url(url)
     cap, shown = max_bytes or FETCH_MAX_BYTES, redact_url(url)
     deadline = time.monotonic() + timeout * 4
-    req = urllib.request.Request(url, headers={"User-Agent": UA, **(headers or {})})
+    req = urllib.request.Request(url, data=data, headers={"User-Agent": UA, **(headers or {})})
     try:
         with (_opener if follow else _opener_nofollow).open(req, timeout=timeout) as r:
             buf = bytearray()
             while chunk := r.read(65536):
                 buf += chunk
                 if len(buf) > cap:
-                    raise ValueError(f"response from {shown[:80]} is larger than {cap // 1_000_000} MB")
+                    raise ValueError(f"response from {shown[:80]} is larger than {cap / 1_000_000:g} MB")
                 if time.monotonic() > deadline:
                     raise ValueError(f"response from {shown[:80]} took longer than {timeout * 4} s")
             return buf.decode(r.headers.get_content_charset() or "utf-8", errors="replace")

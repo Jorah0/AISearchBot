@@ -1,5 +1,57 @@
 # Changelog (development passes, newest first)
 
+## Pass 20 (2026-11-11): browser extension, market pay data, command palette, restore
+
+**Browser extension for Edge and Chrome (replaces the bookmarklets)**
+- Load the `extension` folder once (`edge://extensions` > Developer mode > Load unpacked), then Setup > **Browser
+  extension** > **Pair a browser** and type the string it shows (like `8765-K7QX-M2PD`) into the extension's popup.
+  Setup clears the string as soon as the browser pairs and lists the browser; each string works once.
+- **Capture this posting** puts the job you are looking at on the Board, with the company, location, date and pay
+  the page itself publishes. **Fill this form** types your contact details, work history and saved answers into the
+  empty fields of an application form, highlights what it filled and lists what needs you (radio buttons, file
+  uploads, dates, unclear dropdowns). It never clicks, submits or ticks anything. EEO answers and your desired salary
+  go only when you tick them for that fill; your salary floor and private answers never do.
+- Never on LinkedIn: its User Agreement bans add-ons like this, so the extension does nothing there.
+- Each request from the extension is signed with a secret only that browser holds, and the signature names the port
+  it was sent to, so another program on your PC listening on one of the ports the popup tries cannot pass its
+  requests on to Lodestar and read your answers. Setup > Browser extension > **Revoke** ends a pairing.
+- The bookmarklets turn off once a browser is paired (Setup > Browser extension > Bookmarklets turns them back on).
+
+**Command palette (Ctrl+K)**
+- Press Ctrl+K (Cmd+K on a Mac) anywhere: type a few letters of a tab, a job (company or title), a contact, a document
+  or a setting, or an action (Add job, Check email, Run watches, Recommend on this tab, Open Today), then Enter. Arrows
+  move, Esc closes and puts you back where you were. The letters only have to appear in order ("orch staff" finds
+  Orchid Health - Staff Data Engineer). Works with the keyboard alone and with a screen reader. Check email and Run
+  watches leave the keyboard on their button, and the Master resume is offered only once you have built one.
+- Any button that runs a background job gives the keyboard focus back to itself when the job finishes.
+
+**Restore from backup**
+- Setup > Data > **Restore from backup** (or `lodestar restore ZIP`) puts your data folder back to a backup: the
+  tracker, profile, settings, answers and documents; files made since are removed. A safety backup of what is there
+  now is taken first (`before-restore-*.zip`), and the backup must pass its checks (only the files a backup holds, no
+  path tricks, size limits, a database that opens and passes its integrity check) before anything changes. Refused
+  while the monitor loop is mid-cycle, mail is being sent or scanned, an update runs or another Lodestar window is
+  open. AI keys, the mail sign-in and paired browsers live outside backups and stay as they are, whatever spelling a
+  zip uses for them (`Extension.json`, `.ENV`, `Backups\`); zips with Windows short names (`EXTENS~1.JSO`) are refused.
+- Backups no longer carry `capture.token`, `update-state.json` or `procs\` (running-process markers).
+
+**Market pay from the Bureau of Labor Statistics (opt-in)**
+- Turn it on once (the drawer's **Turn on market pay**, or `lodestar tools set market_pay on`): every job then shows
+  what employers in its area pay its occupation, as public BLS percentiles (10th to 90th and the mean). Off, Lodestar
+  never contacts BLS.
+- The board card gets a "market median" chip; the drawer's **Market pay (BLS)** group draws the percentiles with the
+  posting's own pay over them and says where it sits; Insights > Offers adds a BLS row with where each base sits.
+- A counter-offer can cite the public median or 75th percentile for the job you are countering, as public data (never
+  as another offer, never your floor); Lodestar refuses a figure at or below their base. Interview prep, the gap check
+  and offer evaluation see the figures too.
+- The occupation comes from the job title (or your pick, or your AI's pick from a fixed list when you click), the area
+  from the location (metro, else state, else national; remote jobs use your home area). Both always show next to the
+  figure, with what the figure is not: not the company's band, base pay only, and it lags the market. Jobs outside
+  the U.S. get no figure, even when their country code matches a state ("Berlin, DE" is not Delaware).
+- Only occupation and area codes go to api.bls.gov. 25 queries a day without a key (500 with a free `BLS_API_KEY`),
+  cached until the next yearly release. `lodestar comp market ID` shows it on the command line, `lodestar doctor` the
+  state and today's count.
+
 ## Pass 19 (2026-11-11): AI recommendations, Full AI and AI helpers
 
 Ask the AI to suggest edits to your own content in any tab, apply the ones you like with one click, let it apply

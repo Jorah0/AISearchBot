@@ -96,6 +96,8 @@ Executors are the only code that sends mail, changes status, or adds jobs on lod
    alerted once, AI-judged, and strong fits proposed. Listings that look stale
    are not proposed. Weekly, saved jobs from those boards are re-checked and a removed posting is proposed for
    `withdrawn` (tool `posting_check`, always via the inbox).
+   Market pay (pref `market_pay`, off by default): the next missing public BLS figure for live jobs, at most one
+   BLS query a cycle, cache first, never an AI call (`paydata.fill`).
 3. Follow-ups: nudge about quiet applications; draft a follow-up when a contact is known (a plain template when no
    AI provider is configured, still proposed through the inbox).
    Desktop notifications, if you turned them on (pref `desktop_notifications`): the day's agenda once, an interview
@@ -264,8 +266,11 @@ address, always reviewed in the Inbox.
 
 ### After the ECC and security reviews (2026-11-04)
 
-- Two tokens: the page token (header only) drives the full API; the bookmarklets carry a separate capture token that
-  works only on `/api/capture` and `/api/autofill`. A job board that reads the bookmarklet URL learns nothing useful.
+- Three credentials: the page token (header only) drives the full API; the bookmarklets carry a separate capture token
+  that works only on `/api/capture` and `/api/autofill` (and only while the `bookmarklets` pref allows it: auto turns it
+  off once a browser extension is paired); a paired browser extension signs each `/api/ext/*` request with its own
+  secret (HMAC, 120 s, pinned `chrome-extension://` Origin, bound to the port the popup dialled, so a program on
+  another port cannot relay it), which works on no other route and gets no CORS headers.
 - The server refuses any request whose `Host` header is not this loopback address (DNS-rebinding defence) and any
   POST that is not `application/json`.
 - Actions triggered by inbound mail (status moves, replies) run automatically only when the message carries

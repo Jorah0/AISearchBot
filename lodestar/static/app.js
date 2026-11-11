@@ -41,15 +41,20 @@ function go(tab) {
   if (tab !== 'board' || CT) closeDrawer();
   if (tab === 'contacts') loadContacts();
   if (tab === 'insights') loadInsights();
-  if (tab === 'setup') { loadEmail(); loadAiHistory(); }
+  if (tab === 'setup') { loadEmail(); loadAiHistory(); restoreLoad(); }
   if (tab === 'studio') loadStudio();
   if (tab === 'profile') loadMaster();  // the master card follows background rebuilds
 }
 
 /* ---- background tasks ---- */
 async function run(action, params, done, btn, fail) {  // fail(error): the caller also shows a refusal in place
+  const had = btn && document.activeElement === btn;  // disabling a focused button drops focus to the page
   if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = 'working…'; }
-  const finish = () => { if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label; } };
+  const finish = () => {
+    if (!btn) return;
+    btn.disabled = false; btn.textContent = btn.dataset.label;
+    if (had && btn.isConnected && (!document.activeElement || document.activeElement === document.body)) btn.focus();  // keyboard users keep their place
+  };
   const { task, error } = await api(action.startsWith('/') ? action : '/api/run/' + action, params);  // or a route that starts a task
   if (error) { finish(); fail && fail(error); return toast('error: ' + error, 'err'); }
   const poll = async () => {
@@ -131,7 +136,7 @@ function clearFilters() {
 function toggleView() { V.view = V.view === 'table' ? 'board' : 'table'; saveView(); renderBoard(); }
 function card(j) {
   const chips = [stars(j), salaryText(j) && `<span>${esc(salaryText(j))}</span>`, j.match_score != null && `<span>match ${esc(j.match_score)}%</span>`,
-    where(j) && `<span>${esc(where(j))}</span>`, deadlineChip(j), pipeChip(j), staleChip(j.ghost), sponsorChip(j.sponsor), warmChip(j.warm)].filter(Boolean).join('');
+    where(j) && `<span>${esc(where(j))}</span>`, deadlineChip(j), pipeChip(j), staleChip(j.ghost), sponsorChip(j.sponsor), warmChip(j.warm), payChip(j.pay)].filter(Boolean).join('');
   return `<div class="card ${S.followups.includes(j.id) ? 'late' : ''} ${cur && cur.job.id === j.id ? 'sel' : ''}" data-id="${j.id}" draggable="true" tabindex="0" role="button"
     aria-label="${esc(`#${j.id} ${j.company} - ${j.title}, ${j.status}`)}" ondragstart="event.dataTransfer.setData('text/plain','${j.id}');event.dataTransfer.effectAllowed='move'"
     onclick="openJob(${j.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openJob(${j.id})}">
@@ -287,6 +292,7 @@ async function openJob(id) {
     ${aiMenu('job', j.id)}
 ${pipelineGroup(d)}
 ${detailsForm(j)}
+${payGroup(d)}
 ${peopleGroup(d)}
 ${readinessGroup(d)}
 ${roundsGroup(d)}
@@ -343,6 +349,7 @@ ${mailGroup(d)}
   renderCoverage(savedCoverage(d));
   renderBullets(savedBullets(d), false);
   stageLine();
+  if (d.pay && d.pay.next && !PAY_TRIED.has(j.id)) { PAY_TRIED.add(j.id); payRun(j.id, false); }  // one automatic BLS try per job per page load
   showDoc('timeline', $('#docTabs button'));
   if ($('#jQsrc')) await loadQsrc(j.id);
 }
@@ -999,6 +1006,64 @@ let RESULTS = [];  // listings stay in JS; markup carries only an index (listing
 const searchParams = () => ({ query: $('#sQ').value, keywords: $('#sK').value, location: $('#sLoc').value, min_salary: $('#sSal').value, posted_within: $('#sDays').value, seniority: $('#sLevel').value });
 const GHOST_SHOW = 30;  // web_monitor.GHOST_SHOW
 const staleChip = g => g && g.score >= GHOST_SHOW ? `<span class="chip stale" title="${esc(g.reasons.join('; '))}">possibly stale</span>` : '';
+/* ---- market pay (paydata.py): public BLS OEWS percentiles from the cache; the drawer fetches the job you open (one try
+   per job per page load), the board never fetches. Every BLS string goes through esc() ---- */
+const PCT = [['p10', '10th'], ['p25', '25th'], ['p50', 'median'], ['p75', '75th'], ['p90', '90th'], ['mean', 'mean']];
+const payAmt = (p, k) => num(p[k]) + (p.capped.includes(k) ? '+' : '');
+const payLine = x => PCT.filter(([k]) => x.pay[k] != null).map(([k, l]) => `${l} ${payAmt(x.pay, k)}`).join(' | ');
+const payChip = x => x && x.pay && x.pay.p50 != null ? `<span class="chip pay" title="${esc(`BLS ${payLine(x)}\n${x.soc.name} (${x.soc.soc}), ${x.area.name}\n\n${x.label}`)}">market median $${Math.round(x.pay.p50 / 1000)}k${x.pay.capped.includes('p50') ? '+' : ''} (BLS May ${esc(x.pay.year)}, ${esc(x.area.short)}${x.state === 'stale' ? ', retrieved ' + esc(x.pay.fetched_at) : ''})</span>` : '';
+const PAY_TRIED = new Set();
+const pctName = s => s === 'median' ? 'the median' : `the ${s} percentile`;
+const bandText = b => /^(below|above) /.test(b) ? `${b.split(' ')[0]} ${pctName(b.split(' ')[1])}` : `between ${pctName(b.split('-')[0])} and ${pctName(b.split('-')[1])}`;
+function payStrip(x, j) {  // five ticks on a line, the posting's range drawn over them; plain CSS
+  const p = x.pay, ks = PCT.slice(0, 5).filter(([k]) => p[k] != null), post = x.posting_band ? [j.salary_min, j.salary_max].filter(v => v) : [];
+  if (!ks.length) return '';
+  const vals = [...ks.map(([k]) => p[k]), ...post], lo = Math.min(...vals) * 0.95, hi = Math.max(...vals) * 1.05, pos = v => (v - lo) / (hi - lo) * 100;
+  const bar = post.length ? `<span class="post" style="left:${pos(post[0]).toFixed(1)}%;width:${Math.max(1, pos(post[post.length - 1]) - pos(post[0])).toFixed(1)}%" title="this posting: ${esc(post.map(num).join(' - '))}"></span>` : '';
+  return `<div class="pstrip" role="img" aria-label="${esc('BLS percentiles: ' + payLine(x) + (post.length ? '; this posting ' + post.map(num).join(' - ') : ''))}">${bar}${ks.map(([k, l]) => `<i style="left:${pos(p[k]).toFixed(1)}%"><b>${l}</b><span>${payAmt(p, k)}</span></i>`).join('')}</div>`;
+}
+function payGroup(d) {
+  const x = d.pay || {}, j = d.job, occ = d.occupations || {};
+  if (x.state === 'off') return `<div class="group" id="jPay"><h4>Market pay (BLS)</h4><div class="row"><span class="muted grow">Off. Public U.S. wage percentiles for this job's occupation and area, from the Bureau of Labor Statistics. Turning it on sends only occupation and area codes to api.bls.gov (never your profile, your floor or this job's text); the monitor loop then fills in the other jobs, one query a cycle.</span><button class="b sm" id="jPayOn" onclick="payEnable(this)">Turn on market pay</button></div></div>`;
+  if (x.state === 'error' || !x.state) return '';
+  const opts = Object.entries(occ).map(([c, n]) => `<option value="${esc(c)}" ${j.soc_by === 'user' && j.soc === c ? 'selected' : ''}>${esc(n)} (${esc(c)})</option>`).join('');
+  const sel = `<div class="row"><label class="muted">occupation <select id="jSoc" onchange="paySoc(${j.id},this.value)"><option value="">automatic</option>${opts}<option value="none" ${j.soc === 'none' ? 'selected' : ''}>none (hide market pay)</option></select></label>
+    <button class="b ghost sm" id="jSocAi" onclick="payRun(${j.id},true,this)" ${hasAI() ? '' : 'disabled title="needs an AI provider"'}>Match occupation (AI)</button></div>`;
+  if (x.state === 'hidden') return `<div class="group" id="jPay"><h4>Market pay (BLS)</h4><div class="muted">Hidden for this job (occupation: none).</div>${sel}</div>`;
+  const soc = x.soc ? `${esc(x.soc.name)} (${esc(x.soc.soc)}), ${x.soc.by === 'you' ? 'set by you' : x.soc.by === 'AI' ? 'matched by AI from a fixed list' : 'matched by ' + esc(x.soc.by)}`
+    : 'No occupation matched. Pick one, or Match occupation (AI).';
+  const area = x.state === 'no_area' ? 'Location not recognised as a U.S. metro or state. BLS covers U.S. jobs only; for a U.S. job add the state, e.g. "Boise, ID".'
+    : x.area ? `${esc(x.area.name)} (${esc(x.area_note || x.area.why)})` : '';
+  let body = '';
+  if (x.pay) {
+    const p = x.pay, gone = PCT.filter(([k]) => p[k] == null).map(([, l]) => l), top = x.posting_band && (x.posting_band.max || x.posting_band.min);
+    body = payStrip(x, j) + `<div class="muted">${esc(payLine(x))}${gone.length ? ` · not published: ${esc(gone.join(', '))}` : ''}</div>`
+      + (top ? `<div>This posting's ${x.posting_band.max ? 'top end' : 'stated pay'} sits ${esc(bandText(top))}.</div>` : '')
+      + `<div class="muted plabel">${esc(x.label)}</div>`;
+  } else if (x.state === 'unpublished') body = `<div class="muted">BLS publishes no figure for ${esc(x.soc.name)} here (metro, state or national).</div>`;
+  else if (x.state === 'missing') body = '<div class="muted">No BLS figure retrieved yet.</div>';
+  return `<div class="group" id="jPay"><h4>Market pay (BLS)</h4><div class="muted">occupation: ${soc}</div>${sel}${area ? `<div class="muted">area: ${area}</div>` : ''}${body}
+    ${x.next ? `<div class="row"><button class="b ghost sm" id="jPayGet" onclick="payRun(${j.id},false,this)">Fetch BLS figures</button></div>` : ''}<div id="jPayErr" class="muted" role="status"></div></div>`;
+}
+function payRedraw(id, pay, err) {  // only the Market pay group: anything typed elsewhere in the drawer stays
+  if (!cur || cur.job.id !== id || !$('#jPay')) return;
+  cur.pay = pay; $('#jPay').outerHTML = payGroup(cur);
+  if (err && $('#jPayErr')) $('#jPayErr').textContent = err;
+}
+function payRun(id, ai, btn) {
+  run('market_pay', { id, ai }, r => payRedraw(id, r.pay, r.error), btn, e => { if ($('#jPayErr')) $('#jPayErr').textContent = e; });
+}
+async function payEnable(btn) {
+  btn.disabled = true;
+  const r = await api('/api/prefs', { key: 'market_pay', value: true }); if (r.error) { btn.disabled = false; return toast('error: ' + r.error, 'err'); }
+  toast('market pay on: BLS figures for the job you open; the monitor loop fills in the rest', 'ok');
+  const id = cur.job.id; await load(); openJob(id);
+}
+async function paySoc(id, soc) {
+  const r = await api(`/api/jobs/${id}/soc`, { soc }); if (r.error) return toast('error: ' + r.error, 'err');
+  await load(); await openJob(id);  // the board's chip follows
+  if (r.pay && r.pay.next) payRun(id, false);
+}
 const sponsorChip = s => s ? `<span class="chip" title="from the USCIS H-1B data you imported (${esc(s.name)}); a loose name match, not a promise">possible H-1B sponsor (${esc(s.approvals)} approvals)</span>` : '';
 function listingHtml(j, i) {
   const unknown = ['salary', 'location', 'date'].filter(k => j[k + '_unknown']).map(k => `<span class="chip" title="the listing does not say; kept rather than dropped">${k} unknown</span>`).join('');
@@ -1118,6 +1183,7 @@ function renderSetup() {
   const rates = Object.entries(S.comp).flatMap(([t, cities]) => Object.entries(cities).map(([c, [lo, hi]]) => ({ t, c, lo, hi })));
   $('#compList').innerHTML = rates.map((r, i) => `<div><b>${esc(r.t)}</b> <span class="muted">${esc(r.c === '*' ? 'any city' : r.c)}</span> ${esc(r.lo.toLocaleString())} - ${esc(r.hi.toLocaleString())} <button class="b ghost sm" onclick="compOp({op:'delete',title:RATES[${i}].t,city:RATES[${i}].c})">remove</button></div>`).join('') || '<div class="muted">none recorded: gap checks, offer evaluation and interview prep then say "none recorded"</div>';
   RATES = rates;
+  renderExt();
   const o = location.origin;
   $('#bm').href = `javascript:(()=>{const t=document.title,u=location.href,d=(document.querySelector('main')||document.body).innerText.slice(0,12000);fetch('${o}/api/capture?t=${CAPTURE}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t,url:u,desc:d})}).then(r=>r.json()).then(r=>alert(r.error?('Lodestar: '+r.error):('Lodestar tracked #'+r.id+': '+r.company+' - '+r.title))).catch(e=>alert('Lodestar UI not running? '+e))})();`;
   $('#af').href = `javascript:(()=>{fetch('${o}/api/autofill?t=${CAPTURE}').then(r=>r.json()).then(d=>{if(d.error){alert('Lodestar could not autofill: '+d.error);return}const map={first_name:/first.?name|given|fname|legalname.*first/i,last_name:/last.?name|surname|family|lname|legalname.*last/i,name:/^(full.?)?name$|your.?name|^name$|cards\\[.*\\]\\[name\\]/i,email:/e-?mail/i,phone:/phone|mobile|tel/i,linkedin:/linkedin/i,github:/github/i,website:/website|portfolio|^url|personal.?site/i,location:/city|location|address|where.*located/i};const ats={first_name:['#first_name','input[name=\"first_name\"]','[data-automation-id=\"legalNameSection_firstName\"]','#first-name','input[name=\"_systemfield_first_name\"]'],last_name:['#last_name','input[name=\"last_name\"]','[data-automation-id=\"legalNameSection_lastName\"]','#last-name','input[name=\"_systemfield_last_name\"]'],name:['input[name=\"name\"]','input[name=\"_systemfield_name\"]','#full_name'],email:['#email','input[name=\"email\"]','input[name=\"_systemfield_email\"]','[data-automation-id=\"email\"]','input[type=\"email\"]'],phone:['#phone','input[name=\"phone\"]','[data-automation-id=\"phone-number\"]','#phone-number','input[type=\"tel\"]'],linkedin:['input[name=\"urls[LinkedIn]\"]','#linkedin','input[name*=\"linkedin\" i]'],github:['input[name=\"urls[GitHub]\"]','input[name*=\"github\" i]'],website:['input[name=\"urls[Portfolio]\"]','input[name*=\"website\" i]','input[name*=\"portfolio\" i]'],location:['input[name=\"job_application[location]\"]','#location','input[name*=\"location\" i]']};let n=0;for(const k in ats){if(!d[k])continue;for(const sel of ats[k]){const el=document.querySelector(sel);if(el&&!el.value&&!el.dataset.ls){el.value=d[k];el.dataset.ls='1';el.dispatchEvent(new Event('input',{bubbles:true}));n++;break}}}document.querySelectorAll('input,textarea').forEach(el=>{if(el.type==='hidden'||el.type==='password'||el.value||el.dataset.ls)return;const lab=(el.labels&&el.labels[0]?el.labels[0].innerText:'')+' '+(el.name||'')+' '+(el.id||'')+' '+(el.placeholder||'')+' '+(el.getAttribute('aria-label')||'')+' '+(el.getAttribute('data-automation-id')||'')+' '+(el.getAttribute('autocomplete')||'')+' '+(el.getAttribute('data-qa')||'');for(const k in map){if(map[k].test(lab)&&d[k]){el.value=d[k];el.dispatchEvent(new Event('input',{bubbles:true}));n++;break}}});alert('Lodestar filled '+n+' field(s). Review everything, then submit yourself.')}).catch(e=>alert('Lodestar UI not running? '+e))})();`;
@@ -1188,6 +1254,41 @@ async function compOp(body) {
   const r = await api('/api/comp', body); if (r.error) return toast('error: ' + r.error, 'err');
   if (body.op !== 'delete') ['#mTitle', '#mCity', '#mLow', '#mHigh'].forEach(s => { $(s).value = ''; });
   toast(body.op === 'delete' ? 'removed' : 'recorded', 'ok'); load();
+}
+/* ---- browser extension: pairing string, paired browsers, revoke (extension.py) ---- */
+let EXT_TIMER = null;
+function renderExt() {
+  $('#extList').innerHTML = (S.extensions || []).map((e, i) => `<div><b>${esc(e.label)}</b> <span class="muted">${esc(String(e.origin).replace('chrome-extension://', '').slice(0, 8))}… · paired ${esc(String(e.paired_at).slice(0, 16).replace('T', ' '))} · last used ${esc(String(e.last_used).slice(0, 16).replace('T', ' '))}</span> <button class="b ghost sm" onclick="extRevoke(${i})">Revoke</button></div>`).join('') || '<div class="muted">no browser paired</div>';
+  if (document.activeElement !== $('#extBm')) $('#extBm').value = S.prefs.bookmarklets || 'auto';
+  $('#bmLinks').style.display = S.bookmarklets_on ? '' : 'none';
+  $('#bmState').textContent = S.bookmarklets_on ? 'Drag these to your bookmarks bar. The UI must be running.'
+    : 'Off: a browser extension is paired (or you turned them off). Turn them on under Browser extension > Bookmarklets.';
+}
+async function extPair(btn) {
+  btn.disabled = true;
+  const r = await api('/api/extension/code', {}).finally(() => btn.disabled = false);
+  if (r.error) return toast('error: ' + r.error, 'err');
+  const until = Date.now() + r.expires_in * 1000, known = new Set((S.extensions || []).map(e => e.id));
+  $('#extCode').textContent = `${r.port}-${r.code}`;
+  clearInterval(EXT_TIMER);
+  let n = 0;
+  const tick = async () => {
+    const left = Math.round((until - Date.now()) / 1000);
+    if (left <= 0) { clearInterval(EXT_TIMER); $('#extCode').textContent = ''; $('#extLeft').textContent = 'the code expired: press Pair a browser again'; return; }
+    $('#extLeft').textContent = `type this in the extension's popup (${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left)`;
+    if (n++ % 2) return;  // every 2 s: has a browser paired with this (single-use) code?
+    const p = await api('/api/extension/paired').catch(() => ({}));
+    const fresh = (p.extensions || []).find(e => !known.has(e.id));
+    if (!fresh || !EXT_TIMER) return;
+    clearInterval(EXT_TIMER); EXT_TIMER = null;
+    S.extensions = p.extensions; $('#extCode').textContent = ''; $('#extLeft').textContent = `paired: ${fresh.label}`;
+    renderExt(); load();  // bookmarklets_on may have changed with it
+  };
+  tick(); EXT_TIMER = setInterval(tick, 1000);
+}
+async function extRevoke(i) {
+  const e = (S.extensions || [])[i]; if (!e || !confirm(`Revoke ${e.label}? That browser can no longer capture or fill until you pair it again.`)) return;
+  const r = await api('/api/extension/revoke', { id: e.id }); toast(r.error || (r.ok ? 'revoked ' + e.label : 'already revoked'), r.error ? 'err' : 'ok'); load();
 }
 async function delVault(i) {  // names stay in JS; markup carries only an index
   const v = S.vault[i]; if (!v || !confirm(`Remove ${v.name} from the OS keyring?`)) return;
@@ -1682,6 +1783,8 @@ function renderOffers() {
   $('#offerTable').innerHTML = rows.length ? `<table class="kw offers"><thead><tr><th></th>${rows.map(r => `<th><a href="#" onclick="go('board');openJob(${Number(r.job_id)});return false">#${Number(r.job_id)} ${esc(r.company)}</a><div class="muted">${esc(r.title)} · ${esc(r.status)}</div></th>`).join('')}</tr></thead><tbody>`
     + Object.entries(OF_LABEL).map(([k, l]) => `<tr><td>${l}</td>${rows.map(r => `<td class="${best(k, r) ? 'best' : ''}">${num(r.total[k])}${best(k, r) ? ' <span class="sr">best</span>' : ''}</td>`).join('')}</tr>`).join('')
     + `<tr><td>market range</td>${rows.map(r => `<td>${r.market ? num(r.market.low) + '–' + num(r.market.high) + (r.market.delta ? ` <span class="muted">(${r.market.delta > 0 ? '+' : ''}${num(r.market.delta)})</span>` : ' <span class="muted">(within)</span>') : '<span class="muted">none recorded</span>'}</td>`).join('')}</tr>`
+    + (rows.some(r => r.paydata && r.paydata.pay) ? `<tr><td>BLS market (median / 75th)</td>${rows.map(r => { const x = r.paydata || {}, p = x.pay;
+      return `<td>${p && p.p50 != null ? `<span title="${esc(x.label)}">${payAmt(p, 'p50')} / ${p.p75 != null ? payAmt(p, 'p75') : '-'}</span>${x.base_band ? ` <span class="muted">· base at ${esc(x.base_band)}</span>` : ''}` : '<span class="muted">none cached</span>'}</td>`; }).join('')}</tr>` : '')
     + (o.floor ? `<tr class="private"><td>vs your salary floor <span class="muted">(private)</span></td>${rows.map(r => `<td>${r.vs_floor == null ? '-' : (r.vs_floor >= 0 ? '+' : '') + num(r.vs_floor)}</td>`).join('')}</tr>` : '')
     + ['remote', 'start_date', 'deadline'].map(k => `<tr><td>${k.replace('_', ' ')}</td>${rows.map(r => `<td>${cell(r.offer[k])}</td>`).join('')}</tr>`).join('')
     + `<tr><td>estimates</td>${rows.map(r => `<td class="muted">${esc(r.total.estimates.join('; ') || 'none')}</td>`).join('')}</tr></tbody></table>`
@@ -1715,6 +1818,10 @@ function renderCite() {
   const id = Number($('#ctrJob').value), names = { base: 'base', bonus_pct: 'target bonus %', sign_on: 'sign-on', equity_value_estimate: 'equity (estimate)', year1_total: 'year-1 total' };
   CITE = OFF.offers.filter(r => r.job_id !== id).flatMap(r => OFF.cite.map(f => [f, f === 'year1_total' ? r.total.year1_total : r.offer[f]]).filter(([, v]) => v)
     .map(([f, v]) => [`${r.job_id}:${f}`, `#${r.job_id} ${r.company}: ${names[f] || f} ${num(v)}${f === 'bonus_pct' ? '%' : ''}`]));
+  const me = OFF.offers.find(r => r.job_id === id), x = me && me.paydata, p = x && x.pay;  // public BLS figures of this job
+  if (p) CITE.push(...[['market_median', 'p50', 'median'], ['market_p75', 'p75', '75th percentile']]
+    .filter(([, k]) => p[k] != null && !(me.offer.base >= p[k]))  // at or below their base it would argue for less
+    .map(([f, k, w]) => [`${id}:${f}`, `public BLS ${w} for this job: ${payAmt(p, k)} (May ${p.year}, ${x.area.short})`]));
   $('#ctrCite').innerHTML = CITE.map(([, l], i) => `<label class="muted"><input type="checkbox" id="cite${i}"> ${esc(l)}</label>`).join('')
     || '<span class="muted">no other offer with figures to cite: record a competing offer first, or write your ask below</span>';
 }
@@ -2500,4 +2607,110 @@ function aiHelp(k, btn) {
     aiHelpSay(k, r.recommendations.length ? 'Suggestions are in the AI panel above: tick the ones you want, then Apply suggestions.' : 'The AI suggests no changes.');
   }, btn, e => aiHelpSay(k, e, true));
 }
+/* ---- restore from backup (extras.restore): Setup > Data picks a zip from the backups folder; the server re-checks everything ---- */
+async function restoreLoad() {
+  const r = await api('/api/backups'); if (r.error) return toast('error: ' + r.error, 'err');
+  const sel = $('#rsPick'), keep = sel.value;
+  sel.innerHTML = r.backups.map(b => `<option value="${esc(b.name)}">${esc(b.name)} · ${esc(b.when)} · ${esc((b.size / 1e6).toFixed(1))} MB</option>`).join('')
+    || '<option value="">no backups yet: Backup now makes one</option>';
+  if (r.backups.some(b => b.name === keep)) sel.value = keep;
+}
+function restoreRun(btn) {
+  const name = $('#rsPick').value; if (!name) return toast('no backup to restore: Backup now makes one', 'err');
+  if (!confirm(`Restore ${name}?\n\nYour data folder (profile, tracker, settings, answers, documents) goes back to that backup, and files made since are removed. A safety backup of what is there now is taken first (before-restore-….zip in backups).\n\nKeyring secrets (AI keys, mail sign-in) and paired browsers are not in backups: they stay as they are.`)) return;
+  $('#rsOut').textContent = 'Restoring…';
+  run('restore', { name }, r => {
+    const c = r.counts || {};
+    $('#rsOut').innerHTML = `<div id="rsDone"><b>Restored ${Number(r.restored)} file(s) from ${esc(r.from)}</b>: ${Number(c.jobs)} jobs, ${Number(c.contacts)} contacts, ${Number(c.answers)} answers, ${Number(c.events)} events; removed ${Number(r.removed)} file(s) made since.`
+      + `<div class="muted">Safety backup of what was there: ${esc(r.safety_backup)}</div>`
+      + (r.skipped && r.skipped.length ? `<div class="muted">Not restored (never part of a backup): ${esc(r.skipped.join(', '))}</div>` : '')
+      + `<div class="muted">${esc(r.note)}</div></div>`;
+    toast('backup restored', 'ok'); restoreLoad(); loadProfile(); loadBank(); loadMaster();
+  }, btn, e => { $('#rsOut').innerHTML = `<div class="flagtxt" id="rsErr">${esc(e)}</div>`; });
+}
+
+/* ---- command palette: Ctrl+K / Cmd+K. A dialog with a combobox over a listbox (aria-activedescendant): type to filter
+   (fuzzy: the letters in order), arrows move, Enter runs, Esc closes and gives focus back. Every label is escaped. ---- */
+let PAL = null;  // {items, shown, at, back}: the palette while it is open
+const PAL_KIND = { action: 'Action', tab: 'Tab', job: 'Job', contact: 'Contact', doc: 'Document', setting: 'Setting' };
+function palTab(tab) { go(tab); $(`nav button[data-tab="${tab}"]`).focus(); }
+function palFocus(el) { if (!el) return; el.scrollIntoView({ block: 'center' }); el.focus(); }
+function palRecommend() {  // the first AI toolbar on the open tab, as if you clicked its Recommend
+  const b = $$('main section.on [data-adv-slot] .aibar button').find(x => x.textContent === 'Recommend');
+  if (!b) return toast('This tab has no AI recommendations (Board, Inbox, Contacts, Search, Monitor, Answers, Insights and Profile do)', 'err');
+  palFocus(b); b.click();
+}
+function palToday() {
+  palTab('board'); const t = $('#today');
+  if (t.style.display === 'none') return toast('Nothing is due today', 'ok');
+  t.tabIndex = -1; palFocus(t);
+}
+function palBase() {
+  const label = b => [...b.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim();
+  const items = [
+    { kind: 'action', label: 'Add job', run: () => { palTab('board'); $('#nCo').focus(); } },
+    { kind: 'action', label: 'Check email', run: () => { palFocus($('#topEmail')); $('#topEmail').click(); } },  // focus stays on what ran
+    { kind: 'action', label: 'Run watches', run: () => { palFocus($('#topWatches')); $('#topWatches').click(); } },
+    { kind: 'action', label: 'Recommend on this tab', run: palRecommend },
+    { kind: 'action', label: 'Open Today', run: palToday },
+    ...$$('nav button[data-tab]').map(b => ({ kind: 'tab', label: 'Go to ' + label(b), run: () => palTab(b.dataset.tab) })),
+    ...(S.jobs || []).map(j => ({ kind: 'job', label: `#${j.id} ${j.company} - ${j.title}`, hint: j.status, run: () => { palTab('board'); openJob(j.id); } })),
+    ...$$('#setup .panel > h3').map(h => ({ kind: 'setting', label: h.textContent, hint: 'Setup', run: () => { go('setup'); palFocus(h.parentElement.querySelector(FOCUSABLE)); } })),
+  ];
+  Object.keys(S.prefs || {}).forEach((k, i) => items.push({ kind: 'setting', label: ((S.pref_help || {})[k] || [k])[0], hint: 'Tools > Preferences',
+    run: () => { go('tools'); palFocus($(`#prefs [aria-labelledby="pl${i}"]`)); } }));
+  return items;
+}
+function palScore(q, s) {  // the query's letters in order; runs and word starts score higher; -1 = no match
+  s = s.toLowerCase(); let from = 0, prev = -2, score = 0;
+  for (const ch of q) {
+    const j = s.indexOf(ch, from); if (j < 0) return -1;
+    score += (j === prev + 1 ? 3 : 1) + (j === 0 || /[\s#\-(>·]/.test(s[j - 1]) ? 2 : 0); prev = j; from = j + 1;
+  }
+  return score - s.length / 1000;
+}
+function palRender() {
+  const q = $('#palQ').value.trim().toLowerCase().replace(/\s+/g, ' ');
+  PAL.shown = (q ? PAL.items.map(it => [palScore(q, it.label), it]).filter(x => x[0] >= 0).sort((a, b) => b[0] - a[0]).map(x => x[1])
+    : PAL.items.filter(it => it.kind === 'action' || it.kind === 'tab')).slice(0, 50);
+  $('#palList').innerHTML = PAL.shown.map((it, i) => `<li role="option" id="palO${i}" aria-selected="false" onmousedown="event.preventDefault()" onclick="palRun(${i})">`
+    + `<span class="palk">${esc(PAL_KIND[it.kind])}</span>${esc(it.label)}${it.hint ? ` <span class="muted">${esc(it.hint)}</span>` : ''}</li>`).join('');
+  $('#palN').textContent = PAL.shown.length ? `${PAL.shown.length} result${PAL.shown.length === 1 ? '' : 's'}` : 'No matches';
+  palAt(PAL.shown.length ? Math.min(Math.max(PAL.at, 0), PAL.shown.length - 1) : -1);
+}
+function palAt(i) {
+  PAL.at = i;
+  $$('#palList [role=option]').forEach((o, k) => { o.setAttribute('aria-selected', String(k === i)); o.classList.toggle('on', k === i); });
+  if (i < 0) return $('#palQ').removeAttribute('aria-activedescendant');
+  $('#palQ').setAttribute('aria-activedescendant', 'palO' + i); $('#palO' + i).scrollIntoView({ block: 'nearest' });
+}
+function palAdd(list) { if (PAL) { PAL.items.push(...list); palRender(); } }
+function palOpen() {
+  if (PAL || !S || !$('#viewer').hidden) return;  // the document viewer is a full-screen dialog of its own
+  PAL = { items: palBase(), shown: [], at: 0, back: document.activeElement };
+  $('#palQ').value = ''; $('#palette').hidden = false; palRender(); $('#palQ').focus();
+  api('/api/contacts').then(r => palAdd((r.contacts || []).map(c => ({ kind: 'contact', label: c.name + (c.company ? ` (${c.company})` : ''),
+    run: () => { palTab('contacts'); openContact(c.id); } }))));
+  api('/api/docs').then(r => palAdd((r.docs || []).map(d => ({ kind: 'doc', label: d.label, run: () => openViewer(d.ref) }))));
+}
+function palClose(back = true) {
+  if (!PAL) return; const b = PAL.back; PAL = null; $('#palette').hidden = true;
+  if (back && b && b.isConnected) b.focus();
+}
+function palRun(i) { const it = PAL && PAL.shown[i]; if (!it) return; palClose(false); it.run(); }
+$('#palQ').addEventListener('input', () => { if (PAL) { PAL.at = 0; palRender(); } });
+$('#palette').addEventListener('click', e => { if (e.target.id === 'palette') palClose(); });  // a click beside the box
+document.addEventListener('keydown', e => {  // capture phase: before the drawer's and the viewer's own keys
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
+    e.preventDefault(); e.stopPropagation(); return PAL ? palClose() : palOpen();
+  }
+  if (!PAL) return;
+  e.stopPropagation();  // nothing under the palette reacts while it is open
+  const n = PAL.shown.length;
+  if (e.key === 'Escape') { e.preventDefault(); palClose(); }
+  else if (e.key === 'ArrowDown' && n) { e.preventDefault(); palAt((PAL.at + 1) % n); }
+  else if (e.key === 'ArrowUp' && n) { e.preventDefault(); palAt((PAL.at - 1 + n) % n); }
+  else if (e.key === 'Enter') { e.preventDefault(); palRun(PAL.at); }
+  else if (e.key === 'Tab') e.preventDefault();  // the search box is the dialog's only stop
+}, true);
 load(); loadProfile(); loadBank(); loadReviews(); loadMaster(); setInterval(load, 60000);

@@ -1,0 +1,282 @@
+[
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 0,
+  "id": "",
+  "label": "Resume/CV",
+  "name": "resume",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "input",
+  "type": "file"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 1,
+  "id": "",
+  "label": "Full name",
+  "name": "name",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 2,
+  "id": "",
+  "label": "Email",
+  "name": "email",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "input",
+  "type": "email"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 3,
+  "id": "",
+  "label": "Phone",
+  "name": "phone",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 4,
+  "id": "",
+  "label": "Current location",
+  "name": "location",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 5,
+  "id": "",
+  "label": "Current company",
+  "name": "org",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Submit your application",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 6,
+  "id": "",
+  "label": "LinkedIn URL",
+  "name": "urls[LinkedIn]",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Links",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 7,
+  "id": "",
+  "label": "GitHub URL",
+  "name": "urls[GitHub]",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Links",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 8,
+  "id": "",
+  "label": "Portfolio URL",
+  "name": "urls[Portfolio]",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Links",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 9,
+  "id": "",
+  "label": "Why do you want to work here?",
+  "name": "cards[0f3e][field0]",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Additional questions",
+  "tag": "textarea",
+  "type": ""
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 10,
+  "id": "",
+  "label": "Are you willing to relocate?",
+  "name": "cards[0f3e][field1]",
+  "options": [
+   {
+    "t": "Yes",
+    "v": "Yes"
+   },
+   {
+    "t": "No",
+    "v": "No"
+   }
+  ],
+  "placeholder": "",
+  "qa": "",
+  "section": "Additional questions",
+  "tag": "input",
+  "type": "radio"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 11,
+  "id": "",
+  "label": "Gender",
+  "name": "eeo[gender]",
+  "options": [
+   {
+    "t": "Select ...",
+    "v": ""
+   },
+   {
+    "t": "Male",
+    "v": "Male"
+   },
+   {
+    "t": "Female",
+    "v": "Female"
+   },
+   {
+    "t": "Decline to self-identify",
+    "v": "Decline to self-identify"
+   }
+  ],
+  "placeholder": "",
+  "qa": "",
+  "section": "U.S. Equal Employment Opportunity information",
+  "tag": "select",
+  "type": ""
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 12,
+  "id": "",
+  "label": "Race",
+  "name": "eeo[race]",
+  "options": [
+   {
+    "t": "Select ...",
+    "v": ""
+   },
+   {
+    "t": "White",
+    "v": "White"
+   },
+   {
+    "t": "Asian",
+    "v": "Asian"
+   },
+   {
+    "t": "Decline to self-identify",
+    "v": "Decline to self-identify"
+   }
+  ],
+  "placeholder": "",
+  "qa": "",
+  "section": "U.S. Equal Employment Opportunity information",
+  "tag": "select",
+  "type": ""
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 13,
+  "id": "",
+  "label": "Veteran status",
+  "name": "eeo[veteran]",
+  "options": [
+   {
+    "t": "Select ...",
+    "v": ""
+   },
+   {
+    "t": "I am not a veteran",
+    "v": "I am not a veteran"
+   },
+   {
+    "t": "Decline to self-identify",
+    "v": "Decline to self-identify"
+   }
+  ],
+  "placeholder": "",
+  "qa": "",
+  "section": "U.S. Equal Employment Opportunity information",
+  "tag": "select",
+  "type": ""
+ }
+]

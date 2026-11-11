@@ -302,6 +302,7 @@ notes: {notes}
 OTHER LIVE OFFERS:
 {chr(10).join(others) or 'none'}
 RECORDED MARKET RANGE: {__import__('lodestar.comp', fromlist=['lookup']).lookup(job['title'], job['jd'] or '') or 'none recorded'}
+PUBLIC MARKET DATA: {__import__('lodestar.paydata', fromlist=['line']).line(job) or 'not turned on'}
 
 CANDIDATE PROFILE (see Preferences):
 {candidate_text(6000)}""",
@@ -317,12 +318,15 @@ CANDIDATE PROFILE (see Preferences):
 
 
 COUNTER_CITE = {"base": "a base salary of {:,}", "bonus_pct": "a target bonus of {:g}%", "sign_on": "a sign-on bonus of {:,}",
-                "equity_value_estimate": "equity estimated at {:,}", "year1_total": "a first-year total of about {:,}"}
+                "equity_value_estimate": "equity estimated at {:,}", "year1_total": "a first-year total of about {:,}",
+                "market_median": "", "market_p75": ""}  # market_*: the countered job's own cached BLS figure (paydata.phrase)
 
 
 def counter_figures(job_id: int, cite) -> list[str]:
-    """The competing figures you ticked, as phrases: cite = ['JOB_ID:field', ...] over other live offers (offer /
-    accepted) and COUNTER_CITE fields. No company names: the draft says 'another offer'."""
+    """The figures you ticked, as phrases: cite = ['JOB_ID:field', ...] over other live offers (offer / accepted) and
+    COUNTER_CITE fields, no company names (the draft says 'another offer'); market_median / market_p75 only for the job
+    being countered: the public BLS sentence from the cache (paydata.phrase), never the floor."""
+    from . import paydata
     from .comp import total
 
     out = []
@@ -331,6 +335,11 @@ def counter_figures(job_id: int, cite) -> list[str]:
         if not jid.strip().isdigit() or field not in COUNTER_CITE:
             raise SystemExit(f"cite JOB_ID:field with field one of {', '.join(COUNTER_CITE)}: {str(c)[:40]}")
         j = db.get_job(int(jid))
+        if field in paydata.CITE:
+            if j["id"] != job_id:
+                raise SystemExit(f"cite BLS figures only for the job you are countering (#{job_id}), not #{j['id']}")
+            out.append(paydata.phrase(j, field))
+            continue
         if j["id"] == job_id or j["status"] not in ("offer", "accepted"):
             raise SystemExit(f"#{j['id']} is not another live offer (status offer or accepted)")
         o = db.get_offer(j["id"]) or {}
@@ -354,9 +363,9 @@ def counter(job, cite, ask: str = "", provider: str | None = None, template: boo
     else:
         mail = ai.ask_json(
             f"""Write a short, warm, confident counter-offer email (under 160 words) from the candidate about the {job['title']}
-offer from {job['company']}. Thank them, restate enthusiasm in one sentence, cite only the competing figures listed below,
-each word for word as written (say "another offer", never a company name), make the ask, and keep the door open. Never mention a minimum, a floor, a
-walk-away number or any figure not listed here.{_sig()}
+offer from {job['company']}. Thank them, restate enthusiasm in one sentence, cite only the figures listed below, each
+word for word as written (competing figures as "another offer", never a company name; public market figures as public
+BLS data, never as an offer), make the ask, and keep the door open. Never mention a minimum, a floor, a walk-away number or any figure not listed here.{_sig()}
 {JSON_MAIL}
 
 {counter_facts(job, figures, ask)}
@@ -375,18 +384,29 @@ def counter_facts(job, figures: list[str], ask: str) -> str:
     """What a counter-offer prompt may cite: the offer's own terms, the figures you ticked, your ask. Nothing private."""
     o = db.get_offer(job["id"]) or {}
     theirs = ", ".join(f"{k}={o[k]}" for k in ("base", "bonus_pct", "sign_on", "equity_value_estimate") if o.get(k))
-    return (f"THEIR OFFER: {theirs or 'not recorded'}\nCOMPETING FIGURES TO CITE: {'; '.join(figures) or 'none'}\n"
-            f"THE ASK: {ask or 'ask them to revisit the package in light of the competing figures'}")
+    offers, market = _split(figures)
+    return (f"THEIR OFFER: {theirs or 'not recorded'}\nCOMPETING FIGURES TO CITE: {'; '.join(offers) or 'none'}\n"
+            + (f"PUBLIC MARKET FIGURES (cite as public BLS data, never as an offer): {'; '.join(market)}\n" if market else "")
+            + f"THE ASK: {ask or 'ask them to revisit the package in light of the figures above'}")
+
+
+def _split(figures: list[str]) -> tuple[list[str], list[str]]:
+    """(competing-offer phrases, public BLS phrases): a draft never presents one as the other."""
+    from .paydata import HEAD
+
+    return [f for f in figures if not f.startswith(HEAD)], [f for f in figures if f.startswith(HEAD)]
 
 
 def counter_template(job, figures: list[str], ask: str) -> dict:
     """The offline counter-offer {subject, body}: the offer, the cited figures and your ask, nothing else."""
+    offers, market = _split(figures)
     name = my_name()
     who = (job["contact_name"] or "").strip()
     body = (f"Thank you again for the offer for the {job['title']} position at {job['company']}. I am excited about the "
             f"role and would like to find a way to make it work."
             + (f" I have since received another offer that includes "
-               f"{' and '.join(filter(None, (', '.join(figures[:-1]), figures[-1])))}." if figures else "")
+               f"{' and '.join(filter(None, (', '.join(offers[:-1]), offers[-1])))}." if offers else "")
+            + (f" Public data point the same way: {'; '.join(market)}." if market else "")
             + (f" Would you be able to consider {ask}?" if ask else
                " Would you be able to revisit the compensation package with that in mind?")
             + " I would be glad to talk it through.")

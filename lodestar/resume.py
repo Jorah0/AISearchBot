@@ -655,7 +655,7 @@ def parse_salary(text: str) -> dict:
 def gap(job, provider: str | None = None) -> dict:
     """Keyword coverage first (deterministic, saved even if the AI part fails or no provider is set), then the AI's
     verdict, weak areas and suggestions, which see the missing-keyword table."""
-    from . import comp
+    from . import comp, paydata
     from .profile import preferences_text
 
     cov = coverage(job)
@@ -670,6 +670,7 @@ Keyword coverage was already computed deterministically: {cov['score']}/100 of t
 Missing keywords (the candidate may genuinely lack some; never suggest claiming a skill the resume does not support):
 {table}
 Pay stated in the posting: {', '.join(sal) or 'none stated'}. Your recorded market range for this title: {f"{market['low']}-{market['high']} ({market['city']})" if market else 'none recorded'}.
+{paydata.line(job)}
 Weigh both against the candidate's salary floor in Preferences.
 Return JSON: {{"weak_areas": [...], "suggestions": ["concrete resume edits"], "red_flags": [...],
 "verdict": "apply|stretch|skip", "why": "one line"}}

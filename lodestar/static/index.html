@@ -13,8 +13,8 @@
   <button class="b ghost sm" id="codesPill" style="display:none" title="a sign-in code arrived by email" onclick="go('inbox');$('#codesPanel').open=true;codesLoad()">Codes</button>
   <button class="b ghost sm" id="apPill" title="Autopilot runs pipeline steps in the monitor loop within its AI budgets" onclick="go('setup');$('#apCard').scrollIntoView()">Autopilot: off</button>
   <button class="b ghost sm" id="updPill" style="display:none" onclick="go('setup');$('#updCard').scrollIntoView()">Update available</button>
-  <button class="b ghost sm" onclick="run('email_check',{days:3},r=>toast((r.found||[]).length+' relevant email(s)'+(r.note?'\n'+r.note:''),r.note?'err':'ok'),this)">Check email</button>
-  <button class="b ghost sm" onclick="run('watch_run',{},r=>toast((r.alerts||[]).length+' alert(s)','ok'),this)">Run watches</button>
+  <button class="b ghost sm" id="topEmail" onclick="run('email_check',{days:3},r=>toast((r.found||[]).length+' relevant email(s)'+(r.note?'\n'+r.note:''),r.note?'err':'ok'),this)">Check email</button>
+  <button class="b ghost sm" id="topWatches" onclick="run('watch_run',{},r=>toast((r.alerts||[]).length+' alert(s)','ok'),this)">Run watches</button>
 </div>
 <nav aria-label="Sections">
   <button data-tab="board" class="on"><span class="ico" aria-hidden="true">▦</span>Board</button>
@@ -31,7 +31,7 @@
   <span class="sep"></span>
   <button data-tab="tools"><span class="ico" aria-hidden="true">⚙</span>Tools</button>
   <button data-tab="setup"><span class="ico" aria-hidden="true">⚑</span>Setup</button>
-  <div class="foot">localhost only · Esc closes a job</div>
+  <div class="foot">localhost only · Esc closes a job · Ctrl+K commands</div>
 </nav>
 
 <main>
@@ -350,14 +350,20 @@
     <div class="panel"><h3>Other secrets (OS keyring)</h3>
       <div class="row"><input id="vName" placeholder="ANTHROPIC_API_KEY / OBSIDIAN_VAULT" aria-label="vault entry name" style="width:240px"><input id="vUser" placeholder="username (optional)" aria-label="vault entry username" style="width:150px"><input id="vVal" type="password" class="grow" placeholder="secret" aria-label="secret"><button class="b" onclick="setVault()">Store</button></div>
       <div class="muted" id="vList"></div>
-      <p class="muted">AI keys and email have their own cards above. Local: OLLAMA_MODEL (or "Local only" above). Optional: OBSIDIAN_VAULT (folder for the Obsidian export), LODESTAR_NOTIFY_EMAIL (where alerts and the emailed digest go; the digest falls back to your connected mailbox).</p></div>
+      <p class="muted">AI keys and email have their own cards above. Local: OLLAMA_MODEL (or "Local only" above). Optional: OBSIDIAN_VAULT (folder for the Obsidian export), LODESTAR_NOTIFY_EMAIL (where alerts and the emailed digest go; the digest falls back to your connected mailbox), BLS_API_KEY (free from data.bls.gov/registrationEngine: raises market pay lookups from 25 to 500 a day; renew it yearly).</p></div>
     <div class="panel"><h3>Market rates</h3>
       <p class="muted">Your own annual pay ranges by title keyword (and city). Lodestar never guesses pay: gap checks, offer evaluation and interview prep quote these plus figures stated in postings.</p>
       <div class="row"><input id="mTitle" placeholder="title keyword, e.g. data engineer" style="width:200px"><input id="mCity" placeholder="city (empty = any)" style="width:130px"><input id="mLow" type="number" min="0" placeholder="low" style="width:100px"><input id="mHigh" type="number" min="0" placeholder="high" style="width:100px"><button class="b" onclick="compOp({op:'set',title:$('#mTitle').value,city:$('#mCity').value,low:$('#mLow').value,high:$('#mHigh').value})">Record</button></div>
       <div id="compList" class="list"></div></div>
+    <div class="panel" id="extCard"><h3>Browser extension</h3>
+      <p class="muted">Sends the posting on your tab to the Board and fills application forms; it never clicks, submits or ticks anything. Install: edge://extensions or chrome://extensions &gt; Developer mode &gt; Load unpacked &gt; the <code>extension</code> folder of your Lodestar install. Not for LinkedIn: its User Agreement bans browser add-ons that scrape or copy it, so capture and fill do nothing there.</p>
+      <div class="row"><button class="b" onclick="extPair(this)">Pair a browser</button><code id="extCode" aria-live="polite"></code><span class="muted" id="extLeft"></span></div>
+      <div id="extList" class="list"></div>
+      <div class="row"><label class="muted" for="extBm">Bookmarklets</label><select id="extBm" onchange="setPref('bookmarklets',this.value)"><option value="auto">auto: off once a browser is paired</option><option value="on">on</option><option value="off">off</option></select></div>
+      <p class="muted">Form answers come from your answer bank (Answers tab), never your Preferences or anything marked private. EEO answers: save them under <code>EEO: gender</code>, <code>EEO: race</code>, <code>EEO: hispanic or latino</code>, <code>EEO: veteran status</code>, <code>EEO: disability status</code>; they go only when you tick "include EEO answers" in the extension. Desired salary: an answer to <code>Desired salary</code>, sent only when you tick it; it must not be your floor. Radio buttons and dropdown widgets stay yours to click.</p></div>
     <div class="panel"><h3>Browser bookmarklets</h3>
-      <p class="muted">Drag these to your bookmarks bar. The UI must be running.</p>
-      <div class="row"><a id="bm" class="b" href="#">+ Lodestar capture</a><a id="af" class="b ghost" href="#">+ Lodestar autofill</a></div>
+      <p class="muted" id="bmState">Drag these to your bookmarks bar. The UI must be running.</p>
+      <div class="row" id="bmLinks"><a id="bm" class="b" href="#">+ Lodestar capture</a><a id="af" class="b ghost" href="#">+ Lodestar autofill</a></div>
       <p class="muted"><b>Capture</b> sends the job posting you are looking at (LinkedIn, Indeed, any careers page) to the Board. <b>Autofill</b> types your name, email, phone, links and location into empty application-form fields matched by label, and never clicks Submit.</p></div>
     <div class="panel"><h3>Desktop notifications</h3>
       <div class="row"><label><input type="checkbox" id="pNotify" onchange="setPref('desktop_notifications',this.checked)"> notify me on this computer</label>
@@ -369,7 +375,7 @@
         <span class="muted">same checks as <code>lodestar doctor</code></span></div>
       <div id="doctorOut"></div></div>
     <div class="panel"><h3>Data</h3>
-      <div class="row"><button class="b ghost" onclick="run('backup',{},r=>toast('backup written: '+r.path,'ok'),this)">Backup now</button>
+      <div class="row"><button class="b ghost" onclick="run('backup',{},r=>{toast('backup written: '+r.path,'ok');restoreLoad()},this)">Backup now</button>
         <button class="b ghost" onclick="run('export',{fmt:'json'},r=>toast('exported: '+r.path,'ok'),this)">Export JSON</button>
         <button class="b ghost" onclick="run('export',{fmt:'csv'},r=>toast('CSV files written to '+r.path,'ok'),this)">Export CSV</button>
         <button class="b ghost" onclick="api('/api/open_folder',{which:'exports'})">Open exports</button>
@@ -378,6 +384,11 @@
         <button class="b ghost" onclick="api('/api/open_folder',{which:'backups'})">Open backups</button>
         <button class="b ghost" onclick="api('/api/open_folder',{which:'log'})">Open log</button></div>
       <p class="muted">Nightly backups keep the last 7 zips (tool <b>backup</b>). Exports are a JSON dump of every table, or one CSV per table.</p>
+      <h4>Restore from backup</h4>
+      <div class="row"><select id="rsPick" aria-label="Backup to restore"></select><button class="b ghost sm" onclick="restoreLoad()">Refresh</button>
+        <button class="b danger" id="rsGo" onclick="restoreRun(this)">Restore</button></div>
+      <div id="rsOut" role="status" aria-live="polite"></div>
+      <p class="muted">Puts your data folder back to the zip you pick from the backups folder (Open backups to add one). A safety backup of what is there now is taken first, and the backup's database must open and pass its checks before anything changes. Refused while the monitor loop is mid-cycle, mail is being sent or scanned, an update runs, or another Lodestar window or loop is open. Keyring secrets (AI keys, mail sign-in) and paired browsers are not in backups and stay as they are. Same as <code>lodestar restore ZIP</code>.</p>
       <h4>AI changes</h4>
       <p class="muted">Every change Apply suggestions and Full AI made to your content, newest first, with what it was before. Undo puts a batch back exactly; a field you changed since keeps your version.</p>
       <div id="aiHist" class="list"></div></div>
@@ -424,6 +435,13 @@
       <div id="vwFmt"></div>
       <div id="vwEdit" hidden></div>
     </aside>
+  </div>
+</div>
+<div id="palette" role="dialog" aria-modal="true" aria-label="Command palette" hidden>
+  <div class="palbox">
+    <input id="palQ" role="combobox" aria-expanded="true" aria-controls="palList" aria-autocomplete="list" aria-label="Go to a tab, job, contact, document or setting, or run an action" placeholder="Go to a tab, job, contact, document or setting, or run an action" autocomplete="off" spellcheck="false">
+    <ul id="palList" role="listbox" aria-label="Commands"></ul>
+    <div class="muted palhint"><span id="palN" role="status" aria-live="polite"></span> · ↑↓ move · Enter runs · Esc closes</div>
   </div>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>

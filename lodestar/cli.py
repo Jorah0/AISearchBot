@@ -1201,6 +1201,28 @@ def cmd_backup(a):
     print(f"wrote {extras.backup(Path(a.out) if a.out else None, a.keep)}")
 
 
+def cmd_restore(a):
+    """Put the data folder back to a backup zip (extras.restore): shows what the zip holds and asks unless --yes."""
+    from . import extras
+
+    plan = extras.restore_check(a.zip)  # refuses a bad zip before asking anything
+    skipped = f"; never restored: {', '.join(plan['skipped'][:5])}" if plan["skipped"] else ""
+    print(f"{Path(a.zip).name}: {len(plan['files'])} file(s), {plan['total'] / 1e6:.1f} MB unpacked{skipped}")
+    print("Your data folder will be replaced by this backup; a safety backup of it is taken first.")
+    if not a.yes:
+        try:
+            if input("Restore? [y/N] ").strip().lower() not in ("y", "yes"):
+                return print("not restored")
+        except EOFError:
+            return print("not restored (no answer; use --yes)")
+    r = extras.restore(a.zip)
+    c = r["counts"]
+    print(f"restored {r['restored']} file(s) from {r['from']} ({c['jobs']} jobs, {c['contacts']} contacts, {c['answers']} answers); "
+          f"removed {r['removed']} file(s) made since")
+    print(f"safety backup of what was there: {r['safety_backup']}")
+    print(r["note"])
+
+
 def cmd_schedule(a):
     from . import extras
 
@@ -1585,12 +1607,51 @@ def cmd_comp(a):
         print(f"recorded {a.title} / {a.city or '*'}: {a.low}-{a.high}")
     elif a.op == "lookup":
         print(comp.lookup(a.title, a.city or "") or "no match")
+    elif a.op == "market":
+        _market(a)
     else:
         for t, cities in comp.load().items():
             for c, (lo, hi) in cities.items():
                 print(f"{t:<30} {c:<16} {lo:>9} - {hi:<9}")
         if not comp.load():
             print("empty: lodestar comp set \"software engineer\" austin 130000 170000")
+
+
+def _market(a):
+    """lodestar comp market ID [--soc X|none|auto] [--ai]: the job's public BLS figures; fetches what is missing."""
+    from . import paydata, settings
+
+    if not settings.pref("market_pay"):
+        raise SystemExit("market pay is off (Lodestar never contacts api.bls.gov): lodestar tools set market_pay on")
+    job = db.get_job(a.id)
+    if a.soc:
+        paydata.set_soc(a.id, "" if a.soc == "auto" else a.soc)
+    if a.ai and not paydata.match_ai(job, a.provider):
+        raise SystemExit("AI could not match an occupation: pick one with --soc NN-NNNN")
+    job, tried = db.get_job(a.id), set()
+    while (nxt := paydata.for_job(job).get("next")) and tuple(nxt) not in tried and len(tried) < 3:
+        tried.add(tuple(nxt))
+        if err := paydata.fetch([nxt]).get("error"):
+            print(err)
+            break
+    r = paydata.for_job(job)
+    s, area = r.get("soc"), r.get("area")
+    print(f"#{job['id']} {job['company']} - {job['title']}")
+    print(f"occupation: {s['name']} ({s['soc']}), {s['by']}" if s else
+          "occupation: none matched (--soc 15-1252, or --ai to let your AI pick from the list)")
+    if r["state"] == "no_area":
+        print(f"area: '{r['location']}' is not a recognised U.S. metro or state (BLS covers U.S. jobs only; add the "
+              "state, e.g. 'Boise, ID')")
+    elif area:
+        print(f"area: {area['name']} ({r.get('area_note') or area['why']})")
+    if p := r.get("pay"):
+        print("BLS: " + " | ".join(f"{paydata.LABEL[k]} {paydata._amount(p, k)}" for k in
+                                   ("p10", "p25", "p50", "p75", "p90", "mean") if p[k] is not None))
+        if r.get("posting_band"):
+            print("this posting: " + ", ".join(f"{k} at {v}" for k, v in r["posting_band"].items()))
+        print(r["label"])
+    elif r["state"] in ("missing", "unpublished"):
+        print("BLS publishes no figure for this occupation here" if r["state"] == "unpublished" else "no figure cached yet")
 
 
 def cmd_variants(a):
@@ -1645,6 +1706,11 @@ def _offer_table(d: dict) -> str:
                                             for r in rows))
     mkt = [f"{r['market']['low']:,}-{r['market']['high']:,}" if r["market"] else "-" for r in rows]
     out.append(f"{'market range':<18}" + "".join(f"{m:<{w}}" for m in mkt))
+    bls = [f"{p['p50']:,}/{p['p75']:,}" if (p := (r.get("paydata") or {}).get("pay")) and p["p50"] and p["p75"] else "-"
+           for r in rows]
+    if any(b != "-" for b in bls):
+        out.append(f"{'BLS median/75th':<18}" + "".join(f"{b:<{w}}" for b in bls))
+        out.append(f"{'base vs BLS':<18}" + "".join(f"{(r['paydata'].get('base_band') or '-'):<{w}}" for r in rows))
     if d["floor"]:
         out.append(f"{'vs your floor':<18}" + "".join(f"{(format(r['vs_floor'], '+,') if r['vs_floor'] is not None else '-'):<{w}}"
                                                       for r in rows))
@@ -2045,6 +2111,9 @@ def build() -> argparse.ArgumentParser:
     s = sub.add_parser("backup", help="zip your data folder (profile, tracker, documents); keeps the last 7")
     s.add_argument("--out"); s.add_argument("--keep", type=int, default=7)
     s.set_defaults(f=cmd_backup)
+    s = sub.add_parser("restore", help="put your data folder back to a backup zip (a safety backup first; keyring secrets stay)")
+    s.add_argument("zip"); s.add_argument("--yes", action="store_true", help="restore without asking")
+    s.set_defaults(f=cmd_restore)
     s = sub.add_parser("schedule", help="install/remove a background task that runs `lodestar run --once`")
     s.add_argument("op", choices=["install", "remove"]); s.add_argument("--every", type=int, default=30)
     s.set_defaults(f=cmd_schedule)
@@ -2075,6 +2144,9 @@ def build() -> argparse.ArgumentParser:
     v.add_parser("list")
     x = v.add_parser("set"); x.add_argument("title"); x.add_argument("city", nargs="?"); x.add_argument("low", help="150000 or 150k"); x.add_argument("high")
     x = v.add_parser("lookup"); x.add_argument("title"); x.add_argument("city", nargs="?")
+    x = v.add_parser("market", help="public BLS pay for a tracked job (needs: lodestar tools set market_pay on)")
+    x.add_argument("id", type=int); x.add_argument("--soc", help="occupation: NN-NNNN, none (hide), auto (your pick removed)")
+    x.add_argument("--ai", action="store_true", help="let your AI pick the occupation from the bundled list")
     s.set_defaults(f=cmd_comp)
 
     s = sub.add_parser("tools", help="turn automated AI tools on/off, manual (inbox) or auto; set preferences")

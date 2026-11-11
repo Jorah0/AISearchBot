@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lodestar</title>
+<style>
+  body { font: 13px system-ui, sans-serif; width: 320px; margin: 0; padding: 12px; color: #111; background: #fff; }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  input[type=text] { width: 100%; box-sizing: border-box; padding: 6px; font: inherit; }
+  button { font: inherit; padding: 6px 10px; margin: 6px 6px 0 0; cursor: pointer; }
+  button:disabled { cursor: default; opacity: .55; }
+  label { display: block; margin-top: 6px; }
+  .muted { color: #555; }
+  .err { color: #b00020; }
+  .ok { color: #116611; }
+  #needs li { margin: 2px 0; }
+  [hidden] { display: none !important; }
+  a { color: #1d4ed8; cursor: pointer; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1e1e1e; color: #eee; } .muted { color: #aaa; } .err { color: #ff8a80; } .ok { color: #7bd88f; } a { color: #8ab4f8; }
+  }
+</style>
+</head>
+<body>
+<h1>Lodestar</h1>
+<section id="unpaired" hidden>
+  <p class="muted">In Lodestar open Setup &gt; Browser extension &gt; Pair a browser, then type the pairing string here.</p>
+  <label for="pairing">Pairing string</label>
+  <input type="text" id="pairing" placeholder="8765-K7QX-M2PD" autocomplete="off" spellcheck="false">
+  <button id="pair">Pair</button>
+</section>
+<section id="paired" hidden>
+  <p id="host" class="muted"></p>
+  <button id="capture" disabled>Capture this posting</button>
+  <button id="fill" disabled>Fill this form</button>
+  <label><input type="checkbox" id="eeo"> include EEO answers</label>
+  <label><input type="checkbox" id="salary"> include desired salary</label>
+  <p class="muted">Fill types into empty fields only. It never clicks, submits or ticks anything.</p>
+  <div id="frames"></div>
+  <ul id="needs" aria-label="Needs you"></ul>
+  <p><a id="open">Open Lodestar</a> · <a id="unpair">Unpair</a></p>
+</section>
+<p id="status" role="status" aria-live="polite"></p>
+<script src="matcher.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>

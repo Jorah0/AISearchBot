@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Lodestar",
+  "version": "0.2.0",
+  "description": "Send job postings to your local Lodestar and fill application forms. Never submits.",
+  "minimum_chrome_version": "120",
+  "action": { "default_popup": "popup.html", "default_title": "Lodestar" },
+  "icons": { "128": "icon.png" },
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "externally_connectable": { "ids": [], "matches": [] },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src http://127.0.0.1:*"
+  }
+}

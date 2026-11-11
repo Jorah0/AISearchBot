@@ -94,6 +94,10 @@ CREATE TABLE IF NOT EXISTS ai_changes(id INTEGER PRIMARY KEY, batch INTEGER NOT 
   target INTEGER, field TEXT NOT NULL, label TEXT, before TEXT, after TEXT, rec_id INTEGER,
   ts TEXT DEFAULT (datetime('now')), undone_at TEXT);
 CREATE INDEX IF NOT EXISTS ai_changes_batch ON ai_changes(batch);
+-- public BLS OEWS annual pay per (SOC, area) (paydata.py); all six figures NULL = BLS publishes nothing there
+CREATE TABLE IF NOT EXISTS paydata(soc TEXT NOT NULL, area TEXT NOT NULL, year INTEGER, mean INTEGER, p10 INTEGER,
+  p25 INTEGER, p50 INTEGER, p75 INTEGER, p90 INTEGER, capped TEXT, fetched_at TEXT DEFAULT (datetime('now')),
+  PRIMARY KEY(soc, area));
 """
 MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "TEXT",  # ponytail: additive only
               # tracker fields (pass 15); every user write goes through set_fields
@@ -102,7 +106,8 @@ MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "T
               "match_score": "INTEGER", "next_action": "TEXT", "next_action_at": "TEXT",
               "ats_skip": "TEXT",  # JSON list: keywords marked "not mine" for JD coverage (toggle_ats_skip)
               "ats_feed": "TEXT",  # 'greenhouse:acme' when tracked from a public job-board feed (code-set, not a user field)
-              "profile_rev": "TEXT"}  # JSON {section: hash} of the profile sections resume.md drew on (profile.used_revs)
+              "profile_rev": "TEXT",  # JSON {section: hash} of the profile sections resume.md drew on (profile.used_revs)
+              "soc": "TEXT", "soc_by": "TEXT"}  # market pay occupation (paydata.set_soc / match_ai): NN-NNNN or none; user | ai
 WATCH_MIGRATIONS = {"filters": "TEXT",  # JSON search filters of a saved search (web_monitor.clean_filters)
                     "last_error": "TEXT"}  # what the last run could not read (shown on the watch); NULL after a clean run
 ANSWER_MIGRATIONS = {"star": "TEXT",  # JSON STAR fields when the row is a story (interview.save_story); NULL = a form answer

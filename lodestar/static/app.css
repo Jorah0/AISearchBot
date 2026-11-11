@@ -240,3 +240,22 @@ pre.advdiff del { color: var(--bad); text-decoration: line-through; } pre.advdif
 details.aihist summary { cursor: pointer; overflow-wrap: anywhere; }
 details.aimenu { margin: 4px 0; } details.aimenu > summary { cursor: pointer; color: var(--acc-2); font-size: 12px; font-weight: 600; width: max-content; }
 details.aimenu .row { margin: 4px 0; } .aimenu .aitopic { max-width: 100%; } .aihelp:empty { display: none; }
+/* market pay (BLS): five percentile ticks on a line, the posting's range as a bar over them */
+.pstrip { position: relative; height: 44px; margin: 8px 24px 4px; border-top: 2px solid var(--line); }
+.pstrip i { position: absolute; top: -6px; width: 2px; height: 10px; background: var(--acc); font-style: normal; }
+.pstrip i b, .pstrip i span { position: absolute; left: 50%; transform: translateX(-50%); font-size: 11px; white-space: nowrap; }
+.pstrip i b { top: 12px; font-weight: 600; } .pstrip i span { top: 26px; color: var(--dim); }
+.pstrip .post { position: absolute; top: -5px; height: 8px; background: var(--ok); opacity: .45; border-radius: 4px; }
+.plabel { white-space: pre-line; font-size: 12px; margin-top: 4px; }
+#jSoc { max-width: 240px; } #jPay label { max-width: 100%; }
+/* ---- command palette (Ctrl+K) ---- */
+#palette { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.45); display: flex; justify-content: center; align-items: flex-start; padding: 12vh 16px 16px; }
+#palette[hidden] { display: none; }
+.palbox { width: min(640px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); padding: 10px; }
+.palbox input { width: 100%; font-size: 15px; }
+#palList { list-style: none; margin: 8px 0 4px; padding: 0; max-height: 50vh; overflow: auto; }
+#palList li { padding: 6px 10px; border-radius: 8px; cursor: pointer; overflow-wrap: anywhere; }
+#palList li.on, #palList li:hover { background: var(--line); }
+.palk { display: inline-block; min-width: 74px; color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.palhint { font-size: 11px; padding: 0 4px; }
+#rsPick { width: min(100%, 360px); }  /* long backup names must not widen the Setup grid at 420px */

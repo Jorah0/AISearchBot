@@ -31,12 +31,16 @@ outcomes-platform-docs-inventory outcomes-platform-docs-claims platform-fetch pl
 platform-test-matrix outcomes-platform-update-check outcomes-platform-update-apply
 outcomes-platform-update-loop outcomes-platform-update-exe outcomes-platform-update-cli
 outcomes-platform-update-ui outcomes-platform-update-restart outcomes-platform-update-safety
-ui-sweep-69 outcomes-platform-planned-ai-history""".split())  # built out of order (pass 17, 19); ui-sweep-68 is still planned
+ui-sweep-69 outcomes-platform-planned-ai-history ui-sweep-70 extension-pairing extension-signed-routes
+extension-capture extension-autofill extension-bookmarklets-pref extension-popup-pairing extension-popup-capture
+extension-fill extension-honeypots extension-matcher extension-manifest outcomes-platform-planned-paydata
+paydata-data paydata-fetch-cache paydata-uses paydata-ui
+outcomes-platform-restore outcomes-platform-palette""".split())  # built out of order (pass 17, 19); ui-sweep-68 is still planned
 PLANNED = set("""tracker-sourcing-36 tracker-sourcing-37 tracker-sourcing-38 tracker-sourcing-39
 profile-resume-ai-42
-mail-people-interviews-46 mail-people-interviews-47 ui-sweep-68 ui-sweep-70 ui-sweep-71 ui-sweep-72
-outcomes-platform-planned-pipeline outcomes-platform-restore
-outcomes-platform-planned-paydata outcomes-platform-planned-e2e""".split())
+mail-people-interviews-46 mail-people-interviews-47 ui-sweep-68 ui-sweep-71 ui-sweep-72
+outcomes-platform-planned-pipeline
+outcomes-platform-planned-e2e""".split())
 PLANNED_ID = re.compile(r"\b(?:(?:tracker-sourcing|profile-resume-ai|mail-people-interviews|connections|ui-sweep|pipeline|interview|advisor)-\d+"
                         r"|outcomes-platform-[a-z0-9-]*[a-z0-9])\b")
 

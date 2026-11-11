@@ -1,0 +1,143 @@
+[
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 0,
+  "id": "_systemfield_name",
+  "label": "Name",
+  "name": "_systemfield_name",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Data Platform Lead",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 1,
+  "id": "_systemfield_email",
+  "label": "Email",
+  "name": "_systemfield_email",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Data Platform Lead",
+  "tag": "input",
+  "type": "email"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 2,
+  "id": "_systemfield_location",
+  "label": "Location",
+  "name": "_systemfield_location",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Data Platform Lead",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 3,
+  "id": "f2a1",
+  "label": "Phone number",
+  "name": "f2a1",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Data Platform Lead",
+  "tag": "input",
+  "type": "tel"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 4,
+  "id": "f2a2",
+  "label": "LinkedIn",
+  "name": "f2a2",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Data Platform Lead",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 5,
+  "id": "f2a3",
+  "label": "Why do you want to work here?",
+  "name": "f2a3",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Data Platform Lead",
+  "tag": "textarea",
+  "type": ""
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 6,
+  "id": "f2a4",
+  "label": "Desired salary",
+  "name": "f2a4",
+  "options": [],
+  "placeholder": "",
+  "qa": "",
+  "section": "Data Platform Lead",
+  "tag": "input",
+  "type": "text"
+ },
+ {
+  "aria": "",
+  "auto": "",
+  "autocomplete": "",
+  "group": null,
+  "i": 7,
+  "id": "",
+  "label": "What gender do you identify as?",
+  "name": "eeo_gender",
+  "options": [
+   {
+    "t": "Man",
+    "v": "m"
+   },
+   {
+    "t": "Woman",
+    "v": "w"
+   },
+   {
+    "t": "Decline to self-identify",
+    "v": "d"
+   }
+  ],
+  "placeholder": "",
+  "qa": "",
+  "section": "What gender do you identify as?",
+  "tag": "input",
+  "type": "radio"
+ }
+]
