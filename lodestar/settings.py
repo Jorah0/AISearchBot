@@ -13,7 +13,7 @@ import time
 import threading
 
 from .ai import PROVIDERS
-from .config import HOME
+from .config import HOME, full_ai_check
 
 PATH = HOME / "settings.json"
 _LOCK = threading.RLock()  # web threads and the monitor loop both write settings: no lost updates
@@ -146,6 +146,7 @@ def load() -> dict:
 
 
 def save(data: dict) -> None:
+    full_ai_check("changes settings (automation, privacy, providers)")
     tmp = PATH.with_name(PATH.name + ".tmp")  # write-then-rename: a crash mid-write never leaves a torn file
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     for i in range(40):  # Windows refuses the rename while another thread reads settings.json at this instant

@@ -1415,6 +1415,72 @@ def cmd_suggest(a):
               f"  -> {s['to'] or '(no address yet)'}\n      lodestar draft options {s['kind']} {s['job_id']}{extra}")
 
 
+def _rec_line(r: dict) -> str:
+    head = f"[{r['id']}] {r['label'] or r['field']}  ({r['impact']} impact, {r['risk']} risk)" + ("" if r["appliable"] else "  advice")
+    flags = f"\n      blocked: {'; '.join(r['flags'])}" if r["flags"] else ""
+    cur = f"\n      now:  {r['current'][:300]}" if r["current"] else ""
+    return f"  {head}{cur}\n      new:  {r['proposed'][:600]}\n      why:  {r['reason']}{flags}"
+
+
+def cmd_advise(a):
+    from . import advisor
+
+    if a.history:
+        rows = advisor.history(a.limit)
+        print(f"AI change batches: {len(rows) or 'none'}")
+        for b in rows:
+            print(f"  batch {b['batch']:<4} {b['ts']}  {b['mode']:<5} {len(b['changes'])} change(s)" + ("  (undone)" if b["undone"] else ""))
+            for ch in b["changes"]:
+                print(f"      {ch['scope']:<9} {ch['label'] or ch['field']}" + ("  undone" if ch["undone_at"] else ""))
+        return
+    if a.undo is not None:
+        r = advisor.undo(a.undo)
+        print(f"batch {r['batch']}: {r['undone']} change(s) put back")
+        for s in r["skipped"]:
+            print(f"  kept: {s['field']}: {s['why']}")
+        return _advised_profile(r["batch"])
+    if not a.scope and not a.apply:
+        raise SystemExit(f"name a scope: {', '.join(advisor.SCOPES)} (or --apply IDS / --history / --undo BATCH)")
+    if a.apply:
+        r = advisor.apply(a.apply)
+    elif a.auto:
+        r = advisor.auto(a.scope, a.target, a.provider)
+    elif a.list:
+        rows = advisor.pending(a.scope, a.target)
+        print(f"open recommendations: {len(rows) or 'none'}")
+        return print("\n".join(map(_rec_line, rows))) if rows else None
+    else:
+        rows = advisor.recommend(a.scope, a.target, a.provider)
+        print(f"{len(rows) or 'no'} recommendation(s) (one AI call; nothing changed yet). Apply: lodestar advise {a.scope}"
+              f"{' ' + str(a.target) if a.target is not None else ''} --apply ID,ID")
+        return print("\n".join(map(_rec_line, rows))) if rows else None
+    print(f"applied {len(r['applied'])}" + (f" as batch {r['batch']} (undo: lodestar advise --undo {r['batch']})" if r["batch"] else ""))
+    for s in r["skipped"]:
+        print(f"  skipped #{s['id']}: {s['why']}")
+    _advised_profile(r["batch"])
+
+
+def cmd_ai_help(a):
+    from . import advisor
+
+    if not a.name:
+        print("AI helpers (one AI call each; nothing is changed: an appliable one gives suggestions for advise --apply):")
+        for k, h in advisor.helpers().items():
+            print(f"  {k:<16} {h['where']:<9} {h['label']}" + ("  (suggestions)" if h["appliable"] else ""))
+        return print("settings to explain: " + ", ".join(k for k, _ in advisor.topics()))
+    r = advisor.assist(a.name, a.target, a.provider)
+    if "recommendations" in r:
+        print(f"{len(r['recommendations']) or 'no'} suggestion(s); apply: lodestar advise {r['scope']} {r['target']} --apply ID,ID")
+        return print("\n".join(map(_rec_line, r["recommendations"]))) if r["recommendations"] else None
+    print(f"{r['title']}\n\n{r['text']}")
+
+
+def _advised_profile(batch) -> None:
+    """The master resume follows a batch that changed profile.md or the bank (rebuilt once, offline)."""
+    if batch and db.con().execute("SELECT 1 FROM ai_changes WHERE batch=? AND scope IN ('profile', 'bank')", (batch,)).fetchone():
+        _sync_master()
+
+
 def cmd_followup(a):
     from . import apply
 
@@ -2091,6 +2157,23 @@ def build() -> argparse.ArgumentParser:
     s = sub.add_parser("suggest", help="suggested emails for today: thank-yous, follow-ups, replies, offer check-ins, referral asks (no AI)")
     s.add_argument("--dismiss", nargs=2, metavar=("JOB", "KIND"), help="hide one for 3 days")
     s.set_defaults(f=cmd_suggest)
+    s = sub.add_parser("advise", help="AI recommendations for your content in a tab (one AI call); --apply IDS, --auto (Full AI: "
+                       "never sends, moves or adds anything), --undo BATCH, --history")
+    s.add_argument("scope", nargs="?", help="profile, bank, job, docs, answers, stories, contacts, searches, today, insights, inbox")
+    s.add_argument("target", nargs="?", type=int, help="job id (job, docs), or a story / contact / Inbox id")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--apply", metavar="IDS", help="apply these recommendations (comma-separated ids)")
+    g.add_argument("--auto", action="store_true", help="Full AI: recommend and apply what passes the guards (one undoable batch)")
+    g.add_argument("--undo", type=int, metavar="BATCH", help="put one batch of AI changes back")
+    g.add_argument("--history", action="store_true", help="recent AI change batches")
+    g.add_argument("--list", action="store_true", help="open recommendations, no AI call")
+    s.add_argument("--limit", type=int, default=20); s.add_argument("-p", "--provider")
+    s.set_defaults(f=cmd_advise)
+    s = sub.add_parser("ai-help", help="one AI helper from a tab's AI help menu (one AI call; nothing changed); no name lists them")
+    s.add_argument("name", nargs="?", help="e.g. red_flags, plan_day, explain_setting (no name: the list)")
+    s.add_argument("target", nargs="?", help="a job / contact / story id, or the setting to explain (e.g. autopilot, pref:followup_days)")
+    s.add_argument("-p", "--provider")
+    s.set_defaults(f=cmd_ai_help)
     sub.add_parser("today", help="today's agenda: next actions, deadlines, interviews, follow-ups, inbox").set_defaults(f=cmd_today)
     s = sub.add_parser("offer", help="evaluate an offer against your preferences; negotiation plan")
     s.add_argument("id", type=int)

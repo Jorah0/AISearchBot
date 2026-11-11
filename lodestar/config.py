@@ -45,6 +45,16 @@ _load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 _load_dotenv(HOME / ".env")
 
 
+FULL_AI = __import__("threading").local()  # advisor.auto sets .on while Full AI writes (this thread only)
+
+
+def full_ai_check(what: str) -> None:
+    """Called first by every path that sends, submits, moves or adds a job, proposes or approves an action, or writes
+    settings or the vault: refused while Full AI (advisor.auto) is applying changes on this thread."""
+    if getattr(FULL_AI, "on", False):
+        raise SystemExit(f"Full AI never {what}: that stays your click")
+
+
 def setting(name: str, default=None):
     """Non-secret or secret setting. Checks env first, then the vault."""
     val = os.environ.get(name)

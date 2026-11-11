@@ -146,6 +146,7 @@ def detect_ats(src) -> tuple[str, str] | None:
 
 def add_company(src: str, name: str = "", keywords: str = "") -> dict:
     """Watch a company's public job board: a careers / posting URL or 'vendor:slug'. Validated here for CLI and web."""
+    db.full_ai_check("adds a watched company (automation)")
     s, name, keywords = str(src or "").strip(), " ".join(str(name or "").split()), str(keywords or "").strip()
     found = detect_ats(s)
     if not found:

@@ -10,12 +10,12 @@
 ## Project notes
 
 - **Product**: Lodestar. Package `lodestar/`; `jobbot` is a legacy script alias in `pyproject.toml`.
-- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (713 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
+- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (743 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
 - **Test matrix** (`docs/TESTS.md`): one row per feature with its unit/integration and E2E tests by exact name
   (`module.Class.test_name`). Every new feature adds a TESTS.md row + a unit test + an E2E test when it has UI;
   `tests/test_feature_matrix.py` fails on a row with no test, an unknown name, a browser test in the unit column, a
   test named in no row, a dropped row or Planned ID (pinned in the guard), or a stale test count above (update it when you add tests). Coverage (informative): see TESTS.md > Coverage.
-- **Browser tests**: `.venv\Scripts\python.exe -m unittest discover -s tests/e2e -p "e2e_*.py"` (163 tests; needs `pip install -e .[e2e]`; skips without Playwright or a browser). `tests/e2e/harness.py` `E2ETestCase`: per class a temp `LODESTAR_HOME` (module-level paths rebound), fictional seed via the app's write paths (`cls.ids`), fakes for AI (`ai_text`/`ai_json`), IMAP/SMTP, OAuth/urlopen, `util.fetch` (`FETCH`), keyring, toasts, `webbrowser`; real server on a free port; per test a fresh page with a console-error guard. Installed Edge by default; `LODESTAR_E2E_BROWSER=chromium` (CI), `LODESTAR_E2E_HEADED=1` to watch. Failures leave a screenshot + HTML in `tests/e2e/_artifacts/`. Never run `playwright install` locally. Wait with `idle()` (fetch-hook count), never sleeps or `networkidle` alone; drag with `Board.drag` (HTML5 events on the exact elements; a mouse drag picks up the wrong card when `<main>` scrolls). `FakeMail.FAIL` makes logins raise (refused/dropped mailbox).
+- **Browser tests**: `.venv\Scripts\python.exe -m unittest discover -s tests/e2e -p "e2e_*.py"` (179 tests; needs `pip install -e .[e2e]`; skips without Playwright or a browser). `tests/e2e/harness.py` `E2ETestCase`: per class a temp `LODESTAR_HOME` (module-level paths rebound), fictional seed via the app's write paths (`cls.ids`), fakes for AI (`ai_text`/`ai_json`), IMAP/SMTP, OAuth/urlopen, `util.fetch` (`FETCH`), keyring, toasts, `webbrowser`; real server on a free port; per test a fresh page with a console-error guard. Installed Edge by default; `LODESTAR_E2E_BROWSER=chromium` (CI), `LODESTAR_E2E_HEADED=1` to watch. Failures leave a screenshot + HTML in `tests/e2e/_artifacts/`. Never run `playwright install` locally. Wait with `idle()` (fetch-hook count), never sleeps or `networkidle` alone; drag with `Board.drag` (HTML5 events on the exact elements; a mouse drag picks up the wrong card when `<main>` scrolls). `FakeMail.FAIL` makes logins raise (refused/dropped mailbox).
 - **Profile**: prompts read `resume.candidate_text(limit)` (master + profile-bank facts, fitted by section), never `profile_text()[:N]`. Free-form helpers (coach, ideas, mock) pass `strict=False`. Anything an employer reads (resume, letters, mail, form answers) passes `private=False` so the salary floor stays out; drafts pass `drafts.screen` (a counter-offer's cited figures go in `cited=`, the only exemption), employer-facing answer reads use `employer=True` (private answers never leave). Writes to profile.md go through `profile.write_master()` (snapshot + atomic).
 - **Mail trust** (`email_monitor._match` / `_thread`): trusted = aligned DKIM/DMARC + a *strong* tie + agreement with the stored contact. Strong = stored contact, a thread our mail vouches for (it answered trusted mail or went to the stored contact; job not rejected/withdrawn), or the registrable domain of the job's posting URL on the company site. A domain that only *names* the company (`names_company`, any suffix) is weak: filed, never trusted. Mail about an untracked company is never trusted. Manual links (`link_mail`, Track as new job) and replies to them never make a sender trusted. Never loosen this.
 - **Drafts**: AI draft options/rewrites go through `drafts.py` (`options`, `rewrite`, `use`): one AI call, `screen()` (salary-floor guard) on every text, untrusted mail fenced, mail kinds proposed with review (`apply.mail_proposal(review=True)`), recipient from the server. A send_email proposal answering unverified mail is flagged `unverified` and loses `new_status` (`approvals.propose`).
@@ -73,6 +73,26 @@
   data; labels are cleaned when stored (`extras.clean_label`). Never fetch `util.NEVER_FETCH` hosts (checked in
   `_check_url`, so every redirect hop) or pasted URLs; company pages only via `extras.company_pages` (robots.txt, 12
   requests, 30-day cache, never board / ATS hosts). Tests set `extras.PAGE_PAUSE = 0` and put it back.
+- **AI advisor** (`advisor.py`, pass 19): Recommend / Apply suggestions / Full AI / Undo for the user's own content.
+  A new scope = a `SCOPES` entry: `gather(target)` -> `{field: (label, value)}` and `write(target, field, value, restore)`
+  through the app's existing write path (write_master, set_fields, viewer.save_text, approvals.edit ...); `restore=True`
+  must put a gathered value back exactly (undo compares the gathered value with the logged one). Never gather what a
+  model may not see (eligibility / EEO / private answers, Preferences, the contact line, readiness). `employer=True`
+  turns on the floor + no-invented-facts guards. Full AI writes with `config.FULL_AI` set: every path that sends,
+  submits, moves or adds a job, proposes or approves, or writes settings, the vault or watches calls
+  `config.full_ai_check` first; a new such path must too.
+  A scope Full AI may write whose prompt carries third-party text (job, contacts) needs a `check`: `_k_own` refuses a
+  new link / email / phone and notes that lose a line. Form answers: `_answer_bad` (no heading, no `_source:` note) and
+  `_w_docs` refuses any change to the question list (apply and restore alike); the pipeline's `_source: ...; check this`
+  note is never gathered and `_with_notes` puts it back on every write. UI: `advRefresh` never re-renders over typed,
+  unsaved input (`drawerDirty()`, `PROFILE_LOADED`); it says what happened instead.
+  UI: `aiBar(scope, target)` in app.js (tab headers via `data-adv-slot` in index.html, cards inline); a new scope needs
+  its toolbar and its `ADV_NAME` entry, and `ADV_NOAUTO` / `ADV_ADVICE` mirror SCOPES (test_pass19_toolbar checks).
+  AI help menus: a `HELPERS` entry (label, menu `where`, `ask`, `context(target)` fenced; `scope=` makes it appliable:
+  a Recommend with `ask` as focus, so only Apply suggestions writes); the page groups `S.ai_helpers` by `where` into
+  `aiMenu(where, target)` (a new `where` needs a `data-ai-menu` slot or an `aiMenu(` call and an `AIM_NAME` entry).
+  Text a user may send gets `employer=True` (floor guard). Explain this setting's `SETTINGS` name docs/SETUP.md headings:
+  renaming one fails test_pass19_helpers.
 - **Gotcha, SystemExit**: `ai.*` and `profile_text()` report user-facing problems (no key, model rejected, template profile) as `SystemExit`, which `except Exception` does not catch. Background paths catch `(Exception, SystemExit)`.
 - **Run**: `lodestar doctor` (add `--live` for one real AI call per provider), `lodestar desktop` (WebView2 window; falls back to the browser).
 - **Answer bank sources**: every `db.save_answer` from a path where you typed the answer passes `source` (Answers tab "typed under Answers", CLI, `pipeline.answer`); an AI `save_answer` proposal carries `source: "AI draft for job #N"`. Eligibility / EEO answers (`pipeline.never_ai`, which also knows the CANON legal keys) are reused only when `pipeline.yours(source)`, and AI prompts read bank rows only via `db.employer_answers()` (`pipeline.for_prompts`: never such a row, tagged or not). A new event kind a document builder writes goes in `db.BOOKKEEPING` (the follow-up clock).

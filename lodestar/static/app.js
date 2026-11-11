@@ -41,7 +41,7 @@ function go(tab) {
   if (tab !== 'board' || CT) closeDrawer();
   if (tab === 'contacts') loadContacts();
   if (tab === 'insights') loadInsights();
-  if (tab === 'setup') loadEmail();
+  if (tab === 'setup') { loadEmail(); loadAiHistory(); }
   if (tab === 'studio') loadStudio();
   if (tab === 'profile') loadMaster();  // the master card follows background rebuilds
 }
@@ -74,6 +74,7 @@ async function load() {
   renderOnboard(); renderLoop(); renderUpdate(); renderAutopilot(); $('#ver').textContent = 'Lodestar ' + S.version;
   if (!$('#fStatus').options.length) initFilters();
   renderBoard(); renderQuestions(); renderInbox(); renderSearchless(); renderMonitor(); renderAnswers(); renderStories(); renderIdeas(); renderTools(); renderSetup(); fillCoachJobs(); renderTrend();
+  if (ADV_AI !== hasAI()) aiSlots();  // the tab headers' AI toolbars: painted once, again when a provider comes or goes
 }
 
 /* ---- board: filters, sort, view (kept in localStorage), drag and drop, table, Today ---- */
@@ -283,6 +284,7 @@ async function openJob(id) {
       <select id="jStatus" aria-label="Status">${opt(S.statuses, j.status)}</select><button class="b ghost sm" onclick="moveJob(${j.id},$('#jStatus').value)">move</button>
       <button class="b ghost sm close" onclick="closeDrawer()" aria-label="Close job details">✕</button></div>
     <div class="muted">contact: ${esc(j.contact_name || '')} ${esc(j.contact_email || '(none; replies and follow-ups need one)')}</div>
+    ${aiMenu('job', j.id)}
 ${pipelineGroup(d)}
 ${detailsForm(j)}
 ${peopleGroup(d)}
@@ -294,7 +296,7 @@ ${roundsGroup(d)}
       <div class="muted">JD coverage is the share of the posting's keywords your current resume (tailored, else your profile) mentions: a guide for tailoring, not an ATS pass/fail. No AI involved.</div>
       <div id="jMatch"></div><div id="jCheck"></div></div>
 
-    <div class="group"><h4>Documents</h4>${profileBadge(j.id)}<div class="row">
+    <div class="group"><h4>Documents</h4>${profileBadge(j.id)}${aiBar('docs', j.id)}<div class="row">
       <button class="b" onclick="jobRun('gap',{},this)">Gap check (coverage + AI verdict)</button>
       <button class="b" onclick="jobRun('tailor',{docx:true,base:baseOpt()},this)">Tailor resume (+docx)</button>
       <button class="b" onclick="tailorBullets(this)">Tailor by bullet</button>
@@ -355,7 +357,7 @@ const DETAILS = ['location', 'remote', 'salary_min', 'salary_max', 'currency', '
 function detailsForm(j) {
   const inp = (k, label, attrs = '') => `<label class="fld">${label}<input id="d_${k}" value="${esc(j[k] ?? '')}" ${attrs}></label>`;
   const sel = (k, label, vals) => `<label class="fld">${label}<select id="d_${k}"><option value="">-</option>${vals.map(([v, t]) => `<option value="${v}" ${String(j[k] ?? '') === String(v) ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
-  return `<div class="group"><h4>Details</h4>
+  return `<div class="group"><h4>Details</h4>${aiBar('job', j.id)}
     <div class="row">${inp('location', 'location', 'style="width:150px"')}${sel('remote', 'workplace', [['onsite', 'onsite'], ['hybrid', 'hybrid'], ['remote', 'remote']])}
       ${inp('salary_min', 'salary min', 'type="number" min="0" step="1000" style="width:105px"')}${inp('salary_max', 'salary max', 'type="number" min="0" step="1000" style="width:105px"')}
       ${inp('currency', 'currency', 'maxlength="3" style="width:62px"')}${sel('excitement', 'excitement', [1, 2, 3, 4, 5].map(n => [n, '★'.repeat(n)]))}
@@ -537,7 +539,7 @@ async function openContact(id) {
       ${safeUrl(c.linkedin_url) ? `<a href="${esc(c.linkedin_url)}" target="_blank" rel="noopener">LinkedIn ↗</a>` : ''}
       <button class="b ghost sm close" onclick="closeDrawer()" aria-label="Close contact details">✕</button></div>
     <div class="muted">source: ${esc(c.source || 'manual')} · added ${esc(localTs(c.created_at, 10))}</div>
-    <div class="group"><h4>Details</h4>
+    <div class="group"><h4>Details</h4>${aiBar('contacts', c.id)}${aiMenu('contact', c.id)}
       <div class="row">${CT_FIELDS.map(([k, l]) => `<label class="fld">${l}<input id="c_${k}" value="${esc(c[k] ?? '')}" style="width:${k === 'linkedin_url' || k === 'how_met' ? 260 : 170}px"></label>`).join('')}</div>
       <label class="fld">notes<textarea id="c_notes" style="min-height:90px">${esc(c.notes || '')}</textarea></label>
       <div class="row"><label class="fld">last touch<input id="c_last_touch" type="date" value="${esc(c.last_touch || '')}"></label>
@@ -744,7 +746,7 @@ function renderStories() {
   const have = new Set(S.stories.flatMap(s => s.competencies)), none = S.competencies.filter(c => !have.has(c));
   $('#storyList').innerHTML = (S.stories.length && none.length ? `<div class="muted">no story tagged yet: ${esc(none.join(', '))}</div>` : '') + `<div class="list">`
     + (S.stories.map((s, i) => `<div><b>${esc(s.title)}</b> ${s.competencies.map(c => `<span class="pill">${esc(c)}</span>`).join('')}${s.missing.length ? `<span class="chip stale">incomplete: no ${esc(s.missing.join(', '))}</span>` : ''}
-      <button class="b ghost sm" onclick="editStory(${i})">edit</button><button class="b ghost sm" onclick="deleteStory(${i})">remove</button>
+      <button class="b ghost sm" onclick="editStory(${i})">edit</button><button class="b ghost sm" onclick="deleteStory(${i})">remove</button>${aiBar('stories', s.id)}${aiMenu('stories', s.id)}
       <div class="muted" style="white-space:pre-wrap">${esc(['situation', 'task', 'action', 'result', 'metrics'].filter(k => s[k]).map(k => k[0].toUpperCase() + k.slice(1) + ': ' + s[k]).join('\n'))}</div></div>`).join('')
       || '<div class="empty">No stories yet. Write one above, or use "Save as story" on an idea of the stories topic (Ideas tab).</div>') + '</div>';
 }
@@ -796,6 +798,7 @@ function renderInbox() {
       ${r.kind === 'run_to' && (p.reuse || []).length ? `<div class="reuse"><b>Saved answers this fills in on the form</b> <span class="muted">(yours; reject and change them under Answers if one is wrong)</span><ul>${p.reuse.map(x => `<li>${esc(x.label)} → <b>${esc(x.answer)}</b> <span class="muted">${esc(x.source)}</span></li>`).join('')}</ul></div>` : ''}
       ${mail && r.job_id ? `<div class="row" id="att${r.id}">${attHtml(r)}</div>` : ''}
       ${mail && hasAI() ? `<div class="row"><button class="b ghost sm" onclick="draftOptions('pending',{pending_id:${r.id}},'p${r.id}',this)" title="up to 3 alternatives (one AI call); Use this changes only the subject and body">Options</button>${HOWS.map(([k, l]) => `<button class="b ghost sm" onclick="rewritePending(${r.id},'${k}',this)">${l}</button>`).join('')}<button class="b ghost sm" onclick="rewritePending(${r.id},'',this)">custom…</button></div>${optsHtml('p' + r.id)}` : ''}
+      ${mail ? aiBar('inbox', r.id) : ''}
       ${r.result ? `<div class="row"><span class="pill warn">${esc(r.result)}</span></div>` : ''}
       <div class="row"><button class="b" onclick="decide(${r.id},'approve',${mail})">${mail && r.result ? 'Retry send' : 'Approve' + (mail ? ' and send' : '')}</button><button class="b ghost" onclick="decide(${r.id},'reject',false)">Reject</button></div></div>`;
   }).join('') || '<div class="empty">Inbox empty. Automatic actions appear here when a tool is enabled but not set to auto.</div>';
@@ -2315,4 +2318,186 @@ function viewPacket() {
 function viewOfferNote() { const id = Number($('#ctrJob').value); if (!id) return toast('record an offer first', 'err'); openViewer({ type: 'job', id, name: 'offer.md' }); }
 let CTR = null;  // the last counter-offer draft (its job and cited figures: the only figures it may name)
 function viewCounter() { if (CTR) openViewer({ type: 'text', kind: 'counter', job: CTR.id, cite: CTR.cite, text: CTR.text, title: 'Counter-offer draft' }); }
+
+/* ---- AI advisor toolbar (advisor.py): Recommend / Apply suggestions / Full AI / Undo AI changes on every tab and card ---- */
+// advisor.SCOPES with auto=False / write=None; test_pass19_toolbar keeps these in step with the server
+const ADV_NOAUTO = ['searches', 'today', 'insights'], ADV_ADVICE = ['today', 'insights'];
+const ADV_NAME = { profile: 'profile.md', bank: 'profile bank', job: 'job details', docs: 'job documents', answers: 'answer bank', stories: 'STAR stories',
+  contacts: 'contacts', searches: 'saved searches and watchlist', today: 'today', insights: 'insights', inbox: 'Inbox drafts' };
+const ADV = {};  // key (scope_target) -> {scope, target, recs, sel (ticked ids), batch (last one written here), msg, err}; markup carries only the key
+let ADV_AI = null, HIST = [];
+const NO_AI = 'This needs an AI provider: link an AI key in Setup, or click "Local only (Ollama)" there (local Ollama models count). Nothing was changed.';
+function aiBar(scope, target = null) {
+  const t = target == null || target === '' ? null : Number(target), k = scope + '_' + (t ?? 0), advice = ADV_ADVICE.includes(scope);
+  ADV[k] ||= { scope, target: t, recs: null, sel: new Set(), batch: null, msg: '', err: false };
+  const q = `'${k}',this`, need = S && hasAI() ? '' : ' title="needs an AI provider (Setup)"';
+  return `<div class="aibar" role="group" aria-label="AI for ${esc(ADV_NAME[scope] || scope)}" data-adv="${k}"><span class="ailbl" aria-hidden="true">✦ AI</span>`
+    + `<button class="b ghost sm" onclick="advRecommend(${q})"${need}>Recommend</button>`
+    + (advice ? '' : `<button class="b ghost sm" onclick="advApply(${q})">Apply suggestions</button>`)
+    + (ADV_NOAUTO.includes(scope) ? '' : `<button class="b ghost sm" onclick="advAuto(${q})"${need}>Full AI</button>`)
+    + (advice ? '' : `<button class="b ghost sm" onclick="advUndo(${q})">Undo AI changes</button>`)
+    + `</div><div class="advpanel" data-advp="${k}">${advPanel(k)}</div>`;
+}
+function aiSlots() {  // the tab headers: toolbars and AI help menus
+  ADV_AI = hasAI(); $$('[data-adv-slot]').forEach(el => { el.innerHTML = aiBar(el.dataset.advSlot); });
+  $$('[data-ai-menu]').forEach(el => { el.innerHTML = aiMenu(el.dataset.aiMenu); });
+}
+function advDiff(was, now) {  // line diff (LCS) of current -> proposed: removed lines <del>, added <ins>; every line escaped
+  const A = String(was ?? '').split('\n'), B = String(now ?? '').split('\n');
+  if (A.length * B.length > 160000) return `<del>${esc(was)}</del>\n<ins>${esc(now)}</ins>`;  // ponytail: O(n*m) table, capped
+  const L = Array.from({ length: A.length + 1 }, () => new Uint16Array(B.length + 1));
+  for (let i = A.length - 1; i >= 0; i--) for (let j = B.length - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const out = []; let i = 0, j = 0;
+  while (i < A.length || j < B.length) {
+    if (i < A.length && j < B.length && A[i] === B[j]) { out.push(`<span>  ${esc(A[i])}</span>`); i++; j++; }
+    else if (i < A.length && (j >= B.length || L[i + 1][j] >= L[i][j + 1])) { out.push(`<del>- ${esc(A[i])}</del>`); i++; }
+    else { out.push(`<ins>+ ${esc(B[j])}</ins>`); j++; }
+  }
+  return out.join('\n');
+}
+function advCard(k, r, i) {
+  const open = r.status === 'pending' || r.status === 'approved', pick = open && r.appliable, risk = { high: 'due', medium: 'stale' }[r.risk] || '';
+  return `<div class="advcard${r.flags.length ? ' flag' : ''}" data-rec="${Number(r.id)}"><div class="hd">`
+    + (pick ? `<label><input type="checkbox" ${ADV[k].sel.has(r.id) ? 'checked' : ''} onchange="advPick('${k}',${i},this.checked)"> <b>${esc(r.label)}</b></label>` : `<b>${esc(r.label)}</b>`)
+    + ` <span class="chip">impact ${esc(r.impact)}</span> <span class="chip ${risk}">risk ${esc(r.risk)}</span>`
+    + (r.appliable ? '' : ' <span class="chip">advice only</span>')
+    + (open ? '' : ` <span class="pill ${r.status === 'applied' ? 'ok' : 'warn'}">${esc(r.status)}</span>${r.note ? ` <span class="muted">${esc(r.note)}</span>` : ''}`) + '</div>'
+    + (r.appliable ? `<div class="muted">current → proposed</div><pre class="advdiff">${advDiff(r.current, r.proposed)}</pre>` : `<div class="advtext">${esc(r.proposed)}</div>`)
+    + (r.reason ? `<div class="muted">why: ${esc(r.reason)}</div>` : '')
+    + (r.flags.length ? `<div class="flagtxt">⚠ ${r.flags.map(f => esc(f)).join('<br>⚠ ')}<br>Apply refuses this one.</div>` : '') + '</div>';
+}
+function advPanel(k) {
+  const a = ADV[k]; if (!a) return '';
+  return (a.msg ? `<div class="advmsg${a.err ? ' bad' : ''}" role="status">${esc(a.msg)}</div>` : '') + (a.recs || []).map((r, i) => advCard(k, r, i)).join('')
+    + ((a.recs || []).length ? `<div class="row"><button class="b ghost sm" onclick="advClose('${k}')">Close suggestions</button></div>` : '');
+}
+function advPaint(k) { $$(`[data-advp="${k}"]`).forEach(el => { el.innerHTML = advPanel(k); }); }
+function advSay(k, msg, err = false) { ADV[k].msg = msg; ADV[k].err = err; advPaint(k); }
+function advPick(k, i, on) { const r = (ADV[k].recs || [])[i]; if (r) { if (on) ADV[k].sel.add(r.id); else ADV[k].sel.delete(r.id); } }
+function advClose(k) { Object.assign(ADV[k], { recs: null, sel: new Set(), msg: '', err: false }); advPaint(k); }
+function advNeedAI(k) { if (hasAI()) return false; advSay(k, NO_AI, true); return true; }
+function advRecommend(k, btn) {
+  const a = ADV[k]; if (advNeedAI(k)) return;
+  run('advise', { scope: a.scope, target: a.target }, r => advShow(k, r.recommendations), btn, e => advSay(k, e, true));
+}
+function advShow(k, recs) {  // Recommend's cards (also an appliable AI helper's: Fill STAR from my notes)
+  const a = ADV[k]; a.recs = recs; a.sel = new Set(recs.filter(x => x.appliable && !x.flags.length).map(x => x.id));
+  const n = recs.length;
+  advSay(k, !n ? 'The AI recommends no changes here.' : ADV_ADVICE.includes(a.scope) || !recs.some(x => x.appliable)
+    ? `${n} suggestion(s), advice only: nothing here is changed for you.`
+    : `${n} suggestion(s). Tick the ones you want, then Apply suggestions. Nothing has changed yet.`);
+}
+function advDone(k, r, verb) {  // apply / auto result: each card shows what happened to it
+  const a = ADV[k], why = Object.fromEntries((r.skipped || []).map(s => [s.id, s.why]));
+  (a.recs || []).forEach(x => {
+    if (r.applied.includes(x.id)) Object.assign(x, { status: 'applied', note: '' });
+    else if (x.id in why) Object.assign(x, { status: /^(changed|gone)/.test(why[x.id]) ? 'stale' : 'not applied', note: why[x.id] });
+  });
+  a.sel = new Set([...a.sel].filter(id => !r.applied.includes(id) && !(id in why)));
+  if (r.batch) a.batch = r.batch;
+  const sk = (r.skipped || []).length;
+  advSay(k, `${verb} ${r.applied.length} change(s)` + (r.batch ? ` (batch #${r.batch}; Undo AI changes puts them back)` : '') + (sk ? `; ${sk} skipped: ${r.skipped.map(s => s.why).join('; ')}` : '') + '.', !r.applied.length && !!sk);
+  advRefresh(a.scope, a.target);
+}
+async function advApply(k, btn) {
+  const a = ADV[k], ids = [...a.sel];
+  if (!ids.length) return advSay(k, a.recs ? 'Tick at least one suggestion first.' : 'Click Recommend first: Apply suggestions writes the suggestions you tick.', true);
+  btn.disabled = true; const r = await api('/api/advise/apply', { ids }); btn.disabled = false;
+  if (r.error) return advSay(k, r.error, true);
+  advDone(k, r, 'Applied');
+}
+const FULL_AI_KEY = 'ls_full_ai_ok';
+function advAuto(k, btn) {
+  const a = ADV[k]; if (advNeedAI(k)) return;
+  let ok = false; try { ok = localStorage.getItem(FULL_AI_KEY) === '1'; } catch (_) { /* storage blocked: ask every time */ }
+  if (!ok) {
+    if (!confirm(`Full AI for ${ADV_NAME[a.scope]}: one AI call, then every suggestion that passes the checks is written for you (no invented facts or salary floor in employer text, nothing you changed since).\n\nIt never sends mail, submits anything, changes a job's status, adds jobs, or touches settings, automation or the vault.\n\nEvery change is logged: Undo AI changes (here, or Setup > Data) puts it back. Continue?`)) return;
+    try { localStorage.setItem(FULL_AI_KEY, '1'); } catch (_) { /* storage blocked */ }
+  }
+  run('advise_auto', { scope: a.scope, target: a.target }, r => { a.recs = r.recommendations; a.sel = new Set(); advDone(k, r, 'Full AI made'); }, btn, e => advSay(k, e, true));
+}
+async function advUndo(k, btn) {
+  const a = ADV[k]; btn.disabled = true;
+  try {
+    let b = a.batch;
+    if (!b) {  // the newest batch that still holds a change of this toolbar's scope and target
+      const h = await api('/api/advise/history?limit=50');
+      b = ((h.batches || []).find(x => x.changes.some(c => !c.undone_at && c.scope === a.scope && (c.target ?? null) === a.target)) || {}).batch;
+    }
+    if (!b) return advSay(k, 'No AI changes to undo here.', true);
+    const r = await api('/api/advise/undo', { batch: b });
+    if (r.error) return advSay(k, r.error, true);
+    a.batch = null; a.recs = null; a.sel = new Set();
+    advSay(k, `Undid ${r.undone} change(s) of batch #${r.batch}` + (r.skipped.length ? `; kept ${r.skipped.length}: ${r.skipped.map(s => s.field + ' (' + s.why + ')').join('; ')}` : '') + '.', !r.undone);
+    advRefresh(a.scope, a.target);
+  } finally { btn.disabled = false; }
+}
+function advRefresh(scope, target) {  // the component the change touched shows it (answers, stories, watches, Inbox: load())
+  load();
+  if (scope === 'profile') {
+    if ($('#pText').value === PROFILE_LOADED) loadProfile();
+    else toast('profile.md changed: your unsaved text in the editor is kept, but Save is refused until the editor matches the file. Copy your text out and reload, or click Undo AI changes and Save works again', 'err');
+  }
+  if (scope === 'profile' || scope === 'bank') { loadBank(); loadMaster(); }
+  if ((scope === 'job' || scope === 'docs') && cur && cur.job.id === target) {  // a re-render would drop typed, unsaved text
+    if (drawerDirty()) toast('The AI change is saved. The drawer keeps your unsaved text: save it, then reopen the job to see the change', 'err');
+    else openJob(target);
+  }
+  if (scope === 'contacts') { loadContacts(); if (CT && (target == null || CT.contact.id === target)) openContact(CT.contact.id); }
+  if ($('#setup').classList.contains('on')) loadAiHistory();
+}
+async function loadAiHistory() {  // Setup > Data: recent AI change batches, each with its diffs and an Undo
+  const r = await api('/api/advise/history?limit=30'); if (r.error) return toast('error: ' + r.error, 'err');
+  HIST = r.batches;
+  $('#aiHist').innerHTML = HIST.map((b, i) => `<details class="aihist" data-batch="${Number(b.batch)}"><summary>#${Number(b.batch)} · ${b.mode === 'auto' ? 'Full AI' : 'Apply suggestions'} · ${esc(localTs(b.ts, 16))} · ${b.changes.length} change(s) · ${esc([...new Set(b.changes.map(c => ADV_NAME[c.scope] || c.scope))].join(', '))}${b.undone ? ' <span class="pill">undone</span>' : ''}</summary>`
+    + b.changes.map(c => `<div><b>${esc(c.label || c.field)}</b>${c.undone_at ? ' <span class="muted">undone</span>' : ''}<pre class="advdiff">${advDiff(c.before, c.after)}</pre></div>`).join('')
+    + (b.undone ? '' : `<button class="b ghost sm" onclick="histUndo(${i},this)">Undo this batch</button>`) + '</details>').join('')
+    || '<div class="muted">No AI changes yet. Apply suggestions and Full AI log every change here, and each batch can be undone.</div>';
+}
+async function histUndo(i, btn) {
+  const b = HIST[i]; if (!b) return; btn.disabled = true;
+  const r = await api('/api/advise/undo', { batch: b.batch }); btn.disabled = false;
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast(`undid ${r.undone} change(s) of batch #${r.batch}` + (r.skipped.length ? `; kept ${r.skipped.length} you changed since` : ''), r.undone ? 'ok' : 'err');
+  new Set(b.changes.map(c => c.scope + '|' + (c.target ?? ''))).forEach(s => { const [sc, t] = s.split('|'); advRefresh(sc, t === '' ? null : Number(t)); });
+  loadAiHistory();
+}
+
+/* ---- AI help menus (advisor.HELPERS): a few more AI helpers per component, folded under "✦ AI help". One AI call each;
+   the answer is a card you read (nothing changes). Fill STAR from my notes gives the story's toolbar suggestion cards,
+   which only Apply suggestions writes. ---- */
+const AIM_NAME = { board: 'the board', job: 'this job', contacts: 'contacts', contact: 'this contact', stories: 'this story',
+  insights: 'insights', search: 'search', monitor: 'monitor', setup: 'settings' };
+const AIH = {};  // key (where_target) -> {where, target, title, text, msg, err}; markup carries the key and the helper name only
+function aiMenu(where, target = null) {
+  const hs = Object.entries((S && S.ai_helpers) || {}).filter(([, h]) => h.where === where); if (!hs.length) return '';
+  const t = target == null || target === '' ? null : Number(target), k = where + '_' + (t ?? 0);
+  AIH[k] ||= { where, target: t, title: '', text: '', msg: '', err: false };
+  const need = hasAI() ? '' : ' title="needs an AI provider (Setup)"';
+  const topic = where === 'setup' ? `<select class="aitopic" aria-label="Setting to explain">${(S.ai_topics || []).map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join('')}</select>` : '';
+  return `<details class="aimenu" data-aim="${k}"><summary>✦ AI help</summary><div class="row" role="group" aria-label="AI help for ${esc(AIM_NAME[where] || where)}">${topic}`
+    + hs.map(([n, h]) => `<button class="b ghost sm" data-h="${esc(n)}" onclick="aiHelp('${k}',this)"${need}>${esc(h.label)}</button>`).join('')
+    + `</div></details><div class="aihelp" data-aimp="${k}">${aiHelpCard(k)}</div>`;
+}
+function aiHelpCard(k) {
+  const a = AIH[k]; if (!a) return '';
+  return (a.msg ? `<div class="advmsg${a.err ? ' bad' : ''}" role="status">${esc(a.msg)}</div>` : '')
+    + (a.text ? `<div class="advcard aiout"><div class="hd"><b>${esc(a.title)}</b> <span class="chip">AI help: nothing was changed</span></div><div class="advtext">${esc(a.text)}</div>`
+      + `<div class="row"><button class="b ghost sm" onclick="aiHelpClose('${k}')">Close</button></div></div>` : '');
+}
+function aiHelpPaint(k) { $$(`[data-aimp="${k}"]`).forEach(el => { el.innerHTML = aiHelpCard(k); }); }
+function aiHelpSay(k, msg, err = false) { Object.assign(AIH[k], { msg, err }); aiHelpPaint(k); }
+function aiHelpClose(k) { Object.assign(AIH[k], { title: '', text: '', msg: '', err: false }); aiHelpPaint(k); }
+function aiHelp(k, btn) {
+  const a = AIH[k], helper = btn.dataset.h;
+  if (!hasAI()) return aiHelpSay(k, NO_AI, true);
+  const target = a.where === 'setup' ? btn.closest('.aimenu').querySelector('.aitopic').value : a.target;
+  run('ai_help', { helper, target }, r => {
+    if (!r.recommendations) { Object.assign(a, { title: r.title, text: r.text, msg: '', err: false }); return aiHelpPaint(k); }
+    const ak = r.scope + '_' + (r.target ?? 0);  // the card's own AI toolbar shows them: tick, then Apply suggestions
+    ADV[ak] ||= { scope: r.scope, target: r.target, recs: null, sel: new Set(), batch: null, msg: '', err: false };
+    advShow(ak, r.recommendations);
+    aiHelpSay(k, r.recommendations.length ? 'Suggestions are in the AI panel above: tick the ones you want, then Apply suggestions.' : 'The AI suggests no changes.');
+  }, btn, e => aiHelpSay(k, e, true));
+}
 load(); loadProfile(); loadBank(); loadReviews(); loadMaster(); setInterval(load, 60000);

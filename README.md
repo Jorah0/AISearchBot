@@ -127,6 +127,13 @@ lodestar research 3                    # company research pack before an intervi
 lodestar chat                         # coach with your profile + tracker loaded
 lodestar council "Should I take a contract role while searching?" --all
 lodestar ask "Rewrite this bullet: ..." -p groq
+
+# AI recommendations for your own content (one AI call each; nothing changes until you apply)
+lodestar advise profile               # suggestions for profile.md, numbered
+lodestar advise job 3 --apply 12,13   # write the ones you pick (one undoable batch)
+lodestar advise docs 3 --auto         # Full AI: apply what passes the guards; never sends, moves or adds a job
+lodestar advise --history ; lodestar advise --undo 4
+lodestar ai-help posting 3            # one AI helper (summarise a posting, red flags, plan my day, ...)
 ```
 
 ## Credential vault
@@ -199,7 +206,10 @@ weekly goals, offer comparison and an activity log, idea crafting, answer bank a
 bank, coach chat with a scored mock interview (dictation), tool switches, Connect email (provider presets, login test,
 test send), provider and vault setup, Updates (off / notify / auto on an interval, Check now with the commit range and
 changelog, Update now with a backup, the tests and a rollback, Restart in the desktop app, the update log; a top-bar
-badge when an update is out; an update cut off mid-way is rolled back at the next start). Full walkthrough and roadmap: [docs/RUNDOWN.md](docs/RUNDOWN.md).
+badge when an update is out; an update cut off mid-way is rolled back at the next start), and an AI toolbar on every
+tab and card with your own content: Recommend, Apply suggestions, Full AI (never sends, submits, moves or adds a job,
+or touches settings) and Undo AI changes, with the change history in Setup > Data, plus a folded AI help menu per
+component. Full walkthrough and roadmap: [docs/RUNDOWN.md](docs/RUNDOWN.md).
 
 Step-by-step pipeline: each job's drawer shows its steps (fit check, research, tailor, cover letter, form answers,
 apply, confirmation, follow-up, schedule, prep, thank-you, offer, close) with their state in words, **Run next step**

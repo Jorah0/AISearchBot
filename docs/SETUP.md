@@ -70,6 +70,7 @@ supports them.
   - [Cover letters](#cover-letters)
   - [Form answers and the answer bank](#form-answers-and-the-answer-bank)
   - [Company research packs](#company-research-packs)
+  - [AI suggestions on every tab (Recommend, Apply suggestions, Full AI, Undo)](#ai-suggestions-on-every-tab-recommend-apply-suggestions-full-ai-undo)
   - [Settings in this area](#settings-in-this-area)
   - [Safety rules in this area, in short](#safety-rules-in-this-area-in-short)
 - [Finding and tracking jobs](#finding-and-tracking-jobs)
@@ -1254,6 +1255,8 @@ Testing that calls work:
 | `lodestar doctor --live` | yes, a tiny amount | key checks, one IMAP and SMTP login, and one real call per provider |
 | `lodestar usage` (`--days 30`) | no | tokens per provider and model, from `usage.jsonl`; the Link an AI key card shows the same |
 
+**AI helpers (Setup and Tools):** **✦ AI help** > **Explain this setting** at the top of both tabs: pick a Setup card (email, Autopilot, keys, Ollama, models, secrets, market rates, bookmarklets, notifications, diagnostics, data, updates, tool switches) or a preference, and the AI explains it from this guide (`lodestar ai-help explain_setting autopilot`).
+
 ### Other secrets (the vault)
 
 What it is for: any other setting you would rather keep in the keyring than in `.env`. Setup > **Other secrets (OS
@@ -1676,8 +1679,9 @@ lodestar resume adjust "rewrite the summary for data roles" --save  # writes it 
 `resume adjust` also works on a job document: `--job ID --doc resume.md` (or `cover_letter.md`).
 
 **Safety.** Every write Lodestar makes to profile.md first copies the old file to `profile-history\`. If an import
-changed profile.md after you opened the editor, **Save** is refused with "profile.md changed since you opened it (an
-import added lines): reload, then redo your edit", so imported lines are never erased.
+or an AI change (Apply suggestions, Full AI) changed profile.md after you opened the editor, **Save** is refused with
+"profile.md changed since you opened it (an import or an AI change wrote it): copy your text, reload, then redo your
+edit", so nothing written meanwhile is erased. After an AI change, Undo AI changes also makes Save work again.
 
 ### The profile bank
 
@@ -1707,6 +1711,8 @@ lodestar profile reread                                   # read profile.md itse
 
 `profile rebuild` keeps your Preferences section. `profile reread` is useful after you type new roles into profile.md
 by hand, or to fix education entries saved on one line by older versions; it creates a review like an import does.
+
+**AI helpers (Profile):** **AI review**, **Adjust**, **Merge into my profile (AI)** and the Profile and Profile bank toolbars. No extra AI help menu.
 
 ### Importing resumes and LinkedIn exports (with review)
 
@@ -1977,6 +1983,8 @@ stale when a profile section that resume used changes.
 - A build stopped because a salary floor appears outside Preferences: nothing was written. Move the figure into
   Preferences.
 
+**AI helpers (Studio):** **Build** is the AI request itself; no extra menu.
+
 ### The document viewer and formatting panel
 
 **What it is for.** One place to see any generated document as real pages, adjust how it looks, edit it, compare
@@ -2194,6 +2202,8 @@ Inbox > Questions for you. Each answer is marked with its source and "check this
 unsupported skill). An answer that would name your salary floor is withheld. Open it in the viewer like any other
 document. See [The step-by-step pipeline](#the-step-by-step-pipeline) for running steps.
 
+**AI helpers (Answers):** **Draft** and **Options** for a form question; the answer bank's toolbar (Recommend is the improve button). Stories: see [STAR stories](#star-stories).
+
 ### Company research packs
 
 **What it is for.** A short brief before an interview (and an input to cover letters and form answers): what the
@@ -2207,6 +2217,64 @@ needs an AI key and network access. Your salary floor and private preferences ar
 
 - App: drawer > **Company research**, then **View**.
 - Terminal: `lodestar research 1` prints the path of `research.md`.
+
+### AI suggestions on every tab (Recommend, Apply suggestions, Full AI, Undo)
+
+**What it is for.** A second pair of eyes on your own content: profile.md sections, the profile bank, a job's details
+and documents (resume, cover letter, form answers), the answer bank, STAR stories, contacts, saved searches, Inbox
+drafts, plus a plan for today and advice on your Insights numbers. It never touches the app's settings or code.
+
+**How it works.** Each of those places has the same AI toolbar: on the tab (Profile, Profile bank, Answers, Stories,
+Contacts, Search and Monitor, Insights, Inbox, the Board's Today row) and on each card (a job drawer's Details and
+Documents, a contact's drawer, each story, each Inbox email).
+
+- **Recommend**: one AI call. Suggestions appear as cards: a checkbox, what is there now and what is proposed (removed
+  lines in red, added lines in green), why, and the impact and risk. Nothing changes yet. A suggestion that adds a fact
+  your profile does not state (a skill, number, title, employer, date or link) or names your salary floor is flagged,
+  marked high risk and left unticked.
+- **Apply suggestions**: writes the ticked cards. A card whose text you changed since the suggestion turns **stale**
+  and is skipped; a flagged one is refused even if you tick it. The import review's **Apply selected** button is a
+  different button and keeps its meaning.
+- **Full AI**: Recommend, then everything that passes those checks is written for you. The first time, it asks you to
+  confirm. It never sends mail, submits anything, changes a job's status, adds jobs, or touches settings, automation or
+  the vault; Inbox drafts it improves still wait for your approval. Search, Today and Insights have no Full AI (Today
+  and Insights are advice only; a new saved search or watched company stays your click).
+- **Undo AI changes**: puts the last AI change made from this toolbar back exactly. A field you edited since keeps your
+  version. Setup > Data > **AI changes** lists every batch, with what each field was before, and an **Undo this
+  batch** button.
+
+Without an AI provider every one of these buttons says it needs one (a linked key, or **Local only (Ollama)** in
+Setup: local models count). Eligibility and EEO answers, private answers, your Preferences and the contact line are
+never sent to the AI or changed by it.
+
+- Terminal: `lodestar advise SCOPE [TARGET]`, then `--apply IDS`, `--auto`, `--undo BATCH`, `--history`.
+
+#### AI help menus (the assist-button inventory)
+
+Next to the toolbar, most places have a folded **✦ AI help** menu with a few more helpers. Each one is **one AI
+call**, sends its material to the AI as data (a posting, a contact's notes and mail are never followed as
+instructions; your salary floor and Preferences never go in), and shows its answer as a card you read: **nothing is
+changed**. The one helper that proposes edits, **Fill STAR from my notes**, puts suggestion cards in that story's AI
+toolbar, and only **Apply suggestions** writes them (Undo puts them back). Without an AI provider every helper says
+it needs one and calls nothing. Terminal: `lodestar ai-help` lists them, `lodestar ai-help NAME [TARGET]` runs one.
+
+| Tab / box | AI that was already there | AI help menu (new) |
+|---|---|---|
+| Board, Today row | toolbar (Recommend: a priority plan, advice only), **Draft options** on suggested emails, **Run next step** / **Run to** | **What to do next**, **Plan my day** |
+| Job drawer | toolbars on Details and Documents, pipeline steps, readiness explain, question set, gap check, tailor (whole / by bullet), cover letter and options, interview prep, company research, drafts and options, referral asks, offer evaluation, document Adjust and Review | **Summarise the posting**, **Red flags**, **Questions to ask them**, **Likely interview topics**, **Map my stories to this job** |
+| Inbox, each email | toolbars, **Options**, **Shorter / Warmer / More formal / More direct / custom…** rewrites | (none: the rewrites cover it) |
+| Contacts tab | toolbar | **Who to ask for a referral** |
+| A contact's drawer | toolbar | **Draft an intro** (refused when it would name your salary floor) |
+| Search | toolbar, **AI rank vs my profile**, **Auto-track strong fits** | **Suggest search terms** |
+| Monitor | toolbar, **Weekly digest**, email dry-run | **Companies like my targets** (adding one to watch stays your click) |
+| Ideas | **Craft**, **Refine** (the whole tab is AI) | (none) |
+| Answers: the form and the answer bank | **Draft**, **Options**, the answer bank toolbar (Recommend = improve your answers) | (none: Recommend is the improve button) |
+| Answers: each story | toolbar | **Fill STAR from my notes** (suggestions for Apply suggestions) |
+| Coach | coach chat (council), mock interview with scored answers | (none: the tab is a conversation with the AI) |
+| Insights | toolbar (advice only), counter-offer **Draft** / **Options** | **Explain my numbers** |
+| Profile, Profile bank | toolbars, **AI review**, **Adjust**, **Merge into my profile (AI)**, AI import | (none) |
+| Studio | **Build** (the request is the AI instruction) | (none) |
+| Tools, Setup | **Test providers**, **List models**, **Diagnostics + live AI call** | **Explain this setting** (pick a Setup card or a preference; it explains it from this guide) |
 
 ### Settings in this area
 
@@ -2331,6 +2399,8 @@ on your Board is never proposed again. Auto-tracked jobs never count as applicat
 
 **Where the data lives.** Search results are not stored; tracked jobs go into `~/.lodestar/lodestar.db`.
 
+**AI helpers (Search):** **AI rank vs my profile**, **Auto-track strong fits**, the toolbar (saved-search keywords) and **✦ AI help** > **Suggest search terms** (queries and filters from your profile; you type the one you want).
+
 ### Saved searches (watches on a query)
 
 **What it is for.** A search you want repeated. Each monitor cycle runs it with its saved filters across the six
@@ -2425,6 +2495,8 @@ new ones; to clear keywords, remove it and add it again.
 **Workday, Taleo and iCIMS have no public feed.** Giving one of their links is refused with "Workday detected.
 Workday, Taleo and iCIMS have no public job feed: add the careers page as a page watch instead ...". Use a page watch
 for those.
+
+**AI helpers (Monitor):** the toolbar and **✦ AI help** > **Companies like my targets** (suggestions only: you add a company yourself).
 
 ### Stale signals and the weekly posting check
 
@@ -2602,6 +2674,8 @@ lodestar jobs rm 1              # delete the job and its timeline
 should see the fields echoed back, for example
 `#1 excitement=4, deadline=2026-11-20, tags=python,remote, next_action=ask Sam, next_action_at=2026-11-11`.
 
+**AI helpers (Board):** the Today row's AI toolbar (Recommend: a priority plan) and its **✦ AI help** menu: **What to do next**, **Plan my day**. See [AI help menus](#ai-help-menus-the-assist-button-inventory).
+
 ### The job drawer
 
 Click a card (or a company name in the table) to open the drawer. From top to bottom:
@@ -2633,6 +2707,8 @@ Click a card (or a company name in the table) to open the drawer. From top to bo
 
 The checklist is also a command: `lodestar jobs checklist 1` prints each stage as `[x]` done, `[ ]` with the next
 command to run, or `[-]` not relevant yet.
+
+**AI helpers (job drawer):** the **✦ AI help** menu under the contact line: **Summarise the posting**, **Red flags**, **Questions to ask them**, **Likely interview topics**, **Map my stories to this job** (one AI call each; nothing changes), plus the Details and Documents toolbars.
 
 ### Today and the agenda
 
@@ -2926,6 +3002,8 @@ lodestar approve 12 13 14       # several at once
 
 **Where the data lives.** Inbox items, their results and the event they leave on each job are in
 `~/.lodestar/lodestar.db`; tool switches and preferences in `~/.lodestar/settings.json`.
+
+**AI helpers (Inbox):** the toolbar on the tab and on each email, and each email's **Options** and rewrite buttons. No extra AI help menu: the rewrites cover it.
 
 ## Mail, people, interviews and outcomes
 
@@ -3267,6 +3345,8 @@ field counts for trust.
 **Where it lives.** Tables `contacts`, `job_contacts` and `touches` in `lodestar.db`. The LinkedIn archive itself is
 not stored.
 
+**AI helpers (Contacts):** the tab's **✦ AI help** > **Who to ask for a referral**; a contact's drawer > **Draft an intro** (a message to paste yourself; refused when it would name your salary floor). Both read only; asking for the referral stays the job drawer's **Ask for referral**.
+
 ### Interview rounds, calendar files and reminders
 
 **What it is for.** Each job keeps its rounds: number, kind (phone, technical, onsite, panel, final, other), time,
@@ -3345,6 +3425,8 @@ A story needs a title and at least one STAR part. Tags: leadership, conflict, fa
 ownership, customer, data-driven, teamwork, deadline. Stories are stored in the answer bank (question
 `Story: <title>`) but listed separately from form answers.
 
+**AI helpers (stories):** each story's toolbar, and its **✦ AI help** > **Fill STAR from my notes**: the AI moves what you wrote into the right STAR parts (empty parts included) without adding facts; the suggestions appear in the story's toolbar and only **Apply suggestions** writes them. **Map my stories to this job** is in the job drawer.
+
 ### Interview prep and mock interviews
 
 **Prep pack** (needs an AI provider and a filled-in profile): likely questions with model answers, STAR answers from
@@ -3413,6 +3495,8 @@ readiness** asks the AI for advice on the breakdown (never your fit score); **Wh
 top raise-it row without AI. Today shows the readiness of an interview in the next 48 hours, and under 60 its top tip.
 After each mock answer the Coach shows the new readiness. Readiness never goes into anything an employer reads or a
 pipeline step's output. Terminal: `lodestar interview readiness 3`, `lodestar interview calibration`.
+
+**AI helpers (Coach):** the coach chat and the mock interview are the AI; no extra menu. **Likely interview topics** and **Questions to ask them** are in the job drawer's AI help.
 
 ### Offers, the comp table and counter-offers
 
@@ -3499,6 +3583,8 @@ lodestar tools set weekly_goals tailored_applications=3
 
 Progress counts Monday to today (`Weekly goals: contacts 0/5  applications 1/3` at the end of `lodestar insights`)
 and is listed in the weekly digest. In the app, set them on the Insights tab's Weekly goals panel.
+
+**AI helpers (Insights):** the toolbar (Recommend: advice only) and **✦ AI help** > **Explain my numbers**.
 
 ### Activity log export
 
@@ -4060,7 +4146,7 @@ Where to look first:
 | Profile and documents | "no text found in ... (a scanned PDF needs OCR first)" | The PDF is an image: import the .docx instead, or run OCR first. |
 | Profile and documents | "unsupported resume format" | Use .docx, .pdf, .md or .txt (or a LinkedIn .zip). |
 | Profile and documents | "fill in your profile first (Profile tab, or import a resume)", `Created ...profile.md. Fill in your full history there, then rerun.`, or a step's "your master profile is still the template" | Fill in `profile.md` or `lodestar profile import <resume>`; then Retry the step. |
-| Profile and documents | The editor's Save is refused: "profile.md changed since you opened it ..." | An import added lines: reload the Profile tab and redo your edit. |
+| Profile and documents | The editor's Save is refused: "profile.md changed since you opened it ..." | An import or an AI change wrote profile.md: copy your text, reload the Profile tab and redo your edit (after an AI change, Undo AI changes also lets Save through). |
 | Profile and documents | A fact you added to the bank is missing from the master resume | Bank-only facts are used by prompts but not printed: add it to profile.md or click **Rebuild master profile from bank**. |
 | Profile and documents | "close master.pdf (open in another program), then Update now" / `<file>.pdf is open in another program` | A PDF or Word window holds the file: close it and try again. |
 | Profile and documents | No PDF, only an .html file; `no PDF engine (Edge, Chrome or Chromium) ...`; `edge: no PDF written (exit 0)` | See [PDF engines](#pdf-engines); `lodestar doctor` names the engine it found. Try with Edge closed, or point `LODESTAR_BROWSER` at Chrome. |
@@ -4105,8 +4191,6 @@ These are planned but not built yet. They are not in the app today and nothing i
 ([TESTS.md](TESTS.md) lists them under Planned):
 
 - An interview upgrade.
-- AI Recommend, Apply selected and Full AI buttons for AI suggestions, with undo and an AI change history (the import
-  review's **Apply selected** button is a different, working button).
 - A browser extension, which would also capture application-form questions (the bookmarklets cover capture and autofill
   today).
 - BLS market pay data (today Lodestar quotes only your own [market-rate table](#offers-the-comp-table-and-counter-offers) and pay stated in postings).

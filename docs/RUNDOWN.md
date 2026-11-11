@@ -15,6 +15,7 @@ one SQLite file. Nothing leaves your machine except the API calls you configure 
 | Resume studio | `lodestar/studio.py` | the profile-synced master resume (offline, debounced), and AI-planned resume versions that cite profile facts by id (every AI rewrite through `resume.check_rewrite`), page limit, versions, Use for this job | ai, render |
 | Rendering | `lodestar/render.py` | one block list per document -> the HTML page (preview, headless-Edge PDF), python-docx, master-format markdown, ATS text; the style spec | `python-docx` |
 | Viewer | `lodestar/viewer.py` | every generated document as pages with a formatting panel, compare, exports; floor and fact guards on export and Save | render |
+| AI advisor | `lodestar/advisor.py` | Recommend / Apply suggestions / Full AI / Undo for your own content per scope (profile, bank, job, docs, answers, stories, contacts, searches, Today, Insights, Inbox drafts): one fenced AI call, guards (stale, no invented facts, no salary floor, no new heading in a form answer, no new link / email / phone in job and contact fields), an undoable change log; the AI help menus' helpers | ai, the existing write paths |
 | JD coverage | `lodestar/ats.py` | deterministic keyword coverage of a posting against your resume (`match`), over `data/skills.json`; no AI | stdlib |
 | Resume lint | `lodestar/lint.py` | offline resume checks and the saved-file audit (`resume lint`, `resume audit`) | stdlib |
 | Inbox | `lodestar/email_monitor.py` | IMAP scan, keyword prefilter, AI classification, sender trust (DKIM + a strong job tie: contact, vouched thread, or the company site held for the job), status upgrade rules, interview rounds from trusted timed invites, contact touches, reply drafts, mail recording and thread linking, Track as new job | imaplib |
@@ -117,10 +118,10 @@ document is produced (`--council`) and as a standalone `council "<question>"` co
 - `.gitignore` excludes every personal artifact (profile, database, applications, alerts, snapshots, vault index,
   `.env`) and every development artifact (graph outputs, caches, build dirs), so the repo can be shared safely.
 
-## 6. Current state (2026-11-11, pass 18: interview readiness and company-referenced questions, after pass 17.1: credential isolation and fixes)
+## 6. Current state (2026-11-11, pass 19: AI recommendations, Full AI and AI helpers, after pass 18: interview readiness and company-referenced questions)
 
-713 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`), and 163 browser tests pass in Edge
-and Chromium (`python -m unittest discover -s tests/e2e -p "e2e_*.py"`); [TESTS.md](TESTS.md) maps every feature to its tests. Live-verified: installer (Desktop shortcuts; the Start Menu folder fix after the overview is checked statically only), desktop window (Edge
+743 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`), and 179 browser tests pass in Edge
+(`python -m unittest discover -s tests/e2e -p "e2e_*.py"`); [TESTS.md](TESTS.md) maps every feature to its tests. Live-verified: installer (Desktop shortcuts; the Start Menu folder fix after the overview is checked statically only), desktop window (Edge
 WebView2), every UI route with token and Host checks, six free job sources, page watches, Obsidian export. Not yet
 exercised with real credentials: AI calls and key checks, Google / Microsoft sign-in, IMAP login and SMTP sending, Proton
 Mail Bridge (all tested against faked servers and a fake OAuth server on 127.0.0.1 only). Pass-by-pass history is in [CHANGELOG.md](CHANGELOG.md).

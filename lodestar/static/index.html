@@ -41,6 +41,8 @@
     <input id="nCo" placeholder="Company" style="width:160px"><input id="nTi" placeholder="Title" style="width:220px">
     <input id="nJd" class="grow" placeholder="Job description: URL or pasted text"><button class="b" onclick="addJob()">Add job</button>
   </div>
+  <div class="aihead" data-adv-slot="today"></div>
+  <div class="aihead" data-ai-menu="board"></div>
   <div class="panel today" id="today" style="display:none"></div>
   <div class="row" id="upcoming" style="margin-top:4px"></div>
   <div class="muted" id="variants"></div>
@@ -72,6 +74,7 @@
 <section id="inbox" class="inbox">
   <h2>Inbox</h2>
   <p class="sub">Actions Lodestar wants to take. Nothing is sent, moved, or added until you approve it. Set a tool to <b>auto</b> under Tools to skip this step for that tool.</p>
+  <div class="aihead" data-adv-slot="inbox"></div>
   <details class="panel" id="codesPanel" ontoggle="if(this.open)codesLoad()"><summary><b>Emailed sign-in codes</b> <span class="muted" id="codesN"></span></summary>
     <div class="row"><button class="b ghost sm" onclick="codesCheck(this)">Check for a code now</button></div>
     <div id="codesList" role="status" aria-live="polite"></div>
@@ -88,6 +91,8 @@
 <section id="contacts">
   <h2>Contacts</h2>
   <p class="sub">The people in your search. Link them to jobs with a role; "you know N people here" shows on board cards, search results and the job drawer, where you can ask for a referral. Set a next touch and they come up on the Today list. Contacts never make mail trusted: only a job's own contact address does.</p>
+  <div class="aihead" data-adv-slot="contacts"></div>
+  <div class="aihead" data-ai-menu="contacts"></div>
   <div class="panel"><div class="row" style="margin:0">
     <input id="ctName" placeholder="name" aria-label="Contact name" style="width:170px"><input id="ctEmail" placeholder="email (optional)" aria-label="Contact email" style="width:200px">
     <input id="ctCo" placeholder="company" aria-label="Contact company" style="width:150px"><input id="ctPos" placeholder="position" aria-label="Contact position" style="width:150px">
@@ -102,6 +107,8 @@
 
 <section id="search">
   <h2>Search</h2>
+  <div class="aihead" data-adv-slot="searches"></div>
+  <div class="aihead" data-ai-menu="search"></div>
   <div class="row"><input id="sQ" placeholder='query, e.g. "python backend"' style="width:260px"><input id="sK" placeholder="must-have keywords (comma)" style="width:220px">
     <label class="muted"><input type="checkbox" id="sRank"> AI rank vs my profile</label><button class="b" onclick="doSearch(this)">Search free job APIs</button>
     <button class="b ghost" title="AI-judge the results; strong fits go to the Inbox (tool: auto_track). Listings that look stale are skipped." onclick="run('auto_track',searchParams(),r=>toast(r.results.length+' strong fit(s) proposed (Inbox, or tracked if auto_track is auto)'+((r.errors||[]).length?'\ncould not read: '+r.errors.join('; '):''),(r.errors||[]).length?'err':'ok'),this)">Auto-track strong fits</button>
@@ -118,6 +125,8 @@
 
 <section id="monitor">
   <h2>Monitor</h2>
+  <div class="aihead" data-adv-slot="searches"></div>
+  <div class="aihead" data-ai-menu="monitor"></div>
   <div class="grid2">
     <div class="panel"><h3>Watches</h3>
       <div class="row"><input id="wUrl" class="grow" placeholder="career page URL, or a search query"><input id="wKw" placeholder="keywords" style="width:130px"><label class="muted"><input type="checkbox" id="wSearch"> is a search</label><button class="b" onclick="addWatch()">Add</button></div>
@@ -151,9 +160,11 @@
     <div class="row"><select id="aJob" aria-label="Job this answer is for"></select><input id="aQ" class="grow" placeholder='e.g. "Why do you want to work at Acme?" or "Salary expectations?"'><button class="b" onclick="askAnswer(this)">Draft</button><button class="b ghost" onclick="answerOptions(this)" title="up to 3 answers from one AI call, one recommended; Use this fills the form below">Options</button></div>
     <pre id="aOut2" style="display:none"></pre><div id="aOpts"></div></div>
   <div class="panel"><h3>Answer bank</h3>
+    <div data-adv-slot="answers"></div>
     <div class="row"><input id="bQ" class="grow" placeholder="question"><textarea id="bA" class="grow" rows="3" placeholder="answer" style="min-height:60px; font-family:inherit; font-size:13px; flex:1"></textarea><input id="bT" placeholder="tags (comma)" style="width:140px"><label class="muted" title="for you only: never put in a drafted answer, letter or form autofill"><input type="checkbox" id="bP"> private</label><button class="b ghost" onclick="saveAnswer(this)">Save</button></div>
     <div id="bank"></div></div>
   <div class="panel" id="storyPanel"><h3>Stories (STAR)</h3>
+    <div data-adv-slot="stories"></div>
     <p class="muted">Your real stories, tagged by competency. Interview prep and mock interviews build behavioural answers from these instead of inventing them; the job drawer tells you when a posting stresses a competency no story covers yet.</p>
     <input type="hidden" id="stId">
     <div class="row"><input id="stTitle" class="grow" maxlength="120" placeholder="title, e.g. Rescued the billing migration" aria-label="Story title"></div>
@@ -183,6 +194,8 @@
 <section id="insights">
   <h2>Insights</h2>
   <p class="sub">What you did each week, what is working, your offers side by side, and an activity log. Counted from your own actions only: jobs moved to applied, mail sent from the Inbox, interview rounds and the contact touches you record. Auto-tracked saves and Inbox items you did not send never count.</p>
+  <div class="aihead" data-adv-slot="insights"></div>
+  <div class="aihead" data-ai-menu="insights"></div>
   <div class="panel"><h3>Weekly goals</h3>
     <p class="muted">None are set until you choose. Reaching people and tailoring each application usually pay off more than a raw application count, so those come first.</p>
     <div class="row" id="goalForm"></div><div id="goalBars"></div></div>
@@ -219,6 +232,7 @@
 <section id="profile">
   <h2>Profile</h2>
   <p class="sub">Your master resume. Everything Lodestar writes is derived from this file and never invents facts.</p>
+  <div class="aihead" data-adv-slot="profile"></div>
   <div class="row"><span class="muted" id="pPath"></span><button class="b" onclick="saveProfile()">Save</button><button class="b ghost" onclick="run('review',{text:$('#pText').value},r=>show('pOut',r.text),this)">AI review</button><button class="b ghost" onclick="run('lint',{text:$('#pText').value},r=>{$('#pCheck').innerHTML=lintHtml(r)},this)">Check</button><span class="muted">Check: instant offline checks (weak openers, missing numbers, pronouns, sections), line numbers match the editor</span></div>
   <div id="pCheck"></div>
   <div class="row"><input id="pAdj" class="grow" placeholder="adjust with AI, e.g. tighten to one page / emphasise leadership / rewrite summary for data roles"><button class="b ghost" onclick="adjustProfile(this)">Adjust</button><span class="muted">result replaces the editor; nothing is saved until you click Save</span></div>
@@ -228,6 +242,7 @@
     <div id="mStatus" class="muted">loading…</div><div id="mDiff"></div><div id="mWarn"></div>
     <div class="row"><button class="b ghost sm" id="mPdf" onclick="openMaster('pdf')">Open PDF</button><button class="b ghost sm" id="mDocx" onclick="openMaster('docx')">Open DOCX</button><button class="b ghost sm" id="mView" onclick="openViewer({type:'master'})">View / format</button><button class="b ghost sm" onclick="api('/api/open_folder',{which:'resumes'}).then(r=>r.error&&toast('error: '+r.error,'err'))">Show folder</button><button class="b ghost sm" onclick="run('master_sync',{},m=>{renderMaster(m);toast(m.last_error?'master resume: '+m.last_error:'master resume updated',m.last_error?'err':'ok')},this)">Update now</button></div></div>
   <div class="panel" id="bankPanel"><h3>Profile bank</h3>
+    <div data-adv-slot="bank"></div>
     <p class="muted">Every resume you import is kept, and its skills, languages, roles, education and certifications are pooled here with their source. Prompts read your master profile plus anything here it does not mention yet.</p>
     <div class="row"><b style="width:90px">LinkedIn</b><input id="liUrl" class="grow" placeholder="https://www.linkedin.com/in/your-name"><button class="b ghost sm" onclick="bankOp({op:'contact',field:'linkedin',value:$('#liUrl').value},'LinkedIn linked')">Link</button>
       <a id="liExport" class="b ghost sm" target="_blank" rel="noopener" href="#">Request my LinkedIn data ↗</a></div>
@@ -276,6 +291,7 @@
 
 <section id="tools">
   <h2>Tools</h2>
+  <div class="aihead" data-ai-menu="setup"></div>
   <p class="sub"><b>enabled</b> off = never runs. <b>auto</b> off = proposes into the Inbox and waits. <b>auto</b> on = runs immediately and logs an event. Commands you run yourself are confirmed by running them. Pipeline tools (fit_check to thank_you): <b>enabled</b> = Autopilot may use this step; <b>auto</b> = it runs without asking; otherwise Autopilot asks once per job in the Inbox (Setup &gt; Autopilot).</p>
   <div class="panel" id="toolTable"></div>
   <div class="panel"><h3>Preferences</h3><div id="prefs"></div></div>
@@ -283,6 +299,7 @@
 
 <section id="setup">
   <h2>Setup</h2>
+  <div class="aihead" data-ai-menu="setup"></div>
   <div class="panel" id="emailCard"><h3>Connect email</h3>
     <p class="muted">Lodestar reads hiring replies over IMAP and sends only the mail you approve over SMTP. Sign in with Google or Microsoft, or use an app password (never your normal password). Either one stays in the OS keyring and is never shown again. Step-by-step guide: docs/CONNECT.md.</p>
     <div class="row"><select id="eProv" aria-label="mail provider" onchange="emailPreset()"></select>
@@ -360,7 +377,10 @@
         <button class="b ghost" onclick="api('/api/open_folder',{which:'applications'})">Open documents</button>
         <button class="b ghost" onclick="api('/api/open_folder',{which:'backups'})">Open backups</button>
         <button class="b ghost" onclick="api('/api/open_folder',{which:'log'})">Open log</button></div>
-      <p class="muted">Nightly backups keep the last 7 zips (tool <b>backup</b>). Exports are a JSON dump of every table, or one CSV per table.</p></div>
+      <p class="muted">Nightly backups keep the last 7 zips (tool <b>backup</b>). Exports are a JSON dump of every table, or one CSV per table.</p>
+      <h4>AI changes</h4>
+      <p class="muted">Every change Apply suggestions and Full AI made to your content, newest first, with what it was before. Undo puts a batch back exactly; a field you changed since keeps your version.</p>
+      <div id="aiHist" class="list"></div></div>
     <div class="panel" id="updCard"><h3>Updates</h3>
       <div class="row"><label>Updates <select id="uMode" onchange="setPref('update_mode',this.value)"><option value="off">off</option><option value="notify">tell me (notify)</option><option value="auto">install automatically</option></select></label>
         <label>check every <input id="uEvery" type="number" min="1" max="720" style="width:70px" onchange="setPref('update_every_hours',Number(this.value))"> hours</label>

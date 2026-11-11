@@ -11,7 +11,7 @@ from pathlib import Path
 
 import keyring
 
-from .config import HOME
+from .config import HOME, full_ai_check
 
 
 def namespace(home=HOME) -> tuple[str, str]:
@@ -69,6 +69,7 @@ def _pieces(name: str) -> tuple[int, str]:
 
 
 def set(name: str, secret: str, user: str | None = None) -> None:
+    full_ai_check("touches the vault")
     name, secret = str(name or "").strip(), str(secret or "").strip()  # a pasted key's trailing space or newline too
     if not name or not secret:  # a nameless, empty or blank entry is a mis-click, not a secret
         raise ValueError("give both a name (e.g. ANTHROPIC_API_KEY) and the secret to store")
@@ -124,6 +125,7 @@ def user(name: str) -> str:
 
 
 def delete(name: str) -> None:
+    full_ai_check("touches the vault")
     n, h = _pieces(name)
     if h:
         _drop_pieces(name, n, h)

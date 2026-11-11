@@ -5,6 +5,7 @@ mail, change status, or add jobs on lodestar's own initiative, so the rule lives
 import json
 
 from . import db, settings
+from .config import full_ai_check
 from .util import send_email
 
 
@@ -12,6 +13,7 @@ def propose(tool: str, kind: str, payload: dict, summary: str, job_id: int | Non
             force_pending: bool = False) -> dict:
     """Returns {"status": "disabled" | "pending" | "done" | "error", ...}.
     force_pending: ignore the tool's auto flag (used for actions triggered by unauthenticated mail)."""
+    full_ai_check("proposes sends, status changes or new jobs")
     if not settings.enabled(tool):
         return {"status": "disabled", "tool": tool}
     if kind in ("send_email", "save_answer"):  # the one choke point: no AI draft naming the salary floor is ever proposed
@@ -51,6 +53,7 @@ MAIL_EDITS = ("to", "subject", "body", "chosen_time", "attachments")
 
 
 def approve(pid: int, edits: dict | None = None) -> dict:
+    full_ai_check("approves an Inbox item")
     if edits is not None and not isinstance(edits, dict):  # checked before the claim, or the item would stick claimed
         raise ValueError("edits must be a JSON object")
     row = db.get_pending(pid)

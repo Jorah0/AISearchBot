@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import __version__, ai, apply, approvals, codes, comp, connections, db, extras, log, loop, mailconn, oauth, pipeline, settings, vault
+from . import __version__, advisor, ai, apply, approvals, codes, comp, connections, db, extras, log, loop, mailconn, oauth, pipeline, settings, vault
 from .config import ALERTS, PROFILE
 
 STATIC = Path(__file__).parent / "static"
@@ -454,6 +454,12 @@ def _do(action: str, p: dict):
             except (Exception, SystemExit) as e:  # signed in either way; the test result is shown next to it
                 test = {"error": connections.redact(str(e))[:300]}
             return {"status": st, "test": test}
+        case "advise":  # {scope, target?}: one AI call; the recommendations are stored (nothing is changed)
+            return {"recommendations": advisor.recommend(p.get("scope"), p.get("target"), prov)}
+        case "advise_auto":  # Full AI {scope, target?}: recommend + apply what passes the guards, one undoable batch
+            return advisor.auto(p.get("scope"), p.get("target"), prov)
+        case "ai_help":  # {helper, target?}: one AI call; text you read, or suggestion cards for Apply suggestions
+            return advisor.assist(p.get("helper"), p.get("target"), prov)
         case "keys_check":  # Setup's Re-check all: every linked key and the mailbox, no tokens spent
             return connections.check_all()
         case "providers_local":
@@ -667,6 +673,8 @@ def state() -> dict:
         "prefs": settings.load()["prefs"],
         "pref_choices": settings.CHOICES,
         "pref_help": settings.PREF_HELP,
+        "ai_helpers": advisor.helpers(),  # each component's AI help menu (advisor.HELPERS)
+        "ai_topics": advisor.topics(),  # Explain this setting: Setup's cards and the preferences
         "bases": _bases(),
         "answers": [dict(r) for r in db.list_answers() if r["star"] is None],  # stories are listed apart
         "stories": interview.stories(),
@@ -821,6 +829,19 @@ class Handler(BaseHTTPRequestHandler):
                             "stress": interview.story_prompt(job), "mail": [dict(r) for r in db.list_mail(job["id"])],
                             "pipeline": pipeline.status(job["id"]), "questions": pipeline.questions(job=job["id"]),
                             "runs": pipeline.log_runs(job["id"], 10), **_job_extras(job)})
+            elif path.startswith("/api/advise"):  # the AI advisor (advisor.py): scopes | ?scope=&target= | history
+                from urllib.parse import parse_qs
+
+                q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+                if path == "/api/advise/scopes":
+                    self._json({"scopes": advisor.scopes(), "ai": bool(ai.available()), "no_ai": ai.NO_PROVIDER})
+                elif path == "/api/advise/history":
+                    self._json({"batches": advisor.history(int(q["limit"]) if q.get("limit", "").isdigit() else 30)})
+                elif path == "/api/advise":
+                    self._json({"recommendations": advisor.pending(q.get("scope", ""), q.get("target")),
+                                "ai": bool(ai.available())})
+                else:
+                    self._json({"error": "not found"}, 404)
             elif path == "/api/questions":  # ?all=1 (answered and dismissed too) &job=ID
                 from urllib.parse import parse_qs
 
@@ -1089,8 +1110,8 @@ class Handler(BaseHTTPRequestHandler):
 
                 with profile._LOCK:  # the same lock an import holds while it writes profile.md
                     if p.get("base") and p["base"] != profile.master_base():
-                        return self._json({"error": "profile.md changed since you opened it (an import added lines): "
-                                                    "reload, then redo your edit", "stale": True}, 409)
+                        return self._json({"error": "profile.md changed since you opened it (an import or an AI "
+                                                    "change wrote it): copy your text, reload, then redo your edit", "stale": True}, 409)
                     profile.write_master(p["text"])
                 self._json({"ok": True, "base": profile.master_base()})
             elif path.startswith("/api/profile/imports/") and len(parts) == 6:  # <pid>/apply {accept, take, to_master} | discard
@@ -1355,7 +1376,24 @@ class Handler(BaseHTTPRequestHandler):
                         self._json({"error": "not found"}, 404)
                 except viewer.Unconfirmed as e:  # the fact guard: the UI asks, then sends confirm
                     self._json({"error": str(e), "confirm": True}, 409)
+            elif path.startswith("/api/advise/") and len(parts) == 4:  # apply {ids} | reject {ids} | undo {batch}
+                if parts[3] == "apply":
+                    self._json(advisor.apply(p.get("ids")))
+                elif parts[3] == "reject":
+                    self._json({"rejected": advisor.decide(p.get("ids"), "rejected")})
+                elif parts[3] == "undo":
+                    self._json(advisor.undo(p.get("batch")))
+                else:
+                    self._json({"error": "not found"}, 404)
             elif path.startswith("/api/run/"):
+                if parts[3] in ("advise", "advise_auto"):  # a bad scope / target or no provider: 400 before a task starts
+                    sc, _ = advisor.check(p.get("scope"), p.get("target"))
+                    if parts[3] == "advise_auto" and not sc.auto:
+                        raise SystemExit(f"Full AI does not change {sc.label}: use Recommend, then Apply suggestions")
+                    if not ai.available():
+                        raise SystemExit(f"AI recommendations need an AI provider. {ai.NO_PROVIDER}")
+                if parts[3] == "ai_help":  # a bad helper / target or no provider: 400 before a task starts
+                    advisor.helper_check(p.get("helper"), p.get("target"))
                 if parts[3] in ("pipeline_run", "pipeline_bulk"):
                     _check_pipeline(parts[3], p)
                 if parts[3] == "mock":

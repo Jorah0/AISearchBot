@@ -1,5 +1,56 @@
 # Changelog (development passes, newest first)
 
+## Pass 19 (2026-11-11): AI recommendations, Full AI and AI helpers
+
+Ask the AI to suggest edits to your own content in any tab, apply the ones you like with one click, let it apply
+everything safe on its own, and take any of it back.
+
+**An AI toolbar on every tab and card**
+- Profile, the profile bank, a job's Details and Documents, the answer bank, STAR stories (the list and each story),
+  Contacts (the tab and each contact), Search and Monitor (saved searches), Today, Insights and the Inbox (each email
+  waiting for approval) have the same four buttons: **Recommend**, **Apply suggestions**, **Full AI** and
+  **Undo AI changes**. This is about your content only, never the app's own code or settings.
+- **Recommend** makes one AI call and shows a card per suggestion: what the text says now and what it would say
+  (removed lines struck, added lines marked), the reason, and how big and how risky the change is. Nothing changes yet.
+- **Apply suggestions** writes the cards you ticked. (It is a different button from the profile import's
+  "Apply selected", which keeps its meaning.) A card whose text you changed since is skipped as stale.
+- **Full AI** asks the AI for suggestions and applies every one that passes the safety checks. The first time it asks
+  you to confirm and explains what it will never do: send mail, submit anything, change a job's status, add a job,
+  approve or propose an Inbox item, add a watch, or touch automation, privacy, provider settings or your saved keys.
+  Those are blocked in code while it writes, not only in the prompt. An Inbox draft it improves still waits for you.
+- **Undo AI changes** puts the last batch back exactly. A field you edited since keeps your version.
+- Setup > Data > **AI changes** lists every batch (Apply suggestions or Full AI, when, what changed, before and after)
+  with an Undo per batch.
+- Today and Insights give advice only; new saved searches and companies to watch are suggestions you add yourself.
+
+**Safety checks on every change**
+- Text an employer reads (profile, resume, cover letter, form answers, answers, stories, emails) gets no invented
+  facts: no new skill, number, title, degree, name, link or pay figure your profile does not already state. Your
+  salary floor and Preferences never get in.
+- Eligibility and EEO answers and answers you marked private are never sent to the AI or changed.
+- A form answer cannot add a new question to the form, and the "check this" note the pipeline puts under an answer it
+  was unsure about always stays; such an answer gets no credit for its own claims.
+- A job's details and a contact cannot gain a link, email address or phone number they did not have, so an
+  instruction hidden in a job posting cannot slip its own contact details into your to-dos; notes keep every line you
+  wrote (the AI may add lines).
+- Job postings, emails and company pages go to the AI marked as data, never as instructions.
+- Text you typed and have not saved is never thrown away: the job drawer keeps it (a message says the AI change is
+  saved), and on Profile the message tells you Save waits until the editor matches the file (Undo AI changes makes
+  Save work again).
+
+**AI help menus**
+- Each area has a folded **AI help** menu with one-click helpers, one AI call each, that only answer and change
+  nothing: What to do next and Plan my day (Board), Summarise the posting, Red flags, Questions to ask them, Likely
+  interview topics and Map my stories to this job (a job), Who to ask for a referral (Contacts), Draft an intro (a
+  contact), Fill STAR from my notes (a story: its suggestions land in the story's toolbar for you to apply), Explain my
+  numbers (Insights), Suggest search terms (Search), Companies like my targets (Monitor) and Explain this setting
+  (Setup and Tools).
+- Without an AI provider every AI button says it needs one; a local Ollama model counts.
+
+**Terminal**
+- `lodestar advise SCOPE [TARGET]` recommends, `--apply IDS`, `--auto` (Full AI), `--undo BATCH`, `--history`,
+  `--list`. `lodestar ai-help [NAME [TARGET]]` runs a helper or lists them.
+
 ## Pass 18 (2026-11-11): interview readiness and company-referenced questions
 
 Practise with the questions this company is known to ask, see how prepared you are for each interview, and get a

@@ -8,7 +8,7 @@ from datetime import datetime
 from email.message import EmailMessage
 from html.parser import HTMLParser
 
-from .config import ALERTS, setting
+from .config import ALERTS, full_ai_check, setting
 
 UA = "Mozilla/5.0 (compatible; lodestar/0.1; +https://github.com/)"
 MAIL_TIMEOUT = 60  # seconds per IMAP/SMTP socket operation: a server that accepts and goes quiet must not hang the loop
@@ -442,6 +442,7 @@ def smtp_open(host: str, port: int, mode: str):
 def send_email(to: str, subject: str, body: str, in_reply_to: str | None = None, attachments=None) -> str:
     """Send as the connected account over SMTP and return the Message-ID. The only outbound-mail path in lodestar.
     attachments: Paths already validated by mailfiles.resolve (approvals._send)."""
+    full_ai_check("sends mail")
     from email.utils import formatdate, make_msgid
 
     c, (pw, ready) = mail_settings(), mail_login()

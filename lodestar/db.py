@@ -5,7 +5,7 @@ import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 
-from .config import DB_PATH
+from .config import DB_PATH, full_ai_check
 
 # order matters: callers move a job only forward by index (accepted sits before the two closed states)
 STATUSES = ["saved", "applied", "screening", "interview", "offer", "accepted", "rejected", "withdrawn"]
@@ -84,6 +84,16 @@ CREATE TABLE IF NOT EXISTS qsets(job_id INTEGER PRIMARY KEY, company TEXT, fp TE
   data TEXT);            -- JSON: the stored AI part of the job's practice question set (interview.question_set)
 CREATE TABLE IF NOT EXISTS readiness_log(round_id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, at TEXT, score INTEGER,
   parts TEXT, rv INTEGER, ts TEXT DEFAULT (datetime('now','localtime')));  -- readiness when a round happened (local ts)
+-- AI advisor (advisor.py): recommended edits to your own content, and every change Apply / Full AI made (undo log)
+CREATE TABLE IF NOT EXISTS recommendations(id INTEGER PRIMARY KEY, scope TEXT NOT NULL, target INTEGER, field TEXT NOT NULL,
+  label TEXT, current TEXT, proposed TEXT, reason TEXT, impact TEXT, risk TEXT, flags TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | applied | rejected | stale (applying: being written)
+  batch INTEGER, note TEXT, created_at TEXT DEFAULT (datetime('now')), decided_at TEXT);
+CREATE INDEX IF NOT EXISTS recommendations_scope ON recommendations(scope, target, status);
+CREATE TABLE IF NOT EXISTS ai_changes(id INTEGER PRIMARY KEY, batch INTEGER NOT NULL, mode TEXT NOT NULL, scope TEXT NOT NULL,
+  target INTEGER, field TEXT NOT NULL, label TEXT, before TEXT, after TEXT, rec_id INTEGER,
+  ts TEXT DEFAULT (datetime('now')), undone_at TEXT);
+CREATE INDEX IF NOT EXISTS ai_changes_batch ON ai_changes(batch);
 """
 MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "TEXT",  # ponytail: additive only
               # tracker fields (pass 15); every user write goes through set_fields
@@ -334,6 +344,7 @@ def _now() -> str:
 def add_job(company, title, url=None, jd=None, notes=None, ats_feed=None, **fields) -> int:
     """fields: tracker fields the caller knows (a listing's location, posted_at). Source, remote and pay are derived
     from the notes and JD; a field given explicitly wins. ats_feed: the public job-board feed it came from."""
+    full_ai_check("adds jobs")
     given = {k: v for k, v in ((k, _clean(k, v)) for k, v in fields.items()) if v is not None}  # validated before insert
     if ats_feed:
         if not ATS_FEED_RE.fullmatch(str(ats_feed)):
@@ -420,6 +431,7 @@ def update_job(job_id: int, touch: bool = True, **fields) -> None:
 
 
 def set_status(job_id: int, status: str, detail: str = "") -> None:
+    full_ai_check("changes a job's status")
     if status not in STATUSES:
         raise SystemExit(f"status must be one of {STATUSES}")
     get_job(job_id)  # 'no job #N': a typo never writes an orphan timeline event the funnel would count
@@ -457,6 +469,8 @@ def delete_job(job_id: int) -> None:
     con().execute("DELETE FROM mail WHERE job_id=?", (job_id,))  # a reply to its sent mail then reads as unmatched
     for t in ("pipeline", "pipeline_runs", "question_waiters", "qsets", "readiness_log"):  # company_sources stay
         con().execute(f"DELETE FROM {t} WHERE job_id=?", (job_id,))
+    con().execute("DELETE FROM recommendations WHERE scope IN ('job', 'docs') AND target=? AND status IN ('pending', "
+                  "'approved')", (job_id,))  # the AI change log stays (an undo then reports the job gone)
     con().execute("UPDATE questions SET status='dismissed', answer='no longer needed', answered_at=? WHERE status='open' "
                   "AND NOT EXISTS (SELECT 1 FROM question_waiters w WHERE w.qid=questions.id)", (_now(),))
     con().execute("DELETE FROM jobs WHERE id=?", (job_id,))
@@ -572,6 +586,7 @@ def add_watch(url: str, keywords: str | None = "", filters: dict | None = None) 
     """filters: a saved search's filters, already validated (web_monitor.clean_filters); None keeps the ones it has
     (re-adding a saved search without filter fields never silently drops them), {} clears them. keywords None keeps
     its keywords too. True when a watch with this url already existed (updated, not added)."""
+    full_ai_check("adds or changes a watch (automation)")
     old = con().execute("SELECT keywords, filters FROM watches WHERE url=?", (url,)).fetchone()
     if filters is None:
         filters = watch_filters(old) if old else {}

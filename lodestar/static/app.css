@@ -223,3 +223,20 @@ body.vwopen { overflow: hidden; }
   .vwpanes { flex-direction: column; }
   .vwpanes iframe, #vwPdf { height: 70vh; min-height: 300px; }
 }
+
+/* ---- AI advisor toolbar (Recommend / Apply suggestions / Full AI / Undo AI changes) and its suggestion cards ---- */
+.aibar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 6px 0; }
+.aibar .ailbl { color: var(--acc-2); font-size: 12px; font-weight: 600; }
+.aihead { margin: 0 0 8px; }
+.advpanel:empty { display: none; }
+.advmsg { font-size: 12px; color: var(--dim); margin: 4px 0; } .advmsg.bad { color: var(--warn); }
+.advcard { border: 1px solid var(--line); border-left: 3px solid var(--acc); border-radius: 8px; padding: 8px 10px; margin: 6px 0; background: var(--panel-2); min-width: 0; }
+.advcard.flag { border-left-color: var(--warn); }
+.advcard .hd { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.advcard .hd label { min-width: 0; overflow-wrap: anywhere; }
+.advtext { white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0; }
+pre.advdiff { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; margin: 4px 0; }
+pre.advdiff del { color: var(--bad); text-decoration: line-through; } pre.advdiff ins { color: var(--ok); text-decoration: none; }
+details.aihist summary { cursor: pointer; overflow-wrap: anywhere; }
+details.aimenu { margin: 4px 0; } details.aimenu > summary { cursor: pointer; color: var(--acc-2); font-size: 12px; font-weight: 600; width: max-content; }
+details.aimenu .row { margin: 4px 0; } .aimenu .aitopic { max-width: 100%; } .aihelp:empty { display: none; }

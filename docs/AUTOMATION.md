@@ -313,3 +313,33 @@ address, always reviewed in the Inbox.
   can change (job, status-on-send and the unverified flag stay as proposed).
 - Mail trust is unchanged: replying to a mail does not make its sender trusted or the job's contact.
 - "Dismiss for now" snoozes a suggestion for 3 days through the `seen` table (`suggest:JOB:KIND`).
+
+### AI recommendations, Full AI and Undo (pass 19)
+
+- Every tab and card that holds your own content (profile.md sections, the profile bank, a job's details and
+  documents, the answer bank, STAR stories, contacts, saved searches, Today, Insights, Inbox drafts) has an AI
+  toolbar: **Recommend** (one AI call; nothing changes), **Apply suggestions** (writes only the cards you ticked),
+  **Full AI** (Recommend, then writes every suggestion that passes the guards) and **Undo AI changes**. Same from the
+  terminal: `lodestar advise SCOPE [TARGET]` with `--apply`, `--auto`, `--undo`, `--history`.
+- Full AI is not a tool switch and never acts on its own: it runs only when you click it (the first time it asks you
+  to confirm). While it writes, every path that sends mail, submits, changes a job's status, adds a job, proposes or
+  approves an Inbox item, adds a watch or a watched company, or writes settings, the vault or automation refuses
+  (`config.full_ai_check`). Today, Insights and new saved searches / companies are advice only; adding one stays your
+  click. An Inbox draft it improves stays pending until you approve it.
+- Guards on both Apply suggestions and Full AI: a field you changed since the suggestion is skipped (stale); text an
+  employer reads gets no invented fact (skill, number, title, degree, term, link) and never your salary floor or
+  Preferences; eligibility / EEO and private answers are never sent to a model or changed; a form answer may not add a
+  question heading, and the pipeline's "check this" note under an answer always stays (an answer marked that way gets
+  no credit for its own claims); a job's or contact's fields may not gain a link, email address or phone number the
+  field did not hold (a posting is third-party text: an instruction hidden in it cannot plant its own contact route in
+  your to-dos), and notes keep every line you wrote. Postings, mail and company pages go into prompts fenced as data.
+- Every write is logged as one batch (Setup > Data > AI changes, `lodestar advise --history`). Undo puts a batch back
+  exactly, newest first; a field you changed since keeps your version. profile.md changes go through the usual
+  snapshot, so profile-history/ has every version too.
+- Text you typed and have not saved is never thrown away by an AI change: the job drawer is not re-rendered over it
+  (a message says the change is saved), and on Profile the editor keeps your text; Save is refused until the editor
+  matches the file again (copy your text out and reload, or click Undo AI changes and Save works).
+- The AI help menus ("AI help" on Board, a job drawer, Contacts, each story, Insights, Search, Monitor, Setup and
+  Tools) answer one question each with one AI call and change nothing; Fill STAR from my notes puts its suggestions in
+  the story's toolbar, so only Apply suggestions writes them. Without an AI provider every AI control says it needs
+  one (a local Ollama model counts). Usage is recorded in `usage.jsonl` like every other call.
