@@ -759,6 +759,42 @@ def cmd_fit(a):
     print(fit.breakdown_text(job))
 
 
+def cmd_apply_agent(a):
+    """`lodestar apply-agent run|status|stop|continue|login|forget|runs`: the apply agent (docs/APPLY_AGENT.md)."""
+    from . import apply_agent
+
+    if a.op == "run":
+        for r in apply_agent.run_foreground(a.ids, a.mode, True if a.eeo else None, a.headless):
+            print(f"#{r['job_id']}: " + (f"refused: {r['error']}" if "error" in r else
+                                         f"run #{r['run_id']} {r['mode']} -> {r['state']}"
+                                         + (f" ({'; '.join(r['reasons'])})" if r.get("reasons") else "")))
+    elif a.op == "status":
+        st = apply_agent.status()
+        print(st["available"] or "the apply agent is available")
+        for r in st["live"] + st["recent"]:
+            print(f"run #{r['id']} #{r['job_id']} {r['company']} - {r['title']}: {r['state']} ({r['mode']}) {r['step'] or ''}"
+                  + (f" confirmation {r['confirmation']}" if r["confirmation"] else "") + (f" error: {r['error']}" if r["error"] else ""))
+            for n in r["needs"] or []:
+                print(f"    needs you: {n.get('label') or n.get('reason')}: {n.get('hint')}")
+        print(f"{st['queue']} queued")
+    elif a.op == "stop":
+        r = apply_agent.stop()
+        print(f"stop sent (works across processes); {r['queued_stopped']} queued run(s) stopped")
+    elif a.op == "continue":
+        apply_agent.continue_run(a.run)
+        print(f"run #{a.run}: continuing")
+    elif a.op == "login":
+        r = apply_agent.login_window(a.url)
+        print(f"sign-in window open at {r['url']}: sign in, then close the window before running the agent")
+    elif a.op == "forget":
+        r = apply_agent.forget_logins()
+        print("the agent's browser profile (its sign-ins) was deleted" if r["removed"] else "no agent profile to delete")
+    elif a.op == "runs":
+        for r in db.runs_for(a.id):
+            print(f"run #{r['id']} {r['state']} ({r['mode']}, {r['submitted_by'] or 'not submitted'}) {r['submitted_at'] or ''} "
+                  f"{r['confirmation'] or ''} {r['evidence'] or ''}".rstrip())
+
+
 def cmd_intel(a):
     """`lodestar intel ID [--gather|--refresh] [--summary]`: the job's public facts with their sources and dates."""
     from . import intel
@@ -2008,6 +2044,21 @@ def build() -> argparse.ArgumentParser:
     s = sub.add_parser("fit", help="fit score: one job's breakdown (parts, weights, chips), or `fit refresh` for every stale one (no AI)")
     s.add_argument("target", help="a job id, or 'refresh'"); s.add_argument("--limit", type=int, default=300, help="refresh: at most this many")
     s.set_defaults(f=cmd_fit)
+
+    s = sub.add_parser("apply-agent", help="the apply agent: fills an application in its own browser window (stop: you press "
+                                           "Submit; review: the Inbox first; auto: within every gate)")
+    v = s.add_subparsers(dest="op", required=True)
+    x = v.add_parser("run", help="apply to these jobs now, one at a time (Ctrl+C stops; the window closes with it)")
+    x.add_argument("ids", type=int, nargs="+"); x.add_argument("--mode", choices=("stop", "review", "auto"))
+    x.add_argument("--eeo", action="store_true", help="type your saved EEO answers"); x.add_argument("--headless", action="store_true")
+    v.add_parser("status", help="live and recent runs, and what they need from you")
+    v.add_parser("stop", help="stop the agent (any process); its tabs stay open while Lodestar runs")
+    x = v.add_parser("continue", help="continue a run after you signed in, typed a code or allowed a host"); x.add_argument("run", type=int)
+    x = v.add_parser("login", help="a plain browser window on the agent's profile: sign in to a site once, by hand")
+    x.add_argument("url", nargs="?")
+    v.add_parser("forget", help="delete the agent's browser profile (every site sign-in it holds)")
+    x = v.add_parser("runs", help="a job's runs: outcome, who submitted, confirmation, evidence folder"); x.add_argument("id", type=int)
+    s.set_defaults(f=cmd_apply_agent)
 
     s = sub.add_parser("intel", help="job intelligence: company facts and news, hiring signals, role and pay context, "
                                      "each with its source and date")

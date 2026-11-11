@@ -84,24 +84,40 @@
 
   const radios = (el) => [...(el.form || el.getRootNode()).querySelectorAll(`input[type="radio"][name="${CSS.escape(el.name)}"]`)];
 
-  globalThis.LodestarScan = () => {
+  function agentExtra(el, d) {  // the apply agent's scan (Lodestar's own window): state its plan needs, read only
+    const group = d.type === "radio" ? radios(el) : [el];
+    const value = d.type === "radio" ? clean((group.find((r) => r.checked) || {}).value)
+      : d.type === "checkbox" ? String(el.checked) : d.type === "file" ? clean([...(el.files || [])].map((f) => f.name).join(","))
+      : d.tag === "widget" ? clean(txt(el)) : String(el.value || "").slice(0, 4000);
+    group.forEach((r) => r.setAttribute("data-lodestar-i", String(d.i)));
+    return { ...d, required: Boolean(el.required || el.getAttribute("aria-required") === "true" || /\*\s*$/.test(txt(el.labels && el.labels[0]))),
+      value, help: byIds(el, el.getAttribute("aria-describedby")), maxlength: el.maxLength > 0 ? el.maxLength : null,
+      hidden: d.type === "file" ? !visible(el) : false };
+  }
+
+  // opts.agent: the apply agent (lodestar/apply_ats.py, its own window, never the extension): checkboxes and every file
+  // input too, each element tagged data-lodestar-i so Lodestar finds it again, plus required / value / help
+  globalThis.LodestarScan = (opts) => {
     if (M.linkedin(location.hostname)) return { error: M.LINKEDIN, fields: [], questions: [], atsFrames: [] };
+    const agent = Boolean(opts && opts.agent);
+    if (agent) for (const el of walk(document)) el.removeAttribute("data-lodestar-i");  // a new step: fresh numbers only
     const heads = [...document.querySelectorAll('h1, h2, h3, h4, h5, h6, legend, [role="heading"]')];
     const seenRadio = new Set(), out = [];
     for (const el of walk(document)) {
       const type = el.tagName === "INPUT" ? (el.getAttribute("type") || "").toLowerCase() : "";
-      if (SKIP.has(type)) continue;
+      if (SKIP.has(type) && !(agent && type === "checkbox")) continue;
       if (type === "radio") {  // one descriptor per group, visible when any option or its label is
         if (seenRadio.has(el.name)) continue;
         seenRadio.add(el.name);
         if (!radios(el).some((r) => visible(r) || [...(r.labels || [])].some(visible))) continue;
       } else if (type === "file") {
-        if (!/resume|r[ée]sum[ée]|\bcv\b/i.test(labelOf(el) + attr(el, "name") + attr(el, "id"))) continue;
+        if (!agent && !/resume|r[ée]sum[ée]|\bcv\b/i.test(labelOf(el) + attr(el, "name") + attr(el, "id"))) continue;
       } else if (!visible(el)) continue;
       out.push({ el, d: descriptor(el, out.length, heads) });
       if (out.length >= 400) break;
     }
     M.groups(out.map((f) => f.d));
+    if (agent) return { fields: out.map((f) => ({ ...agentExtra(f.el, f.d), key: f.d.type === "file" ? "file" : M.classify(f.d) })) };
     st.fields = out.map((f) => ({ el: f.el, d: f.d, key: f.d.type === "file" ? "resume" : M.classify(f.d) }));
     const markers = Object.keys(M.MARKERS).filter((k) => document.querySelector(M.MARKERS[k]));
     const frames = [...document.querySelectorAll("iframe[src]")].map((f) => M.atsFrame(f.getAttribute("src"), location.origin)).filter(Boolean);

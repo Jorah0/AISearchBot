@@ -99,6 +99,17 @@ CREATE INDEX IF NOT EXISTS ai_changes_batch ON ai_changes(batch);
 CREATE TABLE IF NOT EXISTS paydata(soc TEXT NOT NULL, area TEXT NOT NULL, year INTEGER, mean INTEGER, p10 INTEGER,
   p25 INTEGER, p50 INTEGER, p75 INTEGER, p90 INTEGER, capped TEXT, fetched_at TEXT DEFAULT (datetime('now')),
   PRIMARY KEY(soc, area));
+-- apply agent runs (apply_agent.py): one row per attempt; at most one live run per job (partial unique index)
+CREATE TABLE IF NOT EXISTS apply_runs(id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL,
+  mode TEXT NOT NULL CHECK(mode IN ('stop','review','auto')), state TEXT NOT NULL DEFAULT 'queued',
+  ats TEXT, url TEXT, step TEXT, plan TEXT, plan_hash TEXT, answers TEXT, needs TEXT, pending_id INTEGER,
+  eeo INTEGER NOT NULL DEFAULT 0, submit_clicks INTEGER NOT NULL DEFAULT 0, hosts TEXT, reasons TEXT,
+  submitted_by TEXT CHECK(submitted_by IN ('user','approved','auto')), submitted_at TEXT, confirmation TEXT,
+  evidence TEXT, error TEXT, heartbeat TEXT,
+  created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
+CREATE INDEX IF NOT EXISTS apply_runs_job ON apply_runs(job_id);
+CREATE UNIQUE INDEX IF NOT EXISTS apply_runs_live ON apply_runs(job_id)
+  WHERE state IN ('queued','running','needs_you','ready','awaiting_approval','approved','submitting');
 """
 MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "TEXT",  # ponytail: additive only
               # tracker fields (pass 15); every user write goes through set_fields
@@ -111,7 +122,8 @@ MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "T
               "soc": "TEXT", "soc_by": "TEXT",  # market pay occupation (paydata.set_soc / match_ai): NN-NNNN or none; user | ai
               # fit score (fit.py, code-set, never a user field): score 0-100, the breakdown JSON, the fit.rev() it was
               # scored at (stale when it differs), the score when the job left 'saved', the AI part {score, why, at}
-              "fit_score": "INTEGER", "fit": "TEXT", "fit_rev": "TEXT", "fit_applied": "INTEGER", "ai_fit": "TEXT"}
+              "fit_score": "INTEGER", "fit": "TEXT", "fit_rev": "TEXT", "fit_applied": "INTEGER", "ai_fit": "TEXT",
+              "apply_url": "TEXT"}  # the employer's application link the apply agent opens (set_fields, http(s) only)
 WATCH_MIGRATIONS = {"filters": "TEXT",  # JSON search filters of a saved search (web_monitor.clean_filters)
                     "last_error": "TEXT"}  # what the last run could not read (shown on the watch); NULL after a clean run
 ANSWER_MIGRATIONS = {"star": "TEXT",  # JSON STAR fields when the row is a story (interview.save_story); NULL = a form answer
@@ -214,7 +226,7 @@ def _contacts_from_jobs(c: sqlite3.Connection) -> int:
 # --- tracker fields ---------------------------------------------------------
 REMOTE = ("onsite", "hybrid", "remote")
 REMOTE_BOARDS = ("remotive", "remoteok", "jobicy", "himalayas", "wwr")  # job APIs that only list remote roles
-_TEXT = {"location": 120, "source": 60, "next_action": 200}
+_TEXT = {"location": 120, "source": 60, "next_action": 200, "apply_url": 2048}
 _INT = {"salary_min": (0, 10_000_000), "salary_max": (0, 10_000_000), "excitement": (1, 5), "match_score": (0, 100)}
 _DATE = ("posted_at", "deadline", "next_action_at")
 FIELDS = (*_TEXT, *_INT, *_DATE, "remote", "currency", "tags")
@@ -296,6 +308,8 @@ def _clean(k: str, v):
         return ",".join(tags) or None
     if len(s) > _TEXT[k]:
         raise SystemExit(f"{k} is longer than {_TEXT[k]} characters")
+    if k == "apply_url" and not re.fullmatch(r"https?://[^\s/?#]+[^\s]*", s, re.I):
+        raise SystemExit("apply_url must be an http(s) link")
     return s
 
 
@@ -497,7 +511,7 @@ def delete_job(job_id: int) -> None:
     con().execute("DELETE FROM mock_sessions WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM offers WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM mail WHERE job_id=?", (job_id,))  # a reply to its sent mail then reads as unmatched
-    for t in ("pipeline", "pipeline_runs", "question_waiters", "qsets", "readiness_log"):  # company_sources stay
+    for t in ("pipeline", "pipeline_runs", "question_waiters", "qsets", "readiness_log", "apply_runs"):  # company_sources stay
         con().execute(f"DELETE FROM {t} WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM recommendations WHERE scope IN ('job', 'docs') AND target=? AND status IN ('pending', "
                   "'approved')", (job_id,))  # the AI change log stays (an undo then reports the job gone)
@@ -600,7 +614,9 @@ BOOKKEEPING = ("proposed", "rejected_proposal", "send_failed", "set_status", "ad
                # the listing monitor and job-alert mail watch the posting, not the employer talking to you
                "posting_removed", "posting_changed", "posting_reopened", "posting_reposted", "listing_seen",
                # documents built for the job (a drawer click or a pipeline step): your prep, not contact with the employer
-               "gap", "research", "bullets", "resume", "coverage", "cover_letter", "interview_prep")
+               "gap", "research", "bullets", "resume", "coverage", "cover_letter", "interview_prep",
+               # the apply agent's Inbox decision and evidence note (the 'applied' status change is the activity)
+               "submit_application", "apply_evidence")
 
 
 def needs_followup(days: int | None = None):
@@ -850,6 +866,67 @@ def followup_waiting(job_id: int):
     """The follow-up email for this job already waiting in the Inbox (a pending row), or None: no second one is added."""
     return con().execute("SELECT * FROM pending WHERE job_id=? AND kind='send_email' AND status='pending' "
                          "AND json_extract(payload, '$.purpose')='followup' ORDER BY id LIMIT 1", (job_id,)).fetchone()
+
+
+# --- apply agent runs (apply_agent.py) ------------------------------------------
+LIVE_RUN = ("queued", "running", "needs_you", "ready", "awaiting_approval", "approved", "submitting")
+_RUN_JSON = ("plan", "answers", "needs", "hosts", "reasons")
+
+
+def add_run(job_id: int, mode: str, eeo: bool = False, answers: dict | None = None) -> int:
+    """A queued run; a second live run for the same job is refused (partial unique index)."""
+    try:
+        cur = con().execute("INSERT INTO apply_runs(job_id, mode, eeo, answers) VALUES(?,?,?,?)",
+                            (job_id, mode, int(bool(eeo)), json.dumps(answers or {})))
+    except sqlite3.IntegrityError:
+        release(close=False)
+        live = con().execute(f"SELECT id FROM apply_runs WHERE job_id=? AND state IN {LIVE_RUN}", (job_id,)).fetchone()
+        raise SystemExit(f"#{job_id}: the apply agent is already on it (run #{live['id'] if live else '?'})") from None
+    con().commit()
+    return cur.lastrowid
+
+
+def get_run(rid: int) -> dict:
+    """The run as a dict, JSON columns decoded."""
+    row = con().execute("SELECT * FROM apply_runs WHERE id=?", (rid,)).fetchone()
+    if not row:
+        raise SystemExit(f"no apply run #{rid}")
+    d = dict(row)
+    for k in _RUN_JSON:
+        try:
+            d[k] = json.loads(d[k]) if d[k] else ({} if k == "answers" else [])
+        except ValueError:
+            d[k] = {} if k == "answers" else []
+    return d
+
+
+def update_run(rid: int, **fields) -> None:
+    for k in _RUN_JSON:
+        if k in fields and not isinstance(fields[k], str | None):
+            fields[k] = json.dumps(fields[k])
+    fields["updated_at"] = _now()
+    con().execute(f"UPDATE apply_runs SET {', '.join(k + '=?' for k in fields)} WHERE id=?", (*fields.values(), rid))
+    con().commit()
+
+
+def claim_run(rid: int, frm: str, to: str, **fields) -> bool:
+    """state frm -> to in one statement (plus fields): False when another thread or process got there first."""
+    for k in _RUN_JSON:
+        if k in fields and not isinstance(fields[k], str | None):
+            fields[k] = json.dumps(fields[k])
+    fields |= {"state": to, "updated_at": _now()}
+    cur = con().execute(f"UPDATE apply_runs SET {', '.join(k + '=?' for k in fields)} WHERE id=? AND state=?",
+                        (*fields.values(), rid, frm))
+    con().commit()
+    return cur.rowcount == 1
+
+
+def live_runs() -> list[dict]:
+    return [get_run(r["id"]) for r in con().execute(f"SELECT id FROM apply_runs WHERE state IN {LIVE_RUN} ORDER BY id")]
+
+
+def runs_for(job_id: int) -> list[dict]:
+    return [get_run(r["id"]) for r in con().execute("SELECT id FROM apply_runs WHERE job_id=? ORDER BY id DESC", (job_id,))]
 
 
 # --- answer bank ------------------------------------------------------------

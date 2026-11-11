@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Example Robotics - Data Engineer - Apply</title>
+<!-- A fictional two-step application form for the apply agent's browser tests (tests/e2e/e2e_apply_agent.py). -->
+<style>body{font:15px system-ui;margin:24px;max-width:640px} label{display:block;margin:10px 0 4px} input,select{width:100%;padding:4px}
+input[type=checkbox]{width:auto} [aria-invalid=true]{outline:2px solid #c00} button{margin-top:14px;padding:6px 14px}</style>
+</head><body>
+<h1>Example Robotics: Data Engineer</h1>
+<section id="login" hidden><h2>Sign in</h2><label for="user">Email</label><input id="user" type="email">
+  <label for="pw">Password</label><input id="pw" type="password"><button type="button" id="signin">Sign in</button></section>
+<form id="app" onsubmit="return false">
+  <section data-step="1"><h2>Your details</h2>
+    <label for="first_name">First Name *</label><input id="first_name" name="first_name" required>
+    <label for="last_name">Last Name *</label><input id="last_name" name="last_name" required>
+    <label for="email">Email *</label><input id="email" name="email" type="email" required>
+    <label for="phone">Phone</label><input id="phone" name="phone" type="tel">
+    <button type="button" data-next>Next</button>
+  </section>
+  <section data-step="2" hidden><h2>Application</h2>
+    <label for="resume">Resume/CV *</label><input id="resume" name="resume" type="file" required>
+    <label for="heard">How did you hear about us?</label>
+    <select id="heard" name="heard"><option value="">Select...</option><option value="board">Job board</option><option value="site">Company website</option></select>
+    <label for="gender">Gender</label>
+    <select id="gender" name="gender"><option value="">Select...</option><option value="f">Female</option><option value="m">Male</option><option value="d">Decline to self-identify</option></select>
+    <label><input type="checkbox" id="consent" name="consent" required> I agree to the privacy policy *</label>
+    <button type="button" id="submit">Submit application</button>
+  </section>
+  <section data-step="code" hidden><h2>Check your email</h2>
+    <p>Enter the verification code we sent to your email.</p>
+    <label for="otp">Code</label><input id="otp" autocomplete="one-time-code"><button type="button" id="verify">Verify</button>
+  </section>
+</form>
+<p id="err" role="alert"></p>
+<script src="fixture.js"></script>
+</body></html>

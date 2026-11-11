@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import __version__, advisor, ai, apply, approvals, codes, comp, connections, db, extension, extras, log, loop, mailconn, oauth, paydata, pipeline, settings, vault
+from . import __version__, advisor, ai, apply, apply_agent, approvals, codes, comp, connections, db, extension, extras, log, loop, mailconn, oauth, paydata, pipeline, settings, vault
 from .config import ALERTS, PROFILE
 
 STATIC = Path(__file__).parent / "static"
@@ -820,6 +820,17 @@ def _pipeline_summary() -> dict:
     return summ
 
 
+def _apply_state() -> dict:
+    try:
+        return apply_agent.status(brief=True)
+    except (Exception, SystemExit) as e:  # the page never fails on the agent's state
+        db.release(close=False)
+        return {"available": f"apply agent state unavailable: {e}"[:200], "live": [], "queue": 0}
+
+
+SHOT_RE = re.compile(r"(?:page-\d{2}|confirmation)\.png")
+
+
 def state() -> dict:
     from . import interview
     from .ideas import merged as ideas_merged
@@ -849,6 +860,7 @@ def state() -> dict:
         "setup": setup_status(conn),
         "connections": conn,
         "codes_count": len(codes.current()),  # the count only: a code never travels in the state
+        "apply": _apply_state(),  # the apply agent: available, live runs, queue (apply_agent.status)
         "loop": dict(loop.STATUS),
         "jobs": [_job_view(j, idx, revs, pidx, frev) for j in db.list_jobs()],
         "fit_rev": frev,  # a job whose fit was scored at another rev is stale (dimmed); the page asks for a refresh
@@ -1011,6 +1023,21 @@ class Handler(BaseHTTPRequestHandler):
                 s = interview.question_set(job)  # the full set: every string is escaped client-side
                 self._json({k: s[k] for k in ("questions", "emphasis", "emphasis_text", "hits", "dropped", "by_source",
                                               "stale", "built_at", "ai_at", "ai_error", "site")})
+            elif path == "/api/apply/status":  # the apply agent: live runs, the queue, the last 10 runs
+                self._json(apply_agent.status())
+            elif re.fullmatch(r"/api/apply/\d+/shot/[^/]+", path):  # a run's screenshot, by exact name only
+                rid, name = int(path.split("/")[3]), path.split("/")[5]
+                ev = db.get_run(rid)["evidence"]
+                if not SHOT_RE.fullmatch(name) or not ev or not (Path(ev) / name).is_file():
+                    return self._json({"error": "not found"}, 404)
+                body = (Path(ev) / name).read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
             elif path == "/api/boosters":  # Insights: chance boosters across the search (rules only, no AI, no network)
                 from . import boosters
 
@@ -1250,6 +1277,22 @@ class Handler(BaseHTTPRequestHandler):
         try:
             p = self._body()
             parts = path.split("/")
+            if path.startswith("/api/apply/"):  # the apply agent (apply_agent.py): every route needs the page token
+                if path == "/api/apply/start":  # {ids: [...], mode?, eeo?}
+                    ids = p.get("ids") if isinstance(p.get("ids"), list) else [p.get("id")]
+                    mode = p.get("mode") if p.get("mode") in apply_agent.MODES else None
+                    eeo = p.get("eeo") if isinstance(p.get("eeo"), bool) else None
+                    runs = apply_agent.enqueue(ids[:200], mode, eeo)
+                    return self._json({"runs": [r for r in runs if "run_id" in r], "refused": [r for r in runs if "error" in r]})
+                if path == "/api/apply/stop":
+                    return self._json(apply_agent.stop())
+                if path == "/api/apply/login":  # {url?}: the plain sign-in window on the agent's profile
+                    return self._json(apply_agent.login_window(p.get("url") or None))
+                if path == "/api/apply/forget":
+                    return self._json(apply_agent.forget_logins())
+                if re.fullmatch(r"/api/apply/\d+/continue", path):
+                    return self._json(apply_agent.continue_run(int(parts[3])))
+                return self._json({"error": "not found"}, 404)
             if path == "/api/jobs":
                 from html import unescape
 

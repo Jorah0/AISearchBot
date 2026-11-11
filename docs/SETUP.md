@@ -342,7 +342,7 @@ your switches through, and pauses at the end so you can read the output).
 | Step | Result |
 |---|---|
 | Python check | Stops with "Python 3.11+ is required" if `python` is missing or older than 3.11. |
-| `[1/6]` environment | Creates `.venv` in the install folder (kept if it exists), upgrades pip, installs Lodestar in editable mode with the `all` extras (`pip install -e ".[all]"`: the desktop window and PDF import). |
+| `[1/6]` environment | Creates `.venv` in the install folder (kept if it exists), upgrades pip, installs Lodestar in editable mode with the `all` extras (`pip install -e ".[all]"`: the desktop window, PDF import and the apply agent's Playwright; `.[apply]` alone adds only the agent). |
 | `[2/6]` data files | Runs `lodestar init` (data folder, `profile.md` template, tracker database) and makes sure `applications\` and `snapshots\` exist. The data folder is `%USERPROFILE%\.lodestar`, or `LODESTAR_HOME` if set in that PowerShell session. |
 | `[3/6]` .env | Copies `.env.example` to `.env` in the install folder if you do not have one. |
 | `[4/6]` shortcuts | On the Desktop and in the Start Menu folder `Lodestar`: **Lodestar** (runs `lodestar desktop`: the window with the monitor loop inside) and **Lodestar monitor** (runs `lodestar run --every N`: the loop only, in a console window). Both use `assets\lodestar.ico` and start in the install folder. Old lower-case shortcuts from earlier versions are removed. |

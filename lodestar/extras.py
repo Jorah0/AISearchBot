@@ -695,11 +695,12 @@ def ext_autofill(questions: list[str], eeo: bool = False, salary: bool = False, 
 
 # ----------------------------------------------------------------------------- backup + restore + export
 SKIP_DIRS = {"backups", "snapshots", "cache", "__pycache__", "procs",
-             "mail"}  # applications/*/mail/: received attachments, still in the mailbox (up to 25 MB a message)
+             "mail",  # applications/*/mail/: received attachments, still in the mailbox (up to 25 MB a message)
+             "browser-profile"}  # the apply agent's browser profile: live site sign-ins (cookies), hundreds of MB
 # .env may hold keys or IMAP_PASS in clear text; extension.json holds the paired browsers' secrets (a restore must never
 # bring back a revoked one); capture.token is the running server's bookmarklet token; update-state.json would make the
 # next start "finish" an update that is not happening: none goes in a zip, and a restore never touches them
-SKIP_NAMES = {".env", "extension.json", "capture.token", "update-state.json"}
+SKIP_NAMES = {".env", "extension.json", "capture.token", "update-state.json", "apply-agent.stop"}
 
 
 def in_backup(rel: Path) -> bool:

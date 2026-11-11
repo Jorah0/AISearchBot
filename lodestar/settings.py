@@ -46,6 +46,11 @@ TOOLS = {
                      "(never eligibility or EEO)", True, False),
     "interview_prep": ("Pipeline: write the interview prep pack once an interview is booked", True, False),
     "thank_you": ("Pipeline: draft a thank-you after an interview round; the email always waits in the Inbox", True, True),
+    # apply agent (apply_agent.py): off = it fills the form in its own window and stops before Submit (you press it);
+    # on = each submission waits in the Inbox with screenshots; auto = it submits on its own, only within every gate
+    "apply_agent": ("Apply agent: submit applications in its own browser window. Off = it fills and stops before Submit; "
+                    "on = each submission waits in the Inbox with screenshots; auto = it submits on its own within the "
+                    "caps (docs/APPLY_AGENT.md)", False, False),
 }
 PREFS = {
     "name": "",
@@ -93,6 +98,12 @@ PREFS = {
     "years_experience": 0,  # 0: counted from the roles in your profile
     "auto_track_daily_max": 10,  # auto_track proposals a day at most (alerts can bring 100 listings a day)
     "adzuna_country": "us",  # Adzuna's country site (two letters) once ADZUNA_APP_ID / ADZUNA_APP_KEY are linked
+    # apply agent: stop = you press Submit; review = the Inbox first; auto = every gate in apply_agent.auto_blockers
+    "apply_agent_mode": "stop",
+    "apply_agent_daily_cap": 5,
+    "apply_agent_min_fit": 80,
+    "apply_agent_auto_ats": "",  # comma list of ATS names auto may submit on; ships with none
+    "apply_agent_eeo": False,
 }
 PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "name": ("Your name", "signs drafted emails when no signature is set"),
@@ -140,6 +151,13 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
                              "scored in your results (0-100)"),
     "adzuna_country": ("Adzuna country", "two letters, e.g. us, gb, de, ca, au: which Adzuna site searches go to "
                        "(only with an Adzuna key, Setup > Job sources)"),
+    "apply_agent_mode": ("Apply agent mode", "stop: it fills and you press Submit; review: each submission waits in the "
+                         "Inbox; auto: it submits on its own (tool apply_agent on auto, every gate passed)"),
+    "apply_agent_daily_cap": ("Apply agent: automatic submissions a day", "at most this many (0-25)"),
+    "apply_agent_min_fit": ("Apply agent: minimum fit for auto", "auto submits only jobs whose fit score is at least this (0-100)"),
+    "apply_agent_auto_ats": ("Apply agent: sites for auto", "comma list of application systems auto may submit on "
+                             "(greenhouse, lever, ashby, ...); empty: none"),
+    "apply_agent_eeo": ("Apply agent: include EEO answers", "type your saved EEO answers into forms by default"),
 }
 CHOICES = {"resume_style": ("classic", "modern", "compact"),  # prefs limited to a fixed set of values
            "provider": ("", *PROVIDERS),  # "" = the first configured one
@@ -147,11 +165,13 @@ CHOICES = {"resume_style": ("classic", "modern", "compact"),  # prefs limited to
            "bookmarklets": ("auto", "on", "off"),
            "work_authorization": ("", "authorized", "needs_sponsorship"),
            # web_monitor.SENIORITY (settings must not import web_monitor; test_pass21_fit checks they agree)
-           "target_seniority": ("", "intern", "junior", "mid", "senior", "staff", "lead", "manager")}
+           "target_seniority": ("", "intern", "junior", "mid", "senior", "staff", "lead", "manager"),
+           "apply_agent_mode": ("stop", "review", "auto")}
 RANGES = {"followup_days": (1, 90), "auto_track_min_score": (0, 100), "weekly_target": (0, 200),
           "activity_weekly_min": (0, 100), "update_every_hours": (1, 720),
           "autopilot_ai_per_cycle": (0, 500), "autopilot_ai_per_day": (0, 500), "autopilot_jobs_per_cycle": (0, 50),
-          "years_experience": (0, 60), "auto_track_daily_max": (0, 100)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
+          "years_experience": (0, 60), "auto_track_daily_max": (0, 100),
+          "apply_agent_daily_cap": (0, 25), "apply_agent_min_fit": (0, 100)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
 GOALS = ("contacts", "tailored_applications", "mock_sessions", "applications")  # quality first, raw volume last
 
 
@@ -261,6 +281,13 @@ def set_pref(key: str, value) -> None:
             value = str(value or "").strip().lower()
             if len(value) != 2 or not value.isascii() or not value.isalpha():
                 raise SystemExit("adzuna_country is a two-letter country code, e.g. us, gb, de")
+        if key == "apply_agent_auto_ats":  # names the apply agent knows (apply_ats.ATS); unknown ones are refused
+            from .apply_ats import ATS
+
+            names = [x.strip().lower() for x in str(value or "").split(",") if x.strip()]
+            if bad := [x for x in names if x not in ATS]:
+                raise SystemExit(f"unknown application system {bad[0][:30]!r}. Known: {', '.join(ATS)}")
+            value = ",".join(dict.fromkeys(names))
         if key in CHOICES and value not in CHOICES[key]:
             raise SystemExit(f"{key} is one of: {', '.join(c or '(empty: automatic)' for c in CHOICES[key])}")
         data = load()

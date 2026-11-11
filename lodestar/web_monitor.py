@@ -311,9 +311,9 @@ def _recruitee(slug, company):
 
 
 def _personio(slug, company):
-    import xml.etree.ElementTree as ET
+    from .util import parse_xml
 
-    root = _vendor_get("Personio", FEEDS["personio"].format(slug=slug), parse=lambda u: ET.fromstring(fetch(u)))
+    root = _vendor_get("Personio", FEEDS["personio"].format(slug=slug), parse=lambda u: parse_xml(fetch(u)))
     out = []
     for pos in root.iter("position"):
         desc = "\n\n".join(strip_html(f"{d.findtext('name') or ''}\n{d.findtext('value') or ''}")
@@ -825,10 +825,10 @@ def _himalayas(q):
 
 def _wwr(q):
     """We Work Remotely's public RSS (attribution: every listing links back to its item). One fetch an hour for every
-    query (GLOBAL), filtered here. xml.etree: the bundled expat refuses entity-expansion bombs; fetch caps the size."""
-    import xml.etree.ElementTree as ET
+    query (GLOBAL), filtered here. util.parse_xml refuses any DOCTYPE/ENTITY declaration; fetch caps the size."""
+    from .util import parse_xml
 
-    root = ET.fromstring(_cached("wwr", "https://weworkremotely.com/remote-jobs.rss", parse=fetch))
+    root = parse_xml(_cached("wwr", "https://weworkremotely.com/remote-jobs.rss", parse=fetch))
     words, out = _words_in(q), []
     for it in root.iter("item"):
         head, desc = (it.findtext("title") or "").strip(), (it.findtext("description") or "").strip()

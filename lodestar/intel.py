@@ -100,14 +100,13 @@ class _Head(HTMLParser):
 
 
 def _feed(xml: str) -> list[dict]:
-    """RSS <item> or Atom <entry>: {title, url, date}, newest first, at most NEWS_MAX. xml.etree: the bundled expat
-    refuses entity-expansion bombs; util.fetch caps the size."""
-    import xml.etree.ElementTree as ET
-
+    """RSS <item> or Atom <entry>: {title, url, date}, newest first, at most NEWS_MAX. util.parse_xml refuses any
+    DOCTYPE/ENTITY declaration; util.fetch caps the size."""
+    from .util import parse_xml
     from .web_monitor import _when
 
     out = []
-    for it in ET.fromstring(xml).iter():
+    for it in parse_xml(xml).iter():
         if it.tag.rsplit("}", 1)[-1] not in ("item", "entry"):
             continue
         kids = {c.tag.rsplit("}", 1)[-1]: c for c in it}

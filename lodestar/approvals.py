@@ -57,6 +57,8 @@ def approve(pid: int, edits: dict | None = None) -> dict:
     if edits is not None and not isinstance(edits, dict):  # checked before the claim, or the item would stick claimed
         raise ValueError("edits must be a JSON object")
     row = db.get_pending(pid)
+    if row["kind"] == "submit_application":  # a submission is never edited through the payload (Fix answers refills)
+        edits = None
     if edits and row["kind"] == "send_email":  # the Inbox textarea path: only what the card lets you edit
         edits = {k: v for k, v in edits.items() if k in MAIL_EDITS}
     if row["status"] == "pending":
@@ -244,5 +246,40 @@ def _note(p: dict) -> str:
     return "noted"
 
 
+def _submit_app(p: dict) -> str:
+    """Approve a filled application: the agent window that holds it submits it (apply_agent._watch sees 'approved')."""
+    from . import apply_agent
+
+    run = db.get_run(int(p["run_id"]))
+    if run["job_id"] != p.get("job_id") or run["plan_hash"] != p.get("plan_hash"):
+        raise Stale("stale: the form changed since this was proposed; the newer version is in the Inbox")
+    if not apply_agent.alive(run):
+        raise Stale(f"stale: the agent window for run #{run['id']} is closed; use Apply for me again (your answers are kept)")
+    if why := apply_agent.already_submitted(run["job_id"], but=run["id"]):
+        raise Stale(f"stale: {why}; nothing was sent")
+    by = "auto" if run["mode"] == "auto" else "approved"
+    if not db.claim_run(run["id"], "awaiting_approval", "approved", submitted_by=by):
+        raise Stale(f"stale: run #{run['id']} is {db.get_run(run['id'])['state']}")
+    job = db.get_job(run["job_id"])
+    return (f"approved: Lodestar submits #{job['id']} {job['company']} in the agent window; it moves to applied when the "
+            "employer's confirmation page appears")
+
+
+def record_submission(run_id: int) -> str:
+    """After the agent saw the confirmation page of a submission whose Inbox item was approved (by you, or by the auto
+    tool): the job moves to applied with the evidence. Reachable only for an approved submit_application item."""
+    run = db.get_run(run_id)
+    item = db.get_pending(run["pending_id"]) if run["pending_id"] else None
+    if run["state"] != "confirmed" or not item or item["kind"] != "submit_application" or item["status"] != "done":
+        raise SystemExit(f"run #{run_id} has no approved, confirmed submission to record")
+    job = db.get_job(run["job_id"])
+    note = (f"(apply agent run #{run_id}, {'automatic' if run['submitted_by'] == 'auto' else 'approved by you'}: "
+            f"{('confirmation ' + run['confirmation']) if run['confirmation'] else 'confirmation page seen'})")
+    if db.STATUSES.index(job["status"]) < db.STATUSES.index("applied"):  # saved only: never moves a closed job
+        db.set_status(job["id"], "applied", note)
+    db.add_event(job["id"], "apply_evidence", run["evidence"] or "")
+    return note
+
+
 EXECUTORS = {"send_email": _send, "set_status": _status, "add_job": _add_job, "save_answer": _answer, "note": _note,
-             "run_to": _run_to}
+             "run_to": _run_to, "submit_application": _submit_app}

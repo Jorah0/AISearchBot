@@ -14,6 +14,21 @@ UA = "Mozilla/5.0 (compatible; lodestar/0.1; +https://github.com/)"
 MAIL_TIMEOUT = 60  # seconds per IMAP/SMTP socket operation: a server that accepts and goes quiet must not hang the loop
 
 
+_DTD_RE = re.compile(rb"<!(DOCTYPE|ENTITY)", re.I)
+
+
+def parse_xml(text):
+    """xml.etree root for untrusted feed XML. Any DOCTYPE/ENTITY declaration is refused (ValueError) before parsing:
+    RSS, Atom and job feeds never need one, and refusing it rules out entity-expansion and external-entity tricks
+    whatever the bundled expat version. Size is already capped by fetch()."""
+    import xml.etree.ElementTree as ET
+
+    raw = text.encode("utf-8", "replace") if isinstance(text, str) else bytes(text)
+    if _DTD_RE.search(raw):
+        raise ValueError("refused XML with a DOCTYPE or ENTITY declaration")
+    return ET.fromstring(raw)
+
+
 def redact_url(url) -> str:
     """url with every query value shown as ***: an API key passed as ?key=... never reaches an error, log or alert."""
     from urllib.parse import parse_qsl, urlsplit
