@@ -7,12 +7,29 @@ import hashlib
 import json
 import os
 import re
+from pathlib import Path
 
 import keyring
 
 from .config import HOME
 
-SERVICE = "lodestar"
+
+def namespace(home=HOME) -> tuple[str, str]:
+    """(keyring service, legacy service read as a fallback or "") for a data folder. Only the default folder (~/.lodestar, or
+    ~/.jobbot when that migration could not run) uses 'lodestar' and the pre-rename 'jobbot' fallback; any other
+    LODESTAR_HOME (a test, a doc writer's sandbox, a second profile) gets its own service from its resolved path, so it
+    can never read or overwrite the real keys and mail password. LODESTAR_VAULT_SERVICE names a fixed service instead."""
+    fixed = os.environ.get("LODESTAR_VAULT_SERVICE", "").strip()
+    if fixed:
+        return fixed, ""
+    here, *default = (os.path.normcase(os.path.realpath(p))  # resolved, case-insensitive on Windows
+                      for p in (home, Path.home() / ".lodestar", Path.home() / ".jobbot"))
+    if here in default:
+        return "lodestar", "jobbot"
+    return "lodestar:" + hashlib.sha256(here.encode()).hexdigest()[:12], ""
+
+
+SERVICE, LEGACY = namespace()
 INDEX = HOME / "vault_index.json"
 CHUNK = 1000  # ponytail: Windows Credential Manager caps a blob at 2560 bytes (1280 UTF-16 chars); keyring does not split
 
@@ -82,8 +99,8 @@ def _drop_pieces(name: str, n: int, h: str) -> None:
 def get(name: str) -> str | None:
     try:
         val = keyring.get_password(SERVICE, name)
-        if val is None:  # secrets stored before the rename live under the old service name: copy once
-            val = keyring.get_password("jobbot", name)
+        if val is None and LEGACY:  # secrets stored before the rename live under the old service name: copy once
+            val = keyring.get_password(LEGACY, name)
             if val is not None:
                 keyring.set_password(SERVICE, name, val)
         if val is None or not val.startswith(MARK):
@@ -110,7 +127,7 @@ def delete(name: str) -> None:
     n, h = _pieces(name)
     if h:
         _drop_pieces(name, n, h)
-    for service in (SERVICE, "jobbot"):  # the old-name copy too, or get() would copy it straight back
+    for service in filter(None, (SERVICE, LEGACY)):  # the old-name copy too, or get() would copy it straight back
         try:
             keyring.delete_password(service, name)
         except keyring.errors.PasswordDeleteError:  # not stored under that name

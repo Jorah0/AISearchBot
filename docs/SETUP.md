@@ -198,7 +198,9 @@ and Groq have free tiers; [Local models (Ollama)](#local-models-ollama) need no 
 - `JOB` or `ID` is a job number from `lodestar jobs list`, or the `#N` on a Board card.
 - `-p PROVIDER` before the command name picks the AI provider for one command (`lodestar -p groq pipeline run 1`).
 - To try something without touching your real data, set `$env:LODESTAR_HOME` to an empty folder in that PowerShell
-  window first. It moves only the data folder: secrets in the OS keyring are shared by every data folder.
+  window first. That folder also gets its own keyring namespace, so it cannot see or change the keys and mail login of
+  your real install ([Settings and secrets](#settings-and-secrets-env-and-the-keyring-vault)). Values in a `.env` file
+  still apply to it.
 
 ### The app at a glance
 
@@ -546,7 +548,8 @@ and the Start Menu folder, `.venv`, and the build output (`build\`, `dist\`, `lo
   it is deleted completely, backups included: make a copy of `backups\` first if you might want it.
 - Secrets in the OS keyring are never touched. Remove them yourself before uninstalling if you want them gone:
   `lodestar keys rm anthropic`, `lodestar email disconnect`, `lodestar vault rm NAME` (`lodestar vault list` shows the
-  names).
+  names). For a data folder set with `LODESTAR_HOME`, run them with that same `LODESTAR_HOME`: each data folder has
+  its own keyring namespace.
 - The install folder itself, its `.env` and the source code stay; delete the folder afterwards if you want.
 
 ### First run
@@ -734,7 +737,10 @@ $env:LODESTAR_HOME = "D:\LodestarData"
 A variable set like this only lasts for that window and only affects commands started from it. For the shortcuts and
 the scheduled task to use the same folder, add `LODESTAR_HOME` as a permanent user environment variable in Windows
 (Settings > System > About > Advanced system settings > Environment Variables), then run the installer again.
-`JOBBOT_HOME` is still accepted as the old name. A data folder from before the rename (`~/.jobbot`) is copied to
+`LODESTAR_HOME` must be an environment variable: a `LODESTAR_HOME=` line in a `.env` file is read too late to move the
+data folder. A data folder other than `~/.lodestar` keeps its secrets in its own keyring namespace (see the next
+section), so link your keys and mailbox again there, or set `LODESTAR_VAULT_SERVICE=lodestar` to keep using the ones
+you already linked. `JOBBOT_HOME` is still accepted as the old name. A data folder from before the rename (`~/.jobbot`) is copied to
 `~/.lodestar` automatically the first time Lodestar starts; `lodestar doctor` then says when the old folder is safe
 to delete.
 
@@ -767,6 +773,23 @@ and `lodestar email status` warns about mail overrides). Empty lines like `ANTHR
 Secrets are tied to the computer and the Windows user: they do not travel with the data folder (see "Moving to a new
 PC").
 
+**Each data folder has its own keyring namespace.** Only the default data folder (`~/.lodestar`, or `~/.jobbot` while
+an old folder could not be moved) uses the keyring service `lodestar` (and still picks up secrets saved under the old
+name `jobbot`, copying each one over the first time it is read). A data folder set with `LODESTAR_HOME` anywhere else
+uses `lodestar:` plus 12 hex characters derived from that folder's full path, with no fallback, so a test copy or a
+sandbox can never read or change your real keys and mail password: link them again there. Because the name comes from
+the path, moving or renaming such a folder also moves it to a new, empty namespace (link again, or use
+`LODESTAR_VAULT_SERVICE`). `lodestar doctor` and Setup > Run diagnostics show the active one on the `vault namespace`
+line. To give a portable install one fixed name on purpose, set `LODESTAR_VAULT_SERVICE`, as an environment variable
+or in a `.env` file (for example `LODESTAR_VAULT_SERVICE=lodestar` to use the default folder's secrets). Never set it
+for a test or sandbox run: that would point the sandbox back at real secrets (the unit tests, the E2E suite and the
+update check blank it for their own runs, so a line in the repo `.env` does not reach them). If you used your own
+`LODESTAR_HOME` before this change, your keys and mailbox were saved under `lodestar`: `vault namespace` shows a WARN
+naming the secrets this folder's index lists but its namespace does not hold. Link them again, or set
+`LODESTAR_VAULT_SERVICE=lodestar` in the environment. `.env` files still load for every data
+folder: a key written in `.env` is plain config and applies wherever that file is read (the `.env` in the install
+folder is read by every data folder you use from that install).
+
 ### lodestar doctor
 
 `lodestar doctor` checks the install and prints one PASS / WARN / FAIL line per item, with the fix next to each
@@ -786,6 +809,7 @@ On a fresh install with no key yet it looks like this:
 [PASS] module webview     installed
 [PASS] module pypdf       installed
 [PASS] keyring backend    ...
+[PASS] vault namespace    lodestar (the default data folder)
 [PASS] WebView2 runtime   found
 [PASS] PDF engine         edge (C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe)
 [PASS] data folder        C:\Users\you\.lodestar (writable)
@@ -806,7 +830,9 @@ code is 1 only in the last case.
 |---|---|
 | `module webview missing (pip install -e .[desktop])` | `.venv\Scripts\python.exe -m pip install -e ".[desktop]"`, or re-run `install.ps1`. Until then the UI opens in the browser. |
 | `module pypdf missing (pip install -e .[pdf])` | Same with `.[pdf]`; needed only to import PDF resumes. |
-| `keyring backend` WARN (a fail or null backend) | No usable OS keyring (common on a headless Linux without a Secret Service). Keys cannot be stored in the vault; install and unlock a keyring, or put settings in `.env`. |
+| `keyring backend` WARN (`fail.Keyring` or `null.Keyring`) | With `PYTHON_KEYRING_BACKEND` set to the null backend, that is your choice for a scratch run. Otherwise: no usable OS keyring (common on a headless Linux without a Secret Service). Keys cannot be stored in the vault; install and unlock a keyring, or put settings in `.env`. |
+| `[WARN] vault namespace ...; N stored secret(s) not found here (...)` | This data folder's name index lists secrets its keyring namespace does not hold: usually an own `LODESTAR_HOME` install from before Pass 17.1, whose secrets are under `lodestar`. Link them again, or set `LODESTAR_VAULT_SERVICE=lodestar` in the environment. |
+| `vault namespace lodestar:... (this data folder only ...)` | Not a fault: `LODESTAR_HOME` points at a data folder other than `~/.lodestar`, so it has its own keyring namespace and does not see the default folder's keys. Link them there, or set `LODESTAR_VAULT_SERVICE=lodestar` on purpose. |
 | `WebView2 runtime not found` | Install the Microsoft Edge WebView2 runtime, or use the browser. |
 | `PDF engine none ...` | Install Edge, Chrome or Chromium (or Word / LibreOffice), or set `LODESTAR_BROWSER`. |
 | `data folder ... not writable` | Check the folder's permissions, or point `LODESTAR_HOME` elsewhere. |
@@ -1043,7 +1069,7 @@ address. Everything here is done once, in **Setup** in the app or with the `lode
 
 | What | Where it is kept |
 |---|---|
-| AI keys, the app password, the Google / Microsoft refresh token, your OAuth client ID and secret, anything you store under Other secrets | the OS keyring: Windows Credential Manager, macOS Keychain, Secret Service on Linux (service name `lodestar`) |
+| AI keys, the app password, the Google / Microsoft refresh token, your OAuth client ID and secret, anything you store under Other secrets | the OS keyring: Windows Credential Manager, macOS Keychain, Secret Service on Linux (service name `lodestar` for the default data folder; see the namespace note in [Settings and secrets: .env and the keyring vault](#settings-and-secrets-env-and-the-keyring-vault)) |
 | Names of stored secrets (never the values) | `~/.lodestar/vault_index.json` |
 | Result of the last key and mailbox checks (status, time, model; never a key) | `~/.lodestar/connections.json` |
 | Default provider, council providers, pinned models | `~/.lodestar/settings.json` |
@@ -1127,13 +1153,16 @@ Enter (nothing appears while you paste; that is normal). It then prints one line
 
 - **Re-check** (next to each key) checks that one key now. **Re-check all** checks every linked key and the mailbox.
 - **Remove** deletes the key from the keyring after you confirm. It is greyed out when the key comes from `.env` or the
-  environment: remove that line there instead. Ollama has no Remove (it has no key).
+  environment: remove that line there instead. For Ollama (no key) **Remove** unlinks it: it clears the model its
+  link saved, so Lodestar stops using Ollama (unless `OLLAMA_MODEL` is set or Ollama is the default provider; the
+  message then says which).
 - Terminal:
 
 ```powershell
 lodestar keys check            # every linked key and the mailbox, then the table
 lodestar keys check openai     # one key
 lodestar keys rm openai        # remove it from the keyring
+lodestar keys rm ollama        # unlink Ollama (clears its saved model)
 ```
 
 ### Local models (Ollama)
@@ -1163,8 +1192,11 @@ to Ollama at `http://localhost:11434` (fixed address).
 
 Other ways to turn Ollama on: store the model name (`lodestar vault set OLLAMA_MODEL llama3.1`, or an
 `OLLAMA_MODEL=llama3.1` line in `.env`), or pick `ollama` as the default provider. Picking **Ollama (local, no key)**
-in the Link list and clicking Link only checks that Ollama answers; if Ollama already serves the default model
-(`llama3.1`) the card can still show "not linked" afterwards. Use **Local only (Ollama)** or `OLLAMA_MODEL` to be sure.
+in the Link list and clicking Link checks that Ollama answers and pins its model (`llama3.1`, or one Ollama serves),
+so the card shows Ollama linked. If Ollama is not running, Link shows **Couldn't reach** and saves nothing: the card
+stays "not linked" and the offline templates keep working. Start Ollama and click Link again. Linking does not make
+Ollama the default provider; **Local only (Ollama)** does. **Remove** on the Ollama row (or `lodestar keys rm ollama`)
+unlinks it.
 
 To leave local-only mode: Tools > Preferences, set **Default AI provider** back to "(automatic)" and empty **Council
 providers**. In the terminal (`--%` makes Windows PowerShell pass the empty value):
@@ -1580,8 +1612,8 @@ on the Board). All files named here are in your data folder; the full list is in
    lodestar profile review 02c13f4a --accept new
    ```
 
-   You should see `applied 02c13f4a: added ...; profile.md updated` and a `master resume:` line naming the files it
-   built.
+   You should see `applied 02c13f4a: added ...; profile.md updated` and a `master resume:` line naming `master.pdf`
+   (`master.html` without a PDF engine) with `(first build)` or what changed.
 3. Open profile.md (Profile tab, or the path `lodestar resume profile` prints) and fill in what is missing, including
    the Preferences line.
 4. Check it offline:
@@ -1699,7 +1731,8 @@ Uploads in the app are limited to 15 MB.
    file picker and **Import LinkedIn** (the **Request my LinkedIn data** link opens LinkedIn's download page,
    https://www.linkedin.com/mypreferences/d/download-my-data; on LinkedIn it is Settings > Data privacy > Get a copy
    of your data, and the basic archive arrives by email).
-2. To keep the file away from any AI provider, tick **offline only** first. Offline reading is verbatim.
+2. To keep the file away from any AI provider, tick **offline only** first (the box is in the Profile bank panel and
+   covers both the LinkedIn import and Import an existing resume). Offline reading is verbatim.
 3. A **Review import** panel appears. Each row has a status, the kind of fact, the fact, and the line it came from.
 4. Click **Accept all new**, or tick rows and click **Apply selected**. For conflicts choose **keep mine**, **use
    incoming** or (when it looks like a separate role) **add separately**. Untick **also add to my master profile
@@ -1780,8 +1813,9 @@ facts are left out. It is drawn in your saved look (pref `resume_look`), else th
 Resumes already tailored for a job are never rewritten. Their drawer shows "Profile changed since this resume was made
 (Experience)" only when a section that resume used changed.
 
-**In the app.** Profile tab > **Master resume** card: status, what changed, warnings, **Open PDF**, **Open DOCX**,
-**View / format**, **Show folder**, **Update now**.
+**In the app.** Profile tab > **Master resume** card: status (built when, engine, pages; "profile changed: updates
+shortly" while a rebuild is due), what changed, warnings, **Open PDF** (**Open print page** when no PDF engine
+worked), **Open DOCX**, **View / format**, **Show folder**, **Update now**.
 
 **From the terminal:**
 
@@ -1815,6 +1849,9 @@ Lodestar prints PDFs from the same HTML page you see in the preview. It tries, i
 3. LibreOffice (`soffice --headless`), on the .docx.
 4. Nothing worked: an HTML page with print styles is written (and, for `resume export --pdf`, opened in your browser).
    Print it and choose "Save as PDF".
+
+The browser gets 60 seconds per PDF. Steps 2 and 3 apply to `resume export --pdf`, the master resume and studio
+builds. The document viewer's PDF tab and PDF download use step 1 only.
 
 `lodestar doctor` shows which engine was found, for example `[PASS] PDF engine  edge (C:\Program Files
 (x86)\Microsoft\Edge\Application\msedge.exe)`.
@@ -1911,7 +1948,7 @@ With a working PDF engine you also get the `.pdf`, the real page count and the e
 | `--drop e3,p2` | Fact ids to leave out (from `resume catalogue`). |
 | `--since YEAR` | Leave out entries that ended before this year. |
 | `--on-file` | Also use facts from your other resumes. |
-| `--format pdf,docx,md,txt,html` | Files to write (default `pdf,docx`; the HTML page is always kept). |
+| `--format pdf,docx,md,txt,html` | Files to write (default `pdf,docx`; the markdown and the HTML page are always kept). |
 | `--no-ai` | Offline: your profile as written. Cannot be combined with `--request`. |
 | `--use-for-job` | Make it the job's resume.md / .docx / .pdf. |
 
@@ -1959,7 +1996,9 @@ versions and download it in any format.
 - **Preview**: Letter or A4 sheets with your margins and page breaks, "Page 1 of 2" under each, zoom (fit width,
   100%, fit page), the page count, and a marker on every page past the limit. Click a heading to jump to that
   section's editor.
-- **PDF**: the file headless Edge (or Chrome) prints from the same page. **DOCX**: the same pages, labelled as a Word
+- **PDF**: the file headless Edge (or Chrome / Chromium) prints from the same page, with its page count. The viewer
+  uses only a browser engine (not Word or LibreOffice): without one, the PDF tab and download say so; download the
+  DOCX or the HTML page and print that. **DOCX**: the same pages, labelled as a Word
   layout preview (Word may differ slightly). **TXT** and **MD**: the exact text of those downloads (TXT is what an
   ATS text box gets).
 - **Print**, **Open in new window** (written to `exports\` and opened), **Download** PDF / DOCX / TXT / MD / HTML,
@@ -1968,20 +2007,26 @@ versions and download it in any format.
 
 **Format panel** (changes show live): template, font, base size, heading size, accent (a named colour or any colour),
 margins, line spacing, paragraph spacing, page size, page limit, density, date format, bullet style (disc, circle,
-square, dash, none), contact line, heading case, and **Sections** (drag or use the arrows to reorder; untick to hide).
+square, dash, none), contact line, heading case (upper or title), and **Sections** (drag or use the arrows to
+reorder; untick to hide). Picking another template resets this document's other look choices to that template's.
 Letters also get the date line, the recipient block and the signature. Changes are kept for that document in
 `viewer.json`. **Save as my default look** writes `resume_look`; **Reset to template** drops this document's look. A
 studio version opens in its own look.
 
 **Edit text panel.** One editor per section. Edits change the preview and the downloads. For a job's documents,
-**Save document** keeps them (the old version goes to `history\`); elsewhere edits apply only to what you preview and
-export. **Discard edits** throws them away.
+**Save document** keeps them (the old version goes to `history\`); elsewhere (the master resume, studio versions,
+drafts) edits apply only to what you preview and export, and there is no Save button. **Discard edits** throws them
+away. Switching documents with unsaved edits, or closing the viewer with unsaved edits to a job's document, asks
+first.
 
-**Safety.** Every export re-runs the salary-floor guard: a resume, cover letter, form answers or counter-offer draft
-that names your floor or private Preferences is refused ("this document names your salary floor ...: edit it out
-before it is exported or sent"). Your private notes (prep, research, offer notes) are not checked. For resumes, each
-line you changed is checked against your profile: a new number, tool, title or link shows "not in your profile" and
-the download asks **Export anyway?** first. Lines that state personal data are flagged too.
+**Safety.** Every export and every **Save document** re-runs the salary-floor guard: a resume, cover letter, form
+answers or counter-offer draft that names your floor or private Preferences is refused ("this document names your
+salary floor ...: edit it out before it is exported or sent"), and nothing is saved. Your private notes (prep,
+research, offer notes) are not checked. For resumes, each line you changed is checked against your profile: a new
+number, tool, title or link shows "not in your profile" above the preview. A download (or Open in new window) then
+asks **Export anyway?**, and **Save document** asks **Save anyway?** ("Mail and the application packet will use this
+text"), because the saved text is what later exports, mail and the packet read. Cancel keeps the document as it was.
+Lines that state personal data are flagged too.
 
 ### Tailoring a resume for a job
 
@@ -3536,9 +3581,12 @@ Lodestar needs Python 3.11 or newer (`requires-python = ">=3.11"` in `pyproject.
    You should see `[PASS]` lines for Python, the modules, the keyring backend and the data folder. On a fresh scratch
    folder, `master profile` and `profile bank` are WARN and `AI providers` may be FAIL; that is expected.
 
-   Note: `LODESTAR_HOME` moves the data folder only. Secrets live in the OS keyring (Windows Credential Manager, macOS
-   Keychain, Secret Service on Linux), which is shared by every data folder, so a scratch folder still sees the AI keys
-   and mail login you linked for real. `doctor` will show them.
+   A scratch `LODESTAR_HOME` also gets its own keyring namespace: `vault namespace` reads `lodestar:<12 hex> (this
+   data folder only ...)`, and the AI keys and mail login you linked for real are not visible there. Do not set
+   `LODESTAR_VAULT_SERVICE` for scratch runs. For manual experiments you can also add
+   `$env:PYTHON_KEYRING_BACKEND = "keyring.backends.null.Keyring"`, so nothing at all is read from or written to the OS
+   keyring (doctor then shows `keyring backend` as WARN `null.Keyring`). The repo's `.env` still loads: keep secrets out
+   of it.
 
 `python -m lodestar` and the `lodestar` / `jobbot` scripts (`.venv\Scripts\lodestar.exe`) run the same CLI
 (`lodestar.cli:main`); `jobbot` is a legacy alias.
@@ -3811,6 +3859,11 @@ and the code disagree, the code is right.
   counter-offer's cited figures, passed in `cited=`. Reads of the answer bank for employers use `employer=True`
   (private answers never leave).
 - **Writing profile.md**: always through `profile.write_master()` (it snapshots the old file and writes atomically).
+- **Keyring isolation** (`vault.namespace`): the keyring service is `lodestar` (legacy `jobbot` fallback) only for
+  the default data folder; any other `LODESTAR_HOME` uses `lodestar:<12 hex of its path>` with no fallback, so tests,
+  agents and sandboxes never touch the real keys. All keyring access goes through `vault.py`. Never set
+  `LODESTAR_VAULT_SERVICE` for a test or sandbox run (the update gate and the E2E harness blank it); manual runs also
+  set `PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring`.
 - **Mail trust** (`email_monitor._match` / `_thread`): mail is trusted only with aligned DKIM/DMARC, a strong tie to
   the job and agreement with the stored contact. Strong ties are the stored contact, a thread Lodestar's own mail
   vouches for, or the registrable domain of the job's posting URL on the company's own site. A domain that only names
@@ -3923,7 +3976,8 @@ Where to look first:
 | AI keys | `provider X is not in council_providers=...` | The default provider is outside your `council_providers` list: add it with `lodestar tools set council_providers ...`, or change the default provider. |
 | AI keys | The Getting started banner says "<provider> key failed: ..." | Open Setup, read the detail next to the pill, fix it at the provider, click **Re-check**. |
 | AI keys | `local-only preset NOT applied (nothing changed): Ollama is not reachable at localhost:11434 or serves no model.` | Start Ollama, `ollama pull llama3.1`, run `lodestar providers local` again. |
-| AI keys | A scratch `LODESTAR_HOME` still shows your keys or mailbox | Expected: the OS keyring is shared by every data folder. `lodestar vault rm NAME` removes a secret for all of them. |
+| AI keys | With `LODESTAR_HOME` set, your keys and mailbox show as not linked | Expected: a data folder other than `~/.lodestar` has its own keyring namespace (`lodestar doctor`, `vault namespace` line). Link them again there, or set `LODESTAR_VAULT_SERVICE=lodestar` on purpose to share the default folder's secrets. |
+| AI keys | A scratch `LODESTAR_HOME` still shows your keys or mailbox | A `.env` file (current folder, install folder or that data folder) or an environment variable supplies them, or `LODESTAR_VAULT_SERVICE` is set. Remove it for scratch runs. |
 | Email | `Set up your Google client first` (or Microsoft) | No sign-in client stored: do the one-time client setup ([Email with Sign in with Google (Gmail)](#email-with-sign-in-with-google-gmail)). |
 | Email | `redirect_uri_mismatch` | The Google client is not a Desktop app: create a Desktop app client (Google step 4). |
 | Email | `access_denied`, "Access blocked: app has not completed the Google verification process" | Not a test user, or you cancelled: add yourself as a test user or publish the app (Google steps 5, 6). |

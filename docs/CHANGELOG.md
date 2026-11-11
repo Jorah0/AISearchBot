@@ -1,5 +1,30 @@
 # Changelog (development passes, newest first)
 
+## Pass 17.1 (2026-11-10): credential isolation and fixes
+
+**Upgrading with your own `LODESTAR_HOME`?** If you set `LODESTAR_HOME` to a folder other than `~/.lodestar`, your
+keys and mailbox were saved under the shared keyring name and that folder no longer sees them: AI falls back to the
+offline templates and mail checks stop. Link your keys and mailbox again (Setup), or set the environment variable
+`LODESTAR_VAULT_SERVICE=lodestar` to keep using them. `lodestar doctor` WARNs on the `vault namespace` line and names
+what is missing. The default `~/.lodestar` needs nothing.
+
+
+- Each data folder has its own keyring namespace. Only the default `~/.lodestar` uses the keyring service `lodestar`
+  (with the old `jobbot` fallback); any other `LODESTAR_HOME` uses `lodestar:` plus a hash of its path and can no
+  longer read or change the real keys and mail password. `LODESTAR_VAULT_SERVICE` sets a fixed name on purpose;
+  `lodestar doctor` shows the active one. The update gate's test run and the unit and browser test suites never
+  inherit a fixed name, even from a `.env` line.
+- Linking **Ollama (local, no key)** under Setup > Link an AI key now shows it linked: the link saves its model, but
+  only when Ollama answered. A link while Ollama is not running saves nothing, so the offline templates keep working.
+  **Remove** on the Ollama row (`lodestar keys rm ollama`) now unlinks it. A saved model no longer leaks into the
+  shared preference defaults.
+- The document viewer's **Open in new window** asks before writing a resume with lines your profile does not support,
+  like a download and Save document already did (it used to skip the question).
+- `lodestar doctor` warns on a null or fail keyring backend again (both are classes named `Keyring`; the row now names
+  the module, for example `Windows.WinVaultKeyring` or `null.Keyring`).
+- docs/SETUP.md re-checked against the final pass 17 code (import review, master resume card, studio formats, the
+  viewer's Save prompt and Format panel, PDF engines) and the keyring namespace; CONNECT.md and `.env.example` updated.
+
 ## Pass 17 (2026-11-10): resume import, master resume, resume studio, document viewer
 
 Import a resume or LinkedIn export into a review and keep every section of it; a master resume that follows your

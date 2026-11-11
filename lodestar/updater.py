@@ -347,7 +347,7 @@ def _gate(repo: Path) -> None:
     if (repo / "tests").is_dir():
         with tempfile.TemporaryDirectory(prefix="lodestar-update-gate-", ignore_cleanup_errors=True) as home:
             _run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], repo, GATE_TIMEOUT,
-                 env | {"LODESTAR_HOME": home})
+                 env | {"LODESTAR_HOME": home, "LODESTAR_VAULT_SERVICE": ""})  # "": the temp home's own keyring namespace
     _, out, err = _proc([sys.executable, "-m", "lodestar", "doctor"], repo, 300, env)
     last = (out.strip().splitlines() or [""])[-1]
     if last not in ("all good", "usable; see WARN lines", "something is broken; see FAIL lines"):  # it crashed

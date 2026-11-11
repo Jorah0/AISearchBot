@@ -23,8 +23,18 @@ def checks() -> list[tuple[str, str, str]]:
         import keyring
 
         kr = keyring.get_keyring()
-        name = type(kr).__name__
+        name = f"{type(kr).__module__}.{type(kr).__name__}".removeprefix("keyring.backends.")  # null / fail: both 'Keyring'
         out.append(("warn" if "fail" in name.lower() or "null" in name.lower() else "ok", "keyring backend", name))
+        from . import vault
+
+        why = ("set by LODESTAR_VAULT_SERVICE" if os.environ.get("LODESTAR_VAULT_SERVICE", "").strip() else
+               "the default data folder" if vault.LEGACY else "this data folder only: the default folder's secrets are not visible")
+        # an install on its own LODESTAR_HOME from before Pass 17.1 stored its secrets under 'lodestar': the folder's name
+        # index still lists them, but this namespace does not hold them
+        lost = [] if vault.LEGACY else [n for n, _ in vault.names() if vault.get(n) is None]
+        out.append(("warn" if lost else "ok", "vault namespace", f"{vault.SERVICE} ({why})" + (
+            f"; {len(lost)} stored secret(s) not found here ({', '.join(lost[:4])}): link them again, or set "
+            "LODESTAR_VAULT_SERVICE=lodestar if they were saved before Pass 17.1" if lost else "")))
     except Exception as e:
         out.append(("fail", "keyring backend", str(e)))
     if os.name == "nt":

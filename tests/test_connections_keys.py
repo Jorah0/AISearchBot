@@ -21,6 +21,7 @@ import urllib.request
 
 if "lodestar.config" not in sys.modules:  # same temp home as test_lodestar.py when that file was imported first
     os.environ["LODESTAR_HOME"] = tempfile.mkdtemp(prefix="lodestar-test-")
+    os.environ["LODESTAR_VAULT_SERVICE"] = ""  # the temp home's own keyring namespace, even with a fixed one in .env
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
 
 from lodestar import ai, cli, connections, doctor, extras, mailconn, settings, util, vault  # noqa: E402
@@ -145,7 +146,7 @@ class Verify(Base):
             self.assertNotIn(KEY, json.dumps(r))
             self.assertNotIn(KEY, self.stored_texts())
             self.assertEqual(r.get("quota", False), reply == (429, ""))
-        self.assertEqual(self.store[("lodestar", "ANTHROPIC_API_KEY")], KEY)  # a failed key is still stored
+        self.assertEqual(self.store[(vault.SERVICE, "ANTHROPIC_API_KEY")], KEY)  # a failed key is still stored
         self.reply = lambda url: (400, '{"error": {"message": "API key not valid. Please pass a valid API key."}}')
         self.assertIn("rejected", connections.verify_key("gemini", "AIzaWRONGWRONG")["detail"])
 
@@ -171,7 +172,7 @@ class Verify(Base):
         connections.link("anthropic", KEY)
         st = connections.status()["keys"]["anthropic"]
         self.assertEqual((st["linked"], st["status"], st["source"]), (True, "verified", "vault"))
-        self.store[("lodestar", "ANTHROPIC_API_KEY")] = KEY + "X"
+        self.store[(vault.SERVICE, "ANTHROPIC_API_KEY")] = KEY + "X"
         self.assertEqual(connections.status()["keys"]["anthropic"]["status"], "unchecked")
         os.environ["GROQ_API_KEY"] = "gsk_envenvenv"
         self.assertEqual(connections.status()["keys"]["groq"]["source"], "env")
@@ -179,9 +180,9 @@ class Verify(Base):
             connections.unlink("groq")  # set in .env, not the vault
         r = connections.link("anthropic", "  other-key-12345  \n")
         self.assertIn("does not look like", r["prefix_warning"])
-        self.assertEqual(self.store[("lodestar", "ANTHROPIC_API_KEY")], "other-key-12345")
+        self.assertEqual(self.store[(vault.SERVICE, "ANTHROPIC_API_KEY")], "other-key-12345")
         connections.unlink("anthropic")
-        self.assertNotIn(("lodestar", "ANTHROPIC_API_KEY"), self.store)
+        self.assertNotIn((vault.SERVICE, "ANTHROPIC_API_KEY"), self.store)
         self.assertNotIn("anthropic", json.loads(connections.PATH.read_text(encoding="utf-8"))["keys"])
 
     def test_redact_skips_empty_and_short_secrets(self):
@@ -195,7 +196,7 @@ class Startup(Base):
     def test_start_checks_runs_once_in_the_background_and_one_failure_never_stops_the_rest(self):
         connections._STARTED = False
         os.environ["OPENAI_API_KEY"], os.environ["GROQ_API_KEY"] = "sk-abcdefgh", "gsk_abcdefgh"
-        self.store[("lodestar", "ANTHROPIC_API_KEY")] = KEY
+        self.store[(vault.SERVICE, "ANTHROPIC_API_KEY")] = KEY
         seen = []
 
         def verify(name, key=None):
@@ -340,7 +341,7 @@ class SetupAndRoutes(Base):
             self.assertEqual(code, 400)
             self.assertIn("error", json.loads(text))
             code, text = self.req("POST", "/api/keys/remove", {"name": "anthropic"})
-            self.assertEqual((code, ("lodestar", "ANTHROPIC_API_KEY") in self.store), (200, False))
+            self.assertEqual((code, (vault.SERVICE, "ANTHROPIC_API_KEY") in self.store), (200, False))
         finally:
             srv.shutdown()
             srv.server_close()
@@ -357,6 +358,40 @@ class SetupAndRoutes(Base):
         self.assertIn("provider_problems", js)
 
 
+class Ollama(Base):
+    def test_linking_ollama_shows_it_linked_when_it_answers_and_unlink_clears_the_pin(self):
+        # Setup > Link an AI key > Ollama > Link said Verified while the card still read "not linked": Ollama has no key
+        # to store and ai.available() lists it only for a pinned model or the provider pref, so the link now pins its
+        # model (pass 17.1)
+        from lodestar import apply
+
+        settings.set_model = self.real[-1]  # the real one: tearDown puts settings.json back
+        self.assertFalse(connections.status()["keys"]["ollama"]["linked"])
+        r = connections.link("ollama")
+        k = connections.status()["keys"]["ollama"]
+        self.assertEqual((r["status"], k["linked"], k["status"], k["model"]), ("verified", True, "verified", "llama3.1"))
+        self.assertIn("ollama", ai.available())
+        self.assertEqual(settings.PREFS["models"], {})  # the pin went to settings.json, never into the shared defaults
+        # unlink clears that pin (it used to refuse: "Ollama has no key")
+        connections.unlink("ollama")
+        self.assertNotIn("ollama", ai.available())
+        self.assertFalse(connections.status()["keys"]["ollama"]["linked"])
+        # still on through the provider pref: the pin is cleared and the message names what keeps it on
+        settings.set_pref("provider", "ollama")
+        with self.assertRaises(SystemExit) as e:
+            connections.unlink("ollama")
+        self.assertIn("provider is ollama", str(e.exception))
+        # not running: never pinned, so ai.available() and the offline templates stay as they were (review code-1)
+        settings.PATH.write_text("{}", encoding="utf-8")
+        connections.PATH.unlink(missing_ok=True)
+        self.reply = lambda url: urllib.error.URLError("refused")
+        self.assertEqual(connections.link("ollama")["status"], "unreachable")
+        self.assertFalse(connections.status()["keys"]["ollama"]["linked"])
+        self.assertNotIn("ollama", ai.available())
+        self.assertEqual(settings.pref("models"), {})
+        self.assertTrue(apply._offline(False))
+
+
 class Cli(Base):
     def test_keys_link_list_check_and_rm(self):
         real = cli.getpass.getpass
@@ -369,7 +404,7 @@ class Cli(Base):
                 cli.main(["keys", "check", "anthropic"])
         finally:
             cli.getpass.getpass = real
-        self.assertEqual(self.store[("lodestar", "ANTHROPIC_API_KEY")], KEY)
+        self.assertEqual(self.store[(vault.SERVICE, "ANTHROPIC_API_KEY")], KEY)
         text = out.getvalue()
         self.assertIn("Anthropic (Claude): verified", text)
         self.assertIn("console.anthropic.com", text)
@@ -380,12 +415,12 @@ class Cli(Base):
         self.assertIn(".env", str(e.exception))
         with contextlib.redirect_stdout(io.StringIO()):
             cli.main(["keys", "rm", "ANTHROPIC_API_KEY"])
-        self.assertNotIn(("lodestar", "ANTHROPIC_API_KEY"), self.store)
+        self.assertNotIn((vault.SERVICE, "ANTHROPIC_API_KEY"), self.store)
 
 
 class Doctor(Base):
     def test_doctor_rows_follow_the_stored_status(self):
-        self.store[("lodestar", "ANTHROPIC_API_KEY")] = KEY
+        self.store[(vault.SERVICE, "ANTHROPIC_API_KEY")] = KEY
         rows = {w: (s, d) for s, w, d in doctor.checks()}
         self.assertEqual(rows["key anthropic"][0], "warn")
         self.assertIn("lodestar keys check anthropic", rows["key anthropic"][1])

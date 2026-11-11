@@ -223,6 +223,11 @@ class Viewer(E2ETestCase):
         self.assertIn("Save anyway?", self.dialogs[-1])
         saved = resume.app_dir(db.get_job(self.ids["saved"])) / "resume.md"
         self.assertIn("Cut warehouse spend 40%", saved.read_text(encoding="utf-8"))
+        opened = len(self.opened)
+        self.page.get_by_role("button", name="Open in new window").click()  # an export too: asks; declined, nothing opens
+        self.idle()
+        self.assertIn("Export anyway?", self.dialogs[-1])
+        self.assertEqual(len(self.opened), opened)
         self.page.get_by_role("button", name="Discard edits").click()
         self.ready()
         self.assertIn("Cut warehouse spend 40%", frame.locator("body").text_content())

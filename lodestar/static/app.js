@@ -1071,7 +1071,7 @@ function renderKeys() {
       + (k.model ? ` <span class="muted">model ${esc(k.model)}</span>` : '')
       + (k.detail && k.status !== 'verified' ? ` <span class="muted">${esc(k.detail)}</span>` : '')
       + ` <button class="b ghost sm" onclick="keyCheck(${i},this)">Re-check</button>`
-      + (n === 'ollama' ? '' : ` <button class="b ghost sm" ${env ? 'disabled title="set in .env or the environment: remove it there"' : ''} onclick="keyRemove(${i})">Remove</button>`) + '</div>';
+      + ` <button class="b ghost sm" ${env ? 'disabled title="set in .env or the environment: remove it there"' : ''} onclick="keyRemove(${i})">Remove</button></div>`;
   }).join('');
 }
 function keyHint() {
@@ -1097,7 +1097,8 @@ async function keyCheck(i, btn) {
   load();
 }
 async function keyRemove(i) {
-  const n = KEYS[i], k = (S.connections?.keys || {})[n]; if (!k || !confirm(`Remove the ${k.label} key from the OS keyring?`)) return;
+  const n = KEYS[i], k = (S.connections?.keys || {})[n];
+  if (!k || !confirm(n === 'ollama' ? 'Unlink Ollama? Lodestar stops using it (its saved model is cleared).' : `Remove the ${k.label} key from the OS keyring?`)) return;
   const r = await api('/api/keys/remove', { name: n }); toast(r.error ? 'error: ' + r.error : 'removed', r.error ? 'err' : 'ok'); load();
 }
 /* ---- connect email: a Google / Microsoft sign-in (every 2-step method runs on their page) or an app password. The
@@ -2030,10 +2031,11 @@ async function vwPdfLoad() {
   $('#vwLabel').textContent = `The PDF as printed${VW.data.engine ? ' by ' + VW.data.engine : ''}: ${f.name}${f.pages ? ', ' + f.pages + ' page' + (f.pages === 1 ? '' : 's') : ''}`;
 }
 function vwPrint() { $('#vwFrame').contentWindow.print(); }  // the sheets, with the page's own @page size and margins
-async function vwOpen(btn) {
-  const body = { ref: VW.ref, fmt: VW.tab === 'pdf' ? 'pdf' : VW.tab === 'docx' ? 'docx' : 'html', opts: VW.opts, confirm: true };
+async function vwOpen(btn, sure) {  // an export to exports/: the fact guard asks first (409 confirm), like a download
+  const body = { ref: VW.ref, fmt: VW.tab === 'pdf' ? 'pdf' : VW.tab === 'docx' ? 'docx' : 'html', opts: VW.opts, confirm: !!sure };
   if (VW.text !== null) body.text = VW.text;
   btn.disabled = true; const r = await api('/api/view/open', body); btn.disabled = false;
+  if (r.confirm) return confirm(r.error + '\n\nExport anyway?') ? vwOpen(btn, true) : null;
   toast(r.error ? 'error: ' + r.error : 'opened ' + r.path, r.error ? 'err' : 'ok');
 }
 function vwCompare(i) { VW.cmp = i === '' ? null : VW.data.compare[Number(i)].ref; vwLoad(false); }

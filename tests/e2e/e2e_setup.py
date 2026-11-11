@@ -107,6 +107,36 @@ class SetupKeys(E2ETestCase):
         self.expect_toast("local-only preset NOT applied (nothing changed)", "ok")
         self.assertEqual(settings.load()["prefs"]["provider"], provider)
 
+    def test_linking_ollama_shows_it_linked_and_verified(self):
+        # pass 17.1: Link said "Verified" while the card still read "Ollama (local, no key): not linked"
+        self.addCleanup(settings.set_pref, "models", settings.pref("models"))  # the class's other tests expect no Ollama
+        self.assertIn("Ollama (local, no key): not linked", self.page.text_content("#kList"))
+        self.page.select_option("#kProv", "ollama")  # no key to type: the field is disabled
+        self.run_click(self.page.locator("#keysCard").get_by_role("button", name="Link", exact=True))
+        self.expect_toast("Ollama (local, no key): Verified", "ok")
+        row = self.key_row("Ollama")
+        self.assertIn("Verified", row.locator(".pill").text_content())
+        self.assertIn("model llama3.1", row.text_content())
+        self.assertNotIn("Ollama (local, no key): not linked", self.page.text_content("#kList"))
+        self.assertIn("(linked)", self.page.locator("#kProv option[value=ollama]").text_content())
+        self.assertTrue(self.state()["connections"]["keys"]["ollama"]["linked"])
+        # Remove unlinks it: asks first, then clears the saved model (it used to have no Remove at all)
+        self.answer(True)
+        self.run_click(row.get_by_role("button", name="Remove"))
+        self.assertIn("Unlink Ollama?", self.dialogs[-1])
+        self.expect_toast("removed", "ok")
+        self.assertIn("Ollama (local, no key): not linked", self.page.text_content("#kList"))
+        self.assertFalse(settings.pref("models").get("ollama"))
+
+    def test_diagnostics_name_the_isolated_vault_namespace(self):
+        # pass 17.1: a temp data folder has its own keyring service, never the default folder's 'lodestar'
+        self.allow_console()
+        self.run_click(self.page.get_by_role("button", name="Run diagnostics"))
+        row = self.page.locator("#doctorOut .list > div", has_text="vault namespace")
+        self.assertIn(vault.SERVICE, row.text_content())
+        self.assertIn("this data folder only", row.text_content())
+        self.assertRegex(vault.SERVICE, r"^lodestar:[0-9a-f]{12}$")
+
     def test_diagnostics_notifications_and_market_rates(self):
         self.allow_console()
         self.run_click(self.page.get_by_role("button", name="Run diagnostics"))

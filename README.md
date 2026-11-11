@@ -138,6 +138,10 @@ lodestar vault rm linkedin.com
 
 Secrets go to the OS keyring; only names and usernames are indexed in `~/.lodestar/vault_index.json`.
 Env vars and a `.env` file override the vault for any setting.
+Each data folder has its own keyring namespace: `~/.lodestar` uses the service `lodestar`, any other `LODESTAR_HOME`
+uses `lodestar:<hash of its path>` and never sees the default folder's secrets (`LODESTAR_VAULT_SERVICE` fixes the name).
+Used your own `LODESTAR_HOME` before Pass 17.1? Link your keys and mailbox again, or set `LODESTAR_VAULT_SERVICE=lodestar`
+(`lodestar doctor` WARNs on `vault namespace` and names what is missing).
 
 ## How the pieces fit
 

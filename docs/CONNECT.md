@@ -16,6 +16,19 @@ stops working. Setup in the app has the same steps in short; the terminal comman
   messages, exports or backups, and never sent anywhere except to the provider they belong to.
 - Access tokens for Google / Microsoft mail live in memory only, for about an hour; only the refresh token is stored.
 - A value in the environment or a `.env` file still wins over the keyring (Setup says so when that happens).
+- Each data folder has its own keyring namespace. The default folder (`~/.lodestar`) uses the service name `lodestar`
+  (and still reads secrets saved under the old name `jobbot` once, copying them over). Any other `LODESTAR_HOME` (a
+  test copy, a sandbox, a second profile) uses `lodestar:` plus 12 hex characters derived from that folder's path, so it
+  never sees or changes the secrets of your real install: link keys and the mailbox again there. `lodestar doctor` (and
+  Setup > Run diagnostics) shows the active namespace on the `vault namespace` line. The name comes from the folder's
+  full path, so moving or renaming such a folder starts an empty namespace. A portable install that wants one
+  fixed name sets `LODESTAR_VAULT_SERVICE`, in the environment or a `.env` file (for example
+  `LODESTAR_VAULT_SERVICE=lodestar` to share the default folder's secrets on purpose). Never set it for a test or
+  sandbox run (the unit tests, E2E suite and update check blank it themselves). Upgrading an install that already used
+  its own `LODESTAR_HOME`: its secrets were saved under `lodestar`, so link them again or set
+  `LODESTAR_VAULT_SERVICE=lodestar`; the `vault namespace` line WARNs and names the missing ones. To remove the secrets of a non-default folder, run `lodestar keys rm`, `lodestar email disconnect` or
+  `lodestar vault rm` with that same `LODESTAR_HOME`. `.env` files still load for any data folder: a key written
+  there is plain config and is used wherever that `.env` is read.
 
 ## 2. AI keys
 
@@ -32,7 +45,7 @@ time Lodestar starts (`lodestar ui`, `app`, `desktop`), in the background. The c
 | Groq | https://console.groq.com/keys | starts with `gsk_`; has a free tier |
 | OpenRouter | https://openrouter.ai/settings/keys | starts with `sk-or-` |
 | Mistral | https://console.mistral.ai/api-keys | |
-| Ollama (local, no key) | https://ollama.com/download | runs on this computer; Link checks that it answers |
+| Ollama (local, no key) | https://ollama.com/download | runs on this computer; Link checks that it answers and saves its model only then (not running: nothing saved); Remove unlinks it |
 
 All paid providers are pay as you go. What the status pill means:
 

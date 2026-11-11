@@ -18,6 +18,7 @@ from pathlib import Path
 
 if "lodestar.config" not in sys.modules:  # same temp home as test_lodestar.py when that file was imported first
     os.environ["LODESTAR_HOME"] = tempfile.mkdtemp(prefix="lodestar-test-")
+    os.environ["LODESTAR_VAULT_SERVICE"] = ""  # the temp home's own keyring namespace, even with a fixed one in .env
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
 
 from lodestar import cli, doctor, extras, mailconn, util, vault  # noqa: E402
@@ -104,7 +105,7 @@ class Mail(unittest.TestCase):
         os.environ.update(self.env)
 
     def stored(self, name):
-        return self.store.get(("lodestar", name))
+        return self.store.get((vault.SERVICE, name))
 
 
 class Presets(Mail):

@@ -71,7 +71,7 @@ Step by step for every provider and mailbox: [CONNECT.md](CONNECT.md).
 | `lodestar keys` / `lodestar keys list` | Each provider: linked (vault / env / no), last check (Verified, Failed, Couldn't reach, Not checked), when, the model in use; where to get a key when none is linked. |
 | `lodestar keys link NAME` | `NAME`: anthropic, openai, gemini, groq, openrouter, mistral, ollama (or the variable name, e.g. `ANTHROPIC_API_KEY`). Asks for the key without showing it, stores it in the keyring and verifies it at once with a call that spends no tokens (the provider's model list; OpenRouter's key info). Never prints the key. |
 | `lodestar keys check [NAME]` | Re-verify one key, or every linked key and the mailbox. |
-| `lodestar keys rm NAME` | Remove the key from the keyring (a key in `.env` or the environment stays: remove it there). |
+| `lodestar keys rm NAME` | Remove the key from the keyring (a key in `.env` or the environment stays: remove it there). `ollama` (no key) unlinks it: clears the model its link saved. |
 
 Every app start (`lodestar ui`, `app`, `desktop`) re-checks the linked keys and the mailbox once in the background;
 offline is "couldn't reach", never "invalid"; a quota or rate limit (HTTP 429) shows as Failed (quota) and keeps AI

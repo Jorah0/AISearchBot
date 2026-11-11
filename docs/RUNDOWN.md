@@ -117,9 +117,9 @@ document is produced (`--council`) and as a standalone `council "<question>"` co
 - `.gitignore` excludes every personal artifact (profile, database, applications, alerts, snapshots, vault index,
   `.env`) and every development artifact (graph outputs, caches, build dirs), so the repo can be shared safely.
 
-## 6. Current state (2026-11-10, pass 17: resume import, master resume, resume studio, document viewer)
+## 6. Current state (2026-11-10, pass 17.1: credential isolation and fixes, after pass 17: resume import, master resume, resume studio, document viewer)
 
-644 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`), and 155 browser tests pass in Edge
+657 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`), and 157 browser tests pass in Edge
 and Chromium (`python -m unittest discover -s tests/e2e -p "e2e_*.py"`); [TESTS.md](TESTS.md) maps every feature to its tests. Live-verified: installer (Desktop shortcuts; the Start Menu folder fix after the overview is checked statically only), desktop window (Edge
 WebView2), every UI route with token and Host checks, six free job sources, page watches, Obsidian export. Not yet
 exercised with real credentials: AI calls and key checks, Google / Microsoft sign-in, IMAP login and SMTP sending, Proton

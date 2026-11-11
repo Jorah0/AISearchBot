@@ -6,6 +6,7 @@ Every automated AI flow is a *tool* with two switches:
     enabled = True, auto=True   executes immediately and logs an event
 Commands you type yourself are confirmed by typing them; only automatic flows go through the inbox.
 """
+import copy
 import json
 import os
 import time
@@ -137,7 +138,8 @@ def load() -> dict:
     except ValueError:  # a corrupt file must not break every setting check; defaults apply until the next save
         data = {}
     tools = {n: {"enabled": e, "auto": a} | data.get("tools", {}).get(n, {}) for n, (_, e, a) in TOOLS.items()}
-    return {"tools": tools, "prefs": PREFS | data.get("prefs", {})}
+    # a copy: set_model() fills prefs["models"] in place, and that must never be the shared default dict
+    return {"tools": tools, "prefs": copy.deepcopy(PREFS) | data.get("prefs", {})}
 
 
 def save(data: dict) -> None:

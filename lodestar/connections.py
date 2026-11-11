@@ -207,6 +207,10 @@ def link(name: str, key: str | None = None) -> dict:
     if res.get("pick") and not setting(f"{name.upper()}_MODEL"):
         settings.set_model(name, res["pick"])
         res |= {"model": res["pick"], "detail": res["detail"].split("; Setup can switch")[0] + f"; switched to {res['pick']}"}
+    # Ollama: no key to store, so a link that reached it pins its model (what ai.available() and the card read). A dead
+    # Ollama is never pinned: that would switch off the offline templates, as ai.local_preset() also refuses
+    if not entry["key"] and res.get("status") == "verified" and name not in ai.available():
+        settings.set_model(name, res.get("model") or ai.model_for(name))
     record("keys", name, res, fp(key or ai.api_key(name)))
     return out | {k: v for k, v in res.items() if k != "pick"}
 
@@ -214,8 +218,13 @@ def link(name: str, key: str | None = None) -> dict:
 def unlink(name: str) -> dict:
     name = resolve(name)
     k = REGISTRY[name]["key"]
-    if not k:
-        raise SystemExit("Ollama has no key: stop it, or change the provider under Tools > Preferences")
+    if not k:  # Ollama: no key; unlinking clears the model pin its link saved (an empty entry = no pin)
+        settings.set_pref("models", f"{name}=")
+        _forget(name)
+        if name in ai.available():
+            raise SystemExit("Ollama's model pin is cleared, but it stays on: OLLAMA_MODEL is set in .env or the "
+                             "environment, or the provider is ollama under Tools > Preferences")
+        return status()
     if os.environ.get(k) and not vault.get(k):
         raise SystemExit(f"{k} is set in .env or the environment, not in the vault: remove it there")
     vault.delete(k)

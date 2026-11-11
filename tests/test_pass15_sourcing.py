@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 
 if "lodestar.config" not in sys.modules:  # same temp home as test_lodestar.py when that file was imported first
     os.environ["LODESTAR_HOME"] = tempfile.mkdtemp(prefix="lodestar-test-")
+    os.environ["LODESTAR_VAULT_SERVICE"] = ""  # the temp home's own keyring namespace, even with a fixed one in .env
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
 
 from lodestar import ai, apply, db, profile, settings, web_monitor as wm  # noqa: E402

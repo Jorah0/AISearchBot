@@ -38,7 +38,8 @@ for _env in {Path.cwd() / ".env", ROOT / ".env"}:
             _k = _ln.split("=", 1)[0].lstrip("# ").strip()
             if "=" in _ln and re.fullmatch(r"[A-Z][A-Z0-9_]*", _k) and _k != "LODESTAR_HOME":
                 os.environ[_k] = ""
-for _k in ("LODESTAR_NOTIFY_EMAIL", "LODESTAR_PROVIDER", "OBSIDIAN_VAULT"):
+# LODESTAR_VAULT_SERVICE "": the temp home's own keyring namespace (vault.namespace), never a fixed, real one
+for _k in ("LODESTAR_NOTIFY_EMAIL", "LODESTAR_PROVIDER", "OBSIDIAN_VAULT", "LODESTAR_VAULT_SERVICE"):
     os.environ[_k] = ""
 
 try:

@@ -15,7 +15,7 @@ NAME = re.compile(r"`([A-Za-z_]\w*\.\w+\.\w+)`")
 UNMAPPED: set[str] = set()  # tests deliberately named in no row (none today)
 # Every row ID, pinned: deleting a row fails. Numbered areas run 1..N with no gap; a Planned feature that gets built
 # moves from PLANNED into a row (raise N or add the name here).
-NUMBERED = {"tracker-sourcing": 35, "profile-resume-ai": 40, "mail-people-interviews": 44, "connections": 18, "ui-sweep": 66,
+NUMBERED = {"tracker-sourcing": 35, "profile-resume-ai": 40, "mail-people-interviews": 44, "connections": 23, "ui-sweep": 66,
             "pipeline": 16}
 NAMED = set("""outcomes-platform-insights-analytics outcomes-platform-insights-ui outcomes-platform-weekly-goals
 outcomes-platform-offers-record outcomes-platform-comp-total outcomes-platform-offers-compare outcomes-platform-market-rates

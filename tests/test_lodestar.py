@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 os.environ["LODESTAR_HOME"] = tempfile.mkdtemp(prefix="lodestar-test-")
+os.environ["LODESTAR_VAULT_SERVICE"] = ""  # the temp home's own keyring namespace, even with a fixed one in .env
 os.environ["ANTHROPIC_API_KEY"] = "test-key"
 
 from lodestar import ai, db, email_monitor, resume, util, web_monitor  # noqa: E402
@@ -1608,7 +1609,11 @@ class SettingsProviders(unittest.TestCase):
     def test_vault_remove_route_deletes_both_service_names(self):
         import http.client, json as _json
         from lodestar import desktop, vault, web
-        calls, real_del, idx = [], vault.keyring.delete_password, vault._index()
+        calls, idx, ns = [], vault._index(), (vault.SERVICE, vault.LEGACY)
+        real_get, real_del = vault.keyring.get_password, vault.keyring.delete_password
+        vault.SERVICE, vault.LEGACY = "lodestar", "jobbot"  # as on the default data folder; a temp home has no legacy name
+        gets = []  # every read is faked too: the real OS keyring's 'lodestar' service is never touched (review code-2)
+        vault.keyring.get_password = lambda service, name: gets.append((service, name))
 
         def fake_del(service, name):
             calls.append((service, name))
@@ -1626,11 +1631,13 @@ class SettingsProviders(unittest.TestCase):
             c.request("POST", "/api/vault", _json.dumps({"name": "TEST_KEY", "delete": True}), h)
             r = c.getresponse(); self.assertEqual((r.status, _json.loads(r.read())), (200, {"ok": True})); c.close()
             self.assertEqual(calls, [("lodestar", "TEST_KEY"), ("jobbot", "TEST_KEY")])
+            self.assertIn(("lodestar", "TEST_KEY"), gets)  # the chunk lookup before the delete read the fake, not the OS
             self.assertNotIn("TEST_KEY", dict(vault.names()))
         finally:
             srv.shutdown()
-            vault.keyring.delete_password = real_del
+            vault.keyring.get_password, vault.keyring.delete_password = real_get, real_del
             vault._save_index(idx)
+            vault.SERVICE, vault.LEGACY = ns
 
     def test_csv_export_usage_in_state_and_gap_has_no_council(self):
         from lodestar import web

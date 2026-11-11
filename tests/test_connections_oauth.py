@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 if "lodestar.config" not in sys.modules:  # same temp home as test_lodestar.py when that file was imported first
     os.environ["LODESTAR_HOME"] = tempfile.mkdtemp(prefix="lodestar-test-")
+    os.environ["LODESTAR_VAULT_SERVICE"] = ""  # the temp home's own keyring namespace, even with a fixed one in .env
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
 
 from lodestar import cli, doctor, email_monitor, mailconn, oauth, util, vault  # noqa: E402
@@ -402,13 +403,13 @@ class Vault(Base):
         vault.set("OAUTH_REFRESH", "y" * 1500)  # shorter: the old pieces go
         self.assertEqual(vault.get("OAUTH_REFRESH"), "y" * 1500)
         self.assertEqual(len(tails()), 1)
-        del self.store[("lodestar", tails()[0])]
+        del self.store[(vault.SERVICE, tails()[0])]
         self.assertIsNone(vault.get("OAUTH_REFRESH"))  # a missing piece is no token, never half a token
         vault.set("OAUTH_REFRESH", "z" * 2500)
         vault.delete("OAUTH_REFRESH")
         self.assertEqual(self.store, {})
         vault.set("SHORT", "abc")
-        self.assertEqual((vault.get("SHORT"), list(self.store)), ("abc", [("lodestar", "SHORT")]))
+        self.assertEqual((vault.get("SHORT"), list(self.store)), ("abc", [(vault.SERVICE, "SHORT")]))
 
 
 class Tokens(Base):
