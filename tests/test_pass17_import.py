@@ -302,6 +302,14 @@ class Verify(Base):
                            "Workﬂow lead at Acme")["experience"][0]
         self.assertEqual(e["flags"], [])  # NFKC: the PDF's 'ﬂ' ligature reads as 'fl'
 
+    def test_a_quote_starting_with_a_dash_bullet_is_found(self):
+        text = "## Awards\n- Data Hero - Tidewater Logistics (2023)\n"
+        for quote in ("- Data Hero - Tidewater Logistics (2023)", "Data Hero - Tidewater Logistics (2023)"):
+            f = profile.verify({"contact": {}, "awards": [{"name": "Data Hero", "issuer": "Tidewater Logistics",
+                                                           "date": "2023", "quote": quote}]}, text)
+            self.assertEqual(f["awards"][0]["flags"], [], quote)
+        self.assertEqual(profile._vnorm("- Built X\n— Shipped Y"), "built x shipped y")
+
     def test_ai_contact_values_are_checked_and_regex_wins(self):
         text = "Dana Smith\ndana@example.com | +1 512 555 0101\n## Skills\nPython\n"
         reply = self.reply(contact={"name": "Dana Smith", "email": "attacker@evil.example", "phone": "+1 999 999 9999",
@@ -401,6 +409,50 @@ class Review(Base):
         self.assertEqual((edu["incoming"]["school"], edu["incoming"]["degree"]), ("UT Austin", "BSc"))
         self.assertEqual(edu["status"], "new")  # shown next to the old one-liner for you to resolve
         self.assertFalse(p["resume"])
+
+    def test_apply_never_writes_what_profile_md_already_shows(self):
+        PROFILE.write_text(MASTER.replace("+1 512 555 0101", "+1 512 555 0101 | linkedin.com/in/dana-smith"), encoding="utf-8")
+        # the first import after pass 17: profile.md shows the role (another layout), the bank has no roles yet
+        p = profile.stage_import(b"Dana Smith\ndana@example.com | https://www.linkedin.com/in/dana-smith\n## Experience\n"
+                                 b"Senior Engineer | Acme Corp | Mar 2021 - Present\n- Cut deploy time 40%\n## Skills\nPython\n",
+                                 "acme.md", use_ai=False)
+        role = next(i for i in p["items"] if i["kind"] == "experience")
+        self.assertEqual((role["status"], role["in_master"]), ("new", True))
+        r = profile.apply_import(p["id"], "new")
+        text = PROFILE.read_text(encoding="utf-8")
+        self.assertEqual(r["added"]["experience"], 1)  # the bank has it now
+        self.assertEqual((text.count("Acme Corp"), text.count("Cut deploy time 40%")), (1, 1))
+        self.assertEqual(text.count("linkedin.com/in/dana-smith"), 1)  # the normalised URL is the same value
+        self.assertIn("Python", text)  # what profile.md did not show still goes in
+        # Re-read my master profile, then Accept all new: the bank fills, profile.md is not written back into
+        before = PROFILE.read_text(encoding="utf-8")
+        r = profile.apply_import(profile.reread_master()["id"], "new")
+        self.assertEqual((PROFILE.read_text(encoding="utf-8"), r["master_changed"]), (before, False))
+        self.assertTrue(r["added"])
+
+    def test_a_finer_date_is_an_add_and_keep_mine_still_takes_new_bullets(self):
+        bank = profile.load()
+        profile.merge(bank, {"experience": [{"title": "Senior Engineer", "company": "Acme Corp", "start": "2021",
+                                             "end": "Present", "bullets": ["Cut deploy time 40%"]}]}, "old.pdf")
+        profile.save(bank)
+        p = profile.stage_import(b"## Experience\n### Senior Engineer - Acme Corp (Mar 2021 - Present)\n- Cut deploy time 40%\n"
+                                 b"- Mentored 2 junior engineers on dbt testing\n", "acme.md", use_ai=False)
+        it = next(i for i in p["items"] if i["kind"] == "experience")
+        self.assertEqual((it["status"], it["fields"], it["default"]), ("changed", {}, True))  # one date, more precise
+        self.assertEqual(it["adds"], {"start": "Mar 2021", "bullets": ["Mentored 2 junior engineers on dbt testing"]})
+        self.assertEqual(profile.apply_import(p["id"], "new", to_master=False)["updated"], 1)
+        acme = profile.load()["experience"][0]
+        self.assertEqual((acme["start"], acme["bullets"][-1]), ("Mar 2021", "Mentored 2 junior engineers on dbt testing"))
+        self.assertIsNone(profile._finer_date("2021-03", "2022"))
+        self.assertEqual(profile._finer_date("2021-03", "Mar 2021"), "2021-03")  # the same month: yours stays
+        # a real conflict kept as yours still takes the bullets it adds when you tick it
+        p = profile.stage_import(b"## Experience\n### Senior Engineer - Acme Corp (Mar 2021 - 2024)\n- Cut costs 12%\n",
+                                 "acme2.md", use_ai=False)
+        it = next(i for i in p["items"] if i["kind"] == "experience")
+        self.assertEqual((it["status"], it["fields"]), ("conflict", {"end": ["Present", "2024"]}))
+        profile.apply_import(p["id"], [it["id"]], {it["id"]: "mine"}, to_master=False)
+        acme = profile.load()["experience"][0]
+        self.assertEqual((acme["end"], acme["bullets"][-1]), ("Present", "Cut costs 12%"))
 
     def test_import_file_without_review_still_merges(self):
         PROFILE.write_text(MASTER, encoding="utf-8")

@@ -165,6 +165,25 @@ class Sync(Base):
             live[0].fn()  # the timer firing: one build
         self.assertEqual(studio.meta()["rev"], profile.profile_rev())
 
+    def test_status_says_a_rebuild_is_pending_so_the_card_can_follow_it(self):
+        t = threading.Timer(600, lambda: None)
+        t.daemon = True
+        with patched(studio, _TIMER=None):
+            self.assertFalse(studio.master_status()["pending"])
+            studio._TIMER = t
+            t.start()
+            try:
+                self.assertTrue(studio.master_status()["pending"])  # the card shows 'building shortly' and polls
+            finally:
+                t.cancel()
+                t.join()
+            self.assertFalse(studio.master_status()["pending"])
+        with studio._SYNC:  # a build running now (Update now, the loop)
+            self.assertTrue(studio.master_status()["pending"])
+        js = (Path(studio.__file__).parent / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("if (tab === 'profile') loadMaster();", js)  # the card refreshes when the tab is shown
+        self.assertIn("m.pending ? setTimeout(loadMaster", js)
+
     def test_a_trigger_during_a_build_reruns_once(self):
         gate, started, builds = threading.Event(), threading.Event(), []
         real_build = studio._build

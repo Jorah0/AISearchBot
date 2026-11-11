@@ -294,10 +294,35 @@ class Guards(Base):
         name, data, _ = viewer.export(self.ref, "txt", text=edited, confirm=True)
         self.assertIn("55%", data.decode())
         self.assertEqual(viewer.view(self.ref, text=RESUME)["guards"]["facts"], [])  # unchanged text: nothing to check
-        r = viewer.save_text(self.ref, edited)
+        r = viewer.save_text(self.ref, edited, confirm=True)
         self.assertTrue(r["facts"])
         self.assertIn("55%", (self.dir / "resume.md").read_text(encoding="utf-8"))
         self.assertTrue(list((self.dir / "history").glob("resume-*.md")))
+
+    def test_save_asks_like_an_export_and_every_changed_line_is_checked(self):
+        # the saved text is what every later export, mail and the packet read: an unsupported line needs confirm first
+        bad = "- Led the Kubernetes migration at Google as VP of Engineering"
+        edited = RESUME.replace("### Engineer, Globex (2016-2021)", "### Director of Engineering - Google (2012 - Present)")
+        with self.assertRaises(viewer.Unconfirmed):
+            viewer.save_text(self.ref, edited)
+        self.assertEqual((self.dir / "resume.md").read_text(encoding="utf-8"), RESUME)  # nothing saved
+        self.assertFalse((self.dir / "history").exists())
+        r = viewer.save_text(self.ref, edited, confirm=True)  # your confirm: saved, and the lines are named back
+        self.assertTrue(any("google" in x.lower() for x in r["facts"]), r)
+        self.assertIn("Google", (self.dir / "resume.md").read_text(encoding="utf-8"))
+        (self.dir / "resume.md").write_text(RESUME, encoding="utf-8")
+        # a filler of 30 harmless lines (the same one) never uses up the check: the invented line after it is caught
+        padded = RESUME + "\n" + "- tidied the pipeline docs\n" * 30 + bad + "\n"
+        g = viewer.view(self.ref, text=padded)["guards"]["facts"]
+        self.assertTrue(any("Kubernetes" in x for x in g), g)
+        with self.assertRaises(viewer.Unconfirmed):
+            viewer.export(self.ref, "txt", text=padded)
+        # past the cap, the rest is not passed silently: one entry asks for confirm
+        with patched(viewer, CHECK_MAX=2):
+            g = viewer.view(self.ref, text=RESUME + "- Wrote docs\n- Wrote more docs\n- Wrote better docs\n")["guards"]["facts"]
+            self.assertIn("1 more changed line(s) were not checked (over 2): confirm only if every one comes from your profile", g)
+            with self.assertRaises(viewer.Unconfirmed):
+                viewer.save_text(self.ref, RESUME + "- Wrote docs\n- Wrote more docs\n- Wrote better docs\n")
 
     def test_counter_draft_may_name_only_its_cited_figures(self):
         other = db.add_job("Hooli", "Data Engineer", None, "x", "viewer test")
@@ -420,6 +445,9 @@ class Web(Base):
         self.assertEqual(st, 200)
         self.assertTrue(str(opened[0]).endswith(os.path.join("exports", "Dana-Smith-Resume.html")))
         self.assertIn("#1F3A5F", Path(opened[0]).read_text(encoding="utf-8"))  # the document's own look
+        st, _, data = self.call("/api/view/save", {"ref": self.ref, "text": RESUME.replace("40%", "45%")})
+        self.assertEqual((st, json.loads(data)["confirm"]), (409, True))  # the fact guard asks before a save too
+        self.assertIn("40%", (self.dir / "resume.md").read_text(encoding="utf-8"))
         st, _, data = self.call("/api/view/save", {"ref": self.ref, "text": RESUME.replace("ships", "builds")})
         self.assertEqual((st, json.loads(data)["ok"]), (200, True))
         self.assertIn("builds reliable", (self.dir / "resume.md").read_text(encoding="utf-8"))

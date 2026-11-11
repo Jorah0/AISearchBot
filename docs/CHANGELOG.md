@@ -1,6 +1,33 @@
 # Changelog (development passes, newest first)
 
-## Pass 17, part 3 (2026-11-10): a viewer and formatting for every document
+## Pass 17 (2026-11-10): resume import, master resume, resume studio, document viewer
+
+Import a resume or LinkedIn export into a review and keep every section of it; a master resume that follows your
+profile on its own; an AI resume studio that builds PDF / DOCX / text resumes from your own facts in the look you
+choose; and one viewer with real pages and a formatting panel for every document Lodestar writes. The parts below
+list each in detail.
+
+**Fixes before release**
+- Saving an edited resume in the viewer now asks first when a line says something your profile does not (a new
+  employer, title or number), the same as exporting does. Every changed line is checked, however long the edit.
+- A resume the studio writes may say "N years of experience" (counted from your first role), but that number is
+  no longer accepted anywhere else in the text (for example as a team size).
+- "Use for this job" with a studio version built before you changed your profile now shows "Profile changed" on the
+  job (and marks the pipeline's Tailor step stale) instead of hiding it.
+- When resume.pdf is open in another program, "Use for this job" stops before changing anything, so the PDF that mail
+  attaches always matches the resume text. Saving or re-tailoring a job's resume prints its PDF again (or removes it
+  when no PDF can be printed) instead of leaving an older PDF beside the new text.
+- The pipeline's Tailor step no longer spends a second AI call when only one is left in the day's budget: it shortens
+  the resume without the AI instead.
+- Importing a resume no longer adds roles, bullets, skills, education or your LinkedIn link to profile.md a second
+  time when profile.md already shows them, and "Re-read my master profile" only fills the profile bank.
+- Bulleted awards, publications and certifications read by AI are no longer flagged "quote not found".
+- A date that only gets more precise ("2021" to "Mar 2021") is an update, not a conflict, so the new bullets that come
+  with it are no longer dropped; a conflict you keep as yours still takes the bullets you ticked.
+- The Profile tab's master resume card now updates by itself after a background rebuild ("Building from your
+  profile shortly…", then the new date), and whenever you open the tab.
+
+### Part 3 (2026-11-10): a viewer and formatting for every document
 
 **Document viewer**
 - The master resume, studio versions, tailored resumes, cover letters, form answers, offer notes, interview prep,
@@ -15,7 +42,7 @@
   resume lines your profile does not support ask before export.
 - Download buttons now work in the desktop window too.
 
-## Pass 17, part 2 (2026-11-10): the AI resume studio
+### Part 2 (2026-11-10): the AI resume studio
 
 **Studio tab**
 - Describe the resume you want ("one page, lead with leadership, navy accent, drop the 2015 job"), aim it at a
@@ -35,7 +62,7 @@
 - The Tailor resume step now uses the studio, and reads stale only when a part of your profile that resume used
   changed (the same rule as the drawer badge).
 
-## Pass 17, part 1 (2026-11-10): full resume import and the profile-synced master resume
+### Part 1 (2026-11-10): full resume import and the profile-synced master resume
 
 **Import with review**
 - An imported resume (or LinkedIn export) is read into a review instead of straight into your profile. Each fact

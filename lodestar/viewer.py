@@ -29,6 +29,7 @@ JOB_DOCS = {"resume.md": "resume", "cover_letter.md": "letter", "form_answers.md
 EMPLOYER = {"resume", "letter", "answers", "counter"}  # an employer reads these: a salary floor in them stops the export
 FORMATS = ("pdf", "docx", "txt", "md", "html")
 HIST_RE = re.compile(r"^[\w.-]{1,120}$")
+CHECK_MAX = 400  # distinct changed resume lines the fact guard checks; more than that needs confirm as a whole
 
 
 class Unconfirmed(SystemExit):
@@ -189,11 +190,15 @@ def guards(src: dict, text: str | None, txt: str) -> dict:
         old = [_plain(x.strip().lstrip("-*# ").strip()) for x in src["md"].splitlines() if x.strip()]
         new = [_plain(x.strip().lstrip("-*# ").strip()) for x in text.splitlines() if x.strip()]
         facts, seen = _facts(), set(old)
-        for ln in [x for x in new if x not in seen][:30]:
+        fresh = list(dict.fromkeys(x for x in new if x not in seen))  # every distinct changed line is checked
+        for ln in fresh[:CHECK_MAX]:
             near = difflib.get_close_matches(ln, old, 1, 0.3)
             g = check_rewrite(near or [""], ln, facts)
             if g["flags"]:
                 out["facts"].append(f'"{ln[:70]}": {g["why"]}')
+        if len(fresh) > CHECK_MAX:  # never pass unchecked lines silently: they need your confirm like a flagged one
+            out["facts"].append(f"{len(fresh) - CHECK_MAX} more changed line(s) were not checked (over {CHECK_MAX}): "
+                                "confirm only if every one comes from your profile")
     return out
 
 
@@ -356,9 +361,11 @@ def open_file(ref, fmt: str, opts=None, text: str | None = None, confirm: bool =
     return str(out)
 
 
-def save_text(ref, text: str) -> dict:
-    """Save an edited job document (resume.save_doc: the old version goes to history/). The floor guard runs first;
-    the master resume, studio versions and drafts are not saved from here (edit the profile, build again, or export)."""
+def save_text(ref, text: str, confirm: bool = False) -> dict:
+    """Save an edited job document (resume.save_doc: the old version goes to history/). The floor guard runs first,
+    then the fact guard like an export: the saved text becomes the document every later export, mail and packet reads,
+    so lines your profile does not support need confirm (Unconfirmed) here. The master resume, studio versions and
+    drafts are not saved from here (edit the profile, build again, or export)."""
     from .resume import save_doc
 
     src = source(ref)
@@ -368,5 +375,7 @@ def save_text(ref, text: str) -> dict:
     g = guards(src, str(text), render.page_txt(_blocks(src, st, {}, str(text))))
     if g["blocked"]:
         raise SystemExit(g["blocked"])
+    if g["facts"] and not confirm:
+        raise Unconfirmed("these lines say what your profile does not: " + "; ".join(g["facts"][:6]))
     save_doc(src["job"], src["name"], str(text))
     return {"ok": True, "facts": g["facts"], "personal": g["personal"]}

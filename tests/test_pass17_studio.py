@@ -311,6 +311,21 @@ class Guards(Base):
         self.assertIn('left out "Led 10+ years of platform work."', text)
         self.assertIn('left out "US citizen open to relocation."', text)
 
+    def test_computed_years_cover_only_a_years_phrase(self):
+        n = time.localtime().tm_year - 2012  # the earliest role starts in 2012
+        plan = {"headline": {"text": f"Data engineer who managed {n} engineers", "refs": ["e1"]},
+                "summary": {"text": f"Data engineer with {n}+ years of experience. Grew the platform to {n} regions.",
+                            "refs": ["s0"]},
+                "sections": [{"kind": "summary"}, {"kind": "experience", "items": ["e1"]}]}
+        r, ev = studio.resolve(plan, profile.structured())
+        self.assertEqual((r["headline"], r["summary"]), ("", f"Data engineer with {n}+ years of experience."))
+        text = "\n".join(ev)
+        self.assertIn(f'left out "Grew the platform to {n} regions."', text)
+        self.assertNotIn(f"headline: {n} years is computed", text)  # an invented team size is not a computed fact
+        g = resume.check_rewrite("", f"{n} years building pipelines for {n} teams", "", allow_numbers={n})
+        self.assertEqual((g["new_numbers"], g["computed"]), ([str(n)], []))
+        self.assertEqual(resume.check_rewrite("", f"{n}-year track record", "", allow_numbers={n})["computed"], [str(n)])
+
     def test_on_file_entries_are_listed_and_contact_values_never_reach_the_prompt(self):
         bank = profile.load()
         profile.merge(bank, {"experience": [{"title": "Intern", "company": "Hooli", "start": "2011", "end": "2011",
@@ -428,6 +443,90 @@ class Build(Base):
             db._local.con = con
 
 
+    def test_use_for_job_keeps_the_build_time_sections_and_a_locked_file_changes_nothing(self):
+        import pathlib
+
+        con = getattr(db._local, "con", None)
+        db._local.con = db.connect(":memory:")
+        run, _ = fake_pages([1])
+        try:
+            jid = db.add_job("Acme", "Data Engineer", jd="Python SQL CI pipelines")
+            with patched(studio, _engine_pdf=run):
+                v1, v2 = studio.build(use_ai=False, job_id=jid), studio.build(use_ai=False, job_id=jid, req={"drop": ["e3"]})
+            for v, mark in ((v1, b"%PDF VERSION-ONE"), (v2, b"%PDF VERSION-TWO")):
+                (studio.STUDIO / v["vid"] / v["files"]["pdf"]).write_bytes(mark)
+            studio.use_for_job(v1["vid"], jid)
+            d = resume.app_dir(db.get_job(jid))
+            md, docx, h = (d / "resume.md").read_text(encoding="utf-8"), (d / "resume.docx").read_bytes(), db.get_job(jid)["resume_hash"]
+            PROFILE.write_text(MASTER.replace("Cut deploy time 40%", "Cut deploy time 12%"), encoding="utf-8")  # after v2
+            real = pathlib.Path.replace
+
+            def locked(self, target):
+                if self.name == "resume.pdf":  # open in a PDF reader
+                    raise PermissionError(13, "in use")
+                return real(self, target)
+
+            pathlib.Path.replace = locked
+            try:
+                with self.assertRaises(SystemExit) as e:
+                    studio.use_for_job(v2["vid"], jid)
+            finally:
+                pathlib.Path.replace = real
+            self.assertIn("resume.pdf is open in another program", str(e.exception))
+            self.assertEqual(((d / "resume.md").read_text(encoding="utf-8"), (d / "resume.docx").read_bytes(),
+                              (d / "resume.pdf").read_bytes(), db.get_job(jid)["resume_hash"]), (md, docx, b"%PDF VERSION-ONE", h))
+            self.assertEqual(list(d.glob("*.old")), [])
+            studio.use_for_job(v2["vid"], jid)
+            self.assertEqual((d / "resume.pdf").read_bytes(), b"%PDF VERSION-TWO")
+            self.assertEqual(list(d.glob("*.old")), [])
+            # v2 was built from the profile before the edit: the badge and the pipeline's Tailor step say so
+            job = db.get_job(jid)
+            self.assertEqual(profile.changed_sections(job["profile_rev"]), ["Experience"])
+            self.assertIn("Experience", pipeline._profile_stale(job, {"_revs": profile.section_revs()}))
+        finally:
+            shutil.rmtree(resume.APPS_DIR, ignore_errors=True)
+            db._local.con.close()
+            db._local.con = con
+
+    def test_an_edited_resume_md_never_leaves_an_old_pdf_beside_it(self):
+        con = getattr(db._local, "con", None)
+        db._local.con = db.connect(":memory:")
+        try:
+            jid = db.add_job("Acme", "Data Engineer", jd="Python SQL CI pipelines")
+            job = db.get_job(jid)
+            d = resume.app_dir(job)
+            (d / "resume.md").write_text("# Dana\n## Experience\n- Cut deploy time 40%\n- Wrote the runbook\n", encoding="utf-8")
+            (d / "resume.pdf").write_bytes(b"%PDF stale")
+            resume.save_doc(job, "resume.md", "# Dana\n## Experience\n- Cut deploy time 40%\n")  # no PDF engine here
+            self.assertFalse((d / "resume.pdf").exists())  # removed rather than attached saying the old thing
+            self.assertFalse((d / "resume.html").exists())
+            self.assertNotIn("runbook", "\n".join(p.text for p in __import__("docx").Document(str(d / "resume.docx")).paragraphs))
+
+            def fake(html, pdf, browser=None):
+                Path(pdf).write_bytes(b"%PDF " + Path(html).read_text(encoding="utf-8").encode()[-200:])
+                return {"path": str(pdf), "method": "edge", "tried": []}
+
+            (d / "resume.pdf").write_bytes(b"%PDF stale")
+            with patched(resume, _browser=lambda: "msedge.exe", pdf_from_html=fake):
+                resume._save_resume(job, "# Dana\n## Experience\n- Cut deploy time 41%\n", 0)  # tailor / bullets path
+            self.assertNotEqual((d / "resume.pdf").read_bytes(), b"%PDF stale")  # printed again from the new text
+            self.assertFalse((d / "resume.html").exists())
+        finally:
+            shutil.rmtree(resume.APPS_DIR, ignore_errors=True)
+            db._local.con.close()
+            db._local.con = con
+
+    def test_tighten_needs_a_second_ai_call_in_the_budget(self):
+        fake = self.ai({"sections": [{"kind": "experience", "items": ["e1", "e2", "e3"]}]},
+                       tighten={"sections": [{"kind": "experience", "items": ["e1"]}]})
+        run, calls = fake_pages([3, 3, 1])
+        with patched(studio, _engine_pdf=run):
+            v = studio.build(req={"pages": 1}, max_ai=1)  # a pipeline run with one call left
+        self.assertEqual((v["ai_calls"], len(fake.prompts)), (1, 1))
+        self.assertFalse(any("tightened" in e for e in v["events"]), v["events"])
+        self.assertTrue(any(e.startswith("page limit: cut") for e in v["events"]), v["events"])
+
+
 class Pipeline(Base):
     def test_tailor_step_runs_the_studio_and_is_stale_only_when_a_used_section_changed(self):
         con = getattr(db._local, "con", None)
@@ -448,6 +547,23 @@ class Pipeline(Base):
             st = {e["name"]: e for e in pipeline.status(jid)}["tailor"]
             self.assertEqual(st["state"], "stale")
             self.assertIn("your profile changed since this was built (Experience)", st["why"])
+        finally:
+            shutil.rmtree(resume.APPS_DIR, ignore_errors=True)
+            db._local.con.close()
+            db._local.con = con
+
+    def test_tailor_step_stays_within_the_runs_ai_budget(self):
+        con = getattr(db._local, "con", None)
+        db._local.con = db.connect(":memory:")
+        fake = self.ai({"sections": [{"kind": "experience", "items": ["e1", "e2", "e3"]}]},
+                       tighten={"sections": [{"kind": "experience", "items": ["e1"]}]})
+        run, _ = fake_pages([3, 3, 1])
+        try:
+            jid = db.add_job("Acme", "Data Engineer", jd="Python SQL")
+            pipeline.skip(jid, "score")
+            with patched(studio, _engine_pdf=run):
+                r = pipeline.run(jid, "tailor", budget=1)  # one call left today: the plan, then trim (no tighten call)
+            self.assertEqual((r["outcome"], r["ai"], len(fake.prompts)), ("done", 1, 1))
         finally:
             shutil.rmtree(resume.APPS_DIR, ignore_errors=True)
             db._local.con.close()

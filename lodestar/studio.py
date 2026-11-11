@@ -52,7 +52,8 @@ def files() -> dict:
 
 
 def master_status() -> dict:
-    """master.json + {stale: the profile changed since the last build, files, engine}."""
+    """master.json + {stale: the profile changed since the last build, pending: a rebuild is scheduled or running (the
+    card polls until it is done), files, engine}."""
     from .resume import engine_name
 
     m = meta()
@@ -60,7 +61,8 @@ def master_status() -> dict:
         rev = profile.profile_rev()
     except (Exception, SystemExit):  # an unreadable bank never costs the page
         rev = m.get("rev")
-    return m | {"stale": m.get("rev") != rev, "files": files(), "engine": engine_name()}
+    pending = bool(_TIMER is not None and _TIMER.is_alive()) or _SYNC.locked()
+    return m | {"stale": m.get("rev") != rev, "pending": pending, "files": files(), "engine": engine_name()}
 
 
 def schedule_master(delay: float | None = None) -> None:
@@ -612,15 +614,17 @@ def _new_dir(target: str) -> tuple[str, Path]:
 
 
 def build(request: str = "", req: dict | None = None, job_id=None, jd: str | None = None, parent: str | None = None,
-          provider: str | None = None, use_ai: bool | None = None) -> dict:
+          provider: str | None = None, use_ai: bool | None = None, max_ai: int | None = None) -> dict:
     """One studio version: plan (AI, or offline), resolve, render, check, keep. use_ai None = AI when a provider is set
     up; a typed request with no AI is refused (an offline build would ignore it). parent: a follow-up on that version
-    (its plan and requirements carry over; built fresh when the profile changed since). -> plan.json."""
+    (its plan and requirements carry over; built fresh when the profile changed since). max_ai: AI calls this build may
+    make (a pipeline run's budget left); with one, an over-long plan is trimmed without the tighten call. -> plan.json."""
     from . import ai, ats, db, lint, render, settings
     from .resume import SYSTEM
 
     request, req = _text(request, 4000), dict(req or {})
-    rev = profile.profile_rev()
+    revs = profile.section_revs()  # kept: Use for this job records what the version was built from, not the profile then
+    rev = profile.profile_rev(revs)
     notes, events = [], []
     par = version(parent) if parent else None
     reuse = None
@@ -678,7 +682,8 @@ def build(request: str = "", req: dict | None = None, job_id=None, jd: str | Non
         events += ev
     vid, vdir = _new_dir(f"{job['company']}-{job['title']}" if job else "jd" if jd_text else "general")
     try:
-        out = _render_version(resolved, st, vdir, plan, doc, req, missing, want_ai, provider, events)
+        out = _render_version(resolved, st, vdir, plan, doc, req, missing,
+                              want_ai and (max_ai is None or ai_calls < max_ai), provider, events)
         ai_calls += out.pop("ai_calls")
         cover = None
         if jd_text:
@@ -691,6 +696,7 @@ def build(request: str = "", req: dict | None = None, job_id=None, jd: str | Non
                  "req": req, "job_id": int(job_id) if job_id else None,
                  "jd": jd_text if jd and not job else "",
                  "jd_hash": hashlib.sha256(jd_text.encode()).hexdigest()[:12] if jd_text else "", "profile_rev": rev,
+                 "section_revs": revs,
                  "used_ai": want_ai, "ai_calls": ai_calls, "plan": plan, "style": st, "events": events,
                  "notes": notes + look_notes + ([_text(plan.get("notes"), 600)] if want_ai and plan.get("notes") else []),
                  "warnings": out["warnings"], "lint": lint.lint(out["md"])["issues"][:20], "audit": out["audit"],
@@ -845,18 +851,29 @@ def use_for_job(vid, job_id) -> dict:
     v, job, d = version(vid), db.get_job(int(job_id)), _vdir(vid)
     md = (d / v["files"]["md"]).read_text(encoding="utf-8")
     before = resume.coverage(job, save=False)["score"] if job["jd"] else 0
-    out, after = resume._save_resume(job, md, before, f"studio {vid}")
+    # the old resume.docx / .pdf move aside first: one open in another program stops here, before resume.md or the
+    # job's variant changed, so the files mail attaches never disagree with the text
+    aside: list[tuple[Path, Path]] = []
+    for ext in ("docx", "pdf"):
+        target = resume.app_dir(job) / f"resume.{ext}"
+        if target.is_file():
+            try:
+                target.replace(target.with_name(f"{target.name}.old"))
+            except PermissionError:
+                for old, t in aside:
+                    old.replace(t)
+                raise SystemExit(f"{target.name} is open in another program: close it, then Use for this job again") from None
+            aside.append((target.with_name(f"{target.name}.old"), target))
+    # the section revs it was built from: a version older than the profile shows as changed (older plans: all of it)
+    revs = v.get("section_revs") or ({k: "?" for k in profile.section_revs()} if v.get("profile_rev") != profile.profile_rev() else None)
+    out, after = resume._save_resume(job, md, before, f"studio {vid}", revs)
     copied = {}
     for ext in ("docx", "pdf"):
-        target = out.with_suffix(f".{ext}")
-        try:
-            if ext in v["files"]:
-                shutil.copyfile(d / v["files"][ext], target)
-                copied[ext] = str(target)
-            elif ext == "docx":
-                copied[ext] = str(resume.export_docx(out))  # never leave an older resume.docx beside the new text
-            else:
-                target.unlink(missing_ok=True)
-        except PermissionError:
-            raise SystemExit(f"{target.name} is open in another program: close it, then Use for this job again") from None
+        if ext in v["files"]:
+            shutil.copyfile(d / v["files"][ext], out.with_suffix(f".{ext}"))
+            copied[ext] = str(out.with_suffix(f".{ext}"))
+        elif ext == "docx":
+            copied[ext] = str(resume.export_docx(out))  # never leave an older resume.docx beside the new text
+    for old, _ in aside:
+        old.unlink(missing_ok=True)
     return {"path": str(out), "vid": vid, **copied, "coverage": {"before": before, "after": after}}

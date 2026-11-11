@@ -43,6 +43,7 @@ function go(tab) {
   if (tab === 'insights') loadInsights();
   if (tab === 'setup') loadEmail();
   if (tab === 'studio') loadStudio();
+  if (tab === 'profile') loadMaster();  // the master card follows background rebuilds
 }
 
 /* ---- background tasks ---- */
@@ -1348,14 +1349,15 @@ async function reviewDiscard(n, btn) {
 async function loadMaster() { const r = await api('/api/studio'); if (!r.error) renderMaster(r.master); }
 function renderMaster(m) {
   const f = m.files || {}, when = m.built ? m.built.replace('T', ' ').slice(0, 16) : '';
-  $('#mStatus').innerHTML = (when ? `Updated from your profile at ${esc(when)}` + (m.engine ? ` · ${esc(m.engine)}` : '') + (m.pages ? ` · ${m.pages} page(s)` : '') : 'Not built yet: Update now builds it')
+  clearTimeout(MASTER_POLL); MASTER_POLL = m.pending ? setTimeout(loadMaster, 4000) : null;  // a rebuild is due: follow it
+  $('#mStatus').innerHTML = (when ? `Updated from your profile at ${esc(when)}` + (m.engine ? ` · ${esc(m.engine)}` : '') + (m.pages ? ` · ${m.pages} page(s)` : '') : m.pending ? 'Building from your profile shortly…' : 'Not built yet: Update now builds it')
     + (m.stale && when ? ' <span class="chip stale">profile changed: updates shortly, or Update now</span>' : '');
   $('#mDiff').innerHTML = (m.diff || []).length ? `<div class="muted">last change: ${esc(m.diff.join(' · '))}</div>` : '';
   $('#mWarn').innerHTML = (m.last_error ? `<div class="warnbox">${esc(m.last_error)}</div>` : '') + (m.warnings || []).map(w => `<div class="warnbox">${esc(w)}</div>`).join('');
   $('#mPdf').disabled = !f.pdf && !f.html; $('#mPdf').textContent = f.pdf || !f.html ? 'Open PDF' : 'Open print page'; $('#mDocx').disabled = !f.docx;
   MASTER = m;
 }
-let MASTER = null;
+let MASTER = null, MASTER_POLL = null;
 async function openMaster(ext) {
   const e = ext === 'pdf' && MASTER && !(MASTER.files || {}).pdf ? 'html' : ext, r = await api('/api/master/open', { ext: e });
   toast(r.error ? 'error: ' + r.error : 'opened ' + r.path, r.error ? 'err' : 'ok');
@@ -2121,10 +2123,11 @@ function vwJump(title) {  // a click on a heading in the page: its section's edi
   const box = $$('#vwEdit .vwsec').find(s => s.dataset.title.trim().toLowerCase() === title.trim().toLowerCase()) || $('#vwEdit .vwsec');
   const ta = box && box.querySelector('textarea'); if (ta) { ta.scrollIntoView({ block: 'nearest' }); ta.focus(); }
 }
-async function vwSaveText(btn) {
-  btn.disabled = true; const r = await api('/api/view/save', { ref: VW.ref, text: VW.text ?? VW.data.md }); btn.disabled = false;
+async function vwSaveText(btn, sure) {  // the fact guard asks first (409 confirm), like an export
+  btn.disabled = true; const r = await api('/api/view/save', { ref: VW.ref, text: VW.text ?? VW.data.md, confirm: !!sure }); btn.disabled = false;
+  if (r.confirm) return confirm(r.error + '\n\nSave anyway? Mail and the application packet will use this text.') ? vwSaveText(btn, true) : null;
   if (r.error) return toast('error: ' + r.error, 'err');
-  toast('saved ' + VW.ref.name + (r.facts.length ? ' (check: ' + r.facts.length + ' line(s) your profile does not support)' : ''), r.facts.length ? '' : 'ok');
+  toast('saved ' + VW.ref.name + (r.facts.length ? ' (you confirmed ' + r.facts.length + ' line(s) your profile does not support)' : ''), r.facts.length ? '' : 'ok');
   VW.text = null; await vwLoad(false);
   if (cur && VW && cur.job.id === VW.ref.id) openJob(cur.job.id);
 }

@@ -1261,8 +1261,8 @@ class Handler(BaseHTTPRequestHandler):
                         out = viewer.open_file(ref, str(p.get("fmt") or "html"), opts, text, bool(p.get("confirm")))
                         _open_path(Path(out))
                         self._json({"ok": True, "path": out})
-                    elif path == "/api/view/save":  # {text}: a job document's edit, after the floor guard
-                        self._json(viewer.save_text(ref, text or ""))
+                    elif path == "/api/view/save":  # {text, confirm?}: a job document's edit, after the floor + fact guards
+                        self._json(viewer.save_text(ref, text or "", bool(p.get("confirm"))))
                     else:
                         self._json({"error": "not found"}, 404)
                 except viewer.Unconfirmed as e:  # the fact guard: the UI asks, then sends confirm

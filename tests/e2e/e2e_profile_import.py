@@ -1,9 +1,12 @@
 """Profile, pass 17: the import review (conflict keep mine / use incoming, flagged rows, the 'Not stored' note, lines not
 read, Re-read my master profile, bank chips of the new kinds), the stale-editor guard on Save, the master resume card
 (Update now, Open, Show folder, the 'profile changed' state) and the drawer's 'profile changed' badge."""
+import threading
 import unittest
 
 from harness import PROFILE_MD, E2ETestCase, db, profile, resume
+
+from lodestar import studio
 
 RESUME = b"""Pat Rivera
 Date of Birth: 1990-04-02
@@ -39,8 +42,10 @@ class ProfileImport(E2ETestCase):
     def test_review_conflict_use_incoming_not_stored_and_unread(self):
         self.run_click(self.page.get_by_role("button", name="Re-read my master profile"))
         self.expect_toast("profile.md read into a review below", "ok")
+        before = profile.master_text()
         self.run_click(self.page.locator("#pReview .review", has_text="profile.md").get_by_role("button", name="Accept all new"))
         self.assertEqual(self.page.locator("#pReview .review").count(), 0)
+        self.assertEqual(profile.master_text(), before)  # a re-read fills the bank: nothing is written back twice
         self.assertEqual(profile.load()["experience"][0]["end"], "Present")
         review = self.upload_and_import("pat-2024.txt", RESUME)
         self.assertIn("Not stored: date of birth (line 2)", review.locator(".warnbox").text_content())
@@ -121,6 +126,28 @@ class ProfileImport(E2ETestCase):
         self.set_viewport(420)
         self.settle()
         self.assertEqual(self.overflow(), [])
+
+    def test_master_card_follows_a_background_rebuild(self):
+        timer = threading.Timer(600, lambda: None)  # the debounce timer a Save starts in the app (studio.AUTO)
+        timer.daemon = True
+        old = studio._TIMER
+        try:
+            studio._TIMER = timer
+            timer.start()
+            self.go("board")
+            self.go("profile")  # showing the tab refreshes the card
+            self.idle()
+            self.assertIn("Building from your profile shortly", self.page.text_content("#mStatus"))
+            timer.cancel()
+            studio.sync_master(force=True)  # the rebuild it stood for, in the background
+            self.page.wait_for_function("() => document.querySelector('#mStatus').textContent.includes('Updated from your profile at')",
+                                        timeout=15_000)  # the card polls while a rebuild is due
+            self.assertFalse(self.page.locator("#mDocx").is_disabled())
+        finally:
+            timer.cancel()
+            studio._TIMER = old
+            for f in profile.RESUMES.glob("master.*"):
+                f.unlink(missing_ok=True)
 
     def test_drawer_badge_when_a_used_section_changed(self):
         jid = self.ids["saved"]

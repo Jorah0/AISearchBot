@@ -428,7 +428,7 @@ def _tailor(job, ctx):
 
     look = settings.pref("resume_look") or {}
     v = studio.build(request=settings.pref("resume_request") or "", req={"pages": look.get("pages", 1)}, job_id=job["id"],
-                     provider=ctx.provider, use_ai=None)
+                     provider=ctx.provider, use_ai=None, max_ai=max(1, ctx.budget - ctx.spent))  # the run's budget
     ctx.spent += v.get("ai_calls") or 0
     r = studio.use_for_job(v["vid"], job["id"])
     return {"vid": v["vid"], "docx": "resume.docx", "pdf": "resume.pdf" if r.get("pdf") else None, "pages": v["pages"],

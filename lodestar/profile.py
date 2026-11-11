@@ -975,6 +975,7 @@ def extract(text: str, provider: str | None = None, use_ai: bool | None = None) 
 def _vnorm(s) -> str:
     """For substring checks: NFKC (PDF 'ﬂ' -> 'fl'), casefold, bullet glyphs and markdown marks gone, spaces collapsed."""
     s = unicodedata.normalize("NFKC", str(s or "")).casefold()
+    s = re.sub(r"(?m)^\s*[-–—]\s+", " ", s)  # a dash bullet at a line's start ('- Data Hero - ...' quoted from a list)
     s = re.sub(r"[•·▪◦‣●*_`#]|\s[-–—]\s", " ", s).replace("–", "-").replace("—", "-")
     return re.sub(r"\s+", " ", s).strip()
 
@@ -1314,6 +1315,7 @@ def diff(bank: dict, facts: dict, master: str = "") -> list[dict]:
     summary are items too. default: new / changed items start checked unless flagged; a conflict keeps yours."""
     items: list[dict] = []
     top = facts.get("_flags") or {}
+    shown = _master_facts(master)  # what profile.md already shows: in_master items are never written into it again
 
     def add(**kw) -> None:
         it = {"id": f"i{len(items) + 1}", "flags": [], "fields": {}, "adds": {}, "existing": None, "in_master": False,
@@ -1329,7 +1331,7 @@ def diff(bank: dict, facts: dict, master: str = "") -> list[dict]:
             v = _linkedin_url(v) or v
         have = bank["contact"].get(k) or ""
         status = "duplicate" if have.casefold() == v.casefold() else "conflict" if have else "new"
-        add(kind="contact", field=k, status=status, incoming=v, existing=have or None, in_master=v in master,
+        add(kind="contact", field=k, status=status, incoming=v, existing=have or None, in_master=_shown_in(v, master),
             flags=[top["contact"][k]] if k in (top.get("contact") or {}) else [])
     if (s := str(facts.get("summary") or "").strip()) and not _personal_value(s):
         have = str(bank.get("summary") or "")
@@ -1355,15 +1357,62 @@ def diff(bank: dict, facts: dict, master: str = "") -> list[dict]:
                 fields = {f: [have.get(f), item[f]] for f in FIELDS[kind] if f not in LIST_FIELDS and item[f] and have.get(f)
                           and _norm(have[f]).casefold() != _norm(item[f]).casefold()}
                 adds = {f: item[f] for f in FIELDS[kind] if f not in LIST_FIELDS and item[f] and not have.get(f)}
+                for f in [f for f in fields if f in DATE_FIELDS]:  # '2021' vs 'Mar 2021': one date, not a conflict
+                    if (finer := _finer_date(*fields[f])) is not None:
+                        del fields[f]
+                        if finer == item[f]:
+                            adds[f] = finer  # the import is more precise: it fills in the month
                 for f in LIST_FIELDS & set(FIELDS[kind]):
                     if more := [b for b in item[f] if b.casefold() not in {x.casefold() for x in have.get(f) or []}]:
                         adds[f] = more
                 status = "conflict" if fuzzy or fields else "changed" if adds else "duplicate"
-            label = item.get(KEYS[kind][0]) or item.get(FIELDS[kind][0]) or ""
             add(kind=kind, status=status, incoming=item, existing=_bare(have) if have else None, fields=fields, adds=adds,
                 flags=flags, quote=str(raw.get("quote") or "")[:300], fuzzy=fuzzy, suggest=raw.get("suggest") or {},
-                in_master=bool(label) and _mentioned(label, master))
+                in_master=_in_master(shown, kind, item))
     return items
+
+
+DATE_FIELDS = {"start", "end", "date", "expires"}
+
+
+def _finer_date(a, b) -> str | None:
+    """'2021' and 'Mar 2021' are one date at two precisions -> the finer one; '2021-03' and 'Mar 2021' are the same
+    month -> a (yours stays); None when they are different dates."""
+    ya, yb = re.findall(r"(?:19|20)\d\d", str(a or "")), re.findall(r"(?:19|20)\d\d", str(b or ""))
+    if len(ya) != 1 or ya != yb:
+        return None
+    bare = lambda s: re.fullmatch(r"\s*(?:19|20)\d\d\s*", str(s or ""))  # noqa: E731
+    if bare(a) or bare(b):
+        return b if bare(a) else a
+    ma = lint._month(str(a), False)
+    return a if ma is not None and ma == lint._month(str(b), False) else None
+
+
+def _master_facts(master: str) -> dict:
+    """profile.md read the way an import is read (offline, Preferences and personal data out): what it already shows."""
+    if not str(master or "").strip() or is_template(master):
+        return empty()
+    try:
+        return {**empty(), **extract_heuristic(redact_personal(drop_preferences(master))[0])}
+    except Exception:  # an odd layout: nothing counts as shown (the old behaviour)
+        return empty()
+
+
+def _in_master(shown: dict, kind: str, item: dict) -> bool:
+    """profile.md already has this entry: the same key, or the same company / school / organisation under another
+    spelling (for a role, with the same title too, so a new role at an old employer still goes in)."""
+    if _find(shown, kind, item) is not None:
+        return True
+    j = _fuzzy(kind, item, shown.get(kind) or []) if kind in ("experience", "education", "volunteering") else None
+    return j is not None and (kind != "experience"
+                              or _norm(shown[kind][j].get("title")).casefold() == _norm(item.get("title")).casefold())
+
+
+def _shown_in(value: str, text: str) -> bool:
+    """A contact value already in the text, compared without scheme / www / trailing slash and case
+    ('https://www.linkedin.com/in/pat' is shown by 'linkedin.com/in/pat')."""
+    key = re.sub(r"^(?:https?://)?(?:www\.)?", "", _norm(_linkedin_url(value) or value).casefold()).rstrip("/")
+    return bool(key) and key in re.sub(r"https?://|www\.", "", str(text or "").casefold())
 
 
 def _write_pending(p: dict) -> dict:
@@ -1468,6 +1517,7 @@ def apply_import(pid: str, accept="new", take: dict | None = None, to_master: bo
         raise ValueError(f"take must be mine, incoming or both (got {sorted(bad)[0]!r})")
     ids = _accepted_ids(p["items"], accept)
     source, notes = p["source"], list(p.get("notes") or [])
+    to_master = to_master and source != "profile.md"  # a re-read of profile.md only fills the bank: never written back
     added: dict[str, int] = {}
     updated = 0
     with _LOCK:
@@ -1486,7 +1536,7 @@ def apply_import(pid: str, accept="new", take: dict | None = None, to_master: bo
                     bank["summary"] = it["incoming"]
                 added[kind] = added.get(kind, 0) + (status == "new")
                 updated += status == "conflict"
-                if to_master and not template:
+                if to_master and not template and not (status == "new" and it.get("in_master")):
                     text, note = _master_contact(text, kind, it.get("field"), old, it["incoming"])
                     notes += [note] if note else []
                 continue
@@ -1494,6 +1544,11 @@ def apply_import(pid: str, accept="new", take: dict | None = None, to_master: bo
             if status == "duplicate" or (status == "conflict" and choice == "mine") or (it["id"] not in ids and i is not None):
                 if i is not None:  # where else this fact appears
                     have = bank[kind][i]
+                    if status == "conflict" and it["id"] in ids:  # keep mine: your fields stay, its new bullets join
+                        for f, v in it["adds"].items():
+                            if f in LIST_FIELDS:
+                                have[f] = (have.get(f) or []) + [b for b in v if b not in (have.get(f) or [])]
+                                updated += 1
                     if source not in have.setdefault("sources", []):
                         have["sources"].append(source)
                     _evidence(have, source, it.get("quote"))
@@ -1505,7 +1560,11 @@ def apply_import(pid: str, accept="new", take: dict | None = None, to_master: bo
                 _evidence(entry, source, it.get("quote"))
                 bank[kind].append(entry)
                 added[kind] = added.get(kind, 0) + 1
-                if to_master and not template:
+                if to_master and not template and it.get("in_master") and choice != "both":  # never written twice
+                    if any(_vnorm(b) not in _vnorm(text) for b in entry.get("bullets") or []):
+                        notes.append(f"profile.md already shows {entry_label(kind, entry)}: the bank has the imported "
+                                     "details; add any new lines there yourself")
+                elif to_master and not template:
                     text = _insert_into_master(text, kind, _render_item(kind, entry), entry.get("heading"))
                 continue
             have = bank[kind][i]
@@ -1645,7 +1704,7 @@ def _master_contact(text: str, kind: str, field: str | None, old: str, new: str)
         return text, f"profile.md has no contact line ('Name | City | email | ...'): add your {field} there"
     if old and old in lines[at]:
         lines[at] = lines[at].replace(old, new, 1)
-    elif new not in lines[at]:
+    elif not _shown_in(new, lines[at]):  # 'linkedin.com/in/pat' already shows 'https://www.linkedin.com/in/pat'
         lines[at] = lines[at].rstrip() + f" | {new}"
     return "\n".join(lines), ""
 

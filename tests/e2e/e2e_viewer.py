@@ -218,6 +218,11 @@ class Viewer(E2ETestCase):
         name, data = self.download("txt", answer=True)  # the fact guard asks first
         self.assertIn("Export anyway?", self.dialogs[-1])
         self.assertIn("45%", data.decode())
+        self.page.get_by_role("button", name="Save document").click()  # saving asks the same way; declined: not saved
+        self.idle()
+        self.assertIn("Save anyway?", self.dialogs[-1])
+        saved = resume.app_dir(db.get_job(self.ids["saved"])) / "resume.md"
+        self.assertIn("Cut warehouse spend 40%", saved.read_text(encoding="utf-8"))
         self.page.get_by_role("button", name="Discard edits").click()
         self.ready()
         self.assertIn("Cut warehouse spend 40%", frame.locator("body").text_content())

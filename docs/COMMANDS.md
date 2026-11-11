@@ -386,12 +386,15 @@ interests and any other section under its own heading. Each entry keeps the line
   quote the AI returns must be found in the file; anything else is flagged ("not in file", "bullet 2
   reworded" with the verbatim line offered) and starts unchecked. Offline reading is verbatim; a guessed title /
   company split or a lost end date (`2019 -`, never turned into "Present") is flagged too.
-- **Statuses**: new, changed (fills empty fields or adds bullets), conflict (a field differs, or the same company
-  with another title and overlapping dates: keep mine / use incoming / add separately), duplicate (records the
-  source). "Accept all new" takes new and changed items that are not flagged.
+- **Statuses**: new, changed (fills empty fields or adds bullets; a date that only gets more precise, "2021" ->
+  "Mar 2021", is a change, not a conflict), conflict (a field differs, or the same company with another title and
+  overlapping dates: keep mine / use incoming / add separately; a ticked "keep mine" still adds its new bullets),
+  duplicate (records the source). "Accept all new" takes new and changed items that are not flagged.
 - **profile.md**: accepted facts go into their section (`## Work History` counts as Experience; a missing section is
-  added before Preferences) in one save with one snapshot; "use incoming" re-renders that role's header. Untick
-  "also add to my master profile" (`--no-master`) to keep them in the bank only.
+  added before Preferences) in one save with one snapshot; "use incoming" re-renders that role's header. What
+  profile.md already shows (the same role, school or skill in any layout, a contact value written another way) is
+  never added to it again, only to the bank; a re-read of profile.md only fills the bank. Untick "also add to my
+  master profile" (`--no-master`) to keep them in the bank only.
 - Lines the offline reader could not place are listed ("lines not read"). Reviews older than 30 days are dropped.
 - The editor's Save sends the hash of the text it loaded: when an import changed profile.md since, the save is
   refused (409) instead of erasing the imported lines.
@@ -416,8 +419,9 @@ resume was made (Experience)" only when a section that resume used changed.
 |---|---|
 | `lodestar resume master [--rebuild]` | Status of the master resume (files, engine, pages, last change, warnings), or rebuild it now |
 
-Profile tab: the "Master resume" card (Open PDF, Open DOCX, Show folder, Update now). Web API: `GET /api/studio`
--> `{master}`, `POST /api/run/master_sync`, `POST /api/master/open {ext}`, `POST /api/open_folder {which: resumes}`;
+Profile tab: the "Master resume" card (Open PDF, Open DOCX, Show folder, Update now); it refreshes when you open the
+tab and, while a rebuild is due ("Building from your profile shortly…"), every few seconds until it is done. Web API:
+`GET /api/studio` -> `{master}` (with `pending`: a rebuild is scheduled or running), `POST /api/run/master_sync`, `POST /api/master/open {ext}`, `POST /api/open_folder {which: resumes}`;
 `GET /api/state` jobs carry `profile_changed` (section names).
 
 ## Resume studio (pass 17)
@@ -430,7 +434,8 @@ skill-group labels) each pass the no-invention guard: a rewrite that adds a numb
 skill or tool its own role never mentions (a tool used at another employer does not count), a seniority word, a
 degree, a name the profile never mentions, a link, email or phone, or personal data or pay goes back to your words,
 and the summary is checked sentence by sentence. The one computed number allowed is "N years" from your earliest
-role's start; the version notes say so. A bullet may only cite bullets of its own role. The job description and the
+role's start, and only as "N years" / "N+ years" (the same figure as a team size or a count is a new number); the
+version notes say so. A bullet may only cite bullets of its own role. The job description and the
 request are fenced as data; contact values never reach the AI.
 
 The plan is rendered deterministically: the HTML page (also the preview) is printed to PDF by headless Edge
@@ -465,8 +470,9 @@ Studio tab: request box, target (a tracked job or a pasted JD), "Requirements an
 section order with up / down buttons, leave out entries, include facts from your other resumes), Build and Build
 without AI; the result shows pages, engine, coverage, the AI's notes (as text), every guard event and warning, the ATS
 checks, a sandboxed preview (srcdoc, no scripts), Open PDF / DOCX / TXT / MD / page, Show folder, Make this my default
-look, Use for this job (resume.md through the usual save: history, variant, coverage, the sections used for the
-'profile changed' badge; .docx / .pdf copied in) and Refine; Versions lists every build with Open and Delete. The
+look, Use for this job (resume.md through the usual save: history, variant, coverage, the sections the version was
+built from for the 'profile changed' badge; .docx / .pdf copied in; a resume.pdf or .docx open in another program
+stops it before anything changed) and Refine; Versions lists every build with Open and Delete. The
 drawer's "Build in Studio" opens the tab aimed at that job. Web API: `GET /api/studio` -> `{master, versions,
 catalogue, engine, ai, look, choices, defaults}`, `GET /api/studio/<id>` (plan.json + html + md + txt),
 `GET /api/studio/<id>/file?name=` (one of its files, for the viewer), `POST /api/run/studio_build {request?, req?,
@@ -475,7 +481,12 @@ id?, jd?, parent?, ai?}`, `POST /api/studio/<id>/open {file}` | `use {job_id}` |
 
 The pipeline's Tailor step (pass 16.5) now runs the studio for the job (pref `resume_request`, your look, one page
 unless the look says otherwise) and Use for this job; it reads stale exactly when the drawer's 'profile changed'
-badge shows (a section that resume used changed), and after a JD change as before.
+badge shows (a section that resume used changed), and after a JD change as before. It stays within the run's AI
+budget: with one call left, an over-long plan is trimmed without the AI's shortening call.
+
+Saving a job's resume.md (the drawer's or the viewer's Save, tailoring, accepted bullets) keeps the files beside it
+current: resume.docx is exported again and resume.pdf printed again (with no PDF engine it is removed rather than left
+saying the old text; open in another program, the save stops before anything changed).
 
 ## Document viewer and formatting (pass 17)
 
@@ -502,8 +513,10 @@ counter-offer draft (View / format the draft).
   document's look. A studio version opens in its own look.
 - **Edit text** panel: one editor per section. Edits change the preview and the exports; Save document keeps them for
   a job's documents (the old version goes to history/). Every export re-runs the salary-floor guard (resumes, letters,
-  form answers and counter drafts are refused; your private notes are not checked) and, for resumes, checks each
-  changed line against your profile (a new number, tool, title or link asks "Export anyway?" first).
+  form answers and counter drafts are refused; your private notes are not checked) and, for resumes, checks every
+  changed line against your profile (a new number, tool, title or link asks "Export anyway?" first). Save document
+  runs the same checks and asks "Save anyway?" first: the saved text is what later exports, mail and the application
+  packet use.
 
 One renderer path: markdown (or a studio version's resolved document) -> render.py blocks -> the HTML page (the preview
 and the PDF), python-docx and plain text. Web API (token-protected like every route): `POST /api/view {ref, opts?, text?,

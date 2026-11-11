@@ -123,7 +123,9 @@ The master resume (`resumes/master.*`, pass 17) is rebuilt offline, without AI, 
 changed: about 20 seconds after the last save while the app runs, and in each cycle of `lodestar run` / `app` /
 `desktop` for edits made outside the app. It only reads saved files and only writes `resumes/master*`, so it never
 touches text you are editing, and it never rewrites a resume already tailored for a job (the drawer shows "Profile
-changed since this resume was made" instead, only when a section that resume used changed).
+changed since this resume was made" instead, only when a section that resume used changed; a studio version is
+compared with the profile it was built from, not the profile on the day you used it). The Profile tab's card follows
+the rebuild by itself.
 
 Sending mail needs a connected mailbox (Setup > Connect email: Sign in with Google / Microsoft or an app password; or
 `lodestar email signin google|microsoft` / `lodestar email connect`; see CONNECT.md). Without one, approvals of email
@@ -143,7 +145,7 @@ Each tracked job moves through 13 steps (`pipeline.py`), shown in the job drawer
 |---|---|---|---|
 | Fit check | JD coverage + AI verdict (asks for the JD when there is none) | fit_check | yes |
 | Research | company research pack from public pages | research | yes |
-| Tailor resume | the resume studio builds the job's resume from your facts (pref `resume_request`, your look, one page; every AI rewrite checked) and uses it | tailor | yes |
+| Tailor resume | the resume studio builds the job's resume from your facts (pref `resume_request`, your look, one page; every AI rewrite checked) and uses it; within the run's AI budget (one call left: no AI shortening call, the plan is trimmed) | tailor | yes |
 | Cover letter | from the tailored resume, research and fit check | cover_letter | yes |
 | Form answers | the job's form questions: closed-form ones from your answers, open-ended ones drafted | form_answers | yes (never eligibility or EEO) |
 | Apply | you send it and click Mark applied | none | no |

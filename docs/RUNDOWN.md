@@ -12,6 +12,9 @@ one SQLite file. Nothing leaves your machine except the API calls you configure 
 | AI | `lodestar/ai.py` | `chat()`, `ask()`, `ask_json()` over Anthropic + every OpenAI-compatible API; `council()` pools providers and synthesizes | urllib |
 | Data | `lodestar/db.py` | jobs (with validated tracker fields), events, watches, companies, contacts, interview rounds, offers, mail (deduped by Message-ID), seen-keys; status pipeline; stats; funnel; thread-local connections | sqlite3 |
 | Documents | `lodestar/resume.py` | master profile, per-job tailoring (bullet by bullet), cover letter, gap JSON, review, salary parsing, Markdown to .docx / PDF | `python-docx` |
+| Resume studio | `lodestar/studio.py` | the profile-synced master resume (offline, debounced), and AI-planned resume versions that cite profile facts by id (every AI rewrite through `resume.check_rewrite`), page limit, versions, Use for this job | ai, render |
+| Rendering | `lodestar/render.py` | one block list per document -> the HTML page (preview, headless-Edge PDF), python-docx, master-format markdown, ATS text; the style spec | `python-docx` |
+| Viewer | `lodestar/viewer.py` | every generated document as pages with a formatting panel, compare, exports; floor and fact guards on export and Save | render |
 | JD coverage | `lodestar/ats.py` | deterministic keyword coverage of a posting against your resume (`match`), over `data/skills.json`; no AI | stdlib |
 | Resume lint | `lodestar/lint.py` | offline resume checks and the saved-file audit (`resume lint`, `resume audit`) | stdlib |
 | Inbox | `lodestar/email_monitor.py` | IMAP scan, keyword prefilter, AI classification, sender trust (DKIM + a strong job tie: contact, vouched thread, or the company site held for the job), status upgrade rules, interview rounds from trusted timed invites, contact touches, reply drafts, mail recording and thread linking, Track as new job | imaplib |
@@ -24,8 +27,10 @@ one SQLite file. Nothing leaves your machine except the API calls you configure 
 | Web | `lodestar/web_monitor.py` | career-page diffs (robots.txt respected); six free job sources (Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse); Greenhouse / Lever / Ashby company boards; search filters, cross-source de-dup, stale signals, H-1B sponsor hints, weekly posting check; AI fit ranking | urllib |
 | Interview | `lodestar/interview.py` | interview rounds, question bank (`data/questions.json`), STAR stories, prep pack, mock interview with per-answer scoring | ai |
 | Contacts | `lodestar/contacts.py` | contacts CRM: people, job links with a role, LinkedIn connections import, warm paths, touches, referral asks | db |
-| Profile bank | `lodestar/profile.py` | saved resumes, pooled skills / languages / roles, LinkedIn import, `candidate_text()` for prompts | ai |
+| Profile bank | `lodestar/profile.py` | saved resumes, every resume section (schema v2), import reviews (new / changed / conflict / duplicate, verified against the file, personal data dropped), LinkedIn import, the structured catalogue, `candidate_text()` for prompts | ai |
 | Apply | `lodestar/apply.py` | answer bank drafts, checklist, follow-up, thank-you, offer review, auto-track | ai, approvals |
+| Pipeline | `lodestar/pipeline.py` | per-job steps (fit check to close-out) that read earlier outputs, ask once for missing facts, go stale when an input changes, Autopilot with a daily AI budget | ai, approvals |
+| Updater | `lodestar/updater.py` | update check / apply with backup, tests and rollback; subprocesses with a timeout | git |
 | Approvals | `lodestar/approvals.py` | the Inbox: propose, execute, reject; the only code that acts on Lodestar's initiative | db, settings |
 | Settings | `lodestar/settings.py` | tool switches (enabled / auto) and preferences in `settings.json` | stdlib |
 | Ideas | `lodestar/ideas.py` | idea crafting: diverge across providers, critique, rank, refine | ai |
@@ -112,9 +117,9 @@ document is produced (`--council`) and as a standalone `council "<question>"` co
 - `.gitignore` excludes every personal artifact (profile, database, applications, alerts, snapshots, vault index,
   `.env`) and every development artifact (graph outputs, caches, build dirs), so the repo can be shared safely.
 
-## 6. Current state (2026-11-10, pass 16.5: step-by-step pipeline automation)
+## 6. Current state (2026-11-10, pass 17: resume import, master resume, resume studio, document viewer)
 
-561 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`), and 139 browser tests pass in Edge
+644 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`), and 155 browser tests pass in Edge
 and Chromium (`python -m unittest discover -s tests/e2e -p "e2e_*.py"`); [TESTS.md](TESTS.md) maps every feature to its tests. Live-verified: installer (Desktop shortcuts; the Start Menu folder fix after the overview is checked statically only), desktop window (Edge
 WebView2), every UI route with token and Host checks, six free job sources, page watches, Obsidian export. Not yet
 exercised with real credentials: AI calls and key checks, Google / Microsoft sign-in, IMAP login and SMTP sending, Proton

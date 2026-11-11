@@ -8,7 +8,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import ai, db
+from . import ai, db, log
 from .config import APPS_DIR, PROFILE
 from .util import slug
 
@@ -77,17 +77,46 @@ def write_doc(path: Path, text: str) -> Path:
     return path
 
 
+def _drop_pdf(md: Path) -> bool:
+    """Before a per-job .md is rewritten: remove the .pdf beside it (what mail attaches first), so no PDF of the old text
+    outlives it. A PDF open in another program stops the save here, before anything changed. -> there was one."""
+    pdf = md.with_suffix(".pdf")
+    if not pdf.is_file():
+        return False
+    try:
+        pdf.unlink()
+    except OSError:
+        raise SystemExit(f"{pdf.name} is open in another program: close it, then save again") from None
+    return True
+
+
+def _keep_exports(md: Path, had_pdf: bool) -> None:
+    """After a per-job .md changed: the .docx / .pdf beside it are what get uploaded and attached, so they follow it.
+    A PDF that was there is printed again (export_pdf, which re-exports the .docx too); when no PDF can be made it stays
+    removed (the .docx and the text are current) rather than an old one being sent."""
+    if had_pdf:
+        try:
+            r = export_pdf(md, open_html=False)
+            if r["method"] == "html":  # no engine: no PDF; the print page is not a document to attach
+                Path(r["path"]).unlink(missing_ok=True)
+            return
+        except (Exception, SystemExit) as e:
+            log.get("resume").warning("could not print %s again (%s): it stays removed", md.with_suffix(".pdf").name, e)
+    if md.with_suffix(".docx").is_file():
+        export_docx(md)
+
+
 def save_doc(job, name: str, text: str) -> Path:
     """An edited per-job document (editor Save, `resume adjust --job --save`): the previous version moves to history/,
-    resume.md gets its variant hash and a re-score, and an existing .docx beside it is re-exported."""
+    resume.md gets its variant hash and a re-score, and an existing .docx / .pdf beside it is exported again."""
+    had_pdf = _drop_pdf(app_dir(job) / name)
     out = write_doc(app_dir(job) / name, text)
     if name == "resume.md":
         from .extras import resume_hash
 
         db.update_job(job["id"], resume_hash=resume_hash(text))
         rescore(job["id"])  # the match % follows the resume you just saved
-    if out.with_suffix(".docx").is_file():  # the .docx is what gets uploaded: keep it current
-        export_docx(out)
+    _keep_exports(out, had_pdf)
     db.add_event(job["id"], "edited", name)
     return out
 
@@ -178,16 +207,21 @@ def _source(base: str | None = None) -> str:
     return profile.employer_safe(text + ("\n\n" + extra if extra else ""))
 
 
-def _save_resume(job, text: str, before: int, note: str = "") -> tuple[Path, int]:
-    """Write a new resume.md (the old one moves to history/), record its variant, re-score coverage and log the delta."""
+def _save_resume(job, text: str, before: int, note: str = "", revs: dict | None = None) -> tuple[Path, int]:
+    """Write a new resume.md (the old one moves to history/, a .docx / .pdf beside it follows), record its variant,
+    re-score coverage and log the delta. revs: the profile's section_revs the text was built from (a studio version
+    built earlier); default: the profile as it is now."""
     from .extras import resume_hash
 
     from .profile import used_revs
 
+    had_pdf = _drop_pdf(app_dir(job) / "resume.md")
     out = write_doc(app_dir(job) / "resume.md", text)
+    _keep_exports(out, had_pdf)
     h = resume_hash(text)
-    # the profile sections this resume draws on, as they are now: the drawer's 'profile changed' badge compares them
-    db.update_job(job["id"], resume_hash=h, profile_rev=json.dumps(used_revs(text), sort_keys=True))
+    # the profile sections this resume draws on, as they were when it was written: the drawer's 'profile changed'
+    # badge and the pipeline's stale Tailor step compare them with the profile now
+    db.update_job(job["id"], resume_hash=h, profile_rev=json.dumps(used_revs(text, revs), sort_keys=True))
     db.add_event(job["id"], "resume", f"{out} variant={h}" + (f" ({note})" if note else ""))
     if not job["jd"]:  # a resume for a job with no description yet (studio): no coverage to re-score
         return out, before
@@ -315,7 +349,11 @@ def check_rewrite(originals, proposed: str, facts: str, scope: str | None = None
                                if isinstance(t, str) and t.strip() and ats.mentions(t, proposed) and not ats.mentions(t, orig)))
     unsupported = [t for t in added if not ats.mentions(t, base)]
     numbers = _numbers(proposed) - _numbers(orig)
-    new_numbers = sorted(numbers - {str(n) for n in allow_numbers})
+    # a computed number (the studio's 'N years') counts only as 'N years' / 'N+ years': the same figure stated anywhere
+    # else in the text ('managed 7 engineers') is a new number like any other
+    allow = {str(n) for n in allow_numbers
+             if str(n) not in _numbers(re.sub(rf"(?<![\d.,]){re.escape(str(n))}\+?\s*-?\s*years?\b", " ", proposed, flags=re.I))}
+    new_numbers = sorted(numbers - allow)
     titles = sorted({m.lower() for m in TITLE_WORDS.findall(proposed)} - {m.lower() for m in TITLE_WORDS.findall(orig + " " + title)})
     degrees = {x[0] for x in ats.lexicon()["terms"] if x[1] == "education"}
     new_degree = [t for t in unsupported if t in degrees]
@@ -331,7 +369,7 @@ def check_rewrite(originals, proposed: str, facts: str, scope: str | None = None
                                 f"new title {', '.join(titles)}" if titles else "", f"new term {', '.join(terms)}" if terms else "",
                                 "new link" if links else "", "personal data or pay" if personal else "") if x)
     return {"flags": flags, "added": added, "unsupported": unsupported, "new_numbers": new_numbers, "titles": titles,
-            "terms": terms, "why": why, "computed": sorted(numbers & {str(n) for n in allow_numbers}),
+            "terms": terms, "why": why, "computed": sorted(numbers & allow),
             "marks": sorted({s for t in added for s in ats.spans(t, proposed)})}
 
 

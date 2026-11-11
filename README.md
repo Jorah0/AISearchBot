@@ -10,6 +10,8 @@ interviews, mirrors everything into Obsidian, and can pool several AI providers 
 **Link everything** (an AI key, your mailbox with Google / Microsoft sign-in and any 2-step method, or an app
 password): [docs/CONNECT.md](docs/CONNECT.md).
 
+**Full setup guide** (install, every component, how to run it, troubleshooting): [docs/SETUP.md](docs/SETUP.md).
+
 ## Install (the app)
 
 Double-click **`install.bat`**. It creates `.venv`, installs Lodestar with the desktop extras, creates your data files
@@ -139,13 +141,13 @@ Env vars and a `.env` file override the vault for any setting.
 
 ## How the pieces fit
 
-Module map (28 modules, what each does): [docs/RUNDOWN.md, section 1](docs/RUNDOWN.md#1-what-it-is-made-of).
+Module map (37 modules, what each does): [docs/RUNDOWN.md, section 1](docs/RUNDOWN.md#1-what-it-is-made-of).
 
-Tests (offline, 513; browser, 125): `python -m unittest discover -s tests -v`. Which test covers which feature: [docs/TESTS.md](docs/TESTS.md).
+Tests (offline, 644; browser, 155): `python -m unittest discover -s tests -v`. Which test covers which feature: [docs/TESTS.md](docs/TESTS.md).
 
 ### Browser tests
 
-End-to-end tests (120) drive the real UI in a browser (Playwright). Each test class gets a temp data folder with fictional
+End-to-end tests (155) drive the real UI in a browser (Playwright). Each test class gets a temp data folder with fictional
 seeded data, the real server on a free 127.0.0.1 port, and fakes for every outside service (AI, mail, OAuth, job sites,
 keyring): no network, and `~/.lodestar` is never touched.
 
