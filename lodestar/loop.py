@@ -1,4 +1,4 @@
-"""The automation cycle: email -> watches + companies -> market pay (BLS, when on) -> weekly posting check -> follow-up cadence -> interview
+"""The automation cycle: email (+ job-alert mail) -> watches + companies -> daily listing check -> market pay (BLS, when on) -> follow-up cadence -> interview
 reminders -> sync/digest/backup -> update check (updater.tick, on its own interval).
 `lodestar run`, `app` and `desktop` all drive this. Every automatic action still goes through approvals."""
 import threading
@@ -42,8 +42,22 @@ def agenda(now: datetime | None = None) -> dict:
                         **_ready(i["job_id"])} for i in upcoming_interviews(2)],
         "contacts": [{"id": c["id"], "name": c["name"], "company": c["company"] or "", "when": c["next_touch"]} for c in due(today)],
         "emails": _suggested(now),
+        "top_fits": _top_fits(),
+        "closed": _closed_postings(live, now),
+        "boosters": _boosters(),
         "pending": len(db.list_pending("pending")),
     }
+
+
+def _boosters() -> list[dict]:
+    """Today's Chance boosters: the 3 best across the search (rules only); [] on any fault."""
+    from . import boosters
+
+    try:
+        return boosters.across(3)
+    except (Exception, SystemExit) as e:
+        log.get("loop").warning("boosters failed: %s", e)
+        return []
 
 
 def _ready(job_id: int) -> dict:
@@ -58,6 +72,30 @@ def _ready(job_id: int) -> dict:
     top = r["raise"][0] if r["raise"] else None
     return {"readiness": {"score": r["score"], "band": r["band"],
                           "tip": f"{top['text']}, +{top['gain']}" if top else None, "action": top and top["action"]}}
+
+
+def _closed_postings(live, now: datetime) -> list[dict]:
+    """Applied (or later) live jobs whose posting the listing monitor saw removed in the last 7 days (a saved job gets
+    a withdraw proposal in the Inbox instead): 'posting closed: #12 Acme'."""
+    from .web_monitor import removed_event
+
+    since, out = f"{now - timedelta(days=7):%Y-%m-%d}", []
+    for j in live:
+        e = j["status"] != "saved" and removed_event(j["id"])
+        if e and str(e["ts"])[:10] >= since:
+            out.append({"id": j["id"], "company": j["company"], "title": j["title"], "when": str(e["ts"])[:10]})
+    return out
+
+
+def _top_fits() -> list[dict]:
+    """Untracked listings first seen in the last 3 days with fit >= 70 (fit.top_fits); [] on any fault."""
+    from . import fit
+
+    try:
+        return fit.top_fits()
+    except (Exception, SystemExit) as e:
+        log.get("loop").warning("top fits failed: %s", e)
+        return []
 
 
 def _suggested(now: datetime) -> list[dict]:
@@ -175,6 +213,15 @@ def _digest(a, now: datetime | None = None) -> None:
             notify("DIGEST ready: Monitor > Weekly digest (or lodestar digest); set LODESTAR_NOTIFY_EMAIL to get it by email")
 
 
+def _prune() -> None:
+    day = time.strftime("prune:postings:%Y-%m-%d")
+    if not db.seen(day):
+        from . import listings
+
+        print(f"all jobs: {listings.prune()} old listing(s) pruned")
+        db.mark_seen(day)
+
+
 def _backup() -> None:
     day = time.strftime("backup:%Y-%m-%d")
     if settings.auto("backup") and not db.seen(day):
@@ -196,10 +243,12 @@ def cycle(a) -> None:
         from . import email_monitor
 
         _step("email", lambda: email_monitor.check(a.days, provider=a.provider))
-    from . import web_monitor
+    from . import fit, web_monitor
 
     _step("watches", web_monitor.check_watches)
-    _step("posting check", web_monitor.recheck_postings)  # weekly: saved feed jobs whose posting vanished -> Inbox
+    _step("listing check", web_monitor.check_listings)  # daily: tracked jobs' postings removed / changed
+    _step("fit", fit.refresh)  # stale fit scores (profile, preferences, weights changed), no AI
+    _step("all jobs prune", _prune)  # daily: untracked listings unseen for 45 days, or past their closing date
     if settings.pref("market_pay"):  # public BLS pay: cache first, at most one query a cycle, never the AI
         from . import paydata
 

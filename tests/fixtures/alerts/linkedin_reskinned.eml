@@ -1,0 +1,45 @@
+Authentication-Results: mx.example.net; dkim=pass header.d=linkedin.com
+ header.s=s1; spf=pass smtp.mailfrom=linkedin.com; dmarc=pass
+ header.from=linkedin.com
+From: LinkedIn <jobs-listings@linkedin.com>
+To: pat.rivera@example.com
+Subject: New jobs similar to Data Engineer
+Date: Tue, 10 Nov 2026 08:00:00 +0000
+Message-ID: <linkedin_reskinned.fixture@linkedin.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="===============5180930528914106823=="
+
+--===============5180930528914106823==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+This alert is best viewed as HTML.
+
+--===============5180930528914106823==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<html><body><div><p>Jobs you may be interested in</p><div><a href=3D"https://=
+www.linkedin.com/jobs/view/4012345678/?trk=3Dx&otpToken=3DOTPSECRET42">
+<div>Data Engineer</div><div>Quillfeather Labs &middot; Austin, TX (Hybrid)</=
+div></a><div>$120,000 - $140,000 a year</div><div>3 days ago</div></div><div>=
+<div><a href=3D"https://www.linkedin.com/comm/jobs/view/4012345679/?trk=3Deml=
+-cta">View job</a></div>
+<div><a href=3D"https://www.linkedin.com/comm/jobs/view/4012345679/?trackingI=
+d=3DZx9%2Fq&refId=3Dr3f&lipi=3Durn%3Ali%3Apage&midToken=3DMIDSECRET42&midSig=
+=3DSIGSECRET42&otpToken=3DOTPSECRET42&trk=3Deml-jobs">Senior Analytics Engine=
+er</a></div><div>Bramblecrest</div><div>Remote (United States)</div>
+<div>Be an early applicant</div><div>1 week ago</div></div><div><div><a href=
+=3D"https://www.linkedin.com/comm/jobs/view/4012345680/?trk=3Deml-cta">View j=
+ob</a></div>
+<div><a href=3D"https://www.linkedin.com/comm/jobs/view/4012345680/?trackingI=
+d=3DZx9%2Fq&refId=3Dr3f&lipi=3Durn%3Ali%3Apage&midToken=3DMIDSECRET42&midSig=
+=3DSIGSECRET42&otpToken=3DOTPSECRET42&trk=3Deml-jobs">Platform Engineer</a></=
+div><div>Marrowgate</div><div>Berlin, Germany</div>
+<div>Be an early applicant</div><div>2 days ago</div></div><p><a href=3D'http=
+s://www.linkedin.com/comm/psettings/email-unsubscribe'>Unsubscribe</a></p><p>=
+&copy; 2026 LinkedIn</p></div></body></html>
+
+--===============5180930528914106823==--

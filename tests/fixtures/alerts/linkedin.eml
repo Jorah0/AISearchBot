@@ -1,0 +1,75 @@
+Authentication-Results: mx.example.net; dkim=pass header.d=linkedin.com
+ header.s=s1; spf=pass smtp.mailfrom=linkedin.com; dmarc=pass
+ header.from=linkedin.com
+From: LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>
+To: pat.rivera@example.com
+Subject: 3 new jobs for 'data engineer'
+Date: Tue, 10 Nov 2026 08:00:00 +0000
+Message-ID: <linkedin.fixture@linkedin.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="===============1350057902300690753=="
+
+--===============1350057902300690753==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+This alert is best viewed as HTML.
+
+--===============1350057902300690753==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<html><head><style>.card{border:1px solid #ddd}</style></head><body>
+<table class=3D"main" role=3D"presentation"><tr><td><h2>Your job alert for da=
+ta engineer</h2></td></tr>
+<tr><td class=3D"card" style=3D"padding:12px"><table role=3D"presentation">
+ <tr><td><a class=3D"job-title" href=3D"https://www.linkedin.com/comm/jobs/vi=
+ew/4012345678/?trackingId=3DZx9%2Fq&refId=3Dr3f&lipi=3Durn%3Ali%3Apage&midTok=
+en=3DMIDSECRET42&midSig=3DSIGSECRET42&otpToken=3DOTPSECRET42&trk=3Deml-jobs" =
+style=3D"font-weight:600">Data Engineer</a></td></tr>
+ <tr><td class=3D"company">Quillfeather Labs &middot; Austin, TX (Hybrid)</td=
+></tr>
+ <tr><td class=3D"salary">$120,000 - $140,000 a year</td></tr>
+ <tr><td class=3D"badge">Actively recruiting</td></tr>
+ <tr><td class=3D"age">3 days ago</td></tr>
+ <tr><td><a class=3D"cta" href=3D"https://www.linkedin.com/comm/jobs/view/401=
+2345678/?trk=3Deml-cta&otpToken=3DOTPSECRET42">View job</a></td></tr>
+</table></td></tr>
+<tr><td class=3D"card" style=3D"padding:12px"><table role=3D"presentation">
+ <tr><td><a class=3D"job-title" href=3D"https://www.linkedin.com/comm/jobs/vi=
+ew/4012345679/?trackingId=3DZx9%2Fq&refId=3Dr3f&lipi=3Durn%3Ali%3Apage&midTok=
+en=3DMIDSECRET42&midSig=3DSIGSECRET42&otpToken=3DOTPSECRET42&trk=3Deml-jobs" =
+style=3D"font-weight:600">Senior Analytics Engineer</a></td></tr>
+ <tr><td class=3D"company">Bramblecrest &middot; Remote (United States)</td><=
+/tr>
+=20
+ <tr><td class=3D"badge">Actively recruiting</td></tr>
+ <tr><td class=3D"age">1 week ago</td></tr>
+ <tr><td><a class=3D"cta" href=3D"https://www.linkedin.com/comm/jobs/view/401=
+2345679/?trk=3Deml-cta&otpToken=3DOTPSECRET42">View job</a></td></tr>
+</table></td></tr>
+<tr><td class=3D"card" style=3D"padding:12px"><table role=3D"presentation">
+ <tr><td><a class=3D"job-title" href=3D"https://www.linkedin.com/comm/jobs/vi=
+ew/4012345680/?trackingId=3DZx9%2Fq&refId=3Dr3f&lipi=3Durn%3Ali%3Apage&midTok=
+en=3DMIDSECRET42&midSig=3DSIGSECRET42&otpToken=3DOTPSECRET42&trk=3Deml-jobs" =
+style=3D"font-weight:600">Platform Engineer</a></td></tr>
+ <tr><td class=3D"company">Marrowgate &middot; Berlin, Germany</td></tr>
+=20
+ <tr><td class=3D"badge">Actively recruiting</td></tr>
+ <tr><td class=3D"age">2 days ago</td></tr>
+ <tr><td><a class=3D"cta" href=3D"https://www.linkedin.com/comm/jobs/view/401=
+2345680/?trk=3Deml-cta&otpToken=3DOTPSECRET42">View job</a></td></tr>
+</table></td></tr>
+<tr><td><a href=3D"https://www.linkedin.com/comm/jobs/search/?keywords=3Ddata=
+%20engineer&trk=3Deml-see-all">See all jobs</a></td></tr>
+<tr><td style=3D"font-size:11px">You are receiving Job Alert emails.
+ <a href=3D"https://www.linkedin.com/comm/jobs/alerts?midToken=3DMIDSECRET42"=
+>Manage job alerts</a> &middot;
+ <a href=3D"https://www.linkedin.com/comm/psettings/email-unsubscribe?otpToke=
+n=3DOTPSECRET42">Unsubscribe</a></td></tr>
+<tr><td>&copy; 2026 LinkedIn Corporation, 1000 West Maude Avenue, Sunnyvale, =
+CA 94085.</td></tr></table></body></html>
+
+--===============1350057902300690753==--

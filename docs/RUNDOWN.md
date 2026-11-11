@@ -25,7 +25,12 @@ one SQLite file. Nothing leaves your machine except the API calls you configure 
 | Codes | `lodestar/codes.py` | emailed sign-in codes from DKIM-passing mail, 15 minutes, memory only; masks codes before any AI call | imaplib |
 | Attachments | `lodestar/mailfiles.py` | outgoing files only from the job folder's employer-safe set (salary-floor guard, size caps, no links); incoming files saved under the job, never opened | email |
 | Drafts | `lodestar/drafts.py` | AI draft options (one call, one recommended), rewrites, picking an option (always proposed for review), suggested emails from the tracker (no AI) | ai, approvals |
-| Web | `lodestar/web_monitor.py` | career-page diffs (robots.txt respected); six free job sources (Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse); Greenhouse / Lever / Ashby company boards; search filters, cross-source de-dup, stale signals, H-1B sponsor hints, weekly posting check; AI fit ranking | urllib |
+| Web | `lodestar/web_monitor.py` | career-page diffs (robots.txt respected); free job sources (Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse, Himalayas, We Work Remotely; Adzuna and USAJOBS with your free keys) under per-board throttles; Greenhouse / Lever / Ashby / SmartRecruiters / Recruitee / Personio company boards; search filters, cross-source de-dup, stale signals, H-1B sponsor hints; the daily listing check of tracked jobs (changes, removals, reopenings); AI fit ranking | urllib |
+| Fit score | `lodestar/fit.py` | deterministic 0-100 fit per job and listing from five parts (skills required vs nice-to-have, role, experience, location, pay against the private floor) plus modifiers, shrunk toward 50 when partial; weights in `data/fit.json` + pref `fit_weights`; the AI part only from a stored `rank()` judgement | ats, db |
+| All jobs | `lodestar/listings.py` | every listing any source found, merged across sources in the `postings` table (two ATS ids stay two openings), fit-scored, filters, Track / Dismiss, reposts, 45-day prune, the drawer's Listing activity | db, fit |
+| Job alerts | `lodestar/alerts.py` | LinkedIn / Indeed / Glassdoor / ZipRecruiter alert mail (authenticated alert senders only) parsed offline into All jobs; links stored without tokens and never opened | email, html.parser |
+| Intelligence | `lodestar/intel.py` | per-job company facts and news (own site + its feed with robots.txt, Wikipedia), hiring signals from the listing store, role and pay context, each with source and date; a cited AI summary | util.fetch |
+| Boosters | `lodestar/boosters.py` | chance boosters: ranked actions by expected effect (never a probability), rules first, AI additions only with a basis the sources hold | db, ai |
 | Interview | `lodestar/interview.py` | interview rounds, question bank (`data/questions.json`), STAR stories, prep pack, mock interview with per-answer scoring | ai |
 | Contacts | `lodestar/contacts.py` | contacts CRM: people, job links with a role, LinkedIn connections import, warm paths, touches, referral asks | db |
 | Profile bank | `lodestar/profile.py` | saved resumes, every resume section (schema v2), import reviews (new / changed / conflict / duplicate, verified against the file, personal data dropped), LinkedIn import, the structured catalogue, `candidate_text()` for prompts | ai |
@@ -118,9 +123,9 @@ document is produced (`--council`) and as a standalone `council "<question>"` co
 - `.gitignore` excludes every personal artifact (profile, database, applications, alerts, snapshots, vault index,
   `.env`) and every development artifact (graph outputs, caches, build dirs), so the repo can be shared safely.
 
-## 6. Current state (2026-11-11, pass 20: browser extension, market pay data, command palette, restore from backup, after pass 19: AI recommendations, Full AI and AI helpers)
+## 6. Current state (2026-11-11, pass 21: fit score, all-sites sourcing, job-alert emails, listing monitor, job intelligence and chance boosters, after pass 20: browser extension, market pay data, command palette, restore from backup)
 
-799 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`), and 199 browser tests pass in Edge
+885 offline tests pass (`python -m unittest discover -s tests -p "test_*.py"`), and 214 browser tests pass in Edge
 (`python -m unittest discover -s tests/e2e -p "e2e_*.py"`); [TESTS.md](TESTS.md) maps every feature to its tests. Live-verified: installer (Desktop shortcuts; the Start Menu folder fix after the overview is checked statically only), desktop window (Edge
 WebView2), every UI route with token and Host checks, six free job sources, page watches, Obsidian export. Not yet
 exercised with real credentials: AI calls and key checks, Google / Microsoft sign-in, IMAP login and SMTP sending, Proton

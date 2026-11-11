@@ -24,17 +24,21 @@ TOOLS = {
     "email_reply": ("Draft replies to application confirmations, assessments, interview invites and offers", True, False),
     "interview_scheduling": ("Accept a proposed interview slot or propose times from your availability", True, False),
     "followup": ("Draft follow-up emails for applications that went quiet", True, False),
-    "auto_track": ("Judge new listings from watches and searches; add strong fits to the tracker", True, False),
+    "auto_track": ("Judge new listings from watches and searches (fit score; AI on the best few when a key is set); "
+                   "add strong fits to the tracker", True, False),
     "answers": ("Save newly generated application-form answers to the answer bank", True, False),
     "calendar": ("Write .ics calendar files for interviews found in mail", True, True),
     "obsidian_sync": ("Mirror the tracker into Obsidian after each monitor cycle", False, True),
     "digest": ("Email the weekly digest at the end of the week", False, True),
     "backup": ("Nightly zip of your data folder into ~/.lodestar/backups (keeps 7)", True, True),
-    "posting_check": ("Weekly: re-check saved jobs from Greenhouse / Lever / Ashby feeds and propose withdrawing ones "
-                      "whose posting was removed (always waits in the Inbox)", True, False),
+    "posting_check": ("Daily: check tracked jobs' postings (feeds, and pages robots.txt allows) for removal and changes; "
+                      "withdrawing a saved job whose posting is gone always waits in the Inbox", True, False),
+    "job_alerts": ("Read job-alert emails (LinkedIn, Indeed, Glassdoor, ZipRecruiter) into All jobs; their links are "
+                   "never opened", True, True),
     # pipeline steps (pipeline.py): enabled = Autopilot may use the step; auto = it runs without asking, otherwise
     # Autopilot asks once per job in the Inbox. Clicks and the CLI run steps whatever these say.
-    "fit_check": ("Pipeline: judge fit for newly tracked jobs (JD coverage + AI verdict)", True, False),
+    "fit_check": ("Pipeline: the fit score of a tracked job (rules, no AI); on auto it also asks the AI once for "
+                  "its part of the fit", True, False),
     "research": ("Pipeline: build the company research pack from public pages", True, False),
     "tailor": ("Pipeline: build the job's resume in the resume studio (your facts only, checked rewrites, one page) and use it", True, False),
     "cover_letter": ("Pipeline: write the cover letter from the tailored resume, research and fit check", True, False),
@@ -82,11 +86,19 @@ PREFS = {
     # public BLS pay figures per job (paydata.py): off = Lodestar never contacts api.bls.gov; on = the drawer fetches
     # the job you open and the monitor loop fills the rest (at most one BLS query a cycle)
     "market_pay": False,
+    # fit score (fit.py): private, read only by the deterministic score on this machine
+    "fit_weights": {},  # part=number overrides of data/fit.json (skills, role, experience, location, pay, ai); 0 = off
+    "work_authorization": "",  # needs_sponsorship: a posting that says 'no sponsorship' is blocked
+    "target_seniority": "",  # empty: read from your years of experience
+    "years_experience": 0,  # 0: counted from the roles in your profile
+    "auto_track_daily_max": 10,  # auto_track proposals a day at most (alerts can bring 100 listings a day)
+    "adzuna_country": "us",  # Adzuna's country site (two letters) once ADZUNA_APP_ID / ADZUNA_APP_KEY are linked
 }
 PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "name": ("Your name", "signs drafted emails when no signature is set"),
     "availability": ("Interview availability", "replies accept or offer interview slots inside this"),
-    "auto_track_min_score": ("Auto-track threshold (0-100)", "listings the AI scores at least this high are proposed for the Board"),
+    "auto_track_min_score": ("Auto-track threshold (0-100)", "listings whose fit score (rules, plus the AI part when judged) is at "
+                             "least this are proposed for the Board; under it the pipeline's fit check says skip"),
     "followup_days": ("Follow-up after (days)", "a quiet application gets a follow-up draft after this many days (1-90)"),
     "reply_to_confirmations": ("Reply to confirmations", "also draft replies to 'we received your application' mail"),
     "weekly_target": ("Weekly application target", "applications a week; idea crafting plans around it (0-200)"),
@@ -118,14 +130,28 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
                      "(the page a bookmarklet runs on can read its token)"),
     "market_pay": ("Market pay (BLS)", "public BLS wage percentiles for each job's occupation and area; sends only "
                    "occupation and area codes to api.bls.gov (25 queries a day, 500 with a free BLS_API_KEY)"),
+    "fit_weights": ("Fit weights", "part=number, e.g. skills=40 (0 turns a part off; 'reset' = the defaults): skills, role, "
+                    "experience, location, pay, ai"),
+    "work_authorization": ("Work authorization (private)", "needs_sponsorship: postings that say 'no sponsorship' score "
+                           "as blocked; authorized: sponsorship is not judged"),
+    "target_seniority": ("Target level (fit)", "the level the fit score compares titles with; empty: from your years"),
+    "years_experience": ("Years of experience (fit)", "0: counted from the roles in your profile (0-60)"),
+    "auto_track_daily_max": ("Auto-track proposals a day", "at most this many 'track this' items a day; the rest stay "
+                             "scored in your results (0-100)"),
+    "adzuna_country": ("Adzuna country", "two letters, e.g. us, gb, de, ca, au: which Adzuna site searches go to "
+                       "(only with an Adzuna key, Setup > Job sources)"),
 }
 CHOICES = {"resume_style": ("classic", "modern", "compact"),  # prefs limited to a fixed set of values
            "provider": ("", *PROVIDERS),  # "" = the first configured one
            "update_mode": ("off", "notify", "auto"), "update_channel": ("commits", "releases"),
-           "bookmarklets": ("auto", "on", "off")}
+           "bookmarklets": ("auto", "on", "off"),
+           "work_authorization": ("", "authorized", "needs_sponsorship"),
+           # web_monitor.SENIORITY (settings must not import web_monitor; test_pass21_fit checks they agree)
+           "target_seniority": ("", "intern", "junior", "mid", "senior", "staff", "lead", "manager")}
 RANGES = {"followup_days": (1, 90), "auto_track_min_score": (0, 100), "weekly_target": (0, 200),
           "activity_weekly_min": (0, 100), "update_every_hours": (1, 720),
-          "autopilot_ai_per_cycle": (0, 500), "autopilot_ai_per_day": (0, 500), "autopilot_jobs_per_cycle": (0, 50)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
+          "autopilot_ai_per_cycle": (0, 500), "autopilot_ai_per_day": (0, 500), "autopilot_jobs_per_cycle": (0, 50),
+          "years_experience": (0, 60), "auto_track_daily_max": (0, 100)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
 GOALS = ("contacts", "tailored_applications", "mock_sessions", "applications")  # quality first, raw volume last
 
 
@@ -143,6 +169,28 @@ def _goals(value: dict) -> dict:
             raise SystemExit(f"weekly goal {k} must be between 0 and 1000")
         if n:
             out[k] = n
+    return out
+
+
+FIT_PARTS = ("skills", "role", "experience", "location", "pay", "ai")
+
+
+def _weights(value: dict) -> dict:
+    """fit_weights, validated: known parts only, whole numbers 0-100 (0 switches a part off); an empty value drops the
+    override (the part goes back to data/fit.json)."""
+    out = {}
+    for k, v in value.items():
+        if k not in FIT_PARTS:
+            raise SystemExit(f"unknown fit part '{k}'. Parts: {', '.join(FIT_PARTS)}")
+        if str(v).strip() == "":
+            continue
+        try:
+            n = int(str(v).strip())
+        except ValueError:
+            raise SystemExit(f"fit weight {k} must be a whole number: {str(v)[:40]}") from None
+        if not 0 <= n <= 100:
+            raise SystemExit(f"fit weight {k} must be between 0 and 100")
+        out[k] = n
     return out
 
 
@@ -209,22 +257,30 @@ def set_pref(key: str, value) -> None:
                 value = allowed_origin(value)  # https:// or a local folder; ssh / http / git:// are refused here
             elif value and not value.lower().startswith("https://"):
                 raise SystemExit(f"{key} must be an https:// URL")
+        if key == "adzuna_country":  # it goes into Adzuna's URL path: two letters only
+            value = str(value or "").strip().lower()
+            if len(value) != 2 or not value.isascii() or not value.isalpha():
+                raise SystemExit("adzuna_country is a two-letter country code, e.g. us, gb, de")
         if key in CHOICES and value not in CHOICES[key]:
             raise SystemExit(f"{key} is one of: {', '.join(c or '(empty: automatic)' for c in CHOICES[key])}")
         data = load()
         cur = PREFS[key]
         if isinstance(cur, dict):
-            if not isinstance(value, dict):  # one entry at a time: "provider=model" (empty model = back to the default)
+            if key == "fit_weights" and str(value).strip().lower() in ("reset", "default", "defaults"):
+                value = {}
+            elif not isinstance(value, dict):  # one entry at a time: "provider=model" (empty model = back to the default)
                 k, sep, v = str(value).partition("=")
                 if not sep or not k.strip():
                     raise SystemExit(f"{key} takes " + ("goal=number, e.g. contacts=5" if key == "weekly_goals"
+                                                        else "part=number, e.g. skills=40" if key == "fit_weights"
                                                         else "provider=model, e.g. openai=gpt-5"))
-                value = {**data["prefs"].get(key, {}), k.strip(): v.strip()}
+                value = {**data["prefs"].get(key, {}), k.strip(): v.strip()}  # fit_weights: 'skills=' drops it
             if key == "resume_look":  # validated like a studio request: an unknown font or a bad colour is refused
                 from .render import clean_style
 
                 value = clean_style(value, strict=True)
-            data["prefs"][key] = _goals(value) if key == "weekly_goals" else dict(value)
+            data["prefs"][key] = (_goals(value) if key == "weekly_goals" else _weights(value) if key == "fit_weights"
+                                  else dict(value))
             save(data)
             return
         if isinstance(cur, bool):

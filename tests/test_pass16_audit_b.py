@@ -283,9 +283,10 @@ class SearchFailures(Base):
             r = web._act("search", {"query": "python", "rank": True})  # results still shown, unranked, with why
             self.assertEqual(len(r["results"]), 1)
             self.assertTrue(any("needs an AI provider" in x for x in r["errors"]))
-            with self.assertRaises(SystemExit) as e:
-                web._act("auto_track", {"query": "python"})  # never '0 strong fits' as if judged
-            self.assertIn("needs an AI provider", str(e.exception))
+            # pass 21: no provider = the rules-only fit judges (the user's decision), never a silent AI no-op
+            r = web._act("auto_track", {"query": "python"})
+            self.assertEqual(r["errors"], [])
+            self.assertTrue(all(x["why"].startswith("rules:") for x in r["results"]))
 
         def rejected(*a, **k):
             raise SystemExit("model 'gpt-x' was rejected")

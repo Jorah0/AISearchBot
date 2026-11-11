@@ -415,10 +415,19 @@ def counter_template(job, figures: list[str], ask: str) -> dict:
 
 
 # ----------------------------------------------------------------------------- listing judgement
+AI_BUDGET = 15  # listings one auto_track call may send to rank(); the day's total is fit.AI_DAILY
+
+
 def auto_track(listings: list[dict], provider: str | None = None) -> list[dict]:
-    """Score new listings against the profile; propose tracking those above the threshold (tool: auto_track).
-    Listings that look stale (web_monitor.ghost_signals at GHOST_SKIP or more) are left alone, scored 0, unjudged."""
-    from .web_monitor import GHOST_SKIP, ghost_signals, jd_with_salary, listing_fields, rank
+    """Judge new listings and propose tracking strong fits (tool: auto_track). Every fresh listing gets the
+    deterministic fit (fit.py). The best few with a real description (fit >= ai_min, 40+ words, at most AI_BUDGET a call
+    and fit.AI_DAILY a day) also go to rank() when an AI provider is set; its score joins the fit as the AI part (at most
+    its weight's share), so the threshold always compares the blended fit, never the raw AI number. Without AI the
+    rules-only fit decides, but only for listings measured enough (known >= partial_below): a title-only alert row is
+    never proposed on guesswork. Blocked listings never are. At most auto_track_daily_max proposals a day.
+    Listings that look stale (web_monitor.ghost_signals at GHOST_SKIP or more) are left alone, scored 0."""
+    from . import fit
+    from .web_monitor import GHOST_SKIP, ghost_signals, jd_with_salary, listing_fields, posting_key, rank
 
     if not listings or not settings.enabled("auto_track"):
         return []
@@ -431,17 +440,40 @@ def auto_track(listings: list[dict], provider: str | None = None) -> list[dict]:
             j |= {"score": 0, "why": "skipped: possibly stale (" + "; ".join(g["reasons"]) + ")"}
         else:
             fresh.append(j)
-    ranked = rank(fresh, provider)
-    floor = int(settings.pref("auto_track_min_score"))
+    if not fresh:
+        return []
+    ctx, cfg = fit.context(), fit.config()
+    for j in fresh:
+        j["fit"] = fit.for_listing(j, ctx)
+    cand = sorted((j for j in fresh if not j["fit"]["blocked"] and j["fit"]["score"] >= cfg["ai_min"]
+                   and len(str(j.get("desc") or "").split()) >= 40), key=lambda j: -j["fit"]["score"])
+    judged: set[int] = set()
+    if cand and (provider or ai.available()):
+        take = cand[:db.quota("ai_rank", fit.AI_DAILY, min(AI_BUDGET, len(cand)))]
+        for j in take:
+            j.pop("score", None)
+        if take:
+            rank(list(take), provider)  # SystemExit when every batch failed: the watch retries next cycle
+            for j in take:
+                if "score" in j:  # rank() wrote the AI number; the fit blends it in as the AI part
+                    j["fit"] = fit.for_listing(j | {"ai_fit": {"score": j["score"], "why": j.get("why", "")}}, ctx)
+                    judged.add(id(j))
+    floor, cap = int(settings.pref("auto_track_min_score")), int(settings.pref("auto_track_daily_max"))
     out = []
-    for j in ranked:
-        if j.get("score", 0) >= floor:
-            prop = approvals.propose("auto_track", "add_job",
-                                     {"company": j["company"], "title": j["title"], "url": j["url"], "jd": jd_with_salary(j),
-                                      "notes": f"auto-track fit {j['score']}: {j.get('why', '')} (via {j['source']})",
-                                      **listing_fields(j)},
-                                     f"track {j['title']} @ {j['company']} (fit {j['score']})")
-            out.append({**j, "proposal": prop})
+    for j in sorted(fresh, key=lambda j: -j["fit"]["score"]):
+        f, how = j["fit"], "AI" if id(j) in judged else "rules"
+        j |= {"score": f["score"], "why": f"{how}: " + "; ".join(f"{c['sign']} {c['text']}" for c in fit.top(f))}
+        if f["blocked"] or f["score"] < floor or (how == "rules" and f["partial"]):
+            continue
+        if not db.quota("auto_track", cap):  # the rest stay scored and visible; never an Inbox flood
+            continue
+        prop = approvals.propose("auto_track", "add_job",
+                                 {"company": j["company"], "title": j["title"], "url": j["url"], "jd": jd_with_salary(j),
+                                  "notes": f"auto-track fit {f['score']} ({how}): {j['why']} (via {j['source']})",
+                                  "posting_key": j.get("key") or posting_key(j), **listing_fields(j)},
+                                 f"track {j['title']} @ {j['company']} (fit {f['score']} ({how}))",
+                                 force_pending=how == "rules")  # a rules-only guess always waits in the Inbox
+        out.append({**j, "proposal": prop})
     return out
 
 

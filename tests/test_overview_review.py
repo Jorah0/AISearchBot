@@ -198,8 +198,9 @@ class PartialRun(Base):  # live-7
     def test_one_unreachable_board_is_a_note_and_the_run_still_alerts(self):
         db.add_watch("search:data engineer", "")
 
-        def search(q, errors=None, **k):
+        def search(q, errors=None, ran=None, **k):
             errors.append("remoteok: host unreachable")
+            ran += ["a", "remoteok"]  # both boards were asked (pass 21: a throttled board is not asked at all)
             return [{"url": "https://e.co/1", "title": "DE", "company": "Hooli", "location": "Remote"}]
         with patched(web_monitor, search=search, _hits=lambda q, new: [j["url"] for j in new], SOURCES={"a": 1, "remoteok": 2}):
             alerts = web_monitor.check_watches()

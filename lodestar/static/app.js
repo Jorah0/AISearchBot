@@ -43,6 +43,7 @@ function go(tab) {
   if (tab === 'insights') loadInsights();
   if (tab === 'setup') { loadEmail(); loadAiHistory(); restoreLoad(); }
   if (tab === 'studio') loadStudio();
+  if (tab === 'search') loadAllJobs();
   if (tab === 'profile') loadMaster();  // the master card follows background rebuilds
 }
 
@@ -79,6 +80,7 @@ async function load() {
   renderOnboard(); renderLoop(); renderUpdate(); renderAutopilot(); $('#ver').textContent = 'Lodestar ' + S.version;
   if (!$('#fStatus').options.length) initFilters();
   renderBoard(); renderQuestions(); renderInbox(); renderSearchless(); renderMonitor(); renderAnswers(); renderStories(); renderIdeas(); renderTools(); renderSetup(); fillCoachJobs(); renderTrend();
+  fitRefresh();
   if (ADV_AI !== hasAI()) aiSlots();  // the tab headers' AI toolbars: painted once, again when a provider comes or goes
 }
 
@@ -87,7 +89,7 @@ const VIEW_KEY = 'ls_board_view';
 let V = { view: 'board', key: 'updated_at', dir: -1, q: '', status: '', remote: '', minSal: '', tag: '', dl: false };
 try { Object.assign(V, JSON.parse(localStorage.getItem(VIEW_KEY) || '{}')); } catch (_) { /* storage blocked or corrupt: defaults */ }
 const saveView = () => { try { localStorage.setItem(VIEW_KEY, JSON.stringify(V)); } catch (_) { /* storage blocked */ } };
-const SORTS = { updated: ['updated_at', -1], stale: ['updated_at', 1], match: ['match_score', -1], salary: ['salary', -1], excitement: ['excitement', -1], deadline: ['deadline', 1] };
+const SORTS = { updated: ['updated_at', -1], stale: ['updated_at', 1], fit: ['fit_score', -1], match: ['match_score', -1], salary: ['salary', -1], excitement: ['excitement', -1], deadline: ['deadline', 1] };
 const tagsOf = j => (j.tags || '').split(',').map(t => t.trim()).filter(Boolean);
 const payOf = j => j.salary_max ?? j.salary_min ?? null;
 const sortVal = (j, k) => k === 'salary' ? payOf(j) : k === 'next' ? ((S.pipeline || {})[j.id] || {}).next ?? null : k === 'status' ? S.statuses.indexOf(j.status) : j[k] ?? null;
@@ -125,7 +127,7 @@ function initFilters() {
 }
 function syncSort() { $('#fSort').value = Object.keys(SORTS).find(k => SORTS[k][0] === V.key && SORTS[k][1] === V.dir) || ''; }
 function sortBy(k) {  // table header: same column flips the direction; numbers start high-first, text and dates A-Z / soonest
-  if (V.key === k) V.dir = -V.dir; else { V.key = k; V.dir = ['match_score', 'excitement', 'salary', 'updated_at'].includes(k) ? -1 : 1; }
+  if (V.key === k) V.dir = -V.dir; else { V.key = k; V.dir = ['fit_score', 'match_score', 'excitement', 'salary', 'updated_at'].includes(k) ? -1 : 1; }
   saveView(); syncSort(); renderBoard();
 }
 function clearFilters() {
@@ -135,13 +137,52 @@ function clearFilters() {
 }
 function toggleView() { V.view = V.view === 'table' ? 'board' : 'table'; saveView(); renderBoard(); }
 function card(j) {
-  const chips = [stars(j), salaryText(j) && `<span>${esc(salaryText(j))}</span>`, j.match_score != null && `<span>match ${esc(j.match_score)}%</span>`,
+  const chips = [fitBadge(j), stars(j), salaryText(j) && `<span>${esc(salaryText(j))}</span>`,
     where(j) && `<span>${esc(where(j))}</span>`, deadlineChip(j), pipeChip(j), staleChip(j.ghost), sponsorChip(j.sponsor), warmChip(j.warm), payChip(j.pay)].filter(Boolean).join('');
   return `<div class="card ${S.followups.includes(j.id) ? 'late' : ''} ${cur && cur.job.id === j.id ? 'sel' : ''}" data-id="${j.id}" draggable="true" tabindex="0" role="button"
     aria-label="${esc(`#${j.id} ${j.company} - ${j.title}, ${j.status}`)}" ondragstart="event.dataTransfer.setData('text/plain','${j.id}');event.dataTransfer.effectAllowed='move'"
     onclick="openJob(${j.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openJob(${j.id})}">
     <div class="co">${esc(j.company)}</div><div class="ti">${esc(j.title)}</div>${chips ? `<div class="chips">${chips}</div>` : ''}
     <div class="meta"><span>#${j.id}</span><span>${esc(localTs(j.updated_at, 10))}</span></div></div>`;
+}
+/* ---- fit score (lodestar/fit.py): deterministic, private; the board carries score, known, stale and the top chips ---- */
+const fitBand = n => n >= 80 ? 'hi' : n >= 60 ? 'mid' : n >= 40 ? 'lo' : 'bad';
+function fitBadge(j) {
+  if (j.fit_score == null) return '';
+  const tip = [...(j.fit_chips || []), j.fit_partial ? `partial: measured ${Math.round((j.fit_known || 0) * 100)}% of the fit (open the job for what is missing)` : '',
+    j.fit_stale ? 'out of date: your profile, preferences or weights changed; re-scoring' : ''].filter(Boolean).join('\n');
+  return `<span class="chip fit fit-${fitBand(j.fit_score)}${j.fit_stale ? ' stale-fit' : ''}" title="${esc(tip)}">fit ${esc(j.fit_score)}${j.fit_partial ? ' · partial' : ''}${j.fit_blocked ? ' · blocked' : ''}</span>`;
+}
+let FIT_ASKED = null;  // stale fits are re-scored on the server (no AI, silent), then the board reloads; asked again only
+function fitRefresh() {  // when the rev or the stale count moved, so a job that cannot be scored never loops
+  const key = S.fit_rev + ':' + S.fit_stale;
+  if (!S.fit_stale || !S.fit_rev || FIT_ASKED === key) return;
+  FIT_ASKED = key; run('fit_refresh', {}, () => {});
+}
+const PART_NAME_FIT = { skills: 'Skills', role: 'Role', experience: 'Experience', location: 'Location', pay: 'Pay', ai: 'AI', mod: 'Modifiers' };
+function fitGroup(d) {
+  const f = d.fit, j = d.job;
+  const btns = `<button class="b ghost sm" onclick="jobRun('job_ai',{},this)" title="one AI call judges this posting against your profile (no salary floor sent); its score joins the fit as one more part">AI fit</button>`
+    + (f ? `<button class="b ghost sm" onclick="fitWhy()">Why not higher?</button>` : '');
+  if (!f) return `<div class="group" id="jFit"><h4>Fit</h4><div class="muted">Not scored yet: the fit is worked out when the page refreshes, or with lodestar fit ${esc(j.id)}.</div><div class="row">${btns}</div></div>`;
+  const chipsOf = p => f.chips.filter(c => c.part === p).map(c => `<span class="chip fitc${c.sign === '-' ? ' due' : ''}">${esc(c.sign + ' ' + c.text)}</span>`).join(' ');
+  const rows = Object.entries(f.parts).map(([p, v]) => `<div class="cov-row fit-row"><span>${esc(PART_NAME_FIT[p] || p)} <span class="muted">(weight ${esc(v.w)})</span></span>`
+    + (v.s == null ? '<span class="muted">not measured</span><span></span>' : `<span class="bar" role="img" aria-label="${esc(PART_NAME_FIT[p] || p)} ${esc(v.s)} of 100"><i style="width:${Math.max(0, Math.min(100, Number(v.s) || 0))}%"></i></span><span>${esc(v.s)}</span>`)
+    + `</div><div class="chips">${chipsOf(p)}</div>`).join('');
+  const mods = chipsOf('mod');
+  return `<div class="group" id="jFit"><h4>Fit</h4>
+    <div class="row"><b class="cov-score fit-${fitBand(f.score)}">fit ${esc(f.score)}</b>${f.partial ? '<span class="chip">partial</span>' : ''}${f.blocked ? '<span class="chip due">blocked</span>' : ''}
+      ${j.fit_stale ? '<span class="chip stale">out of date</span>' : ''}<span class="muted">${esc(f.note || '')} · measured ${esc(Math.round(f.known * 100))}%</span></div>
+    ${rows}${mods ? `<div class="chips"><span class="muted">modifiers:</span> ${mods}</div>` : ''}
+    <div class="row">${btns}</div><div id="jFitWhy"></div>
+    <div class="muted">Deterministic and private: your skills, role, years, location and pay against this posting, from your profile and Preferences. It never goes to an employer or an AI provider. Weights: Tools &gt; Preferences &gt; Fit weights.</div></div>`;
+}
+function fitWhy() {  // the parts sorted by the points they cost
+  const f = cur && cur.fit; if (!f) return;
+  const tot = Object.values(f.parts).filter(v => v.s != null).reduce((a, v) => a + v.w, 0) || 1;
+  const lost = Object.entries(f.parts).map(([p, v]) => [p, v.s == null ? null : Math.round((100 - v.s) * v.w / tot * f.known)]).sort((a, b) => (b[1] ?? -1) - (a[1] ?? -1));
+  $('#jFitWhy').innerHTML = '<ul>' + lost.map(([p, n]) => `<li>${esc(PART_NAME_FIT[p] || p)}: ${n == null ? 'not measured (pulls the score toward 50)' : 'costs about ' + esc(n) + ' points'}</li>`).join('')
+    + f.mods.filter(m => m.d < 0).map(m => `<li>${esc(m.why)}: ${esc(m.d)} points</li>`).join('') + '</ul>';
 }
 function dragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; e.currentTarget.classList.add('drop'); }
 function dropJob(e, status) { e.preventDefault(); e.currentTarget.classList.remove('drop'); const id = Number(e.dataTransfer.getData('text/plain')); if (id) moveJob(id, status); }
@@ -167,16 +208,25 @@ function renderToday() {
   const parts = [...t.actions.map(i => item(i, (i.overdue ? 'overdue ' + i.when : 'today') + ': ' + i.what, i.overdue ? 'due' : '')),
     ...t.deadlines.map(i => item(i, i.days === 0 ? 'deadline today' : `deadline in ${i.days}d`, 'due')),
     ...t.interviews.map(i => item(i, 'interview ' + i.when + (i.readiness ? ' · readiness ' + i.readiness.score : '')) + tip(i)), ...t.followups.map(i => item(i, 'follow up')),
+    ...(t.closed || []).map(i => item(i, 'posting closed', 'due')),
     ...(t.contacts || []).map(c => `<button class="b ghost sm" onclick="openContact(${Number(c.id)})">get in touch (due ${esc(c.when)}) · ${esc(c.name)}${c.company ? ' (' + esc(c.company) + ')' : ''}</button>`)];
+  const fits = (t.top_fits || []).map(f => `<div class="row"><span class="chip fit fit-${fitBand(f.fit)}">fit ${esc(f.fit)}</span><span>${esc(f.title)} @ ${esc(f.company)}${f.sources.length ? ' (' + esc(f.sources.map(srcLabel).join(', ')) + ')' : ''}</span>
+    <button class="b ghost sm" onclick="trackFit(${Number(f.id)},this)">Track</button>${safeUrl(f.url) ? `<a class="b ghost sm" href="${esc(f.url)}" target="_blank" rel="noopener">Open</a>` : ''}</div>`);
   const em = (t.emails || []).map((s, i) => `<div class="row"><span class="chip ${s.priority === 1 ? 'due' : ''}">${esc(dueText(s.due))}</span><span>${esc(s.reason)} · #${Number(s.job_id)} ${esc(s.company)}${s.to ? ' → ' + esc(s.to) : ''}</span>
     <button class="b ghost sm" onclick="suggestDraft(${i},this)">Draft options</button><button class="b ghost sm" onclick="suggestDismiss(${i})">Dismiss for now</button></div>`);
-  const nq = (S.questions || []).filter(q => q.blocking).length;
-  el.style.display = parts.length || em.length || t.pending || nq ? '' : 'none';
+  const nq = (S.questions || []).filter(q => q.blocking).length, bo = BOOSTS.t = t.boosters || [];
+  el.style.display = parts.length || em.length || fits.length || bo.length || t.pending || nq ? '' : 'none';
   el.innerHTML = `<h3>Today</h3><div class="row">${parts.join('')}${t.pending ? `<button class="b sm" onclick="go('inbox')">${t.pending} waiting in the Inbox</button>` : ''}${nq ? `<button class="b sm" onclick="go('inbox')">${nq} question${nq === 1 ? '' : 's'} for you</button>` : ''}</div>`
-    + (em.length ? `<h4>Suggested emails</h4>${em.join('')}` : '');
+    + (em.length ? `<h4>Suggested emails</h4>${em.join('')}` : '') + (fits.length ? `<h4>Top new fits</h4>${fits.join('')}` : '')
+    + (bo.length ? `<h4>Chance boosters</h4>${bo.map((b, i) => boostRow(b, 't', i)).join('')}` : '');
+}
+async function trackFit(id, btn) {  // a user click: tracked directly, like the Search tab's track
+  btn.disabled = true;
+  const r = await api(`/api/listings/${id}/track`, {}); if (r.error) { btn.disabled = false; return toast('error: ' + r.error, 'err'); }
+  toast(`tracked as #${r.id}`, 'ok'); await load(); openJob(r.id);
 }
 let SEL = new Set();  // table checkboxes; survives the 60 s refresh
-const COLS = [['id', '#'], ['company', 'Company'], ['title', 'Title'], ['status', 'Status'], ['next', 'Next step'], ['salary', 'Salary'], ['match_score', 'Match'], ['excitement', 'Excitement'], ['deadline', 'Deadline'], ['location', 'Location'], ['updated_at', 'Last activity']];
+const COLS = [['id', '#'], ['company', 'Company'], ['title', 'Title'], ['status', 'Status'], ['next', 'Next step'], ['salary', 'Salary'], ['fit_score', 'Fit'], ['match_score', 'Coverage'], ['excitement', 'Excitement'], ['deadline', 'Deadline'], ['location', 'Location'], ['updated_at', 'Last activity']];
 function renderTable(jobs) {
   const shown = new Set(jobs.map(j => j.id)); SEL = new Set([...SEL].filter(id => shown.has(id)));  // bulk acts on what you see
   const sortAttr = k => V.key === k ? (V.dir > 0 ? 'ascending' : 'descending') : 'none';
@@ -184,7 +234,7 @@ function renderTable(jobs) {
     + COLS.map(([k, l]) => `<th aria-sort="${sortAttr(k)}"><button class="th" onclick="sortBy('${k}')">${l}${V.key === k ? (V.dir > 0 ? ' ▲' : ' ▼') : ''}</button></th>`).join('') + '</tr></thead><tbody>'
     + jobs.map(j => `<tr class="${S.followups.includes(j.id) ? 'late' : ''}"><td><input type="checkbox" aria-label="select #${j.id}" ${SEL.has(j.id) ? 'checked' : ''} onchange="selOne(${j.id},this.checked)"></td>
       <td>${j.id}</td><td><a href="#" onclick="openJob(${j.id});return false">${esc(j.company)}</a></td><td>${esc(j.title)}</td><td>${esc(j.status)}</td><td>${pipeChip(j)}</td><td>${esc(salaryText(j))}</td>
-      <td>${esc(j.match_score ?? '')}</td><td>${stars(j)}</td><td>${deadlineChip(j)}</td><td>${esc(where(j))}</td><td>${esc(localTs(j.updated_at, 10))}</td></tr>`).join('')
+      <td>${fitBadge(j)}</td><td>${esc(j.match_score ?? '')}</td><td>${stars(j)}</td><td>${deadlineChip(j)}</td><td>${esc(where(j))}</td><td>${esc(localTs(j.updated_at, 10))}</td></tr>`).join('')
     + '</tbody></table>';  // no match: #filterEmpty (renderBoard) says so for both views
   renderBulk();
 }
@@ -290,19 +340,22 @@ async function openJob(id) {
       <button class="b ghost sm close" onclick="closeDrawer()" aria-label="Close job details">✕</button></div>
     <div class="muted">contact: ${esc(j.contact_name || '')} ${esc(j.contact_email || '(none; replies and follow-ups need one)')}</div>
     ${aiMenu('job', j.id)}
+${fitGroup(d)}
+${boostGroup(d)}
 ${pipelineGroup(d)}
 ${detailsForm(j)}
 ${payGroup(d)}
+${intelGroup(d)}
 ${peopleGroup(d)}
 ${readinessGroup(d)}
 ${roundsGroup(d)}
 
-    <div class="group"><h4>Match</h4>
+    <div class="group" id="jMatchG"><h4>Match</h4>
       <div class="row"><button class="b" onclick="jobMatch(this)">${savedCoverage(d) ? 'Recompute' : 'Compute'} JD coverage</button><button class="b ghost" onclick="jobLint(this)">Check resume</button><button class="b ghost" onclick="run('audit',{id:${j.id}},r=>{$('#jCheck').innerHTML=auditHtml(r)},this)">Audit resume.docx</button></div>
       <div class="muted">JD coverage is the share of the posting's keywords your current resume (tailored, else your profile) mentions: a guide for tailoring, not an ATS pass/fail. No AI involved.</div>
       <div id="jMatch"></div><div id="jCheck"></div></div>
 
-    <div class="group"><h4>Documents</h4>${profileBadge(j.id)}${aiBar('docs', j.id)}<div class="row">
+    <div class="group" id="jDocs"><h4>Documents</h4>${profileBadge(j.id)}${aiBar('docs', j.id)}<div class="row">
       <button class="b" onclick="jobRun('gap',{},this)">Gap check (coverage + AI verdict)</button>
       <button class="b" onclick="jobRun('tailor',{docx:true,base:baseOpt()},this)">Tailor resume (+docx)</button>
       <button class="b" onclick="tailorBullets(this)">Tailor by bullet</button>
@@ -319,7 +372,7 @@ ${roundsGroup(d)}
         <button class="b ghost" onclick="exportPdf(this)">Export PDF</button></div>
       <div id="jBullets"></div></div>
 
-    <div class="group"><h4>Communicate</h4>
+    <div class="group" id="jComm"><h4>Communicate</h4>
       <div class="row"><input id="jIntent" class="grow" placeholder="reply intent, e.g. accept interview, propose Tue/Wed afternoons"><button class="b ghost" onclick="jobRun('reply',{intent:$('#jIntent').value},this)">Draft reply</button></div>
       <div class="row"><input id="jPerson" class="grow" placeholder="outreach to: Name, title (optional)"><select id="jChannel"><option value="linkedin">LinkedIn note</option><option value="email">Email</option></select><button class="b ghost" onclick="jobRun('outreach',{person:$('#jPerson').value,channel:$('#jChannel').value},this)">Draft outreach</button></div>
       <div class="row"><button class="b ghost" onclick="jobRun('followup',{template:$('#jTpl').checked},this)">Follow-up email</button><input id="jInt" placeholder="interviewer" style="width:140px"><input id="jTnotes" class="grow" placeholder="something specific from the interview"><button class="b ghost" onclick="jobRun('thanks',{interviewer:$('#jInt').value,notes:$('#jTnotes').value,template:$('#jTpl').checked},this)">Thank-you note</button></div>
@@ -328,6 +381,7 @@ ${roundsGroup(d)}
         <button class="b ghost" onclick="commOptions(this)" title="up to 3 drafts from one AI call, one recommended; the one you use waits in the Inbox for review">Options</button></div>
       <div id="jOpts"></div></div>
 
+${activityGroup(d)}
 ${mailGroup(d)}
 
     <div class="group"><h4>Schedule and decide</h4>
@@ -368,7 +422,7 @@ function detailsForm(j) {
     <div class="row">${inp('location', 'location', 'style="width:150px"')}${sel('remote', 'workplace', [['onsite', 'onsite'], ['hybrid', 'hybrid'], ['remote', 'remote']])}
       ${inp('salary_min', 'salary min', 'type="number" min="0" step="1000" style="width:105px"')}${inp('salary_max', 'salary max', 'type="number" min="0" step="1000" style="width:105px"')}
       ${inp('currency', 'currency', 'maxlength="3" style="width:62px"')}${sel('excitement', 'excitement', [1, 2, 3, 4, 5].map(n => [n, '★'.repeat(n)]))}
-      ${inp('match_score', 'match %', 'type="number" min="0" max="100" style="width:72px"')}</div>
+      ${inp('match_score', 'coverage %', 'type="number" min="0" max="100" style="width:72px"')}</div>
     <div class="row">${inp('deadline', 'deadline', 'type="date"')}${inp('posted_at', 'posted', 'type="date"')}${inp('source', 'source', 'style="width:130px"')}${inp('tags', 'tags (comma)', 'style="width:190px"')}</div>
     <div class="row">${inp('next_action', 'next action', 'style="width:260px" placeholder="e.g. ask Sam for a referral"')}${inp('next_action_at', 'due', 'type="date"')}
       <button class="b sm" onclick="saveDetails(${j.id})">Save details</button></div></div>`;
@@ -488,7 +542,7 @@ function peopleGroup(d) {
   const linked = new Set(d.people.map(p => p.id)), others = d.warm.filter(p => !linked.has(p.id)), id = d.job.id;
   const who = p => `<a href="#" onclick="openContact(${Number(p.id)});return false">${esc(p.name)}</a>${p.position ? ` <span class="muted">${esc(p.position)}</span>` : ''}`;
   const ask = p => `<button class="b ghost sm" title="draft a referral ask: an email into the Inbox (always reviewed) when they have an address, else a LinkedIn note" onclick="jobRun('referral',{contact_id:${Number(p.id)}},this)">Ask for referral</button><button class="b ghost sm" title="up to 3 referral asks, one recommended (shown under Communicate)" onclick="draftOptions('referral',{id:${id},contact_id:${Number(p.id)}},'jOpts',this)">options</button>`;
-  return `<div class="group"><h4>People</h4>
+  return `<div class="group" id="jPeople"><h4>People</h4>
     ${d.people.map(p => `<div class="row">${who(p)}<span class="pill">${esc(p.role.replace('_', ' '))}</span>${p.email ? `<span class="muted">${esc(p.email)}</span>` : ''}${ask(p)}
       <button class="b ghost sm" onclick="contactOp(${Number(p.id)},'unlink',{job_id:${id}})">unlink</button></div>`).join('') || '<div class="muted">nobody linked to this job yet</div>'}
     ${d.warm.length ? `<div class="row"><span class="chip warm">you know ${d.warm.length} ${d.warm.length === 1 ? 'person' : 'people'} here</span></div>` : ''}
@@ -913,6 +967,96 @@ function renderUnmatched() {
   }).join('') || '<div class="muted">no unmatched mail: relevant mail no job claims appears here</div>';
   keep.forEach(([id, v]) => { const x = document.getElementById(id); if (x) x.value = v; });
 }
+/* ---- Listing activity: posting checks (web), alert sightings (bell), mail both ways (envelope), the job's own events
+   (dot), newest first (listings.activity). Every string is page or mail text: escaped. ---- */
+const ACT_ICON = { web: '🌐', alert: '🔔', mail: '✉', app: '•' };
+/* ---- chance boosters (boosters.py) and job intelligence (intel.py): server data stays in JS, buttons carry an index ---- */
+const BOOST_BTN = { pipeline: 'Open the pipeline', referral: 'Open People', outreach: 'Open outreach', followup: 'Open follow-up', tailor: 'Open tailoring',
+  gap: 'Open gap tools', lint: 'Open resume lint', stories: 'Write a story', search: 'Open search', intel: 'Open job intelligence', contacts: 'Open Contacts', profile: 'Open profile' };
+const BOOSTS = { d: [], t: [], i: [] };  // drawer, Today, Insights
+function boostRow(b, src, i) {
+  const j = b.job ? ` <span class="muted">· #${Number(b.job.id)} ${esc(b.job.company)} - ${esc(b.job.title)}</span>` : '';
+  const btn = BOOST_BTN[(b.action || {}).do] ? `<button class="b ghost sm" onclick="boostAct('${src}',${Number(i)},this)">${BOOST_BTN[b.action.do]}</button>` : '';
+  return `<div class="row boost" data-basis="${esc(b.basis)}"><span class="pill ${b.effect === 'high' ? 'ok' : ''}" title="expected effect, not a probability">${esc(b.effect)} effect</span>
+    <span class="grow"><b>${esc(b.text)}</b>${j}${b.basis === 'ai' ? ' <span class="pill">AI</span>' : ''}<br><span class="muted">${esc(b.why)}${b.from ? ' · basis: ' + esc(b.from) : ''}</span></span>${btn}</div>`;
+}
+async function boostAct(src, i, btn) {  // into the feature that does it; nothing here costs AI or sends anything
+  const b = BOOSTS[src][i]; if (!b) return;
+  const a = b.action || {}, jid = b.job ? b.job.id : cur && cur.job.id;
+  if (a.do === 'stories') return newStory(a.tag);
+  if (a.do === 'search') { go('search'); $('#sQ').value = a.query || ''; if (a.location) $('#sLoc').value = a.location; return $('#sQ').focus(); }
+  if (a.do === 'contacts' || a.do === 'profile') return go(a.do);
+  if (!jid) return;
+  if (!cur || cur.job.id !== jid || CT) { go('board'); await openJob(jid); }
+  if (a.do === 'outreach' && a.person) { $('#jPerson').value = a.person; if (a.channel) $('#jChannel').value = a.channel; }
+  const to = $({ pipeline: '#pGroup', referral: '#jPeople', outreach: '#jComm', followup: '#jComm', tailor: '#jDocs', gap: '#jMatchG', lint: '#jMatchG', intel: '#jIntel' }[a.do] || '#jBoost');
+  if (to) to.scrollIntoView({ block: 'start' });
+  if (a.do === 'lint') jobLint($('#jMatchG button[onclick^="jobLint"]'));
+}
+function boostGroup(d) {
+  const v = d.boosters;
+  if (!v) return '<div class="group" id="jBoost"><h4>Chance boosters</h4><div class="muted">Could not be worked out for this job right now (the log has the reason).</div></div>';
+  BOOSTS.d = v.items;
+  const rows = v.items.map((b, i) => boostRow(b, 'd', i)).join('') || `<div class="muted">${v.closed ? 'This job is closed.' : 'Nothing to boost right now.'}</div>`;
+  return `<div class="group" id="jBoost"><h4>Chance boosters</h4>${rows}
+    <div class="row">${hasAI() ? `<button class="b ghost sm" onclick="boostAi(this)" title="one AI call: up to 3 more actions specific to this job, each with the posting line, source or profile fact it rests on">More from AI</button>` : ''}${v.ai_at ? `<span class="muted">AI additions from ${esc(localTs(v.ai_at, 10))}</span>` : ''}</div>
+    <div class="muted">Ranked by expected effect (high, medium, low), rules first. Never a probability: each says why, and its button opens the feature that does it.</div></div>`;
+}
+function boostAi(btn) { const id = cur.job.id; run('boost_ai', { id }, r => { if (cur && cur.job.id === id) { cur.boosters = r; $('#jBoost').outerHTML = boostGroup(cur); } }, btn); }
+const INTEL_KIND = { company: 'Company', news: 'Recent news', hiring: 'Hiring signals', role: 'The role', pay: 'Pay context' };
+function intelGroup(d) {
+  const v = d.intel;
+  if (!v) return '<div class="group" id="jIntel"><h4>Job intelligence</h4><div class="muted">Could not be worked out for this job right now (the log has the reason).</div></div>';
+  let k = '';
+  const rows = v.items.map((x, i) => (x.kind !== k ? `<h5>${esc(INTEL_KIND[k = x.kind] || x.kind)}</h5>` : '')
+    + `<div class="intel-row" data-kind="${esc(x.kind)}"><span class="pill">S${i + 1}</span> ${esc(x.text)} <span class="muted">· ${safeUrl(x.url) ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.source)}</a>` : esc(x.source)}, ${esc(x.date || 'undated')}</span></div>`).join('');
+  const s = v.summary;
+  return `<div class="group" id="jIntel"><h4>Job intelligence</h4>
+    <div class="row"><button class="b ghost sm" onclick="intelRun(${v.gathered_at ? 'true' : 'false'},this)" title="reads the company's own website and the news feed it links (robots.txt first), and its Wikipedia summary; never a job board">${v.gathered_at ? 'Gather again' : 'Gather public facts'}</button>
+      ${hasAI() && v.items.length ? '<button class="b ghost sm" onclick="intelAi(this)" title="one AI call over the items below only; every line cites its sources">AI summary</button>' : ''}
+      <span class="muted">${v.gathered_at ? 'web facts gathered ' + esc(localTs(v.gathered_at, 10)) + (v.stale ? ' (over a week old)' : '') : 'web facts not gathered yet'}</span></div>
+    ${s ? `<div class="intel-sum"><b>AI summary</b> <span class="muted">${esc(localTs(s.at, 10))} · cites S1-S${Number(s.n)}${v.summary_stale ? ' · the sources changed since: run it again' : ''}</span><pre>${esc(s.text)}</pre></div>` : ''}
+    ${rows}
+    ${v.skipped.length ? `<details><summary class="muted">Not read (${v.skipped.length})</summary><ul>${v.skipped.map(x => `<li>${esc(x)}</li>`).join('')}</ul></details>` : ''}
+    <div class="row"><input id="inSite" class="grow" placeholder="company website, e.g. https://acme.example" aria-label="Company website" value="${esc(v.site || '')}"><button class="b ghost sm" onclick="intelSite()">Set company site</button></div>
+    <div class="muted">Each item names its source and date. Only the company's own site (where its robots.txt allows), the news feed it links and Wikipedia are read, on your click, cached a week; job boards are never read. Hiring signals, role and pay context come from what Lodestar already holds.</div></div>`;
+}
+function intelRun(refresh, btn) { const id = cur.job.id; run('intel', { id, refresh }, r => { if (cur && cur.job.id === id) { cur.intel = r; $('#jIntel').outerHTML = intelGroup(cur); } }, btn); }
+function intelAi(btn) { const id = cur.job.id; run('intel_ai', { id }, () => { if (cur && cur.job.id === id) openJob(id).then(() => $('#jIntel')?.scrollIntoView()); }, btn); }
+function intelSite() { qsrcOp({ op: 'site', url: $('#inSite').value.trim() }, r => r.site ? 'company website saved: ' + r.site + ' (Gather public facts reads it)' : 'company website cleared'); }
+function ago(ts) {
+  const m = /^(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d)/.exec(ts || ''); if (!m) return '';
+  const days = Math.floor((Date.now() - new Date(`${m[1]}T${m[2]}Z`)) / 864e5);
+  return days <= 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`;
+}
+function postingLine(d) {
+  const p = d.posting || {}, bits = [], mails = (d.mail || []).length;
+  if (p.closed) bits.push(`posting removed ${ago(p.closed)}`);
+  else if (p.no_fetch) bits.push(p.seen_alert ? `last seen in an alert ${ago(p.seen_alert)}` : 'not seen in alerts since you tracked it');
+  else if (p.checked) bits.push(`posting open${(p.sources || []).length ? ' on ' + p.sources.join(', ') : ''} (checked ${ago(p.checked)})`);
+  else bits.push('posting not checked yet');
+  if (!p.no_fetch && p.seen_alert) bits.push(`seen in an alert ${ago(p.seen_alert)}`);
+  if (mails) bits.push(`${mails} email${mails === 1 ? '' : 's'}`);
+  return bits.map(esc).join(' · ');
+}
+function activityGroup(d) {
+  const live = 'posting_changes.md' in (d.docs || {});
+  const rows = (d.activity || []).map(a => {
+    const who = a.src === 'mail' ? ` <span class="pill ${a.trusted ? 'ok' : 'warn'}">${a.trusted ? 'verified sender' : 'unverified'}</span>${a.reason ? ` <span class="muted">${esc(a.reason)}</span>` : ''}` : '';
+    const dir = a.src === 'mail' ? (a.dir === 'out' ? 'sent: ' : 'received: ') : '';
+    return `<div class="actrow" data-src="${esc(a.src)}"><span aria-label="${esc(a.src)}" title="${esc(a.src)}">${ACT_ICON[a.src] || '•'}</span> <span class="muted">${esc(localTs(a.at, 16))}</span> ${esc(dir)}${a.kind && a.src !== 'web' ? `<b>${esc(String(a.kind).replace(/_/g, ' '))}</b> ` : ''}${esc(a.text)}${who}</div>`;
+  }).join('');
+  return `<div class="group" id="jActivity"><h4>Listing activity</h4>
+    <div class="row"><span class="muted" id="jPosting">${postingLine(d)}</span>${live ? `<button class="b ghost sm" onclick="useLiveJd(this)" title="replace this job's description with the posting's current one (your tailored documents stay as they are)">Use live description</button><button class="b ghost sm" onclick="viewJobDoc('posting_changes.md')">View changes</button>` : ''}</div>
+    <div class="list">${rows || '<div class="muted">nothing yet: posting checks, job-alert sightings and mail for this job show here</div>'}</div></div>`;
+}
+async function useLiveJd(btn) {
+  if (!cur || !confirm("Replace this job's description with the live posting's? Documents you already tailored are not changed.")) return;
+  btn.disabled = true;
+  const r = await api(`/api/jobs/${cur.job.id}/live_jd`, {}); btn.disabled = false;
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast(r.changed ? 'description replaced by the live posting' : 'the description already matches the live posting', 'ok'); openJob(cur.job.id);
+}
 function mailGroup(d) {
   return `<div class="group"><h4>Mail</h4>${(d.mail || []).map(m => { MAILS[m.id] = m; const id = Number(m.id);
     return mailItem(m, (m.linked_by === 'user' ? `<button class="b ghost sm" onclick="mailOp(${id},'unlink')">Unlink</button>` : '')
@@ -1067,11 +1211,11 @@ async function paySoc(id, soc) {
 const sponsorChip = s => s ? `<span class="chip" title="from the USCIS H-1B data you imported (${esc(s.name)}); a loose name match, not a promise">possible H-1B sponsor (${esc(s.approvals)} approvals)</span>` : '';
 function listingHtml(j, i) {
   const unknown = ['salary', 'location', 'date'].filter(k => j[k + '_unknown']).map(k => `<span class="chip" title="the listing does not say; kept rather than dropped">${k} unknown</span>`).join('');
-  const cov = j.coverage ? `<span class="chip" title="${esc('matched: ' + (j.coverage.matched.join(', ') || '-') + ' · missing: ' + (j.coverage.missing.join(', ') || '-'))}">JD coverage ${esc(j.coverage.score)}%</span>` : '';
+  const cov = fitBadge(j);
   const host = u => { try { return new URL(u).hostname; } catch (_) { return 'link'; } };
   const more = (j.urls || []).slice(1).filter(safeUrl).map(u => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(host(u))} ↗</a>`).join(' ');
   const g = j.ghost && j.ghost.score >= GHOST_SHOW ? `<div class="muted">possibly stale: ${esc(j.ghost.reasons.join('; '))}</div>` : '';
-  const c = j.coverage && (j.coverage.matched.length || j.coverage.missing.length) ? `<div class="muted">matched: ${esc(j.coverage.matched.join(', ') || '-')} · missing: ${esc(j.coverage.missing.join(', ') || '-')}</div>` : '';
+  const c = (j.fit_chips || []).length ? `<div class="muted fitwhy">${esc(j.fit_chips.join(' · '))}</div>` : '';  // the fit's top reasons
   return `<div>${j.score != null ? `<span class="score">${esc(j.score)}</span>` : ''}<b>${esc(j.title)}</b> @ ${esc(j.company)} <span class="muted">${esc(j.location)} ${esc(j.salary)} &lt;${esc((j.sources || [j.source]).join(', '))}&gt;</span>
     ${safeUrl(j.url) ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">open ↗</a>` : ''} ${more} <button class="b ghost sm" onclick="saveListing(${i})">track</button>
     <div class="chips">${j.tracked ? `<span class="chip" title="already on your Board">tracked as #${esc(j.tracked)}</span>` : ''}${cov}${staleChip(j.ghost)}${sponsorChip(j.sponsor)}${warmChip(j.warm)}${unknown}${j.seniority ? `<span class="chip">${esc(j.seniority)}</span>` : ''}</div>${c}${g}${j.why ? `<div class="muted">${esc(j.why)}</div>` : ''}</div>`;
@@ -1080,6 +1224,7 @@ function doSearch(btn) {
   $('#sRes').innerHTML = '<div class="muted">searching…</div>';
   run('search', { ...searchParams(), rank: $('#sRank').checked }, r => {
     RESULTS = r.results || []; const errs = r.errors || [];
+    AJ_HI = new Set(r.ids || []); loadAllJobs();  // stored in All jobs below, marked "from this search"
     const none = errs.length && !RESULTS.length && errs.filter(e => !e.startsWith('AI rank')).length >= (r.boards || Infinity)
       ? 'No job board could be reached, so nothing was checked. Check your connection and try again.' : 'nothing found';
     $('#sRes').innerHTML = (errs.length ? `<div class="warnbox" role="alert">${errs.map(e => 'could not ' + (e.startsWith('AI rank') ? 'rank: ' + esc(e.slice(9)) : 'read ' + esc(e))).join('<br>')}</div>` : '')
@@ -1096,6 +1241,146 @@ async function saveListing(i) {
   const r = await api('/api/jobs', { company: j.company, title: j.title, url: j.url, jd: (j.salary ? `Salary (from ${j.source}): ${j.salary}\n\n` : '') + (j.desc || ''), notes: 'found via ' + j.source, location: j.location || '', date: j.date || '', ats_feed: j.ats_feed || '' });
   if (r.error) return toast('error: ' + r.error, 'err');
   toast((j.tracked ? 'already on your Board as #' : 'tracked as #') + r.id, 'ok'); j.tracked = r.id; load();
+}
+
+/* ---- All jobs (listings.py): every listing any source found, merged; rows stay in AJ, markup carries only an index ---- */
+let AJ = [], AJ_TOTAL = 0, AJ_HI = new Set(), AJ_T = null, AJ_OPEN = {};
+const ajParams = () => ({ q: $('#ajQ').value.trim(), min_fit: $('#ajFit').value, remote: $('#ajRemote').value, min_salary: $('#ajSal').value,
+  days: $('#ajDays').value, show: $('#ajShow').value, sort: $('#ajSort').value, new: $('#ajNew').checked ? '1' : '', source: [...AJ_SRC].join(',') });
+const AJ_SRC = new Set();
+function ajDebounce() { clearTimeout(AJ_T); AJ_T = setTimeout(() => loadAllJobs(), 300); }
+async function loadAllJobs(more = false) {
+  if (!$('#ajList')) return;
+  const p = new URLSearchParams(Object.entries({ ...ajParams(), offset: more ? AJ.length : 0 }).filter(([, v]) => v !== '' && v != null));
+  const r = await api('/api/listings?' + p);
+  if (r.error) { $('#ajList').innerHTML = `<div class="warnbox" role="alert">${esc(r.error)}</div>`; return; }
+  AJ = more ? AJ.concat(r.rows) : r.rows; AJ_TOTAL = r.total;
+  if (!more) AJ_OPEN = {};
+  $('#ajCount').textContent = `${r.total} listing(s)` + (r.stale ? ` · ${r.stale} being re-scored` : '');
+  const names = Object.keys(r.sources).sort();
+  $('#ajSources').innerHTML = names.map((s, i) => `<button class="chip board${AJ_SRC.has(s) ? ' on' : ''}" aria-pressed="${AJ_SRC.has(s)}" onclick="ajSrc(${i})" data-src="${esc(s)}">${esc(srcLabel(s))} ${esc(r.sources[s])}</button>`).join('');
+  $('#ajSources').dataset.names = JSON.stringify(names);
+  renderAllJobs();
+}
+function ajSrc(i) {
+  const s = JSON.parse($('#ajSources').dataset.names || '[]')[i]; if (!s) return;
+  AJ_SRC.has(s) ? AJ_SRC.delete(s) : AJ_SRC.add(s); loadAllJobs();
+}
+const srcLabel = s => ((S && S.sources && S.sources[s]) || {}).label || (s === 'capture' ? 'Browser capture'
+  : /_alert$/.test(s) ? (((S && S.alert_sites) || {})[s.slice(0, -6)] || {label: s.slice(0, -6)}).label + ' alert' : s);
+function boardChip(s) {  // the source's name as a link to its site: the credit Adzuna, Himalayas and We Work Remotely ask for
+  const src = (S && S.sources && S.sources[s]) || {}, home = safeUrl(src.home);
+  return home ? `<a class="chip src-link${s === 'adzuna' ? ' attr-adzuna' : ''}" href="${esc(home)}" target="_blank" rel="noopener" title="listed on ${esc(src.label)}">${esc(src.label)}</a>`
+    : `<span class="chip">${esc(srcLabel(s))}</span>`;
+}
+function ajRow(x, i) {
+  const host = u => { try { return new URL(u).hostname; } catch (_) { return 'link'; } };
+  const links = (x.urls || []).slice(1).filter(safeUrl).map(u => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(host(u))} ↗</a>`).join(' ');
+  const chips = (x.fit_chips || []).map(c => `<span class="chip">${esc(c)}</span>`).join('');
+  const open = AJ_OPEN[x.id];
+  return `<div class="ajrow${x.new ? ' new' : ''}${AJ_HI.has(x.id) ? ' hi' : ''}" role="listitem" data-id="${esc(x.id)}">
+    <div>${fitBadge(x)} <a href="#" class="ajt" onclick="ajExpand(${i});return false" aria-expanded="${!!open}"><b>${esc(x.title)}</b></a> @ ${esc(x.company)} <span class="muted">${esc(x.location)} ${esc(x.salary)}</span>
+      ${x.new ? '<span class="pill ok">new</span>' : ''}${AJ_HI.has(x.id) ? '<span class="pill">from this search</span>' : ''}${x.reposted_at ? `<span class="chip stale" title="a new link for this role on ${esc(x.reposted_at)}">reposted</span>` : ''}${x.closed_at ? `<span class="chip" title="the source says applications close then">closes ${esc(x.closed_at)}</span>` : ''}</div>
+    <div class="chips">${(x.sources || []).map(boardChip).join(' ')}${sponsorChip(x.sponsor)}${warmChip(x.warm)}${chips}</div>
+    <div class="row">${x.job_id ? `<button class="b ghost sm" onclick="openJob(${Number(x.job_id)})">tracked as #${esc(x.job_id)}</button>` : `<button class="b sm" onclick="ajTrack(${i},this)">Track</button>`}
+      <button class="b ghost sm" onclick="ajDismiss(${i},this)">${x.dismissed ? 'Undismiss' : 'Dismiss'}</button>
+      <button class="b ghost sm" onclick="ajAi(${i},this)" ${hasAI() ? '' : 'disabled title="needs an AI provider (Setup > Link an AI key)"'}>AI fit</button>
+      ${safeUrl(x.url) ? `<a class="b ghost sm" href="${esc(x.url)}" target="_blank" rel="noopener">Open ↗</a>` : ''} ${links}</div>
+    ${open ? ajDetail(open) : ''}</div>`;
+}
+function ajDetail(d) {
+  const f = d.fit;
+  const parts = f ? Object.entries(f.parts).map(([p, v]) => `<span class="pill">${esc(p)} ${v.s == null ? '-' : esc(v.s)} (weight ${esc(v.w)})</span>`).join('') : '';
+  return `<div class="ajdetail">${f ? `<div class="muted">fit ${esc(f.score)}${f.partial ? ' · partial' : ''} · ${esc(f.note || '')}</div><div>${parts}</div>
+    <div class="chips">${(f.chips || []).map(c => `<span class="chip">${esc(c.sign + ' ' + c.text)}</span>`).join('')}</div>` : '<div class="muted">not scored yet</div>'}
+    <pre class="ajdesc">${esc(d.desc || '(no description: open the posting, or capture it with the extension)')}</pre></div>`;
+}
+function renderAllJobs() {
+  $('#ajList').innerHTML = AJ.map(ajRow).join('') || `<div class="empty">No jobs yet. Run a search, save one as a watch, add companies, or set up job alerts (Setup &gt; Job sources).</div>`;
+  if (AJ.length < AJ_TOTAL) $('#ajList').insertAdjacentHTML('beforeend', `<div class="row"><button class="b ghost" onclick="loadAllJobs(true)">Load ${Math.min(100, AJ_TOTAL - AJ.length)} more</button></div>`);
+}
+async function ajExpand(i) {
+  const x = AJ[i]; if (!x) return;
+  if (AJ_OPEN[x.id]) { delete AJ_OPEN[x.id]; return renderAllJobs(); }
+  const r = await api('/api/listings/' + Number(x.id));
+  if (r.error) return toast('error: ' + r.error, 'err');
+  AJ_OPEN[x.id] = r; renderAllJobs();
+}
+async function ajTrack(i, btn) {
+  const x = AJ[i]; if (!x) return;
+  btn.disabled = true;
+  const r = await api(`/api/listings/${Number(x.id)}/track`, {}); btn.disabled = false;
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast('tracked as #' + r.id, 'ok'); await load(); loadAllJobs();
+}
+async function ajDismiss(i, btn) {
+  const x = AJ[i]; if (!x) return;
+  btn.disabled = true;
+  const r = await api(`/api/listings/${Number(x.id)}/dismiss`, { on: !x.dismissed }); btn.disabled = false;
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast(x.dismissed ? 'back in the list' : 'dismissed (Which listings > dismissed shows it again)', 'ok'); loadAllJobs();
+}
+function ajAi(i, btn) {
+  const x = AJ[i]; if (!x) return;
+  run('listing_ai', { listing: x.id }, r => { toast(`AI fit: fit ${r.fit.score} now`, 'ok'); delete AJ_OPEN[x.id]; loadAllJobs(); }, btn);
+}
+async function ajSeen(btn) {
+  btn.disabled = true;
+  const r = await api('/api/listings/visit', {}); btn.disabled = false;
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast('all marked seen', 'ok'); loadAllJobs();
+}
+/* ---- Setup > Job alerts: per site, the last alert mail read and its job count; the job_alerts switch ---- */
+function renderAlertSites() {
+  const el = $('#alertList'); if (!el) return;
+  const a = S.alert_sites || {}, tool = (S.tools || []).find(t => t.tool === 'job_alerts') || {};
+  el.innerHTML = Object.keys(a).map(n => `<div><b>${esc(a[n].label)}</b> <span class="muted">${a[n].last ? `last alert read ${esc(new Date(a[n].last * 1000).toLocaleString())} · ${Number(a[n].n)} job${a[n].n === 1 ? '' : 's'} in it` : 'no alert read yet'}</span></div>`).join('');
+  const on = $('#alertsOn'); if (on) on.checked = !!tool.enabled;
+}
+async function alertsToggle(on) {
+  const r = await api('/api/tools', { tool: 'job_alerts', enabled: on });
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast(`job alerts ${on ? 'on' : 'off'}`, 'ok'); load();
+}
+/* ---- Setup > Job sources: each board's state; Adzuna and USAJOBS keys link here (verified with one small search) ---- */
+let BOARDS = [];
+function renderSources() {
+  const src = S.sources || {}, keys = (S.connections || {}).keys || {};
+  BOARDS = Object.keys(src);
+  $('#srcList').innerHTML = BOARDS.map((n, i) => {
+    const s = src[n], k = keys[n], home = safeUrl(s.home);
+    const when = s.last ? new Date(s.last * 1000).toLocaleString() : 'not yet';
+    const head = `<b>${home ? `<a href="${esc(home)}" target="_blank" rel="noopener">${esc(s.label)}</a>` : esc(s.label)}</b> <span class="pill ${s.ready ? 'ok' : 'warn'}">${s.ready ? 'ready' : 'needs keys'}</span>`
+      + ` <span class="muted">${s.every_h ? `saved searches ask it at most every ${esc(s.every_h)} h${s.global ? ' (one fetch for all your searches)' : ''}` : ''}${s.global ? ' · last fetched ' + esc(when) : ''}</span>`;
+    if (!k) return `<div>${head}</div>`;
+    const [label, cls] = KSTAT[k.status] || KSTAT.unchecked;
+    return `<div class="srckey">${head} ${k.linked ? `<span class="pill ${cls}">${esc(label)}</span> <span class="muted">${esc(k.status !== 'verified' ? k.detail : '')}</span>` : ''}
+      <div class="row"><input id="srcId${i}" autocomplete="off" placeholder="${esc(k.id_label)}" aria-label="${esc(s.label + ' ' + k.id_label)}" style="width:220px">
+        <input id="srcKey${i}" type="password" autocomplete="off" placeholder="key" aria-label="${esc(s.label)} key" style="width:220px">
+        <button class="b sm" onclick="srcLink(${i},this)">${k.linked ? 'Replace' : 'Link'}</button>
+        ${k.linked ? `<button class="b ghost sm" onclick="srcCheck(${i},this)">Re-check</button><button class="b ghost sm" onclick="srcRemove(${i})">Remove</button>` : ''}</div>
+      <div class="muted">Free key: ${safeUrl(k.get) ? `<a href="${esc(k.get)}" target="_blank" rel="noopener">${esc(k.get)}</a>` : ''} · stored as ${s.keys.map(x => `<code>${esc(x.name)}</code>`).join(' + ')}${n === 'adzuna' ? ' · Adzuna listings always show an "Adzuna" link (their terms); at most 100 calls a day; pref adzuna_country picks the country site' : ''}</div></div>`;
+  }).join('');
+}
+async function srcLink(i, btn) {
+  const n = BOARDS[i]; if (!n) return;
+  btn.disabled = true;
+  try {
+    const r = await api('/api/keys/link', { name: n, key: $('#srcKey' + i).value, id: $('#srcId' + i).value });
+    if (r.error) return toast('error: ' + r.error, 'err');
+    toast(`${r.label}: ${(KSTAT[r.status] || KSTAT.unchecked)[0]} - ${r.detail}`, r.status === 'failed' ? 'err' : 'ok');
+  } finally { const k = $('#srcKey' + i); if (k) k.value = ''; btn.disabled = false; load(); }
+}
+async function srcCheck(i, btn) {
+  const n = BOARDS[i]; if (!n) return;
+  btn.disabled = true;
+  const r = await api('/api/keys/check', { name: n }); btn.disabled = false;
+  if (r.error) return toast('error: ' + r.error, 'err');
+  load();
+}
+async function srcRemove(i) {
+  const n = BOARDS[i], s = (S.sources || {})[n]; if (!s || !confirm(`Remove the ${s.label} key from the OS keyring?`)) return;
+  const r = await api('/api/keys/remove', { name: n }); toast(r.error ? 'error: ' + r.error : 'removed', r.error ? 'err' : 'ok'); load();
 }
 
 /* ---- monitor ---- */
@@ -1169,12 +1454,13 @@ function renderTools() {
   // each preference: a plain label (aria-labelledby) and one line of help; the raw key stays visible for the terminal
   $('#prefs').innerHTML = PK.map((k, i) => [k, S.prefs[k], `PK[${i}]`, (S.pref_help || {})[k] || [k, '']]).map(([k, v, ref, [label, help]], i) => `<div class="row"><span style="width:220px" id="pl${i}">${esc(label)}<span class="muted" style="display:block">${esc(help)}${label !== k ? ` (${esc(k)})` : ''}</span></span>${S.pref_choices[k] ? `<select aria-labelledby="pl${i}" onchange="setPref(${ref},this.value)">${S.pref_choices[k].map(c => `<option value="${esc(c)}" ${c === v ? 'selected' : ''}>${esc(c || '(automatic)')}</option>`).join('')}</select>`
     : typeof v === 'boolean' ? `<input type="checkbox" aria-labelledby="pl${i}" ${v ? 'checked' : ''} onchange="setPref(${ref},this.checked)">`
-    : typeof v === 'object' && v ? `<span class="muted">${esc(Object.entries(v).map(([p, m]) => p + '=' + (m || '(default)')).join(', ') || (k === 'weekly_goals' ? 'none set' : 'none pinned'))}</span><input class="grow" aria-labelledby="pl${i}" placeholder="${k === 'weekly_goals' ? 'goal=number, e.g. contacts=5 (0 clears); also on the Insights tab' : 'provider=model to pin (empty model = default); Setup > List models shows ids'}" onchange="setPref(${ref},this.value)">`
+    : typeof v === 'object' && v ? `<span class="muted">${esc(Object.entries(v).map(([p, m]) => p + '=' + (m === '' || m == null ? '(default)' : m === 0 ? '0 (off)' : m)).join(', ') || (k === 'weekly_goals' ? 'none set' : k === 'fit_weights' ? 'defaults (skills=35, role=20, experience=15, location=15, pay=15, ai=25)' : 'none pinned'))}</span><input class="grow" aria-labelledby="pl${i}" placeholder="${k === 'weekly_goals' ? 'goal=number, e.g. contacts=5 (0 clears); also on the Insights tab' : k === 'fit_weights' ? 'part=number, e.g. skills=40 (0 = off; skills= drops it)' : 'provider=model to pin (empty model = default); Setup > List models shows ids'}" onchange="setPref(${ref},this.value)">${k === 'fit_weights' ? `<button class="b ghost sm" onclick="setPref(${ref},'reset')">Reset weights</button>` : ''}`
     : `<input class="grow" aria-labelledby="pl${i}" value="${esc(v)}" onchange="setPref(${ref},this.value)">`}</div>`).join('');
 }
 async function setPref(key, value) { const r = await api('/api/prefs', { key, value }); if (r.error) toast('error: ' + r.error, 'err'); load(); }
 function renderSetup() {
   renderKeys();
+  renderSources(); renderAlertSites();
   $('#vList').innerHTML = S.vault.map((v, i) => `<span class="pill">${esc(v.name + (v.user ? ' (' + v.user + ')' : ''))} <button class="b ghost sm" aria-label="remove" onclick="delVault(${i})">×</button></span>`).join(' ') || 'empty';
   const u = Object.entries(S.usage).filter(([k]) => k !== 'total');
   $('#usage').innerHTML = u.length ? 'last 30 days: ' + u.map(([k, d]) => `<span class="pill">${esc(k)}: ${d.calls} calls · ${(d.input + d.output).toLocaleString()} tokens</span>`).join(' ') : '';
@@ -1299,7 +1585,7 @@ let KEYS = [];  // provider names stay in JS; markup carries only an index
 const KSTAT = { verified: ['Verified', 'ok'], failed: ['Failed', 'bad'], unreachable: ["Couldn't reach, will retry", 'warn'], unchecked: ['Not checked', ''] };
 function renderKeys() {
   const c = S.connections || { keys: {} }, sel = $('#kProv'), was = sel.value;
-  KEYS = Object.keys(c.keys);
+  KEYS = Object.keys(c.keys).filter(n => c.keys[n].kind !== 'jobs');  // job-data keys link under Setup > Job sources
   sel.innerHTML = KEYS.map(n => `<option value="${esc(n)}">${esc(c.keys[n].label + (c.keys[n].linked ? ' (linked)' : ''))}</option>`).join('');
   if (KEYS.includes(was)) sel.value = was;
   keyHint();
@@ -1734,9 +2020,11 @@ let INS = null, OFF = null;  // server data stays in JS; markup carries only ind
 const pctx = v => Math.round(Number(v) * 100) + '%', num = v => Number(v || 0).toLocaleString();
 const SERIES = [['applications', 'applications'], ['interviews', 'interviews'], ['offers', 'offers'], ['contacts', 'people contacted'], ['mock_sessions', 'mock sessions']];
 async function loadInsights() {
-  const [a, o, c] = await Promise.all([api('/api/analytics?weeks=' + Number($('#insRange').value || 12)), api('/api/offers'), api('/api/readiness/calibration')]);
+  const [a, o, c, b] = await Promise.all([api('/api/analytics?weeks=' + Number($('#insRange').value || 12)), api('/api/offers'), api('/api/readiness/calibration'), api('/api/boosters')]);
   if (a.error || o.error) return toast('error: ' + (a.error || o.error), 'err');
   INS = a; OFF = o; renderInsights(); renderOffers();
+  BOOSTS.i = b.boosters || [];
+  $('#insBoost').innerHTML = b.error ? esc(b.error) : BOOSTS.i.map((x, i) => boostRow(x, 'i', i)).join('') || '<div class="muted">Nothing to boost right now: open jobs with a description get boosters here.</div>';
   if (c.error) $('#insReady').textContent = c.error; else renderReadyRecord(c);
   if (!$('#acFrom').value) { const t = new Date(), m = new Date(t); m.setDate(t.getDate() - (t.getDay() + 6) % 7); $('#acFrom').value = m.toLocaleDateString('en-CA'); $('#acTo').value = t.toLocaleDateString('en-CA'); }
   $('#acMin').value = S && S.prefs.activity_weekly_min ? S.prefs.activity_weekly_min : '';
@@ -1765,7 +2053,7 @@ function renderInsights() {
   $('#insWeeksTable').innerHTML = `<table class="kw"><thead><tr><th>week</th><th>from</th>${SERIES.map(([, l]) => `<th>${esc(l)}</th>`).join('')}</tr></thead><tbody>`
     + a.weeks.map(w => `<tr><td>${esc(w.week)}</td><td>${esc(w.start)}</td>${SERIES.map(([k]) => `<td>${Number(w[k])}</td>`).join('')}</tr>`).join('') + '</tbody></table>';
   $('#insSource').innerHTML = rateRows(a.by_source);
-  $('#insBand').innerHTML = rateRows(a.by_band) + '<div class="muted">bands of the match score (JD coverage or your own), applications that left "saved"</div>';
+  $('#insBand').innerHTML = rateRows(a.by_band) + '<div class="muted">bands of the fit score each job had when it left "saved" (else its fit now), applications only</div>';
   const st = a.funnel.stages;
   $('#insFunnel').innerHTML = `<table class="kw"><thead><tr><th>stage</th><th>reached</th><th>moved on</th><th>conversion</th><th>median days to next</th></tr></thead><tbody>`
     + Object.entries(st).map(([s, d]) => `<tr><td>${esc(s)}</td><td>${Number(d.reached)}</td><td>${Number(d.advanced)}</td><td>${d.conversion == null ? '-' : pctx(d.conversion)}</td><td>${d.median_days_to_next == null ? '-' : esc(d.median_days_to_next)}</td></tr>`).join('') + '</tbody></table>'

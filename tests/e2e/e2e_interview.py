@@ -135,7 +135,7 @@ class Interview(E2ETestCase):
         self.assertEqual(self.page.text_content("#jChance").strip(), r["chance"]["label"])
         self.assertIn("not a probability", r["chance"]["label"])
         self.assertNotRegex(text.replace("100 pts", ""), r"chance[^.]*\d\s*%")
-        self.assertIn("fit not scored yet", text)
+        self.assertRegex(text, r"fit \d+ · caps the chance band")  # pass 21: the page scores the fit; it caps the band
         self.assertIn(r["stage"], text)
         meters = g.locator("meter")
         self.assertEqual(meters.count(), 5)
@@ -293,7 +293,7 @@ class Interview(E2ETestCase):
         r = it["readiness"]
         btn = self.page.locator("#today button", has_text=f"#{jid} Bluefin Labs")
         self.assertRegex(btn.text_content(), rf"^interview .+ · readiness {r['score']} · #{jid} Bluefin Labs")
-        self.assertNotIn("chance", self.page.text_content("#today").lower())  # no band on Today: no room for its qualifier
+        self.assertNotIn("chance estimate", self.page.text_content("#today").lower())  # no band on Today: no room for its qualifier
         self.assertLess(r["score"], 60)
         tip = self.page.locator("#today button.tip", has_text=r["tip"])
         self.assertEqual(tip.count(), 1)

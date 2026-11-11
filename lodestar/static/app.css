@@ -81,6 +81,9 @@ a { color: var(--acc); text-decoration: none; }
 .chip.due, .b.due { color: var(--bad); border-color: var(--bad); }
 .chip.stale { color: var(--warn); border-color: var(--warn); }
 .chip.warm { color: var(--ok); border-color: var(--ok); }
+.chip.fit { font-weight: 600; } .fit-hi { color: var(--ok); border-color: var(--ok); } .fit-mid { color: var(--acc); border-color: var(--acc); }
+.fit-lo { color: var(--warn); border-color: var(--warn); } .fit-bad { color: var(--bad); border-color: var(--bad); }
+.chip.stale-fit { opacity: .55; border-style: dashed; } .fit-row + .chips { margin: 0 0 4px 148px; font-size: 11px; }
 .list .chips { font-size: 11px; margin-top: 3px; display: flex; gap: 4px 6px; flex-wrap: wrap; }
 .col.drop { outline: 2px dashed var(--acc); outline-offset: -2px; }
 .today .row { margin: 0; gap: 6px; }
@@ -259,3 +262,24 @@ details.aimenu .row { margin: 4px 0; } .aimenu .aitopic { max-width: 100%; } .ai
 .palk { display: inline-block; min-width: 74px; color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .palhint { font-size: 11px; padding: 0 4px; }
 #rsPick { width: min(100%, 360px); }  /* long backup names must not widen the Setup grid at 420px */
+/* All jobs (Jobs tab) and Setup > Job sources */
+.ajrow { border-bottom: 1px solid var(--line); padding: 8px 0; overflow-wrap: anywhere; }
+.ajrow.new { border-left: 3px solid var(--ok); padding-left: 8px; }
+.ajrow.hi { background: rgba(127, 127, 255, .06); }
+.ajrow .row { margin-top: 4px; flex-wrap: wrap; }
+.ajdetail { margin-top: 6px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; }
+.ajdesc { white-space: pre-wrap; max-height: 260px; overflow: auto; font-size: 12px; }
+#ajSources { margin: 6px 0; flex-wrap: wrap; }
+.chip.board { cursor: pointer; background: none; color: inherit; font: inherit; }
+.chip.board.on { border-color: var(--acc); color: var(--acc); }
+a.chip.src-link { text-decoration: none; color: inherit; }
+a.chip.attr-adzuna { display: inline-block; min-width: 116px; min-height: 23px; line-height: 21px; text-align: center; }  /* Adzuna's attribution size */
+.srckey { padding: 6px 0; }
+.actrow { padding: 3px 0; overflow-wrap: anywhere; }
+.srckey .row input { max-width: 100%; }
+/* chance boosters and job intelligence (pass 21) */
+.boost { align-items: flex-start; flex-wrap: nowrap; }
+.boost .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.intel-row { padding: 2px 0; overflow-wrap: anywhere; }
+#drawer .group h5 { margin: 8px 0 2px; font-size: 11px; color: var(--dim); }
+.intel-sum pre { white-space: pre-wrap; margin: 4px 0 8px; }

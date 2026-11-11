@@ -36,7 +36,15 @@ REGISTRY = {
                 "prefix": ""},
     "ollama": {"label": "Ollama (local, no key)", "key": None, "get": "https://ollama.com/download",
                "hint": "runs on this computer; no key", "prefix": ""},
+    # job-data keys (kind "jobs"): a second value `id` goes with the key; Setup > Job sources links them, never the AI card
+    "adzuna": {"label": "Adzuna (job search)", "key": "ADZUNA_APP_KEY", "id": "ADZUNA_APP_ID", "id_label": "Application ID",
+               "get": "https://developer.adzuna.com/signup", "hint": "the Application Key and Application ID", "prefix": "",
+               "kind": "jobs"},
+    "usajobs": {"label": "USAJOBS (US federal jobs)", "key": "USAJOBS_API_KEY", "id": "USAJOBS_EMAIL",
+                "id_label": "the email you requested the key with", "get": "https://developer.usajobs.gov/apirequest/",
+                "hint": "the Authorization Key USAJOBS emailed you", "prefix": "", "kind": "jobs"},
 }
+JOBS = "jobs"
 
 
 def redact(text, *secrets) -> str:
@@ -113,6 +121,41 @@ def resolve(name: str) -> str:
     raise SystemExit(f"unknown key '{n[:40]}'. One of: {', '.join(REGISTRY)}")
 
 
+def secret(name: str) -> str | None:
+    """The stored key of a registry entry: an AI provider's through ai.api_key, a job-data key from the vault."""
+    e = REGISTRY[name]
+    return setting(e["key"]) if e.get("kind") == JOBS else ai.api_key(name)
+
+
+def _verify_jobs(name: str, key: str, ident: str) -> dict:
+    """One small search proves a job-data key (Adzuna: 1 result; USAJOBS: 1 result, its documented headers)."""
+    from urllib.parse import quote
+
+    if name == "adzuna":
+        country = str(settings.pref("adzuna_country") or "us")
+        url = (f"https://api.adzuna.com/v1/api/jobs/{country}/search/1?app_id={quote(ident)}&app_key={quote(key)}"
+               "&results_per_page=1&what=analyst&content-type=application/json")
+        headers = {}
+    else:
+        url = "https://data.usajobs.gov/api/search?Keyword=analyst&ResultsPerPage=1"
+        headers = {"Host": "data.usajobs.gov", "User-Agent": ident, "Authorization-Key": key}
+    host = urlsplit(url).hostname
+    try:
+        with urlopen(Request(url, headers=headers), timeout=15) as r:
+            json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        e.close()
+        if e.code in (400, 401, 403):
+            return {"status": "failed", "detail": f"{REGISTRY[name]['label']} rejected this key or "
+                                                  f"{REGISTRY[name]['id_label'].lower()}: copy both again from {REGISTRY[name]['get']}"}
+        if e.code == 429:
+            return {"status": "failed", "quota": True, "detail": "rate limit reached; the key itself was accepted. Wait"}
+        return {"status": "unreachable", "detail": f"{host} answered HTTP {e.code}; will retry"}
+    except (urllib.error.URLError, OSError, ValueError):
+        return {"status": "unreachable", "detail": f"couldn't reach {host}; will retry"}
+    return {"status": "verified", "detail": "key ok (one search with 1 result)"}
+
+
 def _url(name: str) -> str:
     """The no-token endpoint that proves a key, derived like ai.list_models."""
     if name == "anthropic":
@@ -137,11 +180,17 @@ def verify_key(name: str, key: str | None = None) -> dict:
     scrubbed 160 characters of what the provider said."""
     entry = REGISTRY[name]
     if entry["key"]:
-        key = (key or ai.api_key(name) or "").strip()
+        key = (key or secret(name) or "").strip()
         if not key:
             return {"status": "unchecked", "detail": "no key stored"}
     else:
         key = None
+    if entry.get("kind") == JOBS:
+        ident = (setting(entry["id"]) or "").strip()
+        if not ident:
+            return {"status": "unchecked", "detail": f"no {entry['id_label'].lower()} stored"}
+        res = _verify_jobs(name, key, ident)
+        return res | {"detail": redact(res["detail"], key, ident)[:160]}
     host = urlsplit(_url(name)).hostname
     try:
         with urlopen(Request(_url(name), headers=_headers(name, key)), timeout=15) as r:
@@ -187,9 +236,10 @@ def verify_key(name: str, key: str | None = None) -> dict:
     return out | {"detail": redact(detail, key)[:160], "model": want}
 
 
-def link(name: str, key: str | None = None) -> dict:
+def link(name: str, key: str | None = None, ident: str | None = None) -> dict:
     """Store a key in the vault and verify it at once. A key that fails is still stored (offline, out of credit) and
-    shown Failed with the hint. With the user present, a missing model is switched to one the provider offers."""
+    shown Failed with the hint. With the user present, a missing model is switched to one the provider offers.
+    ident: a job-data key's second value (Adzuna's Application ID, the USAJOBS email), stored beside it."""
     name = resolve(name)
     entry = REGISTRY[name]
     out = {"name": name, "label": entry["label"]}
@@ -197,6 +247,11 @@ def link(name: str, key: str | None = None) -> dict:
         key = "".join(str(key or "").split())  # a pasted key's spaces or line break are never part of it
         if not key:
             raise SystemExit(f"paste the {entry['label']} key ({entry['hint'] or 'from ' + entry['get']})")
+        if entry.get("kind") == JOBS:
+            ident = "".join(str(ident or "").split()) or setting(entry["id"]) or ""
+            if not ident or len(ident) > 200 or (entry["id"].endswith("EMAIL") and "@" not in ident):
+                raise SystemExit(f"give the {entry['id_label']} too ({entry['label']})")
+            vault.set(entry["id"], ident)
         if entry["prefix"] and not key.startswith(entry["prefix"]):
             out["prefix_warning"] = f"this does not look like an {entry['label']} key ({entry['hint']}); linked anyway"
         vault.set(entry["key"], key)
@@ -211,7 +266,7 @@ def link(name: str, key: str | None = None) -> dict:
     # Ollama is never pinned: that would switch off the offline templates, as ai.local_preset() also refuses
     if not entry["key"] and res.get("status") == "verified" and name not in ai.available():
         settings.set_model(name, res.get("model") or ai.model_for(name))
-    record("keys", name, res, fp(key or ai.api_key(name)))
+    record("keys", name, res, fp(key or secret(name)))
     return out | {k: v for k, v in res.items() if k != "pick"}
 
 
@@ -228,6 +283,8 @@ def unlink(name: str) -> dict:
     if os.environ.get(k) and not vault.get(k):
         raise SystemExit(f"{k} is set in .env or the environment, not in the vault: remove it there")
     vault.delete(k)
+    if REGISTRY[name].get("id") and vault.get(REGISTRY[name]["id"]):  # a job-data key's ID / email goes with it
+        vault.delete(REGISTRY[name]["id"])
     _forget(name)
     return status()
 
@@ -240,16 +297,17 @@ def status() -> dict:
     for n, e in REGISTRY.items():
         if e.get("hidden"):
             continue
-        k = ai.api_key(n) if e["key"] else None
-        linked = bool(k) if e["key"] else n in avail
+        k = secret(n) if e["key"] else None
+        linked = (bool(k) and (not e.get("id") or bool(setting(e["id"])))) if e["key"] else n in avail
         s = data["keys"].get(n) or {}
-        if not linked or s.get("fp") != fp(k or ai.api_key(n)):
+        if not linked or s.get("fp") != fp(k or secret(n)):
             s = {}  # a changed (or removed) key reads unchecked until it is verified again
         keys[n] = {"label": e["label"], "linked": linked, "get": e["get"], "hint": e["hint"],
                    "source": ("env" if e["key"] and os.environ.get(e["key"]) else "vault") if linked and e["key"] else "",
                    "status": s.get("status", "unchecked"), "checked_at": s.get("checked_at", ""),
-                   "detail": s.get("detail", ""), "model": s.get("model") or (ai.model_for(n) if linked else ""),
-                   "quota": bool(s.get("quota"))}
+                   "detail": s.get("detail", ""), "quota": bool(s.get("quota")), "kind": e.get("kind", "ai"),
+                   "model": "" if e.get("kind") == JOBS else s.get("model") or (ai.model_for(n) if linked else ""),
+                   "id_label": e.get("id_label", "")}
     mail = data.get("mail") if isinstance(data.get("mail"), dict) else {}
     if mail and (mail.get("fp") != mailconn._fingerprint(util.mail_settings()) or not util.mail_login()[1]):
         mail = {}  # another mailbox, or disconnected: an old result says nothing about it
@@ -260,7 +318,7 @@ def status() -> dict:
 def check(name: str) -> dict:
     """Verify one linked key now and remember the result (never changes settings)."""
     name = resolve(name)
-    k = ai.api_key(name)
+    k = secret(name)
     try:
         res = verify_key(name)
     except (Exception, SystemExit) as e:  # one provider never stops the others

@@ -315,7 +315,7 @@ class Tick(Base):
             email = False; days = 1; provider = None; followup = 7; every = 5; once = True  # noqa: E702
         from lodestar import web_monitor
         with patched(updater, tick=lambda: calls.append(1)), patched(web_monitor, check_watches=lambda: None,
-                                                                       recheck_postings=lambda: None), \
+                                                                       check_listings=lambda: None), \
                 patched(loop, _backup=lambda: None, _digest=lambda a: None), contextlib.redirect_stdout(io.StringIO()):
             loop.cycle(A())  # tests and callers without the flag never check
             self.assertEqual(calls, [])

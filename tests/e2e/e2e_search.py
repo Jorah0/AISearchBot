@@ -1,8 +1,9 @@
 """Search: free job APIs with filters, unknown chips, board errors, AI rank, Auto-track, Save as watch, track a listing."""
 import unittest
-from urllib.parse import quote
 
 from harness import FETCH, E2ETestCase, contacts, day, db, web_monitor
+
+from lodestar import settings  # noqa: E402  (after harness: it sets the temp home first)
 
 SALTMARSH = {"title": "Data Engineer", "company_name": "Saltmarsh Data", "url": "https://jobs.example.com/saltmarsh/de",
              "candidate_required_location": "USA", "salary": "$140k - $170k", "description": "Python, SQL, Airflow, dbt"}
@@ -38,7 +39,7 @@ class Search(E2ETestCase):
         for sel, v in {"#sK": "", "#sLoc": "", "#sSal": "", "#sDays": ""}.items():
             self.page.fill(sel, fields.get(sel, v))
         self.page.select_option("#sLevel", fields.get("#sLevel", ""))
-        self.run_click(self.page.get_by_role("button", name="Search free job APIs"))
+        self.run_click(self.page.get_by_role("button", name="Search boards now"))
 
     def listing(self, company):
         return self.page.locator("#sRes .list > div", has_text=company)
@@ -46,15 +47,16 @@ class Search(E2ETestCase):
     def test_search_with_filters_unknown_chips_and_board_errors(self):
         self.go("search")
         self.search()
-        self.assertIn(f"https://remotive.com/api/remote-jobs?search={quote('data engineer')}&limit=30", self.urls)
+        # pass 21: Remotive limits calls per user, so one unfiltered fetch serves every query (filtered locally)
+        self.assertIn("https://remotive.com/api/remote-jobs?limit=100", self.urls)
         self.assertEqual(self.page.locator("#sRes .list > div").count(), 3)
         self.assertIn("could not read hn", self.page.text_content("#sRes .warnbox"))
         salt, kes, old = self.listing("Saltmarsh Data"), self.listing("Kestrel Maps"), self.listing("Old Harbor")
         self.assertIn("$140k - $170k", salt.text_content())
         self.assertEqual(salt.locator("a", has_text="open").get_attribute("href"), SALTMARSH["url"])
         self.assertIn("senior", kes.locator(".chips").text_content())
-        self.assertRegex(salt.locator(".chips").text_content(), r"JD coverage \d+%")
-        self.assertIn("matched:", salt.text_content())
+        self.assertRegex(salt.locator(".chips .chip.fit").text_content(), r"^fit \d+")  # pass 21: the fit badge
+        self.assertNotIn("matched:", salt.text_content())  # pass 21: no JD-coverage line; the fit badge carries the reasons
         warm = salt.locator(".chip.warm")
         self.assertEqual(warm.text_content(), "you know 1 person here")
         self.assertIn("Lee Park (Analyst)", warm.get_attribute("title"))
@@ -133,12 +135,20 @@ class Search(E2ETestCase):
     def test_auto_track_proposes_strong_fits(self):
         self.go("search")
         self.page.fill("#sQ", "data engineer")
+        settings.set_pref("auto_track_min_score", 0)  # pass 21: the blended fit is compared, so any judged listing passes
+        self.addCleanup(settings.set_pref, "auto_track_min_score", 75)
+        # pass 21: only a listing with a real description (40+ words) reaches the AI; the others are judged by rules
+        long = KESTREL["description"] + " We map coastlines and shipping lanes from open data, with tested pipelines." * 4
+        self.addCleanup(FETCH.__setitem__, "arbeitnow.com", {"data": [KESTREL]})
+        FETCH["arbeitnow.com"] = {"data": [KESTREL | {"description": long}]}
         before = {p["id"] for p in self.state()["pending"]}
         self.run_click(self.page.get_by_role("button", name="Auto-track strong fits"))
         self.expect_toast("strong fit(s) proposed", "err")  # one board (hn) could not be read: said in the toast
-        new = [p for p in self.state()["pending"] if p["id"] not in before]
-        self.assertEqual([(p["tool"], p["kind"], p["payload"]["company"]) for p in new], [("auto_track", "add_job", "Kestrel Maps")])
-        self.assertIn("fit 91", new[0]["summary"])  # Old Harbor (AI would say 95) looks stale: never judged
+        new = {p["payload"]["company"]: p for p in self.state()["pending"] if p["id"] not in before}
+        self.assertIn("Kestrel Maps", new)
+        self.assertNotIn("Old Harbor", new)  # Old Harbor (AI would say 95) looks stale: never judged
+        self.assertEqual({(p["tool"], p["kind"]) for p in new.values()}, {("auto_track", "add_job")})
+        self.assertRegex(new["Kestrel Maps"]["summary"], r"fit \d+ \(AI\)")
         self.assertIn("could not read: hn", self.page.text_content("#toast"))
 
     def test_save_as_watch_blank_new_and_update(self):
@@ -171,7 +181,7 @@ class Search(E2ETestCase):
     def test_search_from_the_keyboard_and_at_420px(self):
         self.go("search")
         self.page.fill("#sQ", "data engineer")
-        self.tab_to("#search .row button.b:not(.ghost)")  # Search free job APIs
+        self.tab_to("#search .row button.b:not(.ghost)")  # Search boards now
         self.press("Enter")
         self.idle()
         self.assertEqual(self.page.locator("#sRes .list > div").count(), 3)

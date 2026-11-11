@@ -14,7 +14,6 @@ import re
 import shutil
 import sys
 import tempfile
-import types
 import unittest
 import urllib.error
 from datetime import datetime, timedelta
@@ -542,19 +541,15 @@ class Readiness(Base):
     def test_chance_band_cap_and_copy(self):
         job = self.job(company="Capco", url=None, jd="")
         real = readiness._compute
-        fit = types.ModuleType("lodestar.fit")
-        fit.rev = lambda: "r1"
-        sys.modules["lodestar.fit"] = fit
-        try:
-            with patched(readiness, _compute=lambda *a, **k: real(*a, **k) | {"score": 85}):
-                r = readiness.readiness(dict(job) | {"fit_score": 45, "fit_rev": "r1"})
-                self.assertEqual((r["band"], r["chance"]["band"], r["chance"]["capped_by_fit"]), ("strong", "fair", True))
-                self.assertIn("capped by your fit score", r["chance"]["label"])
-                stale = readiness.readiness(dict(job) | {"fit_score": 45, "fit_rev": "old"})
-                self.assertEqual(stale["chance"]["band"], "strong")
-                plain = readiness.readiness(job)
-        finally:
-            sys.modules.pop("lodestar.fit", None)
+        from lodestar import fit  # pass 21: the real module; only its rev is pinned
+
+        with patched(fit, rev=lambda: "r1"), patched(readiness, _compute=lambda *a, **k: real(*a, **k) | {"score": 85}):
+            r = readiness.readiness(dict(job) | {"fit_score": 45, "fit_rev": "r1"})
+            self.assertEqual((r["band"], r["chance"]["band"], r["chance"]["capped_by_fit"]), ("strong", "fair", True))
+            self.assertIn("capped by your fit score", r["chance"]["label"])
+            stale = readiness.readiness(dict(job) | {"fit_score": 45, "fit_rev": "old"})
+            self.assertEqual(stale["chance"]["band"], "strong")
+            plain = readiness.readiness(job)
         for x in (r, stale, plain):
             self.assertIn("not a probability", x["chance"]["label"])
             self.assertNotRegex(x["chance"]["label"], r"\d\s*%")

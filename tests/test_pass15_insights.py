@@ -272,14 +272,15 @@ class Insights(Base):
         jobs = []
         for i in range(6):                                                      # six applications scored 80+
             j = db.add_job(f"Co{i}", "Data Engineer", notes="found via remotive")
-            db.set_fields(j, match_score=85)
+            db.con().execute("UPDATE jobs SET fit_score=85 WHERE id=?", (j,))  # pass 21: bands of the fit score
             self.status_at(j, "applied", week0 - timedelta(days=7) if i < 2 else TODAY)
             jobs.append(j)
         self.status_at(jobs[0], "interview", TODAY)
         self.status_at(jobs[1], "rejected", TODAY)
         self.status_at(jobs[2], "offer", TODAY)
         low = db.add_job("Lowco", "Analyst", notes="captured from https://x")
-        db.set_fields(low, match_score=30)
+        db.con().execute("UPDATE jobs SET fit_score=30 WHERE id=?", (low,))
+        db.set_fields(low, match_score=90)  # JD coverage no longer bands Insights
         self.status_at(low, "applied", TODAY)
         db.update_job(jobs[3], resume_hash="abc12345")                            # a tailored application
         db.con().execute("INSERT INTO mock_sessions(job_id, ts, answers, averages) VALUES(?,?,?,?)", (jobs[0], ts(TODAY), "[]", "{}"))

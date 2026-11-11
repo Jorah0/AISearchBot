@@ -241,7 +241,8 @@ class WebFields(unittest.TestCase):
             self.assertEqual((j["deadline"], j["excitement"], j["location"], j["posted_at"], j["salary_max"], j["remote"]),
                              ("2026-12-01", 5, "EU", None, 130000, "remote"))
             state = call("/api/state")[1]
-            self.assertEqual(set(state["today"]), {"actions", "deadlines", "followups", "interviews", "contacts", "emails", "pending"})
+            self.assertEqual(set(state["today"]), {"actions", "deadlines", "followups", "interviews", "contacts", "emails", "pending",
+                                                   "top_fits", "closed", "boosters"})
             self.assertIn("desktop_notifications", state["prefs"])
             call(f"/api/jobs/{jid}/delete", {})
         finally:

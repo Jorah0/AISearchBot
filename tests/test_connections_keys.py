@@ -97,8 +97,9 @@ class Base(unittest.TestCase):
 
 class Registry(Base):
     def test_registry_covers_every_provider_with_its_key_and_https_links(self):
-        self.assertEqual(set(connections.REGISTRY), set(ai.PROVIDERS))
-        for n, e in connections.REGISTRY.items():
+        ai_keys = {n: e for n, e in connections.REGISTRY.items() if e.get("kind") != "jobs"}  # pass 21: + job-data keys
+        self.assertEqual(set(ai_keys), set(ai.PROVIDERS))
+        for n, e in ai_keys.items():
             self.assertEqual(e["key"], ai.PROVIDERS[n]["key"], n)
             self.assertTrue(e["get"].startswith("https://"), n)
         self.assertEqual(connections.resolve("ANTHROPIC_API_KEY"), "anthropic")

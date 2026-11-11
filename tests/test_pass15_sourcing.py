@@ -228,17 +228,16 @@ class Search(Base):
         self.assertEqual([a for a in self.alerts if "NEW LISTING" in a], [a for a in self.alerts if "Initech" in a])
         self.assertEqual(sum("NEW LISTING" in a for a in self.alerts), 1)
 
-    def test_coverage_on_results_and_skipped_for_a_template_profile(self):
+    def test_fit_on_results_and_skills_unknown_for_a_template_profile(self):  # pass 21: the fit replaced JD coverage
         from lodestar.resume import PROFILE_TEMPLATE
 
         PROFILE.write_text(REAL_PROFILE, encoding="utf-8")
         profile.BANK.unlink(missing_ok=True)
-        j = wm.with_coverage(wm.search("python"))[0]
-        self.assertIsInstance(j["coverage"]["score"], int)
-        self.assertIn("python", j["coverage"]["matched"]); self.assertIn("snowflake", j["coverage"]["missing"])
-        self.assertLessEqual(len(j["coverage"]["matched"]), 3)
+        sk = wm.search("python")[0]["fit"]["parts"]["skills"]
+        self.assertIsInstance(sk["s"], int)
+        self.assertIn("python", sk["matched"]); self.assertIn("snowflake", sk["missing"])
         PROFILE.write_text(PROFILE_TEMPLATE, encoding="utf-8")
-        self.assertNotIn("coverage", wm.with_coverage(wm.search("python"))[0])
+        self.assertIsNone(wm.search("python")[0]["fit"]["parts"]["skills"]["s"])
 
 
 class Signals(Base):
@@ -250,10 +249,10 @@ class Signals(Base):
         vague = L("Dev", "Acme", "https://a/1", desc="We are a passionate team that loves what we do and values people. " * 10)
         self.assertIn("no concrete skill", wm.ghost_signals(vague)["reasons"][0])
         self.assertEqual(wm.ghost_signals(L("Dev", "Acme", "https://a/1"))["score"], 0)
-        first = L("Data Engineer", "Acme Inc", "https://old/1", "Berlin")
+        first = L("Data Engineer", "Acme Inc", "https://jobs.example.com/old/1", "Berlin")
         db.note_posting(wm.posting_key(first), first["url"])
         db._local.con.execute("UPDATE postings SET first_seen=datetime('now','-30 days')")
-        again = L("Data Engineer", "ACME", "https://new/2", "Berlin")
+        again = L("Data Engineer", "ACME", "https://jobs.example.com/new/2", "Berlin")  # a new link on the same site
         self.assertIn("reposted", wm.ghost_signals(again)["reasons"][0])
         self.assertEqual(wm.ghost_signals(first)["score"], 0)                 # same link: not a repost
         jid = db.add_job("Initech", "Dev")                                    # a job with no JD is not suspicious
@@ -266,7 +265,8 @@ class Signals(Base):
         stale = L("Dev", "Acme", "https://a/1", days_ago=45) | {"ghost": {"score": 60, "reasons": ["posted 45 days ago", "x"]}}
         fresh = L("Dev", "Globex", "https://a/2")
         self.assertEqual(apply.auto_track([stale, fresh]), [])
-        self.assertEqual(passed, [fresh])
+        self.assertNotIn(stale, passed)  # never scored further, never sent to the AI
+        self.assertIn("fit", fresh); self.assertIn("score", fresh)  # pass 21: the fresh one is judged (rules, no key here)
         self.assertEqual(stale["score"], 0); self.assertTrue(stale["why"].startswith("skipped: possibly stale"))
 
     def test_sponsor_import_tolerates_both_export_formats(self):
@@ -291,35 +291,41 @@ class Signals(Base):
             wm.import_sponsors(b"name,city\nAcme,Austin\n")
         self.assertEqual(db.clear_sponsors(), 3)
 
-    def test_weekly_posting_check_proposes_withdrawal_and_never_moves_status(self):
+    def test_weekly_posting_check_proposes_withdrawal_and_never_moves_status(self):  # daily since pass 21
         self.fake_feeds()
+        pages = []
+        wm.fetch = lambda url, **k: pages.append(url) or ""                     # robots.txt and the page: blank, open
         settings.set_tool("posting_check", auto=True)                          # still waits: the loop only proposes
         live = db.add_job("Acme", "Backend", "https://jobs.lever.co/acme/abc", LONG)
         gone = db.add_job("Acme", "Frontend", "https://jobs.lever.co/acme/gone", LONG, ats_feed="lever:acme")
         applied = db.add_job("Acme", "Ops", "https://jobs.lever.co/acme/gone2", LONG)
         db.set_status(applied, "applied")
-        db.add_job("Acme", "Data", "https://acme.com/careers?gh_jid=9", LONG)    # not a feed job: never checked
+        db.add_job("Acme", "Data", "https://acme.com/careers?gh_jid=9", LONG)    # not a feed job: a page check instead
         db.add_job("Acme", "Backend apply", "https://jobs.lever.co/acme/abc/apply", LONG)  # the live posting's apply link
         db.add_job("Acme", "Board", "https://jobs.lever.co/acme", LONG)          # names no posting: cannot be proven gone
         self.assertEqual([wm._posting_id(u) for u in ("https://boards.greenhouse.io/embed/job_app?for=acme&token=123",
                           "https://jobs.ashbyhq.com/acme/u1/application", "https://boards.greenhouse.io/acme/jobs/11",
                           "https://jobs.lever.co/acme/")], ["123", "u1", "11", ""])
         now = datetime(2026, 11, 6)
-        self.assertEqual(wm.recheck_postings(now), [gone])
+        self.assertEqual(wm.check_listings(now), [gone])                         # the applied one: event only, no proposal
         p = db.list_pending("pending")[0]
         self.assertEqual((p["kind"], p["job_id"], json.loads(p["payload"])["status"], json.loads(p["payload"])["note"]),
                          ("set_status", gone, "withdrawn", "posting removed"))
         self.assertEqual(db.get_job(gone)["status"], "saved")
+        self.assertEqual(db.get_job(applied)["status"], "applied")
+        self.assertTrue(wm.removed_event(applied))
         g = wm.ghost_signals(db.get_job(gone))
         self.assertGreaterEqual(g["score"], wm.GHOST_SKIP); self.assertIn("posting removed", g["reasons"][-1])
         self.assertEqual(wm.ghost_signals(db.get_job(live))["score"], 0)
         self.assertEqual(len(self.calls), 1)                                    # one request for the lever:acme feed
-        self.assertEqual(wm.recheck_postings(now + timedelta(days=1)), [])     # same week: nothing fetched
+        self.assertEqual(pages, ["https://acme.com/robots.txt", "https://acme.com/careers?gh_jid=9"])
+        self.assertEqual(wm.check_listings(now), [])                            # same day: nothing fetched
         self.assertEqual(len(self.calls), 1)
-        self.assertEqual(wm.recheck_postings(now + timedelta(days=7)), [])     # next week: checked, not proposed twice
+        self.assertEqual(wm.check_listings(now + timedelta(days=1)), [])       # next day: checked, not proposed twice
         self.assertEqual((len(self.calls), len(db.list_pending("pending"))), (2, 1))
+        self.assertEqual(len(pages), 2)                                         # a page is read at most weekly
         self.fake_feeds(lever=[])                                               # an empty board proposes nothing
-        self.assertEqual(wm.recheck_postings(now + timedelta(days=14)), [])
+        self.assertEqual(wm.check_listings(now + timedelta(days=2)), [])
 
 
 class Routes(unittest.TestCase):

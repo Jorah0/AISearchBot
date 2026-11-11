@@ -395,8 +395,10 @@ class Ctx:
 
 # ----------------------------------------------------------------------------- stage adapters
 def _score(job, ctx):
-    from . import resume
-
+    """The Fit check (pass 21): the deterministic fit score (fit.py) stored on the job, plus one AI judgement as its AI
+    part only when the fit_check tool is on auto. Its output is that fit's snapshot; verdict skip (the fit gate) when
+    the fit is under auto_track_min_score or blocked. A run step: done when run, stale when the JD or the profile
+    changes, like the other steps (the board's own fit badge refreshes by itself)."""
     if not (job["jd"] or "").strip():
         a = ctx.ask(f"Paste the job description or its URL for {job['company']} - {job['title']}", "jd",
                     why="the fit check and every document read it", apply_to="job:jd")
@@ -405,22 +407,21 @@ def _score(job, ctx):
         if a is SKIP:
             raise Skipped("no job description: add one in the drawer to run the fit check")
         job = db.get_job(job["id"])
-    resume.gap(job, ctx.provider)
-    ctx.spent += _ai_ok(ctx)
-    return {}
+    from . import fit
 
-
-def _score_observe(job, ctx):
-    p = _dir(job) / "gap.json"
-    if not p.is_file():
-        return None
-    g = _load(p.read_text(encoding="utf-8"), None)
-    if not isinstance(g, dict):
-        return None
-    # only the judgement: coverage() rewrites the keyword fields after every tailor, which must not stale anything
-    fp = _h(json.dumps({k: g.get(k) for k in ("verdict", "why", "weak_areas", "red_flags", "suggestions")}, sort_keys=True))
-    return {"file": "gap.json", "fp": fp, "score": g.get("match_score"), "verdict": g.get("verdict"), "why": g.get("why"),
-            "missing": (g.get("missing_keywords") or [])[:15], "weak_areas": g.get("weak_areas") or []}
+    f = fit.for_job(job)  # deterministic, no AI
+    if settings.auto("fit_check") and _ai_ok(ctx) and ctx.budget > 0:  # the AI part only when the tool is on auto
+        try:
+            f = fit.ai_judge(job["id"], ctx.provider)
+            ctx.spent += 1
+        except SystemExit as e:  # budget used up or no usable score: the rules-based fit stands
+            ctx.spent += "budget is used up" not in str(e)  # an unusable reply still cost the call
+            log.get("pipeline").info("#%s AI fit skipped: %s", job["id"], e)
+    chips = [f"{c['sign']} {c['text']}" for c in fit.top(f)]
+    skip = f["blocked"] or f["score"] < int(settings.pref("auto_track_min_score"))
+    return {"fp": _h(json.dumps([f["score"], f["rev"], chips])), "score": f["score"], "known": f["known"], "chips": chips,
+            "verdict": "skip" if skip else "go", "why": "; ".join(chips) or f"fit {f['score']}",
+            "missing": ((f.get("parts") or {}).get("skills") or {}).get("missing") or []}
 
 
 def _research(job, ctx):
@@ -583,7 +584,15 @@ def confirmation_ref(job_id: int) -> str:
 def _confirm_observe(job, ctx):
     m = db.con().execute("SELECT id, COALESCE(sent_at, created_at) at FROM mail WHERE job_id=? AND direction='in' AND trusted=1 "
                          "AND category='application_received' ORDER BY id LIMIT 1", (job["id"],)).fetchone()
-    return {"mail_id": m["id"], "at": m["at"], "ref": confirmation_ref(job["id"]), "via": "email", "fp": str(m["id"])} if m else None
+    if m:
+        return {"mail_id": m["id"], "at": m["at"], "ref": confirmation_ref(job["id"]), "via": "email", "fp": str(m["id"])}
+    # the ATS's own confirmation (greenhouse.io, myworkday.com): never trusted mail, but tied to this posting by its
+    # link or tenant (email_monitor._ats_match) from an authenticated sender. A fact only: no status, no reference.
+    m = db.con().execute("SELECT id, COALESCE(sent_at, created_at) at FROM mail WHERE job_id=? AND direction='in' AND "
+                         "category='application_received' AND (link_reason LIKE 'ATS %' OR link_reason LIKE 'Workday %' OR "
+                         "link_reason LIKE 'iCIMS %') AND link_reason NOT LIKE '%not verified%' ORDER BY id LIMIT 1",
+                         (job["id"],)).fetchone()
+    return {"mail_id": m["id"], "at": m["at"], "ref": "", "via": "listing", "fp": str(m["id"])} if m else None
 
 
 def _confirm_wait(job, ctx):
@@ -734,8 +743,7 @@ def _close_observe(job, ctx):
 
 
 for _st in (
-    Stage("score", "Fit check", ("saved",), reads=("jd", "profile"), tool="fit_check", ai=1, run=_score,
-          observe=_score_observe),
+    Stage("score", "Fit check", ("saved",), reads=("jd", "profile"), tool="fit_check", ai=1, run=_score),
     Stage("research", "Research", ("saved", "interview"), needs=("score",), tool="research", ai=1, run=_research,
           observe=_doc("research.md"), blocked=_need_ai),
     Stage("tailor", "Tailor resume", ("saved",), needs=("score",), reads=("jd",), tool="tailor", ai=1, run=_tailor,

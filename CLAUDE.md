@@ -10,12 +10,12 @@
 ## Project notes
 
 - **Product**: Lodestar. Package `lodestar/`; `jobbot` is a legacy script alias in `pyproject.toml`.
-- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (799 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
+- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (885 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
 - **Test matrix** (`docs/TESTS.md`): one row per feature with its unit/integration and E2E tests by exact name
   (`module.Class.test_name`). Every new feature adds a TESTS.md row + a unit test + an E2E test when it has UI;
   `tests/test_feature_matrix.py` fails on a row with no test, an unknown name, a browser test in the unit column, a
   test named in no row, a dropped row or Planned ID (pinned in the guard), or a stale test count above (update it when you add tests). Coverage (informative): see TESTS.md > Coverage.
-- **Browser tests**: `.venv\Scripts\python.exe -m unittest discover -s tests/e2e -p "e2e_*.py"` (199 tests; needs `pip install -e .[e2e]`; skips without Playwright or a browser). `tests/e2e/harness.py` `E2ETestCase`: per class a temp `LODESTAR_HOME` (module-level paths rebound), fictional seed via the app's write paths (`cls.ids`), fakes for AI (`ai_text`/`ai_json`), IMAP/SMTP, OAuth/urlopen, `util.fetch` (`FETCH`), keyring, toasts, `webbrowser`; real server on a free port; per test a fresh page with a console-error guard. Installed Edge by default; `LODESTAR_E2E_BROWSER=chromium` (CI), `LODESTAR_E2E_HEADED=1` to watch. Failures leave a screenshot + HTML in `tests/e2e/_artifacts/`. Never run `playwright install` locally. Wait with `idle()` (fetch-hook count), never sleeps or `networkidle` alone; drag with `Board.drag` (HTML5 events on the exact elements; a mouse drag picks up the wrong card when `<main>` scrolls). `FakeMail.FAIL` makes logins raise (refused/dropped mailbox).
+- **Browser tests**: `.venv\Scripts\python.exe -m unittest discover -s tests/e2e -p "e2e_*.py"` (214 tests; needs `pip install -e .[e2e]`; skips without Playwright or a browser). `tests/e2e/harness.py` `E2ETestCase`: per class a temp `LODESTAR_HOME` (module-level paths rebound), fictional seed via the app's write paths (`cls.ids`), fakes for AI (`ai_text`/`ai_json`), IMAP/SMTP, OAuth/urlopen, `util.fetch` (`FETCH`), keyring, toasts, `webbrowser`; real server on a free port; per test a fresh page with a console-error guard. Installed Edge by default; `LODESTAR_E2E_BROWSER=chromium` (CI), `LODESTAR_E2E_HEADED=1` to watch. Failures leave a screenshot + HTML in `tests/e2e/_artifacts/`. Never run `playwright install` locally. Wait with `idle()` (fetch-hook count), never sleeps or `networkidle` alone; drag with `Board.drag` (HTML5 events on the exact elements; a mouse drag picks up the wrong card when `<main>` scrolls). `FakeMail.FAIL` makes logins raise (refused/dropped mailbox).
 - **Profile**: prompts read `resume.candidate_text(limit)` (master + profile-bank facts, fitted by section), never `profile_text()[:N]`. Free-form helpers (coach, ideas, mock) pass `strict=False`. Anything an employer reads (resume, letters, mail, form answers) passes `private=False` so the salary floor stays out; drafts pass `drafts.screen` (a counter-offer's cited figures go in `cited=`, the only exemption), employer-facing answer reads use `employer=True` (private answers never leave). Writes to profile.md go through `profile.write_master()` (snapshot + atomic).
 - **Mail trust** (`email_monitor._match` / `_thread`): trusted = aligned DKIM/DMARC + a *strong* tie + agreement with the stored contact. Strong = stored contact, a thread our mail vouches for (it answered trusted mail or went to the stored contact; job not rejected/withdrawn), or the registrable domain of the job's posting URL on the company site. A domain that only *names* the company (`names_company`, any suffix) is weak: filed, never trusted. Mail about an untracked company is never trusted. Manual links (`link_mail`, Track as new job) and replies to them never make a sender trusted. Never loosen this.
 - **Drafts**: AI draft options/rewrites go through `drafts.py` (`options`, `rewrite`, `use`): one AI call, `screen()` (salary-floor guard) on every text, untrusted mail fenced, mail kinds proposed with review (`apply.mail_proposal(review=True)`), recipient from the server. A send_email proposal answering unverified mail is flagged `unverified` and loses `new_status` (`approvals.propose`).
@@ -129,6 +129,45 @@ PORT`, PORT = the server's own
 - **Command palette** (app.js `pal*`, Ctrl+K): a capture-phase keydown listener, so it runs before the drawer's and
   viewer's keys and stops them while open; actions reuse the real buttons (`#topEmail`, `#topWatches`, the tab's own
   Recommend). A new tab, Setup card (`#setup .panel > h3`) or preference appears in it by itself.
+- **Fit score** (`fit.py`, pass 21): deterministic (no AI inside; the AI part is a stored `ai_fit` from `rank()`, at most
+  its weight's share), private (never a floor figure in fit data, never in employer text or prompts; `rank()` sends
+  `candidate_text(private=False)` + `profile.redact_floor(preferences_text())`). Stored per job / postings row with
+  `fit_rev`; stale when it differs from `fit.rev()` (refreshed by the loop's `fit` step and the page). The board gets
+  `fit.light()` only; `GET /api/jobs/<id>` the full breakdown. `jobs.match_score` is JD coverage ("Coverage").
+  auto_track: rules-only without a key, AI on the best few under `quota:ai_rank`, at most `auto_track_daily_max`.
+  The pipeline's Fit check is a run step over the same fit (its verdict is the fit gate). A rules-only `auto_track` proposal (no AI
+  judgement) is always `force_pending`, whatever the tool's auto flag.
+- **Sources / All jobs** (`web_monitor.SOURCES`, `listings.py`, pass 21): a new board goes in `SOURCES`, `EVERY` (its
+  throttle; per-user limits go in `GLOBAL`: one unfiltered `_cached` fetch per window, filtered locally) and
+  `ATTRIBUTION` (its credit link); a keyed one also in `KEYED` + the connections `REGISTRY` (kind `jobs`: key + `id`,
+  verified by one small search, never on the AI card) and runs only when `sources_ready()`. Error text passes
+  `_redact`. Every listing a search, watch, feed or capture sees is stored by `annotate` -> `listings.store` (merged by
+  posting key or same company+title at the same place, never across two different `ats_id`s: a second opening gets
+  key `<key>#<ats_id>` and is never a repost; `url` stays the first link). A GLOBAL board's answer is also saved under
+  `cache/boards/<name>.json`: inside its window a manual search in another process reads it, else skips the board,
+  and a scheduled run skips it. Anything stored about a posting
+  (approval payloads) uses its text `key`, never the rowid. Tests: an earlier module may leave `web_monitor.SOURCES`
+  patched (pin it), and the E2E harness clears `_CACHE` / `_ANSWERS` / meta `src:*` per test.
+- **Job alerts / listing monitor** (`alerts.py`, `web_monitor.check_listings`, pass 21): an alert mail is one whose
+  From is in `alerts.SITES` (domain AND `alert_from` local part) and passes `mail_authenticated`; anything else from
+  those domains (InMail, `indeedapply@`, LinkedIn's `jobs-noreply@` application confirmations) stays ordinary mail.
+  `web_monitor.no_fetch` is the one guard: every `alerts.SITES` domain, plus any host an ingested alert linked to (seen
+  key `alerthost:<host>`, so a click tracker is never opened). Alert links are stored through `alerts.canonical` (token
+  and tracking parameters stripped, the opaque-tracker fallback too); still never print or notify one. Alert mail never reaches the AI or the mail table. ATS mail (`email_monitor.ATS_MAIL`, `_ats_match`) is
+  filed with `mail.link_reason` and is never a strong tie. Posting pages: two misses in a row before `posting_removed`;
+  `posting_reopened` clears it (`web_monitor.removed_event` reads the newer of the two). Tests: job ids restart per
+  in-memory database, so clear `SNAPSHOTS/job-*.json` around listing-check tests.
+- **Job intelligence / chance boosters** (`intel.py`, `boosters.py`, pass 21): every intel item is `{kind, text,
+  source, url, date}`; the web part (company site + the feed it links on its own host, robots.txt first via
+  `util.robots_ok`; Wikipedia REST) runs only on a click and is cached in the `intel` table (`co:<company>` 7 days,
+  `ai:<job>` summary, `boost:<job>` AI boosters; `delete_job` drops the job keys). Never fetch a job board / ATS /
+  `NEVER_FETCH` host (`extras._listing_host`), never a third-party news aggregator. AI summaries keep only lines citing
+  a valid `[S#]`. Boosters: rules first (`for_job`, `across`), effect high/medium/low, never a number or probability
+  (`boosters.NUMERIC` drops AI items stating one, multipliers included; an AI item needs a `basis` that
+  `boosters._grounded` finds: an existing S#, or JD / profile words those texts contain); your own response record only as counts
+  once a group has `extras.MIN_N`. Buttons only open a feature (`boostAct`); nothing a booster does sends or spends AI.
+  Prompts here use `candidate_text(private=False)`: no floor, no fit score. Booster button labels avoid the names E2E
+  tests match by substring (no "Check", "Refresh", "Save website", "New story").
 - **Gotcha, SystemExit**: `ai.*` and `profile_text()` report user-facing problems (no key, model rejected, template profile) as `SystemExit`, which `except Exception` does not catch. Background paths catch `(Exception, SystemExit)`.
 - **Run**: `lodestar doctor` (add `--live` for one real AI call per provider), `lodestar desktop` (WebView2 window; falls back to the browser).
 - **Answer bank sources**: every `db.save_answer` from a path where you typed the answer passes `source` (Answers tab "typed under Answers", CLI, `pipeline.answer`); an AI `save_answer` proposal carries `source: "AI draft for job #N"`. Eligibility / EEO answers (`pipeline.never_ai`, which also knows the CANON legal keys) are reused only when `pipeline.yours(source)`, and AI prompts read bank rows only via `db.employer_answers()` (`pipeline.for_prompts`: never such a row, tagged or not). A new event kind a document builder writes goes in `db.BOOKKEEPING` (the follow-up clock).

@@ -90,10 +90,10 @@ class Actions(Base):
             self.assertIn(f"this step is already running for #{jid}", str(e.exception))
         self.assertEqual(self.ai.prompts, [])  # no AI call was made
         self.assertEqual(pipeline._rows(jid)["tailor"]["updated_at"], now)  # the runner's claim is untouched
-        web._act("gap", {"id": jid})  # another step is free; its result is adopted on exit
+        web._act("research", {"id": jid})  # another step is free; its result is adopted on exit
         st = self.st(jid)
-        self.assertEqual((st["score"]["state"], st["score"]["origin"]), ("done", "observed"))
-        self.assertFalse([r for r in pipeline._rows(jid).values() if r["stage"] == "score" and r["state"] == "running"])
+        self.assertEqual((st["research"]["state"], st["research"]["origin"]), ("done", "observed"))
+        self.assertFalse([r for r in pipeline._rows(jid).values() if r["stage"] == "research" and r["state"] == "running"])
 
     def test_run_next_run_to_and_bulk_refresh_the_board(self):
         a, b = self.job(name="One"), self.job(name="Two")
@@ -112,7 +112,7 @@ class Actions(Base):
         self.assertEqual([x["stage"] for x in r["jobs"][0]["runs"]], ["score", "research"])
         self.assertIn("999999", r["jobs"][1]["error"])  # one bad job never stops the rest
         self.assertEqual(pipeline.summary()[b]["next"], "tailor")
-        self.assertEqual(sum(x["ai"] for x in pipeline.log_runs()), 6)
+        self.assertEqual(sum(x["ai"] for x in pipeline.log_runs()), 3)  # pass 21: the fit check spends none
 
     def test_bulk_job_with_nothing_ready_is_a_skip_not_an_error(self):  # live-4
         ready, idle = self.job(name="Ready"), self.job("applied", name="Idle")

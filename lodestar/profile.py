@@ -2103,6 +2103,19 @@ def preferences_text() -> str:
     return _preferences(master_text())
 
 
+def pref_field(name: str, text: str | None = None) -> str:
+    """One labelled value from Preferences ('Target roles: Data Engineer, Analyst | Locations / remote: ...'), '' when
+    unset; works for the one-line template and for one field per line. text: Preferences already read."""
+    m = re.search(rf"(?im)\b{re.escape(name)}\s*:[ \t]*([^|\n]*)", preferences_text() if text is None else text)
+    return m[1].strip().strip("*_ ").strip() if m else ""
+
+
+def redact_floor(text: str) -> str:
+    """The text with the value after 'Salary floor:' withheld (what rank() sends the AI provider with Preferences).
+    ponytail: the labelled value only; the figure written elsewhere in Preferences slips past"""
+    return re.sub(r"(?im)(salary floor[*_ \t]*:)[^|\n]*", r"\1 (withheld)", text)
+
+
 def salary_floor() -> int | None:
     """The 'Salary floor:' figure from Preferences as an annual number ('$150,000', '150k', 'EUR 90000'); None when
     unset. Private: shown only in Lodestar's own views (offer compare), never in anything an employer reads."""

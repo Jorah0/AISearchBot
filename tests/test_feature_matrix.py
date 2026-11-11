@@ -15,7 +15,7 @@ NAME = re.compile(r"`([A-Za-z_]\w*\.\w+\.\w+)`")
 UNMAPPED: set[str] = set()  # tests deliberately named in no row (none today)
 # Every row ID, pinned: deleting a row fails. Numbered areas run 1..N with no gap; a Planned feature that gets built
 # moves from PLANNED into a row (raise N or add the name here).
-NUMBERED = {"tracker-sourcing": 35, "profile-resume-ai": 41, "mail-people-interviews": 45, "connections": 23, "ui-sweep": 67,
+NUMBERED = {"tracker-sourcing": 38, "profile-resume-ai": 41, "mail-people-interviews": 46, "connections": 23, "ui-sweep": 67,
             "pipeline": 16, "interview": 19, "advisor": 21}
 NAMED = set("""outcomes-platform-insights-analytics outcomes-platform-insights-ui outcomes-platform-weekly-goals
 outcomes-platform-offers-record outcomes-platform-comp-total outcomes-platform-offers-compare outcomes-platform-market-rates
@@ -35,10 +35,13 @@ ui-sweep-69 outcomes-platform-planned-ai-history ui-sweep-70 extension-pairing e
 extension-capture extension-autofill extension-bookmarklets-pref extension-popup-pairing extension-popup-capture
 extension-fill extension-honeypots extension-matcher extension-manifest outcomes-platform-planned-paydata
 paydata-data paydata-fetch-cache paydata-uses paydata-ui
-outcomes-platform-restore outcomes-platform-palette""".split())  # built out of order (pass 17, 19); ui-sweep-68 is still planned
-PLANNED = set("""tracker-sourcing-36 tracker-sourcing-37 tracker-sourcing-38 tracker-sourcing-39
+outcomes-platform-restore outcomes-platform-palette
+fit-privacy fit-stale-refresh fit-auto-track fit-pipeline fit-outcomes fit-ui
+sources-throttle alljobs-store alljobs-view sources-keys listing-activity
+intel-sources intel-local intel-ai boosters-rules boosters-ai boosters-ui""".split())  # built out of order (pass 17, 19); ui-sweep-68 is still planned
+PLANNED = set("""tracker-sourcing-39
 profile-resume-ai-42
-mail-people-interviews-46 mail-people-interviews-47 ui-sweep-68 ui-sweep-71 ui-sweep-72
+mail-people-interviews-47 ui-sweep-68 ui-sweep-71 ui-sweep-72
 outcomes-platform-planned-pipeline
 outcomes-platform-planned-e2e""".split())
 PLANNED_ID = re.compile(r"\b(?:(?:tracker-sourcing|profile-resume-ai|mail-people-interviews|connections|ui-sweep|pipeline|interview|advisor)-\d+"

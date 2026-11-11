@@ -90,7 +90,9 @@ class Board(E2ETestCase):
         chips = north.locator(".chips").text_content()
         for want in ("150k–180k", "Portland, OR · hybrid", "due in 10d"):
             self.assertIn(want, chips)
-        self.assertIn("match 72%", self.page.text_content(f'.card[data-id="{i["screening"]}"]'))
+        badge = self.page.locator(f'.card[data-id="{i["screening"]}"] .chip.fit')  # pass 21: the fit badge, not coverage
+        self.assertRegex(badge.text_content(), r"^fit \d+")
+        self.assertTrue(badge.get_attribute("title"))  # the top chips
         warm = self.page.locator(f'.card[data-id="{i["applied"]}"] .chip.warm')
         self.assertEqual(warm.text_content(), "you know 1 person here")
         self.assertIn("Sam Okafor (Senior Analyst)", warm.get_attribute("title"))

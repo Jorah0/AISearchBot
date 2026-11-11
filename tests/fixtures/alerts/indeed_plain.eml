@@ -1,0 +1,25 @@
+Authentication-Results: mx.example.net; dkim=pass header.d=indeed.com
+ header.s=s1; spf=pass smtp.mailfrom=indeed.com; dmarc=pass
+ header.from=indeed.com
+From: Indeed <alert@indeed.com>
+To: pat.rivera@example.com
+Subject: 2 new data engineer jobs
+Date: Tue, 10 Nov 2026 08:00:00 +0000
+Message-ID: <indeed_plain.fixture@indeed.com>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+MIME-Version: 1.0
+
+Your job alert: data engineer in Remote
+
+Data Engineer
+Fernwood Analytics
+Remote
+https://www.indeed.com/rc/clk?jk=1a2b3c4d5e6f7a8b&from=ja&tk=zz
+
+Senior Data Engineer
+Larchmont Data
+Chicago, IL
+https://www.indeed.com/rc/clk?jk=9f8e7d6c5b4a3f2e&from=ja&tk=zz
+
+Unsubscribe: https://www.indeed.com/alerts/unsubscribe?id=1

@@ -1,0 +1,35 @@
+Authentication-Results: mx.example.net; dkim=pass header.d=glassdoor.com
+ header.s=s1; spf=pass smtp.mailfrom=glassdoor.com; dmarc=pass
+ header.from=glassdoor.com
+From: Glassdoor Jobs <noreply@glassdoor.com>
+To: pat.rivera@example.com
+Subject: Data Engineer jobs for you
+Date: Tue, 10 Nov 2026 08:00:00 +0000
+Message-ID: <glassdoor.fixture@glassdoor.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="===============3686386095310712313=="
+
+--===============3686386095310712313==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+This alert is best viewed as HTML.
+
+--===============3686386095310712313==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<html><body><div><a href=3D"https://www.glassdoor.com/partner/jobListing.htm?=
+pos=3D101&ao=3D1136043&jobListingId=3D1009876543&utm_source=3Djobalert">Senio=
+r Data Engineer</a>
+<div>Larchmont Data</div><div>Chicago, IL</div><div>$130K - $160K (Employer e=
+st.)</div><div>24h</div></div>
+<div><a href=3D"https://www.glassdoor.com/partner/jobListing.htm?pos=3D102&ao=
+=3D1136043&jobListingId=3D1009876544&utm_source=3Djobalert">Data Analyst</a>
+<div>Thistledown Co</div><div>Remote</div></div>
+<p><a href=3D"https://www.glassdoor.com/settings/unsubscribe">Unsubscribe</a>=
+</p></body></html>
+
+--===============3686386095310712313==--

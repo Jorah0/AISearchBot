@@ -87,6 +87,7 @@ class Base(unittest.TestCase):
         settings.PATH.unlink(missing_ok=True)
         profile.BANK.unlink(missing_ok=True)
         PROFILE.write_text(REAL, encoding="utf-8")
+        settings.set_pref("auto_track_min_score", 0)  # pass 21: the fit gate reads the deterministic fit; 0 = always 'go'
         self.ai = FakeAI()
         self.sent = []
         self.patches = contextlib.ExitStack()
@@ -160,12 +161,14 @@ class Chain(Base):
         self.assertIn("RESEARCHMARK", letter)
         self.assertIn("Tailormark", letter)
         ctx = pipeline.context(jid)["stages"]
-        for n, f in (("research", "research.md"), ("tailor", "resume.md"), ("letter", "cover_letter.md"), ("score", "gap.json")):
+        for n, f in (("research", "research.md"), ("tailor", "resume.md"), ("letter", "cover_letter.md")):
             self.assertEqual((ctx[n]["state"], ctx[n]["output"]["file"], ctx[n]["rev"]), ("done", f, 1))
             self.assertTrue(ctx[n]["fp"])
+        self.assertEqual((ctx["score"]["state"], ctx["score"]["rev"]), ("done", 1))  # pass 21: the stored fit, no file
+        self.assertEqual(ctx["score"]["output"]["verdict"], "go")
         self.assertEqual(ctx["letter"]["inputs"]["tailor"], ctx["tailor"]["fp"])
         self.assertEqual(len(pipeline.log_runs(jid)), 4)
-        self.assertEqual(sum(r["ai"] for r in pipeline.log_runs(jid)), 4)
+        self.assertEqual(sum(r["ai"] for r in pipeline.log_runs(jid)), 3)  # the fit check is deterministic
         kinds = {e["kind"] for e in db.events(jid)}
         self.assertFalse(kinds & {"pipeline", "run_to", "proposed"})
         self.assertTrue((pipeline._dir(db.get_job(jid)) / "cover_letter.docx").is_file())
@@ -192,8 +195,7 @@ class Chain(Base):
         st = self.st(jid)
         for n in ("score", "research", "tailor", "letter"):
             self.assertEqual((st[n]["state"], st[n]["origin"], st[n]["rev"]), ("done", "user", 1), n)
-        gap = json.loads(self.doc(jid, "gap.json"))
-        self.assertIn("coverage", gap)  # coverage() rewrote the keyword fields after the tailor
+        self.assertIsNotNone(db.get_job(jid)["fit_score"])  # the Fit check stored the fit score
 
     def test_inputs_captured_at_claim(self):
         jid = self.job()
@@ -649,7 +651,7 @@ class Autopilot(Base):
 
     def test_fit_gate_autopilot_only(self):
         jid = self.job()
-        self.ai.verdict = "skip"
+        settings.set_pref("auto_track_min_score", 100)  # pass 21: a fit under the threshold is the 'skip' verdict
         pipeline.run(jid, "score")
         self.assertTrue(pipeline.fit_skip(pipeline.status(jid)))
         self.assertTrue(pipeline.summary()[jid]["fit_skip"])
@@ -701,7 +703,7 @@ class Engine(Base):
         s = self.job()
         n = len(db.events(s))
         pipeline.run(s, "score")
-        self.assertEqual({e["kind"] for e in db.events(s)[n:]}, {"gap"})  # the stage function's own event only
+        self.assertEqual({e["kind"] for e in db.events(s)[n:]}, set())  # the fit check (pass 21) writes none
 
     def test_relevance_skip_and_registry(self):
         jid = self.job("interview")
@@ -815,7 +817,8 @@ class Fixes(Base):
         approvals.approve(item["id"])
         self.assertEqual(pipeline.spent_today(), 2)
         self.assertIn("daily AI budget reached (2/2 in 24 h)", loop.STATUS["last_error"])
-        self.assertEqual(self.st(jid)["tailor"]["state"], "ready")
+        # pass 21: the fit check (fit_check not on auto) spends no AI call, so research and tailor used the 2
+        self.assertEqual((self.st(jid)["tailor"]["state"], self.st(jid)["letter"]["state"]), ("done", "ready"))
 
     def test_untrusted_confirmation_is_never_quoted(self):  # code-6
         jid = self.job("applied")

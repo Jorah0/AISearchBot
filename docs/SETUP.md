@@ -76,6 +76,12 @@ supports them.
   - [Safety rules in this area, in short](#safety-rules-in-this-area-in-short)
 - [Finding and tracking jobs](#finding-and-tracking-jobs)
   - [Job search (Search tab, `lodestar jobs search`)](#job-search-search-tab-lodestar-jobs-search)
+  - [The fit score](#the-fit-score)
+  - [All jobs and job sources](#all-jobs-and-job-sources)
+  - [Job-alert emails (LinkedIn, Indeed, Glassdoor, ZipRecruiter)](#job-alert-emails-linkedin-indeed-glassdoor-ziprecruiter)
+  - [The listing monitor and Listing activity](#the-listing-monitor-and-listing-activity)
+  - [Job intelligence](#job-intelligence)
+  - [Chance boosters](#chance-boosters)
   - [Saved searches (watches on a query)](#saved-searches-watches-on-a-query)
   - [Page watches (career pages) and robots.txt](#page-watches-career-pages-and-robotstxt)
   - [Company boards (Greenhouse, Lever, Ashby)](#company-boards-greenhouse-lever-ashby)
@@ -2394,15 +2400,17 @@ where anything Lodestar wants to do on its own waits for your approval.
 **Before you start.** Two things make this area work much better:
 
 1. Fill in your master profile (`~/.lodestar/profile.md`, or the Profile tab; see [The master profile (profile.md)](#the-master-profile-profilemd)). Several features are skipped or stop
-   while it is still the template: JD coverage on search results is skipped, and the pipeline's Fit check stops with
-   "your master profile is still the template".
+   while it is still the template: the fit score cannot measure skills (it shows "partial"), and the pipeline's Fit check
+   stops with "your master profile is still the template".
 2. Link at least one AI key (Setup > Link an AI key, or `lodestar keys link anthropic`). Searching, tracking, the
    Board, watches, company boards, H-1B hints and the Inbox all work without AI. AI ranking, auto-tracking, the fit
    verdict and the document steps of the pipeline need a provider.
 
 ### Job search (Search tab, `lodestar jobs search`)
 
-**What it is for.** One search across six free job sources that need no account or key: Remotive, Arbeitnow,
+**What it is for.** (Since pass 21 the tab is called **Jobs**, it also searches Himalayas, We Work Remotely and, with
+your keys, Adzuna and USAJOBS, and every result is kept in All jobs: see [All jobs and job sources](#all-jobs-and-job-sources).)
+One search across the free job sources that need no account or key: Remotive, Arbeitnow,
 RemoteOK, HN Who is hiring, Jobicy and The Muse. Results are de-duplicated (the same company without Inc / LLC /
 GmbH..., same title and same location is shown once, with the richest description and every link), filtered, and
 optionally ranked against your profile by AI. LinkedIn and Indeed have no public API: use the Capture bookmarklet
@@ -2483,6 +2491,216 @@ on your Board is never proposed again. Auto-tracked jobs never count as applicat
 **Where the data lives.** Search results are not stored; tracked jobs go into `~/.lodestar/lodestar.db`.
 
 **AI helpers (Search):** **AI rank vs my profile**, **Auto-track strong fits**, the toolbar (saved-search keywords) and **✦ AI help** > **Suggest search terms** (queries and filters from your profile; you type the one you want).
+
+### The fit score
+
+**What it is for.** One number from 0 to 100 per job and per listing that says how well the posting matches you, with
+the reasons as chips. It is worked out by rules from your profile and Preferences, so it is the same every time, costs
+nothing, and works without an AI key. It is private: it never goes to an employer and never into an AI prompt.
+
+**How it is worked out.** Five parts, each 0-100, weighted (defaults in `lodestar/data/fit.json`):
+
+| Part | Weight | What it compares |
+|---|---|---|
+| Skills | 35 | the skills the posting requires (and, at half weight, its nice-to-haves) against your profile |
+| Role | 20 | the title and level against your target roles and `target_seniority` (manager is its own track) |
+| Experience | 15 | the years the posting asks for against your years (from your experience dates, or `years_experience`) |
+| Location | 15 | the posting's place and workplace against your Preferences locations / remote |
+| Pay | 15 | the posting's range against your private salary floor (below it is a penalty, not a block) |
+
+Then modifiers: an excluded company or title word, or "no sponsorship" when you need it, blocks the job (fit 10 at
+most); a deal-breaker word costs 25; clearance required costs 20; sponsorship offered, a watched company and people you
+know add a little; a stale-looking posting loses up to 15. A part that cannot be measured (no description, no pay
+stated) pulls the score toward 50, and under 60% measured the badge says **partial**.
+
+**In the app.** The Board's card badge (`fit 74`, colour by band, the top reasons in its tooltip; dimmed while it is
+being re-scored), the table's **Fit** column (and **Coverage**, the JD-coverage share, beside it), the **Best fit**
+sort, and the drawer's **Fit** group: every part with its weight and chips, the modifiers, **Why not higher?** (the
+points each part costs) and **AI fit** (one AI call that judges the posting against your profile without the floor; its
+score joins as one more part, weight 25 at most). Today lists **Top new fits** (untracked listings of the last 3 days
+at 70+), with Track.
+
+**Settings** (Tools > Preferences): `fit_weights` (e.g. `skills=40`; `0` turns a part off; `reset` restores the
+defaults), `work_authorization`, `target_seniority`, `years_experience`, `auto_track_min_score` (the threshold
+auto-tracking compares the fit with) and `auto_track_daily_max` (proposals a day, default 10). Any change re-scores
+every job and listing in the background.
+
+```powershell
+lodestar fit 12            # one job's breakdown: parts, weights, chips
+lodestar fit refresh       # re-score everything that is out of date (no AI)
+lodestar jobs list --sort fit
+```
+
+### All jobs and job sources
+
+**What it is for.** Every listing any source found, in one list on the **Jobs** tab (the Search tab's new name):
+searches, saved searches, company boards, captures and job-alert emails, merged across sources (the same company and
+title at the same place is one row with every link and source), each with its fit.
+
+**The sources.** Keyless: Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse, Himalayas (expired
+listings are removed) and We Work Remotely (RSS). With your own free keys: **Adzuna** and **USAJOBS**. Company feeds:
+Greenhouse, Lever, Ashby, and SmartRecruiters, Recruitee and Personio where the employer made the feed public (when it
+is not, Lodestar says so; add the careers page as a page watch instead). LinkedIn, Indeed, Glassdoor and ZipRecruiter
+are never searched or fetched: their terms forbid it. Their jobs come in through job-alert emails (next section) and
+the browser extension. Each source's name is shown as a link back to it, as Adzuna, Himalayas and We Work Remotely ask.
+
+**Getting the Adzuna and USAJOBS keys.**
+
+1. Adzuna: sign up at developer.adzuna.com, create an application, and copy its **Application ID** and **Application
+   key**. Set the country with the `adzuna_country` preference (two letters, default `us`). Lodestar uses at most 100
+   calls a day.
+2. USAJOBS: request an API key at developer.usajobs.gov (it is mailed to you); Lodestar sends the email address you
+   registered with as its User-Agent, as USAJOBS requires.
+3. Setup > **Job sources** > the source's row: paste the values and click Link. Lodestar checks them with one small
+   search and stores them in your OS keyring (vault names `ADZUNA_APP_ID` + `ADZUNA_APP_KEY`, `USAJOBS_API_KEY` +
+   `USAJOBS_EMAIL`). From a terminal: `lodestar keys link adzuna` / `lodestar keys link usajobs`.
+
+**Throttles.** Saved searches ask each board at most once per window (Remotive every 6 hours, Jobicy and most others
+hourly). Remotive, Jobicy, RemoteOK and We Work Remotely limit calls per user, not per query, so Lodestar fetches them
+once per window for all your searches together and filters locally. A manual search reuses that fresh copy, also
+after a restart or from a separate `lodestar jobs search` run (the copy is saved under `cacheoards` in your data
+folder); with no saved copy inside the window the board is skipped until the window passes. Setup >
+Job sources shows each board's window and when it was last asked.
+
+**In the app (Jobs tab > All jobs).** Filters (text, source chips with counts, minimum fit, workplace, minimum pay,
+posted within, not tracked / tracked / dismissed / all, sort), **New since last visit** and **Mark all seen**; per
+row **Track** (adds it to the Board), **Dismiss** / Undismiss and **AI fit**; click a row for its fit breakdown and
+description. Untracked listings not seen again for 45 days drop off; tracked ones never do.
+
+```powershell
+lodestar jobs all --new --min-fit 60
+lodestar jobs track-listing L42
+```
+
+### Job-alert emails (LinkedIn, Indeed, Glassdoor, ZipRecruiter)
+
+**What it is for.** Those sites forbid automated reading, but they will email you new jobs. Lodestar reads those alert
+emails from **your own inbox** and puts their jobs in All jobs, merged with every other source.
+
+**Set it up.**
+
+1. Connect your email (Setup > Connect email; see [Email: pick a way to connect](#email-pick-a-way-to-connect)).
+2. On each site, run a job search and turn on its email alert, delivered to that same address (LinkedIn: Jobs > search >
+   **Set alert**; Indeed, Glassdoor and ZipRecruiter: the email-alert option on a search results page; the labels change
+   now and then).
+3. Setup > **Job alerts**: the "Read job-alert emails" box (tool `job_alerts`) is on by default once email works. The
+   panel shows, per site, when Lodestar last read an alert and how many jobs it held.
+
+**What Lodestar does and never does.** An email counts as an alert only when it comes from the site's known alert
+address **and** passed DKIM/DMARC; anything else from those sites (InMail, "application submitted") is ordinary mail.
+Alerts are never classified by AI, never stored in the mail table, and their links are **never opened** (a link can
+carry a sign-in token; notices never show one). A job you already track that shows up again gets one "seen in an
+alert" line on its Listing activity. Strong new fits can be proposed by `auto_track` (they wait in the Inbox).
+
+**When an alert is not read.** Lodestar sends one notice a day per site. Save the email as a `.eml` file (your mail
+program: Save as / Download message) and run:
+
+```powershell
+lodestar email parse-alert alert.eml            # what it finds; changes nothing
+lodestar email parse-alert alert.eml --trust    # skip the DKIM/DMARC check for a saved file
+```
+
+Lodestar's parser was built from hand-made samples; if a real alert reads wrongly, keep that `.eml` for a fix.
+
+### The listing monitor and Listing activity
+
+**What it is for.** Watching each job you track until it closes, both on the web and in your mail, in one timeline.
+
+**Daily listing check (tool `posting_check`, on by default).** Once a day Lodestar looks at the posting of every open
+tracked job:
+
+- Jobs from a company feed (Greenhouse, Lever, Ashby, SmartRecruiters, Recruitee, Personio) are looked up in the live
+  feed, one request per feed. A changed title, place, pay or description is recorded (the description diff goes to
+  `posting_changes.md` in the job's folder; your job description is not replaced). A posting that disappeared is
+  recorded as removed: for a **saved** job a move to `withdrawn` is proposed and always waits for you; for an applied
+  one it is listed on Today as "posting closed". A posting that comes back clears it.
+- Other posting pages at most weekly, at most 20 a run, only where robots.txt allows, and never LinkedIn, Indeed,
+  Glassdoor or ZipRecruiter. A page counts as gone only after two misses in a row (a deploy's 404 does not).
+
+**Mail from applicant-tracking systems** (Greenhouse, Workday, Lever, iCIMS ...: confirmations, status updates) is filed
+under its job by the posting link, the Workday tenant, the iCIMS id or company + title, with the reason shown. It is
+never treated as trusted, so a status change it suggests always waits in the Inbox.
+
+**In the drawer: Listing activity.** One timeline, newest first: posting checks, alert sightings, the job's own events
+and its mail both ways, plus a line saying whether the posting is open, removed or last seen in an alert. **Use live
+description** replaces the job's description with the posting's current one (your click; tailored documents are not
+touched); **View changes** opens the diff. `lodestar jobs show ID` prints the same timeline.
+
+### Job intelligence
+
+**What it is for.** What is publicly known about the company and the role, in one place, each fact with **where it
+came from and its date**, before you tailor, reach out or interview.
+
+**What it shows (drawer > Job intelligence):**
+
+| Group | From | Network |
+|---|---|---|
+| Company | the company's own homepage (how it describes itself) and its Wikipedia summary | on your click |
+| Recent news | the news feed (RSS / Atom) the company links from its own homepage, newest 5 | on your click |
+| Hiring signals | your listing store: roles seen at the company and since when, how many are still listed, new in the last 30 days, which roles, how long listings stay up, how many were reposted | none |
+| The role | the job description: level, years asked for, how many required and nice-to-have skills, what it stresses, workplace, closing date | none |
+| Pay context | the posting's own range, the BLS figure for the occupation and area (from the market-pay cache), pay in similar postings you have stored | none |
+
+Each item is numbered (S1, S2 ...) and names its source (linked when it has a link) and date.
+
+**Gather public facts.** The web part runs only when you click **Gather public facts** (then **Gather again**). Lodestar
+reads the company's website (the one you set with **Set company site**, or the job's link when it is on the company's
+own domain), checks its robots.txt first, follows a news-feed link only to the company's own site, and reads the
+Wikipedia summary through Wikipedia's API. It never reads a job board, an ATS page or LinkedIn / Indeed / Glassdoor /
+ZipRecruiter, and it uses no third-party news aggregator (their terms do not allow automated reading). Results are
+cached for a week per company, shared by all its jobs. **Not read** lists what was skipped and why (robots.txt, no
+site on file, no article). Check the Wikipedia item names the right company: the panel says so.
+
+**AI summary** (needs an AI key). One AI call over the items in the panel only, asked to cite them; any line that cites
+no source is dropped, so every line you see ends with its `[S#]`. Nothing private goes into that call: no salary
+floor, no Preferences, no fit score. The panel says when the sources changed since the summary.
+
+```powershell
+lodestar intel 12              # the items with sources and dates (no network)
+lodestar intel 12 --gather     # read the company site, its feed and Wikipedia (cached a week)
+lodestar intel 12 --summary    # plus the cited AI summary
+```
+
+### Chance boosters
+
+**What it is for.** The specific things most likely to help a job's chances right now, ranked, each with **why** and a
+button into the feature that does it. Lodestar never shows a probability: each booster has an expected effect of
+high, medium or low.
+
+**The rules (no AI):**
+
+| Booster | When |
+|---|---|
+| Apply while the posting is fresh | a saved job whose posting is up to 7 days old (high) or 21 (medium), not removed |
+| Ask a contact for a referral | you know someone at the company (Contacts) not yet linked to this job |
+| Send the recruiter / hiring manager a note | a contact is on the job; otherwise "find one" |
+| Tailor your resume to this posting | a saved job with a description and no tailored resume |
+| Name X, Y in your tailored resume | your profile has skills the posting requires that the tailored resume does not mention |
+| Close a named gap | required skills not in your profile: a short course or certification you can finish and list honestly (across your search: a gap 2+ open jobs share) |
+| Follow up | the application is due a follow-up (`followup_days`) |
+| Prepare a STAR story for X | the posting stresses a competency none of your stories is tagged with |
+| Fix resume check issues | the tailored resume has high or medium lint issues |
+| Read up on the company | a screening or interview with no Job intelligence gathered yet |
+| Aim more of your search at ... | titles or workplaces where your own response record beats your overall one, once each group has 5 applications (shown as counts, "4 of your 6 applications there got a response, against 5 of 20 overall": your record, not a prediction) |
+
+Closed jobs and jobs your deal-breakers block get none.
+
+**Where they show.** The drawer's **Chance boosters** group (the job's boosters, plus **More from AI**); Today's top 3
+across your search; Insights > **Chance boosters across your search**. Each button only opens the feature (the
+pipeline, People with Ask for referral, Communicate, Documents, the Match group, stories, search, Job intelligence,
+Contacts, your profile); nothing is sent or spent until you act there.
+
+**More from AI** (needs an AI key and the job's description). One AI call adds up to 3 boosters specific to this job,
+each with the posting line, intelligence item or profile fact it rests on ("basis"). An item without a basis, or one
+that states a percentage, odds or probability, is dropped. The call gets the posting, the intelligence items and your
+profile without the salary floor.
+
+```powershell
+lodestar boosters          # the best across your search
+lodestar boosters 12       # one job
+lodestar boosters 12 --ai  # plus up to 3 AI additions with their basis
+lodestar today             # Today, top 3 boosters included
+```
 
 ### Saved searches (watches on a query)
 
@@ -2597,7 +2815,9 @@ reasons, when these signals add up to 30 or more:
 
 At 60 or more, `auto_track` leaves the listing alone.
 
-**Weekly posting check (tool `posting_check`, on by default).** Once a week, on the first monitor cycle of the week,
+**Posting check (tool `posting_check`, on by default).** Since pass 21 this runs **daily** over every open tracked job,
+feeds and posting pages: see [The listing monitor and Listing activity](#the-listing-monitor-and-listing-activity). What
+follows is the original weekly feed check it grew from. Once a week, on the first monitor cycle of the week,
 Lodestar re-checks your **saved** (not yet applied) jobs that came from, or link to, a Greenhouse, Lever or Ashby
 board, one request per board. When a posting has disappeared it records "posting removed" on the job's timeline and
 proposes moving the job to `withdrawn` in the Inbox. That proposal **always waits for you**, even if the tool is set
@@ -2932,7 +3152,7 @@ earlier steps' results, and asks you once for facts it cannot know.
 
 | Name (CLI) | Label (app) | What it does | Tool | Relevant at |
 |---|---|---|---|---|
-| `score` | Fit check | JD coverage + AI verdict (apply / stretch / skip); asks for the JD when there is none | `fit_check` | saved |
+| `score` | Fit check | the deterministic fit score (fit.py) with its chips; verdict skip under auto_track_min_score or when blocked; one AI judgement only when `fit_check` is on auto; asks for the JD when there is none | `fit_check` | saved |
 | `research` | Research | company research pack from public pages | `research` | saved, interview |
 | `tailor` | Tailor resume | the resume studio builds this job's resume from your facts and uses it | `tailor` | saved |
 | `letter` | Cover letter | from the tailored resume, research and fit check | `cover_letter` | saved |
@@ -4349,12 +4569,4 @@ Where to look first:
 These are planned but not built yet. They are not in the app today and nothing in this guide depends on them
 ([TESTS.md](TESTS.md) lists them under Planned):
 
-- An interview upgrade.
-- BLS market pay data (today Lodestar quotes only your own [market-rate table](#offers-the-comp-table-and-counter-offers) and pay stated in postings).
-- A Ctrl+K command palette.
-- A tested restore-from-backup (today you restore by unzipping a backup: [Backups, export and restore](#backups-export-and-restore)).
-- A deterministic fit score.
-- Sourcing from all job sites (more free sources and ATS feeds).
-- Job-alert email ingestion (alert mail from LinkedIn, Indeed, Glassdoor and ZipRecruiter).
-- Chance boosters.
 - An AI apply agent that works with your job-site accounts. Until then you always apply yourself.

@@ -13,14 +13,14 @@
   <button class="b ghost sm" id="codesPill" style="display:none" title="a sign-in code arrived by email" onclick="go('inbox');$('#codesPanel').open=true;codesLoad()">Codes</button>
   <button class="b ghost sm" id="apPill" title="Autopilot runs pipeline steps in the monitor loop within its AI budgets" onclick="go('setup');$('#apCard').scrollIntoView()">Autopilot: off</button>
   <button class="b ghost sm" id="updPill" style="display:none" onclick="go('setup');$('#updCard').scrollIntoView()">Update available</button>
-  <button class="b ghost sm" id="topEmail" onclick="run('email_check',{days:3},r=>toast((r.found||[]).length+' relevant email(s)'+(r.note?'\n'+r.note:''),r.note?'err':'ok'),this)">Check email</button>
+  <button class="b ghost sm" id="topEmail" onclick="run('email_check',{days:3},r=>toast((r.found||[]).length+' relevant email(s)'+(r.alerts?' · '+r.alerts+' new listing(s) from job alerts (Jobs tab)':'')+(r.note?'\n'+r.note:''),r.note?'err':'ok'),this)">Check email</button>
   <button class="b ghost sm" id="topWatches" onclick="run('watch_run',{},r=>toast((r.alerts||[]).length+' alert(s)','ok'),this)">Run watches</button>
 </div>
 <nav aria-label="Sections">
   <button data-tab="board" class="on"><span class="ico" aria-hidden="true">▦</span>Board</button>
   <button data-tab="inbox"><span class="ico" aria-hidden="true">✓</span>Inbox<span class="badge zero" id="inboxN" aria-label="pending approvals and questions">0</span></button>
   <button data-tab="contacts"><span class="ico" aria-hidden="true">☏</span>Contacts</button>
-  <button data-tab="search"><span class="ico" aria-hidden="true">⌕</span>Search</button>
+  <button data-tab="search"><span class="ico" aria-hidden="true">⌕</span>Jobs</button>
   <button data-tab="monitor"><span class="ico" aria-hidden="true">◉</span>Monitor</button>
   <button data-tab="ideas"><span class="ico" aria-hidden="true">✦</span>Ideas</button>
   <button data-tab="answers"><span class="ico" aria-hidden="true">≡</span>Answers</button>
@@ -56,7 +56,7 @@
     <input id="fSal" type="number" min="0" step="1000" placeholder="min salary" aria-label="Minimum salary" style="width:110px">
     <input id="fTag" placeholder="tag" aria-label="Tag filter" style="width:100px">
     <label class="muted"><input type="checkbox" id="fDl"> has deadline</label>
-    <label class="muted">sort <select id="fSort" aria-label="Sort jobs"><option value="updated">last activity</option><option value="stale">stalest first</option><option value="match">match</option><option value="salary">salary</option><option value="excitement">excitement</option><option value="deadline">deadline</option><option value="">(table column)</option></select></label>
+    <label class="muted">sort <select id="fSort" aria-label="Sort jobs"><option value="updated">last activity</option><option value="stale">stalest first</option><option value="fit">best fit</option><option value="match">coverage</option><option value="salary">salary</option><option value="excitement">excitement</option><option value="deadline">deadline</option><option value="">(table column)</option></select></label>
     <button class="b ghost sm" id="fView" onclick="toggleView()" aria-pressed="false">Table view</button>
     <span class="muted">drag a card to another column, or change its status in the job drawer</span>
   </div>
@@ -106,11 +106,11 @@
 </section>
 
 <section id="search">
-  <h2>Search</h2>
+  <h2>Jobs</h2>
   <div class="aihead" data-adv-slot="searches"></div>
   <div class="aihead" data-ai-menu="search"></div>
   <div class="row"><input id="sQ" placeholder='query, e.g. "python backend"' style="width:260px"><input id="sK" placeholder="must-have keywords (comma)" style="width:220px">
-    <label class="muted"><input type="checkbox" id="sRank"> AI rank vs my profile</label><button class="b" onclick="doSearch(this)">Search free job APIs</button>
+    <label class="muted"><input type="checkbox" id="sRank"> AI rank vs my profile</label><button class="b" onclick="doSearch(this)">Search boards now</button>
     <button class="b ghost" title="AI-judge the results; strong fits go to the Inbox (tool: auto_track). Listings that look stale are skipped." onclick="run('auto_track',searchParams(),r=>toast(r.results.length+' strong fit(s) proposed (Inbox, or tracked if auto_track is auto)'+((r.errors||[]).length?'\ncould not read: '+r.errors.join('; '):''),(r.errors||[]).length?'err':'ok'),this)">Auto-track strong fits</button>
     <button class="b ghost" title="alert on new listings for this query and these filters (Monitor > Watches)" onclick="saveSearch()">Save as watch</button></div>
   <div class="row filters" aria-label="Search filters">
@@ -119,8 +119,22 @@
     <input id="sDays" type="number" min="1" max="3650" placeholder="posted within (days)" aria-label="Posted within days" style="width:150px">
     <select id="sLevel" aria-label="Seniority"><option value="">any seniority</option><option>intern</option><option>junior</option><option>mid</option><option>senior</option><option>staff</option><option>lead</option><option>manager</option></select>
     <span class="muted">Listings that do not state a salary, location or date are kept and marked "unknown". Your private dealbreakers (Tools &gt; Preferences: excluded_companies, excluded_title_words) are dropped first.</span></div>
-  <div class="muted">Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse. No keys needed. The same posting found on several boards is shown once with every link. The capture bookmarklet (Setup) covers LinkedIn and Indeed; Monitor &gt; Companies follows a company's own Greenhouse, Lever or Ashby board.</div>
+  <div class="muted" id="sBoards">Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse, Himalayas and We Work Remotely need no key; Adzuna and USAJOBS run once you add their free keys (Setup &gt; Job sources). The same posting found on several boards is shown once with every link. LinkedIn, Indeed, Glassdoor and ZipRecruiter are never fetched: use the browser extension or capture bookmarklet there. Monitor &gt; Companies follows a company's own job board.</div>
   <div class="panel" id="sRes"><div class="empty">No results yet.</div></div>
+  <div class="panel" id="allJobs"><h3>All jobs <span class="muted" id="ajCount"></span></h3>
+    <p class="muted">Every listing any source found: searches, saved searches, company boards and captures, merged across sources. Untracked listings not seen again for 45 days drop off.</p>
+    <div class="row filters" role="search" aria-label="Filter all jobs">
+      <input id="ajQ" type="search" placeholder="filter title or company" aria-label="Filter all jobs by title or company" style="width:200px" oninput="ajDebounce()">
+      <select id="ajFit" aria-label="Minimum fit" onchange="loadAllJobs()"><option value="">any fit</option><option value="50">fit 50+</option><option value="60">fit 60+</option><option value="70">fit 70+</option><option value="80">fit 80+</option></select>
+      <select id="ajRemote" aria-label="Workplace" onchange="loadAllJobs()"><option value="">any workplace</option><option value="remote">remote</option><option value="hybrid">hybrid</option><option value="onsite">onsite</option></select>
+      <input id="ajSal" type="number" min="0" step="1000" placeholder="min salary" aria-label="All jobs minimum salary" style="width:110px" onchange="loadAllJobs()">
+      <input id="ajDays" type="number" min="1" max="3650" placeholder="posted within (days)" aria-label="All jobs posted within days" style="width:150px" onchange="loadAllJobs()">
+      <select id="ajShow" aria-label="Which listings" onchange="loadAllJobs()"><option value="open">not tracked</option><option value="tracked">tracked</option><option value="dismissed">dismissed</option><option value="all">all</option></select>
+      <select id="ajSort" aria-label="Sort all jobs" onchange="loadAllJobs()"><option value="fit">Best fit</option><option value="new">Newest</option><option value="salary">Pay</option><option value="company">Company</option></select>
+      <label class="muted"><input type="checkbox" id="ajNew" onchange="loadAllJobs()"> New since last visit</label>
+      <button class="b ghost sm" onclick="ajSeen(this)">Mark all seen</button></div>
+    <div class="chips" id="ajSources" aria-label="Sources"></div>
+    <div id="ajList" role="list"></div></div>
 </section>
 
 <section id="monitor">
@@ -203,7 +217,10 @@
     <details><summary class="muted">as a table</summary><div id="insWeeksTable"></div></details></div>
   <div class="grid2">
     <div class="panel"><h3>Response rate by source</h3><div id="insSource"></div></div>
-    <div class="panel"><h3>Does tailoring pay off? Response rate by match score</h3><div id="insBand"></div></div></div>
+    <div class="panel"><h3>Response rate by fit score</h3><div id="insBand"></div></div></div>
+  <div class="panel" id="boostPanel"><h3>Chance boosters across your search</h3>
+    <p class="muted">The actions most likely to help your open jobs right now, ranked by expected effect (high, medium, low), with why and a button into the feature that does it. Worked out by rules from your own data, no AI; never a probability. Titles and workplaces where your own response record is better show once a group holds 5 applications, as counts.</p>
+    <div id="insBoost"></div></div>
   <div class="panel"><h3>Funnel and resume variants</h3><div id="insFunnel"></div></div>
   <div class="panel" id="readyPanel"><h3>Readiness vs results</h3>
     <p class="muted">Your interview rounds with a readiness snapshot (taken from 2 hours before to 24 hours after each round while Lodestar runs) and a result, counted per readiness band. Plain counts from your own interviews: not a probability, and they never move the bands.</p>
@@ -336,6 +353,14 @@
     <div class="muted" id="apLast"></div>
     <div class="row"><button class="b ghost" onclick="pipeLog(this)">Show the run log</button><span class="muted">every step run: by you, Autopilot or an approval, with its outcome and AI calls (also <code>lodestar pipeline log</code>)</span></div>
     <div id="apLog"></div></div>
+  <div class="panel" id="srcCard"><h3>Job sources</h3>
+    <p class="muted">Where Jobs searches and saved searches look. Keyless boards always run; Adzuna and USAJOBS run once you add their free keys here (stored in the OS keyring, checked with one small search). Saved searches ask each board at most once per window (Remotive every 6 hours for all your searches together), so Lodestar stays inside each board's published limits. Listings from Adzuna, Himalayas and We Work Remotely always show the source's name as a link: their terms ask for that credit. LinkedIn, Indeed, Glassdoor and ZipRecruiter are never fetched (their terms forbid it).</p>
+    <div id="srcList" class="list" role="status" aria-live="polite"></div></div>
+  <div class="panel" id="alertCard"><h3>Job alerts</h3>
+    <p class="muted">Subscribe to job alerts on LinkedIn (Jobs &gt; search &gt; Set alert), Indeed, Glassdoor or ZipRecruiter, delivered to the mailbox you connected under Connect email. The mail monitor reads only your own inbox: an alert counts only when its sender is the site's known alert address and the mail passed DKIM/DMARC, and its jobs go to All jobs (Jobs tab), merged with every other source. Lodestar never opens an alert's links (the sites' terms forbid automated visits, and those links can carry one-click sign-in tokens): a link opens only when you click it. Alert mails are not stored. Reading alert mail is low risk under those sites' terms, but not none: switch it off here if you prefer.</p>
+    <div class="row"><label><input type="checkbox" id="alertsOn" onchange="alertsToggle(this.checked)"> Read job-alert emails (tool job_alerts)</label></div>
+    <div id="alertList" class="list" role="status" aria-live="polite"></div>
+    <div class="muted">An alert that cannot be read sends one notice a day; save it as a .eml file and run <code>lodestar email parse-alert FILE.eml</code> to see what Lodestar finds in it.</div></div>
   <div class="grid2">
     <div class="panel" id="keysCard"><h3>Link an AI key</h3>
       <div class="row"><select id="kProv" aria-label="AI provider" onchange="keyHint()"></select><input id="kVal" type="password" autocomplete="off" class="grow" placeholder="paste the key" aria-label="API key"><button class="b" onclick="keyLink(this)">Link</button></div>

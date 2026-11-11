@@ -79,7 +79,7 @@ def checks() -> list[tuple[str, str, str]]:
             continue
         when = f"checked {connections.local(k['checked_at'])}" if k["checked_at"] else ""
         if k["status"] == "verified":
-            out.append(("ok", f"key {n}", f"verified, {when}, model {k['model']}"))
+            out.append(("ok", f"key {n}", f"verified, {when}" + (f", model {k['model']}" if k["model"] else "")))
         elif k["status"] == "failed":
             out.append(("fail", f"key {n}", k["detail"] + (f" ({when})" if when else "")))
         elif k["status"] == "unreachable":

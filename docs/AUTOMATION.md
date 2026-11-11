@@ -36,12 +36,13 @@ lodestar tools set signature "Sean"
 | `email_reply` | draft a reply to an application confirmation (only if `reply_to_confirmations`), an assessment invite, an offer, or recruiter outreach. Offer replies thank, ask for the written offer and a timeline, and never accept, decline, or name a number | on, manual |
 | `interview_scheduling` | for interview invites: accept the first proposed slot inside your `availability` (an .ics is written on send) or propose three slots | on, manual |
 | `followup` | draft a follow-up for applications quiet for `followup_days` when a contact email is known | on, manual |
-| `auto_track` | AI-score new listings from watches/searches against your profile; propose tracking those at or above `auto_track_min_score` | on, manual |
+| `auto_track` | score new listings from watches, searches and job-alert mail (the fit score; the AI judges the best few when a key is linked) and propose tracking those at or above `auto_track_min_score`, at most `auto_track_daily_max` a day. Without an AI key it proposes on the rules fit only when 60% of the fit could be measured, and those proposals always wait in the inbox, even on auto | on, manual |
 | `answers` | save the answers it drafts for application-form questions into the answer bank | on, manual |
 | `calendar` | write .ics files for interview dates found in mail | on, auto |
 | `obsidian_sync` | mirror the tracker into your vault after each monitor cycle | off |
 | `digest` | email the weekly digest to `LODESTAR_NOTIFY_EMAIL` on the first cycle from Friday on (a missed Friday catches up on the next cycle); without that address a one-line alert says it is ready | off |
-| `posting_check` | weekly: re-check saved jobs from Greenhouse / Lever / Ashby boards; propose `withdrawn` ("posting removed") for ones whose posting vanished. Always waits in the inbox, even on auto | on, manual |
+| `posting_check` | daily listing check (`web_monitor.check_listings`) of every open tracked job: feed jobs (Greenhouse, Lever, Ashby, SmartRecruiters, Recruitee, Personio) compared with their last copy (changes as a `posting_changed` event and a diff in the job folder's `posting_changes.md`; the JD is never rewritten), other posting pages at most weekly where robots.txt allows (gone only after two misses in a row; LinkedIn, Indeed, Glassdoor and ZipRecruiter are never fetched, nor is any link that came from job-alert mail). A saved job whose posting is gone gets a `withdrawn` proposal that always waits in the inbox, even on auto; an applied one gets the event and a Today item | on, manual |
+| `job_alerts` | read job-alert emails (LinkedIn, Indeed, Glassdoor, ZipRecruiter) from your own inbox into All jobs: only mail from the site's known alert address that passed DKIM/DMARC; never sent to the AI, never stored as mail, its links never opened; one notice per alert mail. New rows are judged by `auto_track` after the mailbox is closed | on, auto |
 
 ## The inbox
 
@@ -145,7 +146,7 @@ Each tracked job moves through 13 steps (`pipeline.py`), shown in the job drawer
 
 | Step | What it does | Tool (Autopilot) | Runs unattended |
 |---|---|---|---|
-| Fit check | JD coverage + AI verdict (asks for the JD when there is none) | fit_check | yes |
+| Fit check | the deterministic fit score (fit.py; one AI judgement as its AI part only when fit_check is on auto); skip under auto_track_min_score (asks for the JD when there is none) | fit_check | yes |
 | Research | company research pack from public pages | research | yes |
 | Tailor resume | the resume studio builds the job's resume from your facts (pref `resume_request`, your look, one page; every AI rewrite checked) and uses it; within the run's AI budget (one call left: no AI shortening call, the plan is trimmed) | tailor | yes |
 | Cover letter | from the tailored resume, research and fit check | cover_letter | yes |

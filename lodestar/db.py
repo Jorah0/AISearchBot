@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS offers(job_id INTEGER PRIMARY KEY, base INTEGER, bonu
   equity_value_estimate INTEGER, vest_years INTEGER, cliff_months INTEGER, retirement_match_pct REAL, remote TEXT,
   start_date TEXT, deadline TEXT, notes TEXT, updated_at TEXT DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value INTEGER);  -- 'jobs_max_id': ids are never handed out twice
+CREATE TABLE IF NOT EXISTS intel(key TEXT PRIMARY KEY, data TEXT, at TEXT DEFAULT (datetime('now')));  -- intel.py: co:<company> public facts (7-day cache), ai:<job> summary, boost:<job> AI boosters
 CREATE TABLE IF NOT EXISTS touches(contact_id INTEGER NOT NULL, day TEXT NOT NULL, UNIQUE(contact_id, day));  -- touches you record (contacts._log_touch)
 CREATE TABLE IF NOT EXISTS mail(id INTEGER PRIMARY KEY, message_id TEXT NOT NULL UNIQUE, in_reply_to TEXT, refs TEXT,
   job_id INTEGER, direction TEXT NOT NULL CHECK(direction IN ('in','out')), from_addr TEXT, to_addr TEXT, subject TEXT,
@@ -107,16 +108,30 @@ MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "T
               "ats_skip": "TEXT",  # JSON list: keywords marked "not mine" for JD coverage (toggle_ats_skip)
               "ats_feed": "TEXT",  # 'greenhouse:acme' when tracked from a public job-board feed (code-set, not a user field)
               "profile_rev": "TEXT",  # JSON {section: hash} of the profile sections resume.md drew on (profile.used_revs)
-              "soc": "TEXT", "soc_by": "TEXT"}  # market pay occupation (paydata.set_soc / match_ai): NN-NNNN or none; user | ai
+              "soc": "TEXT", "soc_by": "TEXT",  # market pay occupation (paydata.set_soc / match_ai): NN-NNNN or none; user | ai
+              # fit score (fit.py, code-set, never a user field): score 0-100, the breakdown JSON, the fit.rev() it was
+              # scored at (stale when it differs), the score when the job left 'saved', the AI part {score, why, at}
+              "fit_score": "INTEGER", "fit": "TEXT", "fit_rev": "TEXT", "fit_applied": "INTEGER", "ai_fit": "TEXT"}
 WATCH_MIGRATIONS = {"filters": "TEXT",  # JSON search filters of a saved search (web_monitor.clean_filters)
                     "last_error": "TEXT"}  # what the last run could not read (shown on the watch); NULL after a clean run
 ANSWER_MIGRATIONS = {"star": "TEXT",  # JSON STAR fields when the row is a story (interview.save_story); NULL = a form answer
                      "private": "INTEGER NOT NULL DEFAULT 0",  # 1 = for you only: never put in an employer-facing prompt
                      "source": "TEXT"}  # where it came from: "answered for job #12 (answers)", "typed under Answers"
-MAIL_MIGRATIONS = {"attachments": "TEXT"}  # JSON [{name, size, type, path?} | {name, skipped}] (mailfiles.py)
+# the All jobs store (pass 21): postings keeps its text key (repost memory); everything else is additive. Rows from
+# before (key, url, first_seen only) stay valid and are hidden from listings until a source sees them again.
+POSTING_MIGRATIONS = {"title": "TEXT", "company": "TEXT", "location": "TEXT", "salary": "TEXT", "posted_at": "TEXT",
+                      "jd": "TEXT", "urls": "TEXT", "sources": "TEXT", "ats_id": "TEXT", "ats_feed": "TEXT",
+                      "last_seen": "TEXT", "seen_count": "INTEGER", "fit_score": "INTEGER", "fit": "TEXT", "fit_rev": "TEXT",
+                      "ai_fit": "TEXT", "job_id": "INTEGER", "dismissed": "INTEGER", "closed_at": "TEXT",
+                      "reposted_at": "TEXT"}
+POSTING_INDEXES = ("CREATE INDEX IF NOT EXISTS postings_last_seen ON postings(last_seen)",
+                   "CREATE INDEX IF NOT EXISTS postings_job ON postings(job_id)",
+                   "CREATE INDEX IF NOT EXISTS postings_fit ON postings(fit_score)")
+MAIL_MIGRATIONS = {"attachments": "TEXT",  # JSON [{name, size, type, path?} | {name, skipped}] (mailfiles.py)
+                   "link_reason": "TEXT"}  # why ATS mail was filed under its job (email_monitor._ats_match); never trust
 BACKFILL_KEY = "backfill:fields-v1"
 CONTACTS_KEY = "backfill:contacts-v1"
-ATS_FEED_RE = re.compile(r"(greenhouse|lever|ashby):[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+ATS_FEED_RE = re.compile(r"(greenhouse|lever|ashby|smartrecruiters|recruitee|personio):[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 
 
 def connect(path=None) -> sqlite3.Connection:
@@ -124,7 +139,7 @@ def connect(path=None) -> sqlite3.Connection:
     c.row_factory = sqlite3.Row
     c.executescript(SCHEMA)
     for table, cols in (("jobs", MIGRATIONS), ("watches", WATCH_MIGRATIONS), ("answers", ANSWER_MIGRATIONS),
-                        ("mail", MAIL_MIGRATIONS)):
+                        ("postings", POSTING_MIGRATIONS), ("mail", MAIL_MIGRATIONS)):
         have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
         for col, typ in cols.items():
             if col in have:
@@ -134,6 +149,8 @@ def connect(path=None) -> sqlite3.Connection:
             except sqlite3.OperationalError as e:  # another thread/process added it between our check and ALTER
                 if "duplicate column" not in str(e).lower():
                     raise
+    for ix in POSTING_INDEXES:  # after the ALTERs: the columns must exist first
+        c.execute(ix)
     backfill(c)
     contacts_from_jobs(c)
     return c
@@ -196,7 +213,7 @@ def _contacts_from_jobs(c: sqlite3.Connection) -> int:
 
 # --- tracker fields ---------------------------------------------------------
 REMOTE = ("onsite", "hybrid", "remote")
-REMOTE_BOARDS = ("remotive", "remoteok", "jobicy")  # job APIs that only list remote roles
+REMOTE_BOARDS = ("remotive", "remoteok", "jobicy", "himalayas", "wwr")  # job APIs that only list remote roles
 _TEXT = {"location": 120, "source": 60, "next_action": 200}
 _INT = {"salary_min": (0, 10_000_000), "salary_max": (0, 10_000_000), "excitement": (1, 5), "match_score": (0, 100)}
 _DATE = ("posted_at", "deadline", "next_action_at")
@@ -353,7 +370,8 @@ def add_job(company, title, url=None, jd=None, notes=None, ats_feed=None, **fiel
     given = {k: v for k, v in ((k, _clean(k, v)) for k, v in fields.items()) if v is not None}  # validated before insert
     if ats_feed:
         if not ATS_FEED_RE.fullmatch(str(ats_feed)):
-            raise SystemExit(f"ats_feed must look like greenhouse:slug, lever:slug or ashby:slug: {str(ats_feed)[:60]}")
+            raise SystemExit(f"ats_feed must look like vendor:slug (greenhouse, lever, ashby, smartrecruiters, recruitee, "
+                             f"personio): {str(ats_feed)[:60]}")
         given["ats_feed"] = str(ats_feed)
     if url:  # the same posting captured or searched twice is one card, not two
         dup = con().execute("SELECT id FROM jobs WHERE url=? AND status NOT IN ('rejected','withdrawn')", (url,)).fetchone()
@@ -388,6 +406,9 @@ def add_job(company, title, url=None, jd=None, notes=None, ats_feed=None, **fiel
         c.rollback()
         raise
     add_event(jid, "created", f"{company} - {title}")
+    if url:  # the All jobs row at this link now belongs to the job (Track, capture, an approved auto_track)
+        c.execute("UPDATE postings SET job_id=? WHERE job_id IS NULL AND url=?", (jid, url))
+        c.commit()
     return jid
 
 
@@ -403,7 +424,8 @@ def _pay(j):
 
 
 # sort key -> row key; None sorts last, ties keep the most recently updated first
-SORTS = {"match": lambda j: (j["match_score"] is None, -(j["match_score"] or 0)),
+SORTS = {"fit": lambda j: (j["fit_score"] is None, -(j["fit_score"] or 0)),
+         "match": lambda j: (j["match_score"] is None, -(j["match_score"] or 0)),  # JD coverage (labelled Coverage)
          "salary": lambda j: (_pay(j) is None, -(_pay(j) or 0)),
          "excitement": lambda j: (j["excitement"] is None, -(j["excitement"] or 0)),
          "deadline": lambda j: (j["deadline"] is None, j["deadline"] or ""),
@@ -452,6 +474,9 @@ def set_status(job_id: int, status: str, detail: str = "") -> None:
                       "AND status='pending' AND json_extract(payload, '$.purpose') IN ('followup', 'thanks')",
                       (_now(), f"stale: the job moved to {status} before this was sent", job_id))
     update_job(job_id, status=status, **extra)
+    if status != "saved":  # the fit the job had when it left 'saved' (Insights' response rate by fit band), kept once set
+        con().execute("UPDATE jobs SET fit_applied=fit_score WHERE id=? AND fit_applied IS NULL", (job_id,))
+        con().commit()
     add_event(job_id, "status", f"{status} {detail}".strip())
     if status == "accepted":  # a hire: offer to close the other live applications, always through the Inbox
         from . import approvals
@@ -478,8 +503,14 @@ def delete_job(job_id: int) -> None:
                   "'approved')", (job_id,))  # the AI change log stays (an undo then reports the job gone)
     con().execute("UPDATE questions SET status='dismissed', answer='no longer needed', answered_at=? WHERE status='open' "
                   "AND NOT EXISTS (SELECT 1 FROM question_waiters w WHERE w.qid=questions.id)", (_now(),))
+    con().execute("UPDATE postings SET job_id=NULL WHERE job_id=?", (job_id,))  # the listing is untracked again
+    con().execute("DELETE FROM meta WHERE key=?", (f"pagemiss:{job_id}",))
+    con().execute("DELETE FROM intel WHERE key IN (?, ?)", (f"ai:{job_id}", f"boost:{job_id}"))  # co: facts stay
     con().execute("DELETE FROM jobs WHERE id=?", (job_id,))
     con().commit()
+    from .config import SNAPSHOTS
+
+    (SNAPSHOTS / f"job-{job_id}.json").unlink(missing_ok=True)  # the listing monitor's last copy of its posting
 
 
 def add_event(job_id: int, kind: str, detail: str = "") -> None:
@@ -566,6 +597,8 @@ BOOKKEEPING = ("proposed", "rejected_proposal", "send_failed", "set_status", "ad
                "interview_date", "email_unverified", "followup_draft", "thanks_draft", "withdraw_draft", "counter_draft",
                "reply_draft", "referral_draft", "outreach_draft", "checkin_draft", "referral", "attachments",
                "run_to",  # run_to: an approved pipeline batch (approvals writes the executor's kind as the event)
+               # the listing monitor and job-alert mail watch the posting, not the employer talking to you
+               "posting_removed", "posting_changed", "posting_reopened", "posting_reposted", "listing_seen",
                # documents built for the job (a drawer click or a pipeline step): your prep, not contact with the employer
                "gap", "research", "bullets", "resume", "coverage", "cover_letter", "interview_prep")
 
@@ -677,9 +710,53 @@ def update_company(cid: int, error: str = "") -> None:
     con().commit()
 
 
+def set_fit(table: str, row_id: int, fit: dict) -> None:
+    """Store a fit result (fit.py) on a job or a posting row (rowid); never touches updated_at."""
+    if table not in ("jobs", "postings"):
+        raise ValueError(table)
+    con().execute(f"UPDATE {table} SET fit_score=?, fit=?, fit_rev=? WHERE {'id' if table == 'jobs' else 'rowid'}=?",
+                  (fit["score"], json.dumps(fit), fit["rev"], row_id))
+    con().commit()
+
+
+def meta_get(key: str) -> int:
+    row = con().execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    return int(row["value"] or 0) if row else 0
+
+
+def meta_set(key: str, value: int | None) -> None:
+    """One overwritten integer per key; None deletes it."""
+    if value is None:
+        con().execute("DELETE FROM meta WHERE key=?", (key,))
+    else:
+        con().execute("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                      (key, int(value)))
+    con().commit()
+
+
+def quota(name: str, cap: int, n: int = 1) -> int:
+    """Take up to n units of today's budget `name` (meta key quota:<name>:<YYYY-MM-DD>, local day); returns how many
+    were granted (0 when the cap is reached). ponytail: read then write on one connection, not one atomic statement;
+    two threads can overshoot by a call. Upgrade: paydata's single upsert if a budget ever needs to be exact."""
+    key = f"quota:{name}:{datetime.now():%Y-%m-%d}"
+    c = con()
+    row = c.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    take = max(0, min(n, cap - (row["value"] if row else 0)))
+    if take:
+        c.execute("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=value+excluded.value",
+                  (key, take))
+        c.commit()
+    return take
+
+
+def quota_refund(name: str, n: int = 1) -> None:
+    con().execute("UPDATE meta SET value=MAX(0, value-?) WHERE key=?", (n, f"quota:{name}:{datetime.now():%Y-%m-%d}"))
+    con().commit()
+
+
 def posting(key: str):
-    """First sighting of a company+title+location: {url, first_seen} or None (web_monitor.ghost_signals)."""
-    return con().execute("SELECT url, first_seen FROM postings WHERE key=?", (key,)).fetchone()
+    """First sighting of a company+title+location: {url, first_seen, ats_id} or None (web_monitor.ghost_signals)."""
+    return con().execute("SELECT url, first_seen, ats_id FROM postings WHERE key=?", (key,)).fetchone()
 
 
 def note_posting(key: str, url: str) -> None:
@@ -883,7 +960,7 @@ def delete_idea(iid: int) -> None:
 
 # --- mail (email_monitor records relevant mail it scans, approvals._send what it sends) -----------------------
 MAIL_COLS = ("message_id", "in_reply_to", "refs", "job_id", "direction", "from_addr", "to_addr", "subject", "sent_at",
-             "category", "summary", "snippet", "trusted", "linked_by", "company", "title", "attachments")
+             "category", "summary", "snippet", "trusted", "linked_by", "company", "title", "attachments", "link_reason")
 
 
 def add_mail(**fields) -> None:

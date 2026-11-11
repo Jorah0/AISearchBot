@@ -53,7 +53,7 @@ class Monitor(E2ETestCase):
         self.allow_console()
         self.page.fill("#cSrc", "https://example.com/careers")
         self.run_click(self.add_company)
-        self.expect_toast("not a Greenhouse, Lever or Ashby board", "err")
+        self.expect_toast("not a supported job board", "err")
         self.page.fill("#cSrc", "https://boards.greenhouse.io/kestrelmaps")
         self.page.fill("#cName", "Kestrel Maps")
         self.page.fill("#cKw", "data, platform")
@@ -100,6 +100,22 @@ class Monitor(E2ETestCase):
         self.expect_toast("0 relevant email(s)", "ok")
         self.assertIn("login", FakeMail.CALLS)
         self.assertIn("select", FakeMail.CALLS)
+
+    def test_check_email_names_new_alert_listings(self):  # regression: the toast counted classified mail only
+        from lodestar import email_monitor
+
+        def scan(*a, **k):
+            out = email_monitor.Scan([])
+            out.alerts = 5
+            return out
+
+        real = email_monitor._scan
+        email_monitor._scan = scan
+        try:
+            self.run_click(self.page.locator(".top").get_by_role("button", name="Check email"))
+            self.expect_toast("0 relevant email(s) · 5 new listing(s) from job alerts (Jobs tab)", "ok")
+        finally:
+            email_monitor._scan = real
 
     def test_email_dry_run_and_digests(self):
         mail = db.con().execute("SELECT COUNT(*) FROM mail").fetchone()[0]

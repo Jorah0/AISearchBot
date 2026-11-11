@@ -9,7 +9,7 @@ from email.header import decode_header, make_header
 from email.utils import parseaddr
 from urllib.parse import urlparse
 
-from . import ai, approvals, codes, db, settings
+from . import ai, alerts, approvals, codes, db, settings
 from .config import setting
 from .util import notify, strip_html
 
@@ -109,6 +109,9 @@ def _match(info: dict):
     j = corporate and next((j for j in live if names_company(dom, j["company"])), None)
     if j:
         return j, False
+    j = _ats_match(info, live)
+    if j:
+        return j, False  # never strong: ATS mail never becomes trusted mail
     return db.find_job_by_company(info.get("company") or ""), False
 
 
@@ -178,6 +181,129 @@ def _body(msg) -> str:
     return strip_html(html)
 
 
+def _part(msg, ctype: str) -> str:
+    """The first non-attachment part of this type, decoded ('' when there is none)."""
+    for p in (msg.walk() if msg.is_multipart() else [msg]):
+        if p.get_content_disposition() == "attachment" or p.get_content_type() != ctype:
+            continue
+        payload = p.get_payload(decode=True)
+        if payload is not None:
+            return payload.decode(p.get_content_charset() or "utf-8", "replace")
+    return ""
+
+
+def _html(msg) -> str:
+    """The text/html part as markup (alerts.parse and the links ATS mail is tied by read its anchors)."""
+    return _part(msg, "text/html")
+
+
+def _text(msg) -> str:
+    return _part(msg, "text/plain")
+
+
+LINK_RX = re.compile(r"https?://[^\s<>\"')]+")
+
+
+def _links(msg, body: str) -> list[str]:
+    """hrefs of the HTML part plus URLs in the text, at most 200: what _ats_match ties ATS mail by. Never fetched."""
+    from html.parser import HTMLParser
+
+    hrefs: list[str] = []
+
+    class _A(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            h = dict(attrs).get("href") if tag == "a" else None
+            if h and h.startswith(("http://", "https://")):
+                hrefs.append(h)
+
+    try:
+        _A().feed(_html(msg))
+    except Exception:  # odd markup never costs the message its scan
+        pass
+    return list(dict.fromkeys(hrefs + LINK_RX.findall(body or "")))[:200]
+
+
+# Applicant-tracking systems that mail candidates on the employer's behalf. Data: confirm against real mail, extend as
+# met. Their mail is tied to a job by a posting link, a Workday tenant, an iCIMS job id or company + title: never strongly.
+ATS_MAIL = {"greenhouse": ("greenhouse.io", "greenhouse-mail.io"), "lever": ("lever.co",),
+            "workday": ("myworkday.com", "myworkdayjobs.com"), "icims": ("icims.com",),
+            "smartrecruiters": ("smartrecruiters.com",), "ashby": ("ashbyhq.com",),
+            "workable": ("workable.com", "workablemail.com"), "jobvite": ("jobvite.com",), "taleo": ("taleo.net",),
+            "successfactors": ("successfactors.com", "successfactors.eu"), "recruitee": ("recruitee.com",),
+            "personio": ("personio.de", "personio.com")}
+
+
+def ats_vendor(dom: str) -> str:
+    dom = (dom or "").lower()
+    return next((v for v, ds in ATS_MAIL.items() if any(dom == d or dom.endswith("." + d) for d in ds)), "")
+
+
+def _title_overlap(mail_title: str, job_title: str) -> float:
+    """Share of the job title's words that the mail's title also has."""
+    from .web_monitor import norm_title
+
+    want, have = set(norm_title(job_title).split()), set(norm_title(mail_title).split())
+    return len(want & have) / len(want) if want else 0.0
+
+
+def _ats_match(info: dict, live: list):
+    """A live job for mail an ATS sent (greenhouse.io, myworkday.com, ...), setting info['link_reason'], else None.
+    Ties, in order: a link in the mail naming the job's board and posting (or the board, when one live job is on it);
+    a Workday tenant (acme@myworkday.com for acme.wd5.myworkdayjobs.com); an iCIMS host + job id; else the classifier's
+    company plus 60%+ of the job title's words on exactly one live job. The caller files it as a weak tie: an ATS
+    domain names no company, so trust and unreviewed status moves stay out of reach (_apply's rule is unchanged)."""
+    from .web_monitor import _posting_id, detect_ats, norm_company
+
+    addr = (info.get("sender_email") or "").lower()
+    vendor = ats_vendor(_domain(addr))
+    if not vendor:
+        return None
+    links = info.get("links") or []
+
+    def feed_of(j):
+        f = tuple(j["ats_feed"].split(":", 1)) if j["ats_feed"] else detect_ats(j["url"])
+        return (f[0], f[1].lower()) if f else None
+
+    for link in links:
+        d = detect_ats(link)
+        if not d:
+            continue
+        board = [j for j in live if j["url"] and feed_of(j) == (d[0], d[1].lower())]
+        pid = _posting_id(link)
+        hit = [j for j in board if pid and _posting_id(j["url"]) == pid]
+        if len(hit) == 1:
+            info["link_reason"] = f"ATS posting link {pid}"[:120]
+            return hit[0]
+        if not pid and len(board) == 1:
+            info["link_reason"] = f"ATS board {d[0]}:{d[1]}"[:120]
+            return board[0]
+    local = addr.split("@", 1)[0]
+    if vendor == "workday" and local:
+        hit = [j for j in live if (urlparse(j["url"] or "").hostname or "").lower().endswith(".myworkdayjobs.com")
+               and (urlparse(j["url"] or "").hostname or "").lower().split(".")[0] == local]
+        if len(hit) == 1:
+            info["link_reason"] = f"Workday tenant {local}"[:120]
+            return hit[0]
+    for link in links:
+        u = urlparse(link)
+        host = (u.hostname or "").lower()
+        m = re.search(r"/jobs/(\d+)", u.path)
+        if not m or not host.endswith("icims.com"):
+            continue
+        hit = [j for j in live if (urlparse(j["url"] or "").hostname or "").lower() == host
+               and re.search(rf"/jobs/{m[1]}(?:/|$)", urlparse(j["url"] or "").path)]
+        if len(hit) == 1:
+            info["link_reason"] = f"iCIMS posting {m[1]}"
+            return hit[0]
+    co = norm_company(info.get("company") or "")
+    hit = [j for j in live if co and norm_company(j["company"]) == co
+           and _title_overlap(info.get("title") or "", j["title"]) >= 0.6]
+    if len(hit) == 1:
+        info["link_reason"] = "company + title"
+        return hit[0]
+    return None
+
+
 def looks_relevant(subject: str, sender: str, body: str) -> bool:
     blob = f"{subject} {body[:2000]}".lower()
     return any(h in blob for h in HINTS) or db.find_job_by_company(sender) is not None
@@ -211,8 +337,8 @@ Return JSON: {{"category": "...", "company": "...", "title": "...", "summary": "
 
 
 def check(days: int = 3, limit: int = 100, dry: bool = False, provider: str | None = None) -> list[dict]:
-    if not settings.enabled("email_classify"):
-        raise SystemExit("tool email_classify is off (lodestar tools enable email_classify)")
+    if not (settings.enabled("email_classify") or settings.enabled("job_alerts")):
+        raise SystemExit("tools email_classify and job_alerts are off (lodestar tools enable email_classify)")
     from .util import mail_login
 
     host, user = setting("IMAP_HOST", "imap.gmail.com"), setting("IMAP_USER")
@@ -229,6 +355,12 @@ def check(days: int = 3, limit: int = 100, dry: bool = False, provider: str | No
         return _scan(host, user, pw, days, limit, dry, provider, int(setting("IMAP_PORT") or 993))
 
 
+class Scan(list):
+    """A scan's classified mail (a plain list for every caller), plus .alerts: how many new listings the same scan read
+    from job-alert mail into All jobs (they are never in the list: alert mail is not classified)."""
+    alerts = 0
+
+
 def _scan(host: str, user: str, pw: str | None, days: int, limit: int, dry: bool, provider: str | None, port: int = 993) -> list[dict]:
     from .util import imap_login, imap_open
 
@@ -238,7 +370,8 @@ def _scan(host: str, user: str, pw: str | None, days: int, limit: int, dry: bool
     since = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
     _, data = box.uid("search", None, f"(SINCE {since})")  # type: ignore[arg-type]
     uids = data[0].split()[-limit:]
-    found = []
+    found, fresh = [], []  # fresh: new job-alert rows, judged once the mailbox is closed
+    classify_on, alerts_on = settings.enabled("email_classify"), settings.enabled("job_alerts")
     try:
         for uid in reversed(uids):
             key = f"email:{user}:{uid.decode()}"
@@ -256,6 +389,16 @@ def _scan(host: str, user: str, pw: str | None, days: int, limit: int, dry: bool
                 if not dry:
                     _touch(sender, _hdr(msg, "Date"))
                 name, addr = parseaddr(sender)
+                site = alerts.site_of(addr) if alerts_on else None
+                if site and mail_authenticated(msg.get_all("Authentication-Results") or [], addr):
+                    # a job-alert digest: its jobs go to All jobs. No AI, no mail-table row, no _apply. A lookalike
+                    # domain, a failed DKIM or another sender on the same domain (InMail) is ordinary mail below.
+                    if not dry:
+                        fresh += alerts.ingest(site, _html(msg), _text(msg), _hdr(msg, "Message-ID"), _hdr(msg, "Date"))
+                        db.mark_seen(key)
+                    continue
+                if not classify_on:  # job_alerts alone: other mail stays unseen for when classify is switched on
+                    continue
                 is_tied = tied(addr, _hdr(msg, "In-Reply-To"), _hdr(msg, "References"))
                 if is_tied or looks_relevant(subject, sender, body):
                     try:
@@ -277,12 +420,13 @@ def _scan(host: str, user: str, pw: str | None, days: int, limit: int, dry: bool
                     info |= {"subject": subject, "from": sender, "date": _hdr(msg, "Date"), "to": _hdr(msg, "To"),
                              "message_id": _hdr(msg, "Message-ID"), "sender_email": addr, "sender_name": name,
                              "in_reply_to": _hdr(msg, "In-Reply-To"), "refs": _hdr(msg, "References"),
-                             "body": body[:3500],
+                             "body": body[:3500], "links": _links(msg, body),
                              "dkim_pass": mail_authenticated(msg.get_all("Authentication-Results") or [], addr)}
                     if info.get("category") != "other":
                         _files(info, msg, len(raw[0][1]))
                         _apply(info, dry)
                         info.pop("_files", None)  # file bytes stay out of the scan result (task results, JSON)
+                        info.pop("links", None)
                         found.append(info)
             except Exception as e:
                 ok = False
@@ -294,7 +438,11 @@ def _scan(host: str, user: str, pw: str | None, days: int, limit: int, dry: bool
             box.logout()
         except Exception:
             pass
-    return found
+    if fresh:  # after logout: AI calls never hold the mailbox session open
+        alerts.judge(fresh)
+    out = Scan(found)
+    out.alerts = len(fresh)
+    return out
 
 
 BIG = 40_000_000  # a message larger than this is still filed; its attachments are not read
@@ -446,9 +594,16 @@ def _record(info: dict, job) -> None:
                     summary=str(info.get("summary") or "")[:500], snippet=info.get("body"), trusted=info.get("trusted"),
                     linked_by=(info.get("linked_by") or "auto") if job else None,
                     company=str(info.get("company") or "")[:200], title=str(info.get("title") or "")[:200],
-                    attachments=att)
+                    attachments=att, link_reason=_reason(info) if job else None)
     except Exception as e:
         print(f"  mail record skipped: {e}")
+
+
+def _reason(info: dict) -> str | None:
+    """mail.link_reason: why ATS mail was filed under its job, marked when its sender was not authenticated (the
+    pipeline's Confirmation step reads only authenticated ones)."""
+    r = info.get("link_reason")
+    return (r if info.get("dkim_pass") else f"{r} (sender not verified)") if r else None
 
 
 def track_mail(mail_id: int, company: str = "", title: str = "") -> int:

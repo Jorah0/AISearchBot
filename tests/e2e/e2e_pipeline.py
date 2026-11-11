@@ -22,6 +22,11 @@ JD = "Senior data engineer. Python, SQL, Spark, Airflow and dbt pipelines. Owner
 class Pipeline(E2ETestCase):
     ai_json = AI
 
+    @classmethod
+    def seed(cls):
+        super().seed()
+        settings.set_pref("auto_track_min_score", 0)  # pass 21: the fit gate reads the deterministic fit; 0 = always 'go'
+
     # --- helpers
     def new_job(self, company, status="saved", jd=JD):
         jid = db.add_job(company, "Data Engineer", f"https://jobs.example.com/{company.lower().replace(' ', '')}", jd, "e2e")
@@ -93,8 +98,7 @@ class Pipeline(E2ETestCase):
         self.run_click(self.line_button("Run"))
         self.assertTrue(self.state_of("Fit check").startswith("done"))
         self.assertIn("rev 1", self.page.text_content("#pLine"))  # the line stays open across the refresh
-        self.line_button("gap.json").click()
-        self.assertRegex(self.page.text_content("#docView"), r'"verdict":\s*"apply"')
+        self.assertIsNotNone(db.get_job(jid)["fit_score"])  # pass 21: the Fit check stores the fit score (no file)
         self.run_click(self.line_button("Re-run"))
         self.assertIn("rev 2", self.page.text_content("#pLine"))
         self.assertEqual(len(self.ran(jid, "score")), 2)
@@ -153,17 +157,14 @@ class Pipeline(E2ETestCase):
         self.assertEqual({e["name"]: e["rev"] for e in pipeline.status(jid)}["letter"], 2)
 
     def test_fit_gate_says_so_and_continue_anyway_runs_the_next_step(self):
-        cls = type(self)
-        cls.ai_json = {**AI, "verdict": "skip", "why": "needs Scala"}
-        try:
-            jid = self.new_job("Gate Co")
-            self.open_job(jid)
-            self.run_click("#pNext")
-        finally:
-            cls.ai_json = AI
+        settings.set_pref("auto_track_min_score", 100)  # pass 21: a fit under the threshold is the gate's 'skip'
+        self.addCleanup(settings.set_pref, "auto_track_min_score", 0)
+        jid = self.new_job("Gate Co")
+        self.open_job(jid)
+        self.run_click("#pNext")
         group = self.page.locator("#pGroup")
         self.assertIn("fit: skip", group.text_content())
-        self.assertIn("needs Scala: Autopilot leaves this job alone", group.text_content())
+        self.assertIn(": Autopilot leaves this job alone", group.text_content())
         self.answer(True)
         self.run_click(group.get_by_role("button", name="Continue anyway"))
         self.assertIn("this click is the override", self.dialogs[-1])

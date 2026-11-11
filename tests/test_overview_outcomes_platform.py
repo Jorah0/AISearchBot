@@ -129,7 +129,7 @@ class Loop(Base):
         calls = []
         with patched(loop, setting=env()), patched(util, setting=env()), \
                 patched(email_monitor, check=lambda *a, **k: calls.append(1)), \
-                patched(web_monitor, check_watches=lambda: None, recheck_postings=lambda: None), \
+                patched(web_monitor, check_watches=lambda: None, check_listings=lambda: None), \
                 patched(loop, _backup=lambda: None, _digest=lambda a: None), contextlib.redirect_stdout(io.StringIO()) as out:
             loop.STATUS["last_error"] = "09:00 email: email is not connected"  # a problem from an earlier cycle
             loop.cycle(self.A())

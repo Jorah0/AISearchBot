@@ -161,6 +161,8 @@ FETCH = {  # util.fetch canned by URL substring; first match wins, else a plain 
     "hn.algolia.com": {"hits": []},
     "jobicy.com": {"jobs": []},
     "themuse.com": {"results": [], "page_count": 0},
+    "himalayas.app": {"jobs": []},
+    "weworkremotely.com": "<rss><channel></channel></rss>",  # a string is served as is (RSS / XML)
 }
 FETCH_HOOK = """(() => {  // counts API requests in flight and background tasks still running, for E2ETestCase.idle()
   const ls = window.__ls = { inflight: 0, tasks: new Set() }, real = window.fetch.bind(window);
@@ -260,7 +262,7 @@ class E2ETestCase(unittest.TestCase):
         def fetch(url, timeout=25, headers=None, max_bytes=None, follow=True, data=None):  # canned pages never redirect
             cls.urls.append(url)
             hit = next((v for k, v in FETCH.items() if k in url), None)
-            return POSTING if hit is None else json.dumps(hit)
+            return POSTING if hit is None else hit if isinstance(hit, str) else json.dumps(hit)
 
         cls._swap(util.fetch, fetch)
 
@@ -420,6 +422,8 @@ class E2ETestCase(unittest.TestCase):
 
     # --- per test: a fresh context and page, console guard, artifacts on failure
     def setUp(self):
+        web_monitor._CACHE.clear(); web_monitor._ANSWERS.clear()  # each test asks the (fake) boards afresh: no throttle
+        db.con().execute("DELETE FROM meta WHERE key LIKE 'src:%'"); db.con().commit(); db.release()
         self.errors, self.dialogs, self._answers, self._allowed = [], [], [], []
         self.context = self.browser.new_context(viewport={"width": 1280, "height": 900})
         self.context.add_init_script(FETCH_HOOK)

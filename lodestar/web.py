@@ -101,7 +101,7 @@ def _doc_index() -> list[dict]:
     return out
 
 
-CLAIM = {"gap": "score", "research": "research", "tailor": "tailor", "bullets": "tailor", "bullets_apply": "tailor",
+CLAIM = {"research": "research", "tailor": "tailor", "bullets": "tailor", "bullets_apply": "tailor",
          "cover": "letter", "prep": "prep", "thanks": "thanks"}  # drawer buttons doing a pipeline step's work by hand
 
 
@@ -154,8 +154,83 @@ def _ready_short(job) -> dict | None:
                      f"{r['chance']['band'].capitalize()} (not a probability)"}
 
 
+def _with_fit(listings: list[dict]) -> list[dict]:
+    """The fit of each search result (not stored: results are not tracked yet), light: score, known, top chips."""
+    from . import fit
+
+    try:
+        ctx = None
+        for j in listings:  # listings.store scored each result already; a row it could not score is scored here
+            f = j.pop("fit", None) or fit.for_listing({k: v for k, v in j.items() if k != "id"}, ctx := ctx or fit.context())
+            j |= fit.light(f)
+    except (Exception, SystemExit) as e:  # results still show without a fit
+        log.get("web").warning("search fit failed: %s", e)
+    return listings
+
+
+def track_posting(pid: int) -> int:
+    """Today's Top new fits / All jobs > Track: a user click, so the job is added directly and the row linked."""
+    from . import listings
+
+    return listings.track(pid)
+
+
+def sources_view() -> dict:
+    """Setup > Job sources and the Jobs tab: each board, ready or needing keys (vault names), its throttle and credit."""
+    from . import web_monitor
+    from .config import setting
+
+    ready, out = set(web_monitor.sources_ready()), {}
+    for n in web_monitor.SOURCES:
+        label, home = web_monitor.ATTRIBUTION.get(n, (n, ""))
+        row = db.con().execute("SELECT value FROM meta WHERE key=?", (f"src:{n}",)).fetchone()
+        out[n] = {"label": label, "home": home, "ready": n in ready, "every_h": round(web_monitor.EVERY.get(n, 0) / 3600, 1),
+                  "global": n in web_monitor.GLOBAL, "last": row["value"] if row else None,
+                  "keys": [{"name": k, "set": bool(setting(k))} for k in web_monitor.KEYED.get(n, ())]}
+    return out
+
+
+def use_live_jd(jid: int) -> bool:
+    """Replace the job's JD with the posting's current description (the listing monitor's snapshot): the user's click,
+    since they may have tailored against the old one. False when there is nothing newer on file."""
+    from .config import SNAPSHOTS
+    from .resume import set_jd
+
+    snap = SNAPSHOTS / f"job-{int(jid)}.json"
+    desc = json.loads(snap.read_text(encoding="utf-8")).get("desc", "") if snap.is_file() else ""
+    if not desc.strip():
+        raise ValueError("no live description on file yet: the listing monitor has not read this posting")
+    if desc == (db.get_job(jid)["jd"] or ""):
+        return False
+    set_jd(jid, desc)
+    db.add_event(jid, "note", "job description replaced by the live posting's")
+    return True
+
+
+def alert_sites() -> dict:
+    """{site: {label, last, n}}: when Lodestar last read that site's alert mail and how many jobs it held (meta)."""
+    from . import alerts
+
+    return {n: {"label": s["label"], "last": db.meta_get(f"alerts:{n}:last") or None, "n": db.meta_get(f"alerts:{n}:n")}
+            for n, s in alerts.SITES.items()}
+
+
 def _job_extras(job) -> dict:
-    """GET /api/jobs/<id>: the readiness breakdown and a summary of the practice set (counts, never the questions)."""
+    """GET /api/jobs/<id>: Job intelligence and Chance boosters (pass 21), the readiness breakdown and a summary of the
+    practice set (counts, never the questions)."""
+    from . import boosters, intel
+
+    out = {}
+    for k, f in (("intel", intel.view), ("boosters", boosters.view)):
+        try:
+            out[k] = f(job)
+        except (Exception, SystemExit) as e:  # the drawer still opens; its group says it could not be worked out
+            log.get("web").warning("%s #%s failed: %s", k, job["id"], e)
+            out[k] = None
+    return out | _ready_extras(job)
+
+
+def _ready_extras(job) -> dict:
     from . import readiness
     from .interview import question_set
 
@@ -277,22 +352,49 @@ def _do(action: str, p: dict):
             return email_monitor.draft_reply(job, p.get("intent", "polite follow-up"), prov)
         case "email_check":
             found = email_monitor.check(int(p.get("days", 3)), dry=bool(p.get("dry")), provider=prov)
-            return {"found": found, "note": "" if prov or ai.available() else  # say why nothing else was classified
+            return {"found": found, "alerts": getattr(found, "alerts", 0), "note": "" if prov or ai.available() else  # say why nothing else was classified
                     "no AI provider: only replies tied to a job were filed; other mail waits until you link a key in Setup > Link an AI key"}
         case "watch_run":
             return {"alerts": web_monitor.check_watches()}
+        case "fit_refresh":  # stale fits (profile, preferences or weights changed): no AI
+            from . import fit
+
+            return fit.refresh()
+        case "listing_ai":  # {listing}: All jobs > AI fit (a user click): one rank() call, stored as the row's AI part
+            from . import fit
+
+            return {"fit": fit.ai_listing(int(p["listing"]), prov)}
+        case "intel":  # {id, refresh?}: Job intelligence > Gather public facts (company site + its feed, Wikipedia)
+            from . import intel
+
+            intel.gather(job, bool(p.get("refresh")))
+            return intel.view(job)
+        case "intel_ai":  # {id}: one AI summary of the panel's items, every line citing its sources
+            from . import intel
+
+            return intel.summarize(job, prov)
+        case "boost_ai":  # {id}: Chance boosters > More from AI: up to 3 job-specific additions with their basis
+            from . import boosters
+
+            boosters.ai_add(job, prov)
+            return boosters.view(job)
+        case "job_ai":  # {id}: the drawer's AI fit: one rank() call on this job, stored as its AI part
+            from . import fit
+
+            return {"fit": fit.ai_judge(job["id"], prov)}
         case "search":  # filters: location (or 'remote'), min_salary, posted_within (days), seniority
             from .contacts import with_warm
 
             errs: list[str] = []  # boards that could not be read: 'nothing found' must not hide 'nothing checked'
-            found = with_warm(web_monitor.with_coverage(web_monitor.search(p["query"], p.get("keywords") or "", errors=errs,
-                                                                           **_filters(p))[:40]))
+            found = with_warm(web_monitor.search(p["query"], p.get("keywords") or "", errors=errs, ran=(ran := []),
+                                                 **_filters(p))[:40])
+            _with_fit(found)
             if p.get("rank") and found:
                 try:
                     found = web_monitor.rank(found, prov)
                 except SystemExit as e:  # no provider / rejected model: the listings still show, unranked, with why
                     errs.append(f"AI rank: {e}")
-            return {"results": found, "errors": errs, "boards": len(web_monitor.SOURCES)}
+            return {"results": found, "errors": errs, "boards": len(ran), "ids": [j["id"] for j in found if j.get("id")]}
         case "chat":
             return {"reply": ai.chat(p["messages"], _coach_system(), prov)}
         case "mock":
@@ -407,8 +509,8 @@ def _do(action: str, p: dict):
             return rep
         case "auto_track":
             errs = []
-            found = web_monitor.search(p["query"], p.get("keywords") or "", errors=errs, **_filters(p))
-            if not found and len(errs) >= len(web_monitor.SOURCES):
+            found = web_monitor.search(p["query"], p.get("keywords") or "", errors=errs, ran=(ran := []), **_filters(p))
+            if not found and ran and len(errs) >= len(ran):
                 raise SystemExit("no job board could be reached, so nothing was judged: " + "; ".join(errs)[:400])
             return {"results": apply.auto_track(found[:40], prov), "errors": errs}
         case "craft":
@@ -538,18 +640,22 @@ def _filters(p: dict) -> dict:
     return clean_filters(**{k: p.get(k) for k in FILTER_KEYS})
 
 
-def _job_view(j, idx=None, revs=None, pidx=None) -> dict:
+def _job_view(j, idx=None, revs=None, pidx=None, frev=None) -> dict:
     """A tracked job for the board: its row plus a sponsor hint, the people you know there and, while it is still only
     saved, stale signals. idx: contacts.warm_index(), built once per board. revs: profile.section_revs(), read once per
     board: profile_changed names the profile sections its resume.md drew on that changed since it was made.
-    pidx: paydata.index(), read once per board: the cached BLS market pay (never the network)."""
+    pidx: paydata.index(), read once per board: the cached BLS market pay (never the network). frev: fit.rev(), read
+    once per board: the fit travels light (score, known, stale, top chips); GET /api/jobs/<id> has the breakdown."""
+    from . import fit
     from .contacts import warm
     from .profile import changed_sections
     from .web_monitor import ghost_signals, sponsor_hint
 
     changed = changed_sections(j["profile_rev"], revs) if revs is not None else []
-    return dict(j) | {"ghost": ghost_signals(j) if j["status"] == "saved" else None, "sponsor": sponsor_hint(j["company"]),
-                      "warm": warm(j["company"], idx), "profile_changed": changed, "pay": _pay_view(j, pidx)}
+    row = {k: v for k, v in dict(j).items() if k not in ("fit", "ai_fit")}
+    return row | fit.light(fit.stored(j), frev) | {
+        "ghost": ghost_signals(j) if j["status"] == "saved" else None, "sponsor": sponsor_hint(j["company"]),
+        "warm": warm(j["company"], idx), "profile_changed": changed, "pay": _pay_view(j, pidx)}
 
 
 def _pay_view(j, pidx=None) -> dict:
@@ -652,6 +758,14 @@ def capture(p: dict) -> dict:
     # duplicate: false, and add_job still stores one card
     jid = db.add_job(company or "Unknown company", title or "Unknown role", url, jd,
                      f"captured from {str(p.get('url') or '')[:2048]}", **listing_fields(post))
+    try:  # All jobs gets the posting too, linked to the job (merged with any feed or search copy of it)
+        from . import listings
+
+        listings.store([{"title": title or "Unknown role", "company": company, "url": url, "location": post["location"],
+                         "salary": " ".join(post["salary"].split()), "date": post["posted_at"], "desc": desc}],
+                       source="capture", job_id=jid)
+    except (Exception, SystemExit) as e:  # the card is what the click asked for; the listing copy is a bonus
+        log.get("web").warning("capture: listing not stored: %s", e)
     return {"id": jid, "company": company, "title": title, "duplicate": bool(dup)}
 
 
@@ -718,18 +832,29 @@ def state() -> dict:
         revs = profile.section_revs()
     except (Exception, SystemExit):  # an unreadable profile never costs the board
         revs = None
-    linked = {e["key"] for e in connections.REGISTRY.values() if e["key"]}  # shown on the Link an AI key card instead
+    linked = {k for e in connections.REGISTRY.values() for k in (e["key"], e.get("id")) if k}  # shown on the Link an AI key card instead
     try:
         pidx = paydata.index()
     except (Exception, SystemExit):
         pidx = {"on": False, "home": [], "rows": {}}
+    from . import fit
+
+    try:
+        frev = fit.rev()
+        fstale = fit.stale_count(frev)
+    except (Exception, SystemExit):  # the board never waits on the fit
+        frev, fstale = None, 0
     return {
         "version": __version__,
         "setup": setup_status(conn),
         "connections": conn,
         "codes_count": len(codes.current()),  # the count only: a code never travels in the state
         "loop": dict(loop.STATUS),
-        "jobs": [_job_view(j, idx, revs, pidx) for j in db.list_jobs()],
+        "jobs": [_job_view(j, idx, revs, pidx, frev) for j in db.list_jobs()],
+        "fit_rev": frev,  # a job whose fit was scored at another rev is stale (dimmed); the page asks for a refresh
+        "fit_stale": fstale,
+        "sources": sources_view(),  # Setup > Job sources and the Jobs tab: ready / needs keys, throttle, credit
+        "alert_sites": alert_sites(),  # Setup > Job alerts: per site, the last alert mail read and its job count
         "contact_roles": ROLES,
         "statuses": db.STATUSES,
         "doc_names": sorted(DOC_NAMES),  # the drawer offers Edit / Adjust for these only
@@ -886,6 +1011,10 @@ class Handler(BaseHTTPRequestHandler):
                 s = interview.question_set(job)  # the full set: every string is escaped client-side
                 self._json({k: s[k] for k in ("questions", "emphasis", "emphasis_text", "hits", "dropped", "by_source",
                                               "stale", "built_at", "ai_at", "ai_error", "site")})
+            elif path == "/api/boosters":  # Insights: chance boosters across the search (rules only, no AI, no network)
+                from . import boosters
+
+                self._json({"boosters": boosters.across(12)})
             elif path == "/api/readiness/calibration":  # your record: evidence table, state, caveat (Insights)
                 from . import readiness
 
@@ -897,13 +1026,17 @@ class Handler(BaseHTTPRequestHandler):
                 from .contacts import job_people, warm
 
                 job = db.get_job(int(path.split("/")[3]))
-                self._json({"job": dict(job), "events": [dict(e) for e in db.events(job["id"])], "docs": _docs(job),
+                from . import fit, listings
+
+                self._json({"job": {k: v for k, v in dict(job).items() if k not in ("fit", "ai_fit")}
+                            | fit.light(fit.stored(job), fit.rev()), "fit": fit.stored(job), "events": [dict(e) for e in db.events(job["id"])], "docs": _docs(job),
                             "people": job_people(job["id"]), "warm": warm(job["company"]),
                             "rounds": interview.rounds(job["id"]), "bank": interview.question_bank(job, False)[:30],
                             "stress": interview.story_prompt(job), "mail": [dict(r) for r in db.list_mail(job["id"])],
                             "pipeline": pipeline.status(job["id"]), "questions": pipeline.questions(job=job["id"]),
                             "runs": pipeline.log_runs(job["id"], 10), "pay": _pay_view(job),
-                            "occupations": paydata.data()["occupations"], **_job_extras(job)})
+                            "occupations": paydata.data()["occupations"], "activity": listings.activity(job["id"]),
+                            "posting": listings.posting_of(job), **_job_extras(job)})
             elif path.startswith("/api/advise"):  # the AI advisor (advisor.py): scopes | ?scope=&target= | history
                 from urllib.parse import parse_qs
 
@@ -917,6 +1050,27 @@ class Handler(BaseHTTPRequestHandler):
                                 "ai": bool(ai.available())})
                 else:
                     self._json({"error": "not found"}, 404)
+            elif path == "/api/listings":  # All jobs: ?q&source(,)&min_fit&remote&min_salary&days&new&show&sort&offset
+                from urllib.parse import parse_qs
+
+                from . import listings
+
+                q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+                num = lambda k: int(q[k]) if q.get(k, "").isdigit() else 0  # noqa: E731
+                try:
+                    self._json(listings.query(q.get("q", ""), [s for s in q.get("source", "").split(",") if s],
+                                              num("min_fit"), q.get("remote", ""), q.get("min_salary") or None,
+                                              q.get("days") or None, q.get("new") in ("1", "true"), q.get("show", "open"),
+                                              q.get("sort", "fit"), num("offset")) | {"boards": sources_view()})
+                except SystemExit as e:  # a bad filter value: said, not a 500
+                    self._json({"error": str(e)}, 400)
+            elif path.startswith("/api/listings/") and path.split("/")[3].isdigit():
+                from . import listings
+
+                try:
+                    self._json(listings.get(int(path.split("/")[3])))
+                except SystemExit as e:
+                    self._json({"error": str(e)}, 404)
             elif path == "/api/questions":  # ?all=1 (answered and dismissed too) &job=ID
                 from urllib.parse import parse_qs
 
@@ -1122,6 +1276,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(extension.new_code() | {"port": self.server.server_address[1]})
             elif path == "/api/extension/revoke":
                 self._json({"ok": extension.revoke(str(p.get("id") or ""))})
+            elif path.startswith("/api/listings/") and len(parts) == 5 and parts[4] == "track":
+                self._json({"id": track_posting(int(parts[3]))})
+            elif path.startswith("/api/listings/") and len(parts) == 5 and parts[4] == "dismiss":
+                from . import listings
+
+                listings.dismiss(int(parts[3]), p.get("on", True) is not False)
+                self._json({"ok": True})
+            elif path == "/api/listings/visit":  # Mark all seen
+                from . import listings
+
+                self._json({"visit": listings.visit()})
             elif path.startswith("/api/jobs/") and len(parts) == 5:
                 jid, op, out = int(parts[3]), parts[4], {"ok": True}
                 if op == "status":
@@ -1147,8 +1312,13 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError(f"not an email address: {email[:80]}")
                     db.update_job(jid, contact_email=email or None, contact_name=name[:120])
                     out["contact_id"] = from_job_contact(jid, name, email)  # also filed under Contacts (recruiter)
+                elif op == "live_jd":  # Use live description: the listing monitor's last copy of the posting
+                    out["changed"] = use_live_jd(jid)
                 elif op == "fields":  # tracker details; db.set_fields whitelists and validates every key
+                    from .resume import refit
+
                     db.set_fields(jid, **{str(k): v for k, v in p.items()})
+                    refit(jid)  # location, workplace and pay are fit inputs
                 elif op == "skip":  # {term}: JD coverage keyword "not mine" on/off; answers with the recomputed coverage
                     from .resume import toggle_skip
 
@@ -1405,7 +1575,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/keys/") and len(parts) == 4:  # link {name, key} | check {name?} | remove {name}
                 op = parts[3]
                 if op == "link":  # the key goes into the vault and is verified at once; it never comes back
-                    self._json(connections.link(p.get("name", ""), p.get("key")))
+                    self._json(connections.link(p.get("name", ""), p.get("key"), **({"ident": p["id"]} if p.get("id") else {})))
                 elif op == "check" and p.get("name"):
                     connections.check(p["name"])
                     self._json(connections.status())
@@ -1542,8 +1712,10 @@ class Handler(BaseHTTPRequestHandler):
                     extras.restore_check(extras.backup_file(p.get("name")))
                 if parts[3] == "mock":
                     _check_mock(p)
-                if parts[3] in ("qset", "readiness_explain"):
+                if parts[3] in ("qset", "readiness_explain", "job_ai", "intel", "intel_ai", "boost_ai"):
                     db.get_job(int(p.get("id")))
+                if parts[3] in ("intel_ai", "boost_ai") and not ai.available():  # said now, not as a failed task
+                    raise SystemExit(f"This needs an AI provider. {ai.NO_PROVIDER}")
                 self._json({"task": start_task(parts[3], p)})
             else:
                 self._json({"error": "not found"}, 404)

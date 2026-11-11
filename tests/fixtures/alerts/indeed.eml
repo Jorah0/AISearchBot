@@ -1,0 +1,37 @@
+Authentication-Results: mx.example.net; dkim=pass header.d=indeed.com
+ header.s=s1; spf=pass smtp.mailfrom=indeed.com; dmarc=pass
+ header.from=indeed.com
+From: Indeed <alert@indeed.com>
+To: pat.rivera@example.com
+Subject: 2 new data engineer jobs
+Date: Tue, 10 Nov 2026 08:00:00 +0000
+Message-ID: <indeed.fixture@indeed.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="===============7740887500504131530=="
+
+--===============7740887500504131530==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+This alert is best viewed as HTML.
+
+--===============7740887500504131530==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<html><body><h1>data engineer jobs</h1><table><tr><td><a href=3D"https://cts.=
+indeed.com/v3/H4sIAAAAAAAA?url=3Dhttps%3A%2F%2Fwww.indeed.com%2Frc%2Fclk%2Fdl=
+%3Fjk%3D0a1b2c3d4e5f6a7b%26from%3Dja%26tk%3Dabc"><b>Analytics Engineer</b></a=
+></td></tr>
+<tr><td>Bramblecrest - Denver, CO</td></tr><tr><td>$95,000 - $110,000 a year<=
+/td></tr><tr><td>Easily apply</td></tr><tr><td>Just posted</td></tr></table><=
+table><tr><td><a href=3D"https://cts.indeed.com/v3/H4sIAAAAAAAA?url=3Dhttps%3=
+A%2F%2Fwww.indeed.com%2Frc%2Fclk%2Fdl%3Fjk%3D1b2c3d4e5f6a7b8c%26from%3Dja%26t=
+k%3Dabc"><b>Data Engineer II</b></a></td></tr>
+<tr><td>Fernwood Analytics - Remote</td></tr><tr><td>Easily apply</td></tr><t=
+r><td>2 days ago</td></tr></table><p><a href=3D'https://www.indeed.com/alerts=
+/unsubscribe?id=3D1'>Unsubscribe</a> &copy; 2026 Indeed</p></body></html>
+
+--===============7740887500504131530==--

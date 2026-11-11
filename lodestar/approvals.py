@@ -208,6 +208,9 @@ def _status(p: dict) -> str:
 def _add_job(p: dict) -> str:
     jid = db.add_job(p["company"], p["title"], p.get("url"), p.get("jd"), p.get("notes"), p.get("ats_feed"),
                      **{k: p[k] for k in ("location", "posted_at") if p.get(k)})  # validated: an edited bad date fails here
+    if p.get("posting_key"):  # auto_track: the All jobs row it came from (its text key: a rowid can be handed out again)
+        db.con().execute("UPDATE postings SET job_id=? WHERE key=? AND job_id IS NULL", (jid, str(p["posting_key"])))
+        db.con().commit()
     if p.get("contact_email"):
         db.update_job(jid, contact_email=p["contact_email"], contact_name=p.get("contact_name", ""))
     m = p.get("message_id") and db.mail_by_message_id(p["message_id"])

@@ -227,7 +227,9 @@ class Sourcing(Base):
             for j in listings:
                 j["score"] = 90
             return listings
-        wm.rank = fake_rank
+        wm.rank, ai.available = fake_rank, lambda: ["anthropic"]
+        PROFILE.write_text(REAL, encoding="utf-8")
+        settings.set_pref("auto_track_min_score", 50)  # the blended fit (pass 21), not the raw AI 90, meets the bar
         proposed = apply.auto_track(found)
         self.assertEqual([p["url"] for p in proposed], ["https://j/2"])
         self.assertIn("already tracked", found[0]["why"])
@@ -287,7 +289,7 @@ class Security(Base):
         self.assertEqual(wm._posting_id(db.get_job(sr)["url"]), "743999999999")
         self.assertEqual(wm._posting_id(db.get_job(wd)["url"]), "R12345")
         with patched(wm, fetch_json=lambda url, **k: json.loads(json.dumps(GH))):
-            proposed = wm.recheck_postings(datetime(2026, 11, 2))
+            proposed = wm.check_listings(datetime(2026, 11, 2))
         self.assertEqual(proposed, [gone])  # a real Greenhouse posting that left the feed is still caught
         self.assertFalse(any(e["kind"] == "posting_removed" for j in (sr, wd) for e in db.events(j)))
 

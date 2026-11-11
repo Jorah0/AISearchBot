@@ -1,0 +1,37 @@
+Authentication-Results: mx.example.net; dkim=pass header.d=ziprecruiter.com
+ header.s=s1; spf=pass smtp.mailfrom=ziprecruiter.com; dmarc=pass
+ header.from=ziprecruiter.com
+From: ZipRecruiter <alerts@ziprecruiter.com>
+To: pat.rivera@example.com
+Subject: New jobs: data platform
+Date: Tue, 10 Nov 2026 08:00:00 +0000
+Message-ID: <ziprecruiter.fixture@ziprecruiter.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="===============8264403058756952147=="
+
+--===============8264403058756952147==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+This alert is best viewed as HTML.
+
+--===============8264403058756952147==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<html><body><p>Jobs matching data platform</p>
+<div><a href=3D"https://click.zipmail.example/ls/click?upn=3DAbC123opaque&otp=
+Token=3DZIPSECRET77">Data Platform Engineer</a>
+<div>Ostrava Systems</div><div>Lisbon, Portugal</div><div>$140,000 - $165,000=
+</div>
+<a href=3D"https://click.zipmail.example/ls/click?upn=3DAbC124opaque">1-Click=
+ Apply</a></div>
+<div><a href=3D"https://click.zipmail.example/ls/click?upn=3DDeF456opaque">Si=
+te Reliability Engineer</a>
+<div>Thistledown Co</div><div>Remote</div></div>
+<p><a href=3D"https://click.zipmail.example/ls/click?upn=3DUnsub999">Unsubscr=
+ibe</a> &copy; 2026 ZipRecruiter</p></body></html>
+
+--===============8264403058756952147==--

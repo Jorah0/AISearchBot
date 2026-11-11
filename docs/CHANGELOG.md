@@ -1,5 +1,71 @@
 # Changelog (development passes, newest first)
 
+## Pass 21 (2026-11-11): fit score, sourcing everywhere, alerts, listing monitor, chance boosters
+
+**Fit score: how well a job suits you, 0 to 100**
+- Every job and every listing gets a fit score without any AI: your skills against what the posting requires (and,
+  separately, what it only calls nice to have), the role and level, the years it asks for against yours, the place,
+  and the pay against your private floor (pay under the floor lowers the score; it never blocks a job, and the floor
+  itself never appears anywhere). Chips say why ("missing kubernetes", "remote OK", "possibly stale").
+- When too little can be measured (a listing with a title only) the score leans toward 50 and says "partial".
+- It shows on the board card, in a Fit column (the old Match column is now Coverage, right after it), in a Fit group in
+  the job drawer with every part, its weight, and "Why not higher?", and as a "best fit" sort. AI fit adds one AI
+  judgement as one part when you click it. Tools > Preferences > Fit weights changes the weights (`pay=0` switches a
+  part off and now reads "pay=0 (off)"); Reset weights goes back to the defaults.
+- `lodestar fit ID` prints the breakdown; Insights now shows the response rate by fit score.
+- Headings such as "Nice to have" or "Preferred qualifications" are read from job pages too, so those skills no longer
+  count as required (no false "missing" chips or "close a gap" suggestions).
+- The interview-readiness chance band is now capped by the fit.
+
+**One Jobs tab for every site**
+- The Search tab is now **Jobs**: one All jobs list of every listing any source found (job APIs, saved searches,
+  company boards, the browser extension and job-alert emails), merged when several sites list the same posting, with
+  source chips, "new since your last visit", Track, Dismiss and AI fit. `lodestar jobs all` lists it too.
+- New sources: Himalayas, We Work Remotely, and Adzuna and USAJOBS once you add their free keys (Setup > Job sources).
+  SmartRecruiters, Recruitee and Personio company boards work where the employer made them public.
+- Each board is asked only as often as its terms allow (Remotive about 4 times a day, Jobicy once an hour), and that now
+  holds across restarts and separate `lodestar jobs search` runs: inside the window Lodestar reuses the last answer it
+  saved, or skips the board.
+- Two openings with the same title at one company (different posting ids) now stay two rows; the second is no longer
+  called a repost of the first, and the first job's fit is no longer lowered for it.
+- Without an AI key, strong rules-only matches are proposed for tracking (at most 10 a day); those proposals always
+  wait in your Inbox, even when the tool is set to auto.
+
+**Job-alert emails**
+- With email connected, LinkedIn, Indeed, Glassdoor and ZipRecruiter job alerts in your own inbox are read into All
+  jobs (Setup > Job alerts, on by default). Only mail from the site's known alert address that passed DKIM/DMARC
+  counts. Alerts are never sent to the AI, never stored as mail, and their links are never opened by Lodestar; sign-in
+  tokens are stripped from the links that are kept. Check email now says how many new listings the alerts held.
+- LinkedIn's "your application was sent" mail is no longer mistaken for an alert: it is read as an application
+  confirmation again.
+- `lodestar email parse-alert FILE.eml` shows what Lodestar reads from a saved alert.
+
+**Listing monitor**
+- Once a day Lodestar checks the posting of every open tracked job: changes to the title, place, pay or description
+  (with a diff saved in the job folder; your JD is replaced only when you click Use live description), removals (two
+  misses in a row first; a saved job gets a withdraw proposal, an applied one a Today item) and reopenings. LinkedIn,
+  Indeed, Glassdoor, ZipRecruiter and links from alert mail are never fetched.
+- Confirmation and status mail from applicant systems (Greenhouse, Workday, iCIMS and others) is filed under the right
+  job with the reason it was linked; it never counts as trusted and its status changes always wait for you.
+- The drawer's **Listing activity** shows it all in one timeline: posting checks, alert sightings and mail.
+
+**Job intelligence and chance boosters**
+- The drawer's **Job intelligence**: company facts and recent news from the company's own site and Wikipedia (only on
+  your click, robots.txt respected, never a job board), hiring signals from your own listing history, the role and pay
+  context, each with its source and date; an AI summary keeps only lines that cite a source.
+- **Chance boosters**: specific actions ranked by expected effect (high, medium, low; never a number), such as apply
+  while the posting is fresh, ask a contact for a referral, tailor to the missing must-haves, close a named skill gap,
+  follow up on time, prepare the stories the company stresses, fix resume issues, and where your own response record
+  is better. Each has a button into the feature. "More from AI" adds up to 3 more, each with its basis; anything that
+  states odds or a multiplier ("4x more likely") or cites a source or posting text that does not exist is dropped.
+- Today and Insights list the best boosters across your search; `lodestar boosters` and `lodestar intel ID` do the same.
+
+**What you need to do**
+- Save one real LinkedIn and one real Indeed alert email (as .eml) and run `lodestar email parse-alert FILE.eml`: the
+  alert formats were built from made-up samples, so a real one confirms the parser (a missing sender is a one-line fix).
+- For Adzuna and USAJOBS results, add their free keys under Setup > Job sources (`lodestar keys link adzuna` /
+  `usajobs`).
+
 ## Pass 20 (2026-11-11): browser extension, market pay data, command palette, restore
 
 **Browser extension for Edge and Chrome (replaces the bookmarklets)**

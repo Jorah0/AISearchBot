@@ -25,11 +25,12 @@ def _job_line(j) -> str:
 
 
 def _details(j) -> str:
-    """Tracker fields worth a glance on a list line: pay, match, excitement, workplace, deadline, tags."""
+    """Tracker fields worth a glance on a list line: pay, fit, JD coverage, excitement, workplace, deadline, tags."""
     lo, hi = j["salary_min"], j["salary_max"]
     pay = (f"{j['currency'] or ''} {lo:,}-{hi:,}" if lo is not None and hi is not None and lo != hi
            else f"{j['currency'] or ''} {(hi if hi is not None else lo):,}" if (lo, hi) != (None, None) else "")
-    bits = [pay.strip(), f"match {j['match_score']}" if j["match_score"] is not None else "",
+    bits = [pay.strip(), f"fit {j['fit_score']}" if j["fit_score"] is not None else "",
+            f"coverage {j['match_score']}" if j["match_score"] is not None else "",
             "*" * (j["excitement"] or 0), j["remote"] or "", f"due {j['deadline']}" if j["deadline"] else "",
             f"[{j['tags']}]" if j["tags"] else ""]
     return "  ".join(b for b in bits if b)
@@ -222,8 +223,16 @@ def cmd_jobs(a):
     elif op == "show":
         j = db.get_job(a.id)
         _p({k: (j[k][:800] if isinstance(j[k], str) else j[k]) for k in j.keys()})
-        for e in db.events(a.id):
-            print(f"  {e['ts']}  {e['kind']:<14} {e['detail'] or ''}")
+        from .connections import local
+        from .listings import activity
+
+        print("listing activity (newest first):")
+        for x in activity(a.id):
+            how = ""
+            if x["src"] == "mail":
+                how = ("verified sender" if x["trusted"] else "unverified") + (f", {x['reason']}" if x["reason"] else "")
+            print(f"  {local(x['at'] or '')}  {x['src']:<5} {x.get('dir', ''):<3} {x['kind'][:18]:<18} {x['text'] or ''}"
+                  + (f"  ({how})" if how else ""))
     elif op == "status":
         db.set_status(a.id, a.status, a.note or "")
         print(f"#{a.id} -> {a.status}")
@@ -268,6 +277,25 @@ def cmd_jobs(a):
         from .extras import packet
 
         print(f"wrote {packet(db.get_job(a.id))}")
+    elif op == "all":  # All jobs: every listing any source found
+        from . import listings
+
+        r = listings.query(min_fit=a.min_fit or 0, sources=[a.source] if a.source else (), new=a.new, show=a.show,
+                           sort=a.sort, offset=a.offset)
+        print(f"{r['total']} listing(s)" + (f", showing {a.offset + 1}-{a.offset + len(r['rows'])}" if r["rows"] else "")
+              + (" · sources: " + ", ".join(f"{k} {v}" for k, v in sorted(r["sources"].items())) if r["sources"] else ""))
+        for x in r["rows"]:
+            fit = "fit  - " if x["fit_score"] is None else f"fit {x['fit_score']:>2}" + ("~" if x.get("fit_partial") else " ")
+            flags = "".join(f" [{t}]" for t, on in (("new", x["new"]), (f"tracked #{x['job_id']}", x["job_id"]),
+                                                     ("dismissed", x["dismissed"]), ("reposted", x["reposted_at"])) if on)
+            print(f"L{x['id']:<5} {fit} {x['title']} @ {x['company']} ({x['location'] or 'n/a'}) {x['salary']}"
+                  f" <{', '.join(x['sources'])}>{flags}\n         {x['url']}"
+                  + "".join(f"\n         {c}" for c in x.get("fit_chips", [])))
+    elif op == "track-listing":
+        from . import listings
+
+        jid = listings.track(a.id)
+        print(f"tracked as #{jid}")
     elif op == "followups":
         from . import settings
 
@@ -282,10 +310,10 @@ def cmd_jobs(a):
         from .contacts import with_warm
 
         errs: list[str] = []
-        found = with_warm(web_monitor.with_coverage(web_monitor.search(a.query, a.keywords or "", errors=errs,
-                                                                       **_search_filters(a))[: a.limit]))
+        ran: list[str] = []
+        found = with_warm(web_monitor.search(a.query, a.keywords or "", errors=errs, ran=ran, **_search_filters(a))[: a.limit])
         if errs:
-            print(("no job board could be reached, nothing was checked: " if len(errs) >= len(web_monitor.SOURCES)
+            print(("no job board could be reached, nothing was checked: " if len(errs) >= len(ran)
                    else "could not read: ") + "; ".join(errs), file=sys.stderr)
         if bad := [i for i in a.save or [] if not 0 <= i < len(found)]:  # checked before anything is printed or saved
             raise SystemExit(f"--save {' '.join(map(str, bad))}: no such result (this search returned {len(found)}, "
@@ -323,8 +351,9 @@ def _listing_notes(j) -> list[str]:
     from .web_monitor import GHOST_SHOW
 
     out = [f"tracked as #{j['tracked']}"] if j.get("tracked") else []
-    if c := j.get("coverage"):
-        out.append(f"JD coverage {c['score']}%  matched: {', '.join(c['matched']) or '-'}  missing: {', '.join(c['missing']) or '-'}")
+    if (f := j.get("fit")) and isinstance(f, dict):
+        out.append(f"fit {f['score']}" + (" (partial)" if f.get("partial") else "") + ": "
+                   + "; ".join(f"{c['sign']} {c['text']}" for c in f.get("chips", []) if not c.get("info"))[:300])
     unknown = [k.split("_")[0] for k in ("salary_unknown", "location_unknown", "date_unknown") if j.get(k)]
     if unknown:
         out.append(f"unknown {', '.join(unknown)} (kept: the filter could not tell)")
@@ -713,6 +742,48 @@ def cmd_match(a):
     print(_coverage_text(cov))
 
 
+def cmd_fit(a):
+    """`lodestar fit ID`: the fit breakdown (scored now when missing or stale); `lodestar fit refresh`: every stale fit."""
+    from . import fit
+
+    if a.target == "refresh":
+        r = fit.refresh(a.limit)
+        print(f"re-scored {r['jobs']} job(s) and {r['listings']} listing(s); {r['left']} left")
+        return
+    if not a.target.isdigit():
+        raise SystemExit("lodestar fit ID | lodestar fit refresh")
+    job = db.get_job(int(a.target))
+    if fit.stored(job) is None or job["fit_rev"] != fit.rev():
+        fit.for_job(job)
+        job = db.get_job(job["id"])
+    print(fit.breakdown_text(job))
+
+
+def cmd_intel(a):
+    """`lodestar intel ID [--gather|--refresh] [--summary]`: the job's public facts with their sources and dates."""
+    from . import intel
+
+    job = db.get_job(a.id)
+    if a.gather or a.refresh:
+        intel.gather(job, a.refresh)
+    if a.summary:
+        intel.summarize(job, a.provider)
+    print(intel.text(job))
+
+
+def cmd_boosters(a):
+    """`lodestar boosters [ID] [--ai]`: chance boosters for one job (rules, plus AI additions with --ai), else across
+    the search. Expected effect only, never a probability."""
+    from . import boosters
+
+    job = db.get_job(a.id) if a.id else None
+    if a.ai:
+        if not job:
+            raise SystemExit("--ai needs a job id: lodestar boosters ID --ai")
+        boosters.ai_add(job, a.provider)
+    print(boosters.text(job))
+
+
 def _mail_test_text(r: dict) -> str:
     lines = [f"{k.upper():<5} {'ok  ' if r[k]['ok'] else 'FAIL'} {r[k]['detail']}" for k in ("imap", "smtp")]
     return "\n".join(lines + ([f"hint: {r['hint']}"] if r["hint"] else []))
@@ -740,6 +811,18 @@ def cmd_email(a):
             print(f"WARNING: {x}")
         if st["configured"]:
             print(_mail_test_text(mailconn.test()))
+    elif a.op == "parse-alert":  # the debugging tool for alert format changes: reads a saved .eml, changes nothing
+        from . import alerts
+
+        r = alerts.parse_file(Path(a.file).read_bytes(), a.trust)
+        print(f"sender: {r['sender'] or '(none)'} (local part '{r['local']}')  site: {r['site'] or 'not a known alert sender'}"
+              f"  authenticated: {'yes' if r['authenticated'] else 'no (use --trust for a saved file)'}")
+        if not r["site"]:
+            print("  add the local part to that site's alert_from in lodestar/alerts.py if this is a job alert")
+        for i, x in enumerate(r["rows"], 1):
+            print(f"{i:>3}. {x['title']} @ {x['company']} | {x['location'] or '-'} | {x['salary'] or '-'} | "
+                  f"{x['date'] or '-'}\n     {x['url'] or '(no https link kept)'}")
+        print(f"{len(r['rows'])} job(s) read")
     elif a.op == "test":
         print(_mail_test_text(mailconn.test()))
     elif a.op == "test-send":
@@ -796,6 +879,8 @@ def cmd_email(a):
     elif a.op == "check":
         found = email_monitor.check(a.days, dry=a.dry, provider=a.provider)
         print(f"\n{len(found)} relevant email(s)")
+        if getattr(found, "alerts", 0):
+            print(f"{found.alerts} new listing(s) from job alerts in All jobs (lodestar jobs all)")
     elif a.op == "reply":
         _print_mail(email_monitor.draft_reply(db.get_job(a.id), a.intent, a.provider))
 
@@ -1016,7 +1101,8 @@ def cmd_keys(a):
             e = connections.REGISTRY[name]
             print(f"Get a key: {e['get']}" + (f"  ({e['hint']})" if e["hint"] else ""))
             key = getpass.getpass(f"{e['label']} key (not shown): ")
-        r = connections.link(name, key)
+        ident = input(f"{e['id_label']}: ") if connections.REGISTRY[name].get("id") else None
+        r = connections.link(name, key, ident)
         print(f"{r['label']}: {r['status']} - {r['detail']}")
         for k in ("prefix_warning", "shadowed"):
             if r.get(k):
@@ -1532,7 +1618,8 @@ def cmd_today(a):
 
     ag = agenda()
     for label, key in (("Next actions due", "actions"), ("Deadlines within 3 days", "deadlines"),
-                       ("Interviews within 48 h", "interviews"), ("Follow-ups due", "followups")):
+                       ("Interviews within 48 h", "interviews"), ("Follow-ups due", "followups"),
+                       ("Postings closed (last 7 days)", "closed")):
         print(f"{label}: {len(ag[key]) or 'none'}")
         for i in ag[key]:
             extra = f"  {'OVERDUE ' if i.get('overdue') else ''}{i['what']}" if "what" in i else ""
@@ -1543,6 +1630,10 @@ def cmd_today(a):
     print(f"Suggested emails: {len(ag['emails']) or 'none'}" + ("  (lodestar suggest)" if ag["emails"] else ""))
     for s in ag["emails"]:
         print(f"  #{s['job_id']:<4} due {s['due']:<11} {s['kind']:<9} {s['company'][:24]} - {s['reason'][:60]}")
+    print(f"Chance boosters: {len(ag['boosters']) or 'none'}" + ("  (lodestar boosters)" if ag["boosters"] else ""))
+    for b in ag["boosters"]:
+        j = b.get("job")
+        print(f"  [{b['effect']:<6}] {b['text'][:70]}" + (f"  (#{j['id']} {j['company'][:24]})" if j else ""))
     print(f"Inbox: {ag['pending']} waiting" + ("  (lodestar inbox)" if ag["pending"] else ""))
 
 
@@ -1680,7 +1771,7 @@ def cmd_insights(a):
             print(f"  {g['group']:<22} n={g['n']:<4} " + (f"response {g['response_rate']:.0%}  interview {g['interview_rate']:.0%}"
                                                        if g["enough"] else "not enough data yet"))
     rates("Response rate by source", d["by_source"])
-    rates("Response rate by match score", d["by_band"])
+    rates("Response rate by fit score", d["by_band"])
     st = d["funnel"]["stages"]
     print("\nFunnel: " + "  ".join(f"{s} {v['reached']}" + (f" -> {v['conversion']:.0%}" if v["conversion"] is not None else "")
                                    + (f" ({v['median_days_to_next']}d)" if v["median_days_to_next"] is not None else "")
@@ -1838,7 +1929,17 @@ def build() -> argparse.ArgumentParser:
     v.add_parser("funnel", help="stage conversion, median days per stage, rejections by stage, outcomes by source")
     x = v.add_parser("packet", help="zip everything about one application (documents, JD, notes)"); x.add_argument("id", type=int)
     x = v.add_parser("followups", help="applications quiet for N+ days"); x.add_argument("--days", type=int, default=None, help="default: pref followup_days")
-    x = v.add_parser("search", help="free job APIs: Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse")
+    x = v.add_parser("all", help="All jobs: every listing any source found (searches, watches, company boards, captures)")
+    x.add_argument("--new", action="store_true", help="only listings first seen since the last 'Mark all seen'")
+    x.add_argument("--min-fit", type=int, help="fit score at least this (0-100)")
+    x.add_argument("--source", help="only listings one source found, e.g. remotive, adzuna, greenhouse")
+    x.add_argument("--show", choices=("open", "tracked", "dismissed", "all"), default="open")
+    x.add_argument("--sort", choices=("fit", "new", "salary", "company"), default="fit")
+    x.add_argument("--offset", type=int, default=0)
+    x = v.add_parser("track-listing", help="add an All jobs listing (id L<n> from jobs all) to the tracker")
+    x.add_argument("id", type=int)
+    x = v.add_parser("search", help="job APIs: Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse, "
+                                    "Himalayas, We Work Remotely; Adzuna and USAJOBS once their keys are set")
     x.add_argument("query"); x.add_argument("--keywords", help="comma list, must appear in title/desc")
     x.add_argument("--rank", action="store_true", help="AI fit score vs your profile"); x.add_argument("--limit", type=int, default=25)
     x.add_argument("--save", type=int, nargs="*", help="result indexes to add to tracker")
@@ -1904,6 +2005,23 @@ def build() -> argparse.ArgumentParser:
     s.add_argument("--skip", action="append", metavar="TERM", help="mark a keyword 'not mine' for this job (again to undo)")
     s.set_defaults(f=cmd_match)
 
+    s = sub.add_parser("fit", help="fit score: one job's breakdown (parts, weights, chips), or `fit refresh` for every stale one (no AI)")
+    s.add_argument("target", help="a job id, or 'refresh'"); s.add_argument("--limit", type=int, default=300, help="refresh: at most this many")
+    s.set_defaults(f=cmd_fit)
+
+    s = sub.add_parser("intel", help="job intelligence: company facts and news, hiring signals, role and pay context, "
+                                     "each with its source and date")
+    s.add_argument("id", type=int)
+    s.add_argument("--gather", action="store_true", help="read the company's site, its news feed and Wikipedia (cached 7 days)")
+    s.add_argument("--refresh", action="store_true", help="gather again even when the cache is fresh")
+    s.add_argument("--summary", action="store_true", help="one AI summary citing the sources [S#]")
+    s.set_defaults(f=cmd_intel)
+
+    s = sub.add_parser("boosters", help="chance boosters: ranked actions with their expected effect (never a probability)")
+    s.add_argument("id", type=int, nargs="?", help="a job id; omit for the best across your search")
+    s.add_argument("--ai", action="store_true", help="one AI call: up to 3 job-specific additions, each with its basis")
+    s.set_defaults(f=cmd_boosters)
+
     s = sub.add_parser("profile", help="profile bank: saved resumes, skills, languages, LinkedIn import")
     v = s.add_subparsers(dest="op", required=True)
     v.add_parser("show", help="what the bank holds: contact, skills, languages, roles, saved resumes")
@@ -1950,6 +2068,8 @@ def build() -> argparse.ArgumentParser:
     v.add_parser("status", help="connected address and servers (never the password)")
     v.add_parser("disconnect", help="remove the stored app password, or sign out (Google: revokes the sign-in)")
     x = v.add_parser("check", help="scan the mailbox for hiring mail: classify, file under jobs, propose replies"); x.add_argument("--days", type=int, default=3); x.add_argument("--dry", action="store_true", help="report only, change nothing")
+    x = v.add_parser("parse-alert", help="show what Lodestar reads from a saved job-alert email (.eml); changes nothing")
+    x.add_argument("file"); x.add_argument("--trust", action="store_true", help="skip the DKIM/DMARC check (a saved file)")
     x = v.add_parser("reply", help="draft an email to the job's contact (waits in the Inbox)"); x.add_argument("id", type=int); x.add_argument("--intent", required=True, help="e.g. 'accept interview, propose Tue/Wed afternoons'")
     s.set_defaults(f=cmd_email)
 

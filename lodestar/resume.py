@@ -179,6 +179,17 @@ def set_jd(job_id: int, jd: str, **fields) -> None:
     """Replace a job's description (fields: e.g. the posting url) and re-score its coverage: the one JD save path."""
     db.update_job(job_id, jd=jd, **fields)
     rescore(job_id)
+    refit(job_id)
+
+
+def refit(job_id: int) -> None:
+    """The fit score follows a changed JD or tracker field; a fit failure never blocks the save."""
+    try:
+        from . import fit
+
+        fit.for_job(db.get_job(job_id))
+    except (Exception, SystemExit) as e:
+        log.get("fit").warning("fit #%s not re-scored: %s", job_id, e)
 
 
 def _gap_keywords(cov: dict) -> dict:

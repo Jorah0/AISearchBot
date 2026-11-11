@@ -62,6 +62,12 @@ Everything lives in `~/.lodestar/` (override with `LODESTAR_HOME`).
 # find jobs (free APIs, no keys) and rank them against your profile
 lodestar jobs search "python backend" --keywords remote --rank
 lodestar jobs search "data engineer" --save 0 3          # add results 0 and 3 to the tracker
+lodestar jobs all --new --min-fit 60  # All jobs: every listing any source found (job APIs, company boards, job-alert mail)
+lodestar jobs track-listing L12       # add one of them to the tracker
+lodestar fit 1                        # fit score 0-100 with its parts and reasons (no AI); `lodestar fit refresh`
+lodestar boosters 1                   # chance boosters: what would help most for job #1 (never a probability)
+lodestar intel 1 --gather             # job intelligence: company facts and news with sources and dates
+lodestar email parse-alert alert.eml  # what Lodestar reads from a saved LinkedIn / Indeed job-alert email
 
 # track an application, capture the posting
 lodestar jobs add "Acme" "Backend Engineer" --jd https://acme.com/careers/123

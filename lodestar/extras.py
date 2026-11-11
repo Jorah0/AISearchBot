@@ -1306,7 +1306,8 @@ def _rates(key, order=()) -> list[dict]:
 
 def analytics(weeks: int = 12, today: date | None = None) -> dict:
     """Insights: per-week counts of your own activity (activity_log), offers and mock sessions; response rate by source
-    and by match-score band (does tailoring pay off?); the existing funnel and resume-variant data; weekly goals."""
+    and by fit band (the fit a job had when it left 'saved', else its fit now); the existing funnel and resume-variant
+    data; weekly goals."""
     today = today or date.today()
     weeks = max(1, min(int(weeks), 104))
     first = monday(today) - timedelta(weeks=weeks - 1)
@@ -1342,5 +1343,6 @@ def analytics(weeks: int = 12, today: date | None = None) -> dict:
             v["conversion"] = None
     return {"weeks": series, "min_n": MIN_N,
             "by_source": _rates(lambda j: j["source"] or db.source_of(j["notes"])),
-            "by_band": _rates(lambda j: _band(j["match_score"]), (*BANDS, "unscored")),
+            "by_band": _rates(lambda j: _band(j["fit_applied"] if j["fit_applied"] is not None else j["fit_score"]),
+                              (*BANDS, "unscored")),
             "funnel": funnel, "variants": db.variant_stats(), "goals": goal_progress(today)}

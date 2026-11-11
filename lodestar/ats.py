@@ -137,6 +137,53 @@ def _other(jd: str, covered: list[tuple[int, int]], exclude: set[str], title_wor
     return Counter(dict(sorted(keep.items(), key=lambda x: (-x[1], -len(x[0]), x[0]))[:OTHER_CAP]))
 
 
+_HEAD_RE = re.compile(r"^\s*(?:#{1,6}\s*(?P<md>.+?)\s*#*|\*\*(?P<bold>.+?)\*\*:?|__(?P<u>.+?)__:?|(?P<colon>[^:\n]{2,59}):)\s*$")
+
+
+_BARE_REQ = re.compile(r"(?:(?:basic|minimum|required|key|core) )?(?:requirements|qualifications|responsibilities|"
+                       r"must haves?|what you(?:ll| will) (?:do|bring|need)|who you are|about (?:you|us|the role|the team)|"
+                       r"(?:the|your) role|benefits|what we offer)")
+
+
+def _bare_head(ln: str, names: list[str]) -> str | None:
+    """'nice' / 'req' for a bare heading line as strip_html leaves an <h3> or <b> heading (no colon, no markup): the
+    whole line is a nice heading (optionally + skills / qualifications / experience / requirements) or a common section
+    name. A skill line ('Kafka is a plus') is never one: only whole-line matches count."""
+    t = norm(ln).strip(" !.*•-")
+    if not t or ":" in t or len(t) > 60:
+        return None
+    if any(re.fullmatch(rf"{re.escape(n)}(?: (?:skills|qualifications|experience|requirements))?", t) for n in names):
+        return "nice"
+    return "req" if _BARE_REQ.fullmatch(t) else None
+
+
+def split_nice(jd, headings) -> tuple[str, str]:
+    """(required_text, nice_text): the posting split at heading-like lines (2-60 characters ending in ':', a Markdown
+    heading, a bold line, or a bare line that is a heading name, as strip_html leaves HTML headings). Text under a
+    heading naming one of `headings` ('Nice to have', 'Preferred', 'Bonus') goes to
+    nice_text up to the next heading; so does the rest of a line 'Nice to have: Kafka, Spark'. Everything else is
+    required_text. ponytail: heading-shaped lines only; a nice-to-have list with no heading stays 'required'."""
+    names = [norm(h) for h in headings]
+    is_nice = lambda h: any(re.search(rf"(?<![a-z]){re.escape(n)}(?![a-z])", norm(h)) for n in names)  # noqa: E731
+    req: list[str] = []
+    nice: list[str] = []
+    cur = req
+    for ln in str(jd or "").splitlines():
+        m = _HEAD_RE.match(ln) if len(ln.strip()) <= 62 else None
+        if m:
+            cur = nice if is_nice(next(g for g in m.groups() if g)) else req
+            continue
+        if b := _bare_head(ln, names):  # '<h3>Nice to have</h3>' after strip_html: a bare line, no colon
+            cur = nice if b == "nice" else req
+            continue
+        head, sep, rest = ln.partition(":")
+        if sep and rest.strip() and len(head) <= 40 and is_nice(head):
+            nice.append(rest)
+            continue
+        cur.append(ln)
+    return "\n".join(req), "\n".join(nice)
+
+
 def _cat(matched: int, total: int) -> dict:
     return {"score": round(100 * matched / total) if total else 0, "matched": matched, "total": total}
 
