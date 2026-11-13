@@ -557,6 +557,12 @@ context with a temp profile and blocks 8765-8774, so a test never reaches a Lode
 | refactor-helpers | One home per small helper (util): write_atomic (write-then-rename with the Windows retry, owner-only option; settings, extension, connections, vault, profile and comp, which was not atomic before), short_hash, load_json, word_in, utc_stamp, utc_to_local; the modules' old private names (fit._h, pipeline._h / _load, interview._load, careers._word_in, the _now copies, the _local copies) are these helpers | `test_pass31_refactor.Helpers.test_write_atomic_retries_a_locked_rename_and_can_be_owner_only`<br>`test_pass31_refactor.Helpers.test_small_helpers` |  |
 | refactor-domains | One registrable-domain rule (util.registrable / org_label with the two-part public suffixes) for mail trust and company-page vetting: jobs.ibm.ca, careers.sap.de and hr.bt.uk read as ibm, sap and bt (company pages misread them before), still fail-closed for a company name on someone else's domain | `test_pass31_refactor.Domains.test_company_pages_and_mail_read_hosts_the_same_way` |  |
 
+## UI overhaul (pass 32)
+
+| ID | Feature | Unit / integration | E2E |
+|---|---|---|---|
+| ui-nav-groups | Grouped sidebar (blueprint 18.1): Inbox, then Pipeline (Board, Contacts), Discover (Jobs, Careers, Monitor), Resume (Profile, Studio), Prepare (Answers, Coach, Ideas), Progress (Insights) and Settings (Tools, Setup) as labelled groups; every tab keeps its button, label and page; inline SVG icons (no font or CDN); at phone width the groups flow into the one scrolling row |  | `e2e_ui.UI.test_sidebar_groups_every_tab_under_its_section` |
+
 ## Planned (not built yet; rows get tests when they exist)
 
 - tracker-sourcing-39, ui-sweep-68, profile-resume-ai-42, mail-people-interviews-47, outcomes-platform-planned-pipeline:

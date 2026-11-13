@@ -19,7 +19,9 @@ nav { grid-area: nav; background: var(--panel); border-right: 1px solid var(--li
 nav button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: 0; color: var(--dim); padding: 9px 12px; border-radius: 8px; cursor: pointer; font: inherit; }
 nav button:hover { color: var(--fg); background: var(--panel-2); }
 nav button.on { color: var(--fg); background: var(--line); }
-nav button .ico { width: 18px; text-align: center; opacity: .9; }
+nav button .ico { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; opacity: .9; }
+nav .nav-group { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+nav .nav-h { color: var(--dim); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 6px 12px 2px; }
 nav .badge { margin-left: auto; background: var(--acc); color: #fff; border-radius: 10px; padding: 0 7px; font-size: 11px; min-width: 20px; text-align: center; }
 nav .badge.zero { display: none; }
 nav .sep { flex: 1; }
@@ -138,7 +140,8 @@ label.fld { display: flex; flex-direction: column; gap: 2px; color: var(--dim); 
   input, select { max-width: 100%; }
   #drawer { top: 0; }
   nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }
-  nav button { width: auto; } nav .sep, nav .foot { display: none; }
+  nav button { width: auto; } nav .sep, nav .foot, nav .nav-h { display: none; }
+  nav .nav-group { flex-direction: row; flex-wrap: wrap; margin: 0; }
   .grid2 { grid-template-columns: 1fr; }
 }
 
@@ -148,6 +151,7 @@ label.fld { display: flex; flex-direction: column; gap: 2px; color: var(--dim); 
   .top .stats { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; max-width: 100%; }
   nav { flex-wrap: nowrap; overflow-x: auto; padding: 4px 6px; gap: 2px; }
   nav button { flex: none; padding: 6px 9px; gap: 6px; }
+  nav .nav-group { flex-wrap: nowrap; }
   #drawer { width: 100vw; }
 }
 
