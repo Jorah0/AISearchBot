@@ -215,6 +215,17 @@ def _card(o: dict, tier: int, why: list[str], ev: dict, bad: list[str], source: 
 
 
 UNMAPPED = "AI-suggested unmapped role: review"
+TECH_GROUPS = ("15-", "17-")  # computer and mathematical; architecture and engineering
+
+
+def work_focus(title: str) -> str:
+    """What a research pack looks for in a team, by the job's occupation (blueprint 12.3: never software by default)."""
+    try:
+        hit = next((c for c, s in occupations.match_title(title or "", 1) if s >= 0.8), "")
+    except SystemExit:  # no occupation data: the generic wording
+        hit = ""
+    return ("team, stack and engineering culture signals" if hit.startswith(TECH_GROUPS)
+            else "team, ways of working and culture signals for this kind of role")
 
 
 def explore(interests: str, provider: str | None = None, bank: dict | None = None, limit: int = 8) -> dict:

@@ -105,6 +105,9 @@ PREFS = {
     "apply_agent_auto_ats": "",  # comma list of ATS names auto may submit on; ships with none
     "apply_agent_eeo": False,
     "accounts_auto_create": False,  # the agent ticks a sign-up's terms box and presses Create (accounts._finish)
+    # pass 28: Google Calendar busy times (calendar_busy.py); on = the next Google sign-in also asks to see when you are
+    # busy (calendar.freebusy only: no event titles, nothing written)
+    "calendar_freebusy": False,
 }
 PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "name": ("Your name", "signs drafted emails when no signature is set"),
@@ -140,6 +143,8 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
                            "ask (labelled 'reported, unverified'; off: only your logs, your pastes, the company's pages, the JD)"),
     "bookmarklets": ("Bookmarklets", "auto: on until a browser extension is paired, then off; on / off: always "
                      "(the page a bookmarklet runs on can read its token)"),
+    "calendar_freebusy": ("Calendar busy times (Google)", "on: interview replies and proposed slots avoid times your Google "
+                          "Calendar shows busy (sign in with Google again under Email to allow it; only free/busy is read)"),
     "market_pay": ("Market pay (BLS)", "public BLS wage percentiles for each job's occupation and area; sends only "
                    "occupation and area codes to api.bls.gov (25 queries a day, 500 with a free BLS_API_KEY)"),
     "fit_weights": ("Fit weights", "part=number, e.g. skills=40 (0 turns a part off; 'reset' = the defaults): skills, role, "

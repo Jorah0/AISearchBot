@@ -529,6 +529,13 @@ context with a temp profile and blocks 8765-8774, so a test never reaches a Lode
 | profile-disputed | Disputed facts (profile.set_disputed / is_disputed, blueprint 8.2): lodestar profile dispute KIND VALUES (its identifying values, --undo clears); the fact stays in the bank but profile.structured() (master resume, studio, letters) and career evidence leave it out | `test_pass27_profile.Disputed.test_a_disputed_fact_leaves_employer_documents_and_career_evidence` |  |
 | studio-claims | Claim check of a studio version (studio.claim_diff / cited_sources, blueprint 8.5): every claim beside the fact it cites as it was at build time (plan.json sources): as written, reworded (passed check_rewrite) or put back by the guard with its reason; Studio's Claim check list | `test_pass27_profile.ClaimDiff.test_each_claim_names_its_fact_and_what_happened`<br>`test_pass27_profile.ClaimDiff.test_cited_sources_keep_only_what_the_plan_cites` | `e2e_studio.Studio.test_claim_check_shows_each_claim_beside_its_fact` |
 
+## Calendar and interview prep (pass 28)
+
+| ID | Feature | Unit / integration | E2E |
+|---|---|---|---|
+| calendar-freebusy | Calendar busy times (calendar_busy.py, blueprint 12.2): pref calendar_freebusy off by default (then no calendar request and no extra scope); on: the next Google sign-in also asks for calendar.freebusy only, and Google FreeBusy busy blocks (local times) go into interview replies as times only and make apply.next_slots skip those hours; refused permission or a non-Google sign-in returns no blocks and says why (never fatal) | `test_pass28_calendar.Busy.test_off_by_default_and_never_asks`<br>`test_pass28_calendar.Busy.test_reads_google_freebusy_as_local_times`<br>`test_pass28_calendar.Busy.test_no_permission_or_no_google_sign_in_is_said_not_fatal`<br>`test_pass28_calendar.Busy.test_calendar_scope_is_asked_only_when_turned_on`<br>`test_pass28_calendar.Busy.test_slot_proposals_skip_busy_blocks`<br>`test_pass28_calendar.Reply.test_an_interview_reply_avoids_your_calendar_blocks` |  |
+| prep-profession | Profession-aware research (careers.work_focus, blueprint 12.3): the research pack and its web query look for stack and engineering culture only for computer / engineering occupations (SOC 15- / 17-), else ways of working and culture for that kind of role; an unknown title gets the generic wording | `test_pass28_calendar.Research.test_research_wording_follows_the_occupation` |  |
+
 ## Planned (not built yet; rows get tests when they exist)
 
 - tracker-sourcing-39, ui-sweep-68, profile-resume-ai-42, mail-people-interviews-47, outcomes-platform-planned-pipeline:

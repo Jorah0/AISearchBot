@@ -489,11 +489,16 @@ def parse_times(text: str) -> list[str]:
     return list(dict.fromkeys(found))[:10]
 
 
-def next_slots(n: int = 3) -> list[str]:
-    """Fallback proposals when the model needs concrete times: next weekdays at 10:00, 14:00 local."""
+def next_slots(n: int = 3, busy=()) -> list[str]:
+    """Fallback proposals when the model needs concrete times: next weekdays at 10:00, 14:00 local, skipping any hour
+    a busy block (your calendar, calendar_busy.busy) touches. ponytail: the 28 days after tomorrow, then fewer than n."""
+    from .calendar_busy import overlaps
+
     out, d = [], datetime.now().replace(minute=0, second=0, microsecond=0) + timedelta(days=1)
-    while len(out) < n:
+    for _ in range(28):
+        if len(out) >= n:
+            break
         if d.weekday() < 5:
-            out += [f"{d:%Y-%m-%d} 10:00", f"{d:%Y-%m-%d} 14:00"]
+            out += [f"{t:%Y-%m-%d %H:%M}" for t in (d.replace(hour=10), d.replace(hour=14)) if not overlaps(t, busy)]
         d += timedelta(days=1)
     return out[:n]

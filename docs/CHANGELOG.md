@@ -1,5 +1,13 @@
 # Changelog (development passes, newest first)
 
+## Pass 28 (2026-11-13): calendar busy times, research for every kind of job
+
+- New preference calendar_freebusy (off by default): interview replies and the slots Lodestar proposes avoid the times
+  your Google Calendar shows busy. Turning it on makes the next Google sign-in also ask for free/busy access only (no
+  event titles, nothing written). Without it, or without a Google sign-in, nothing changes and the reason is logged.
+- The interview research pack and its web search look for a team's stack and engineering culture only for computer and
+  engineering occupations; for every other job they look for its ways of working and culture.
+
 ## Pass 27 (2026-11-13): more resume formats, disputed facts, the claim check
 
 - Resume import also reads .odt (OpenDocument), .rtf and .html files. A PDF with no text layer (a scan) is refused

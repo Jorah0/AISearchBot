@@ -654,11 +654,16 @@ def _maybe_reply(info: dict, job) -> None:
     # times only: this reply goes to an employer, who must never learn which other companies you talk to. This job's
     # own rounds are not busy: the invite's slot was just booked from this very mail and must stay acceptable
     busy = ", ".join(f"{it['when']:%Y-%m-%d %H:%M}" for it in upcoming_interviews(45) if it["job_id"] != job["id"]) or "none"
+    from .calendar_busy import busy as cal_busy
+
+    blocks = cal_busy() if cat == "interview" else []  # pass 28: your calendar's busy blocks (opt-in), times only
+    if blocks:
+        busy = ", ".join(x for x in [busy if busy != "none" else ""] + [f"{s:%Y-%m-%d %H:%M}-{e:%H:%M}" for s, e in blocks] if x)
 
     guide = REPLY_GUIDE.get(cat) or (
         f"Candidate availability: {settings.pref('availability')}. If the email proposes specific times, accept the first "
         f"one inside that availability and put it in chosen_time (YYYY-MM-DD HH:MM, 24h). If none fit or none are "
-        f"proposed, propose exactly three slots chosen from: {', '.join(next_slots(6))}. Confirm the format "
+        f"proposed, propose exactly three slots chosen from: {', '.join(next_slots(6, blocks))}. Confirm the format "
         f"(video/phone/onsite) and who the candidate will meet if that is unstated.")
     try:
         draft = ai.ask_json(
