@@ -483,6 +483,19 @@ def cmd_careers(a):
         print(cov["note"])
 
 
+def cmd_gaps(a):
+    """lodestar gaps: what your open jobs keep asking for that your profile does not show (gaps.py)."""
+    from . import gaps
+
+    out = gaps.report()
+    for r in out["rows"][:a.limit]:
+        kind = "legal requirement" if r["legal"] else "required"
+        print(f"{r['count']:>3} job{'s' if r['count'] != 1 else ' '}  {r['requirement']:<36} {kind:<17} -> {', '.join(r['actions'])}")
+    if not out["rows"]:
+        print("no gaps found in your open jobs' fits (or no open job is scored yet)")
+    print(out["note"])
+
+
 def cmd_audit(a):
     """lodestar audit: the append-only trail of policy decisions and executor runs (policy.py)."""
     import json as _json
@@ -2317,6 +2330,8 @@ def build() -> argparse.ArgumentParser:
     v.add_parser("list")
     x = v.add_parser("rm"); x.add_argument("id", type=int)
     s.set_defaults(f=cmd_companies)
+    s = sub.add_parser("gaps", help="skill-gap planner: requirements your open jobs repeat that your profile does not show, with possible actions")
+    s.add_argument("--limit", type=int, default=20); s.set_defaults(f=cmd_gaps)
     s = sub.add_parser("audit", help="the append-only audit trail: every policy decision (allow / needs you / block, with reasons) and every action run")
     s.add_argument("--limit", type=int, default=50); s.set_defaults(f=cmd_audit)
     s = sub.add_parser("careers", help="career discovery: occupations your profile fits (O*NET), career tracks you choose, track search with board coverage")

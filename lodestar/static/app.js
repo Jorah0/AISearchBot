@@ -2185,7 +2185,21 @@ function renderTrend() {
 let INS = null, OFF = null;  // server data stays in JS; markup carries only indexes and numbers
 const pctx = v => Math.round(Number(v) * 100) + '%', num = v => Number(v || 0).toLocaleString();
 const SERIES = [['applications', 'applications'], ['interviews', 'interviews'], ['offers', 'offers'], ['contacts', 'people contacted'], ['mock_sessions', 'mock sessions']];
+const GAP_ACTION = { certification: 'a certification or license', degree: 'a degree', project: 'a project or portfolio piece',
+  short_course: 'a short course', supervised_experience: 'supervised experience' };
+async function loadGaps() {  // pass 29: Insights > Skill gaps and career tracks (gaps.py)
+  const r = await api('/api/gaps'); if (r.error) return toast('error: ' + r.error, 'err');
+  $('#gapRows').innerHTML = r.rows.slice(0, 15).map(x => `<div class="row"><b>${esc(x.requirement)}</b>
+      <span class="chip">${x.legal ? 'legal requirement' : 'required'}</span><span class="muted">${Number(x.count)} job${x.count === 1 ? '' : 's'}</span>
+      <span class="muted grow">${x.actions.map(a => esc(GAP_ACTION[a] || a)).join(' or ')}</span></div>`).join('')
+    || '<p class="muted">No gaps in the fits of your open jobs (or none is scored yet).</p>';
+  $('#gapNote').textContent = r.note;
+  $('#gapTracks').innerHTML = r.tracks.map(t => `<div class="row"><b>${esc(t.track)}</b><span class="muted">${Number(t.listings)} listings found, ${Number(t.tracked)} tracked</span>`
+    + Object.entries(t.classes).map(([k, n]) => `<span class="chip">${esc((S.career_classes || {})[k] || k)}: ${Number(n)}</span>`).join('') + '</div>').join('')
+    || '<p class="muted">No career tracks yet (Careers tab).</p>';
+}
 async function loadInsights() {
+  loadGaps();
   const [a, o, c, b] = await Promise.all([api('/api/analytics?weeks=' + Number($('#insRange').value || 12)), api('/api/offers'), api('/api/readiness/calibration'), api('/api/boosters')]);
   if (a.error || o.error) return toast('error: ' + (a.error || o.error), 'err');
   INS = a; OFF = o; renderInsights(); renderOffers();

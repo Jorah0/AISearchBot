@@ -76,6 +76,13 @@ class Insights(E2ETestCase):
         self.assertIn("no tailored resume sent yet", self.page.text_content("#insFunnel"))
 
     # --- goals
+    def test_skill_gaps_and_career_tracks_panel(self):  # pass 29, blueprint 13.1 / 13.3
+        self.go("insights")
+        panel = self.page.locator("#gapPanel")
+        self.assertIn("Skill gaps", panel.locator("h3").text_content())
+        self.assertRegex(panel.locator(".gap-note").text_content(), r"based on \d+ (open )?jobs?")
+        self.assertIn("Career tracks", panel.text_content())
+
     def test_weekly_goals_save_bad_value_and_clear(self):
         self.allow_console()
         self.no_goals()

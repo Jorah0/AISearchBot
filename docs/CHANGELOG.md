@@ -1,5 +1,14 @@
 # Changelog (development passes, newest first)
 
+## Pass 29 (2026-11-13): skill-gap planner, career tracks in Insights
+
+- Insights > Skill gaps and `lodestar gaps`: what your open jobs keep asking for that your profile does not show
+  (required skills missing, hard requirements not met or unknown), most repeated first, each with possible actions (a
+  project, a short course, a certification or license, a degree, supervised experience). A legal requirement is marked
+  apart from an employer's preference. Fewer than 5 jobs is said: a list, not a trend.
+- Insights > Career tracks: per career track, the listings its searches found, the ones you track and those jobs by
+  career class.
+
 ## Pass 28 (2026-11-13): calendar busy times, research for every kind of job
 
 - New preference calendar_freebusy (off by default): interview replies and the slots Lodestar proposes avoid the times

@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import __version__, advisor, ai, apply, apply_agent, approvals, codes, comp, connections, db, extension, extras, log, loop, mailconn, oauth, paydata, pipeline, settings, vault
+from . import __version__, advisor, ai, apply, apply_agent, approvals, careers, codes, comp, connections, db, extension, extras, log, loop, mailconn, oauth, paydata, pipeline, settings, vault
 from .config import ALERTS, PROFILE
 
 STATIC = Path(__file__).parent / "static"
@@ -884,7 +884,7 @@ def state() -> dict:
         "sources": sources_view(),  # Setup > Job sources and the Jobs tab: ready / needs keys, throttle, credit
         "alert_sites": alert_sites(),  # Setup > Job alerts: per site, the last alert mail read and its job count
         "contact_roles": ROLES,
-        "statuses": db.STATUSES, "stages": list(db.STAGES),
+        "statuses": db.STATUSES, "stages": list(db.STAGES), "career_classes": careers.CLASSES,
         "doc_names": sorted(DOC_NAMES),  # the drawer offers Edit / Adjust for these only
         "stats": db.stats(),
         "followups": [j["id"] for j in db.needs_followup()],
@@ -1105,6 +1105,10 @@ class Handler(BaseHTTPRequestHandler):
                                 "ai": bool(ai.available())})
                 else:
                     self._json({"error": "not found"}, 404)
+            elif path == "/api/gaps":  # Insights > Skill gaps and career tracks (gaps.py): private, no AI
+                from . import gaps
+
+                self._json(gaps.report() | {"tracks": gaps.by_track()})
             elif path == "/api/audit":  # Setup > Audit log: policy decisions and action runs, newest first (policy.py)
                 from . import policy
 
