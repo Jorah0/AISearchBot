@@ -4,11 +4,13 @@ fixture ontology (careers_fixture.py) stands in for O*NET; no network. Every pat
 import contextlib
 import csv
 import gzip
+import http.client
 import io
 import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -24,8 +26,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import build_onet  # noqa: E402
 from careers_fixture import BANK, write_fixture  # noqa: E402
 
-from lodestar import careers, cli, db, listings, occupations, profile, settings  # noqa: E402
-from lodestar import web_monitor as wm  # noqa: E402
+from lodestar import careers, cli, db, desktop, listings, occupations, profile, settings  # noqa: E402
+from lodestar import web, web_monitor as wm  # noqa: E402
 
 REAL_DATA = occupations.DATA
 
@@ -366,6 +368,79 @@ class Cli(TrackCase):
             run(["careers", "occupation", "99-9999.00"])
         run(["careers", "track-rm", str(tid)])
         self.assertEqual(careers.tracks(), [])
+
+
+class Routes(TrackCase):
+    def setUp(self):
+        super().setUp()
+        self.port = desktop.free_port(8940)
+        self.srv = web.start_server(self.port)
+        self.h = {"Content-Type": "application/json", "X-Lodestar-Token": web.TOKEN, "Host": f"127.0.0.1:{self.port}"}
+        self.c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        self._wm = (wm.SOURCES, wm.search, wm.sources_ready)
+
+    def tearDown(self):
+        wm.SOURCES, wm.search, wm.sources_ready = self._wm
+        self.c.close()
+        self.srv.shutdown()
+        super().tearDown()
+
+    def call(self, method, path, body=None, token=True):
+        self.c.request(method, path, json.dumps(body) if body is not None else None,
+                       {**self.h, "X-Lodestar-Token": web.TOKEN if token else "no"})
+        r = self.c.getresponse()
+        return r.status, json.loads(r.read().decode() or "{}")
+
+    def test_routes_need_the_token(self):
+        for m, path in (("GET", "/api/careers"), ("POST", "/api/careers/tracks"), ("POST", "/api/run/careers_search"),
+                        ("POST", "/api/careers/tracks/1/delete")):
+            self.assertEqual(self.call(m, path, {} if m == "POST" else None, token=False)[0], 403, path)
+
+    def test_track_create_search_delete_and_suggestions(self):
+        wm.SOURCES, wm.sources_ready = {"remotive": None}, lambda: ["remotive"]
+
+        def search(query, errors=None, ran=None, **f):
+            ran.append("remotive")
+            rows = [wm._listing("Hotel Manager", "Inn Co", "https://inn.test/2", source="remotive")]
+            for j, row in zip(rows, listings.store(rows, source="remotive")):  # as web_monitor.annotate does
+                j["id"] = row["id"]
+            return rows
+        wm.search = search
+        st, r = self.call("POST", "/api/careers/tracks", {"label": "Hospitality", "intent": "desired_field", "titles": "Hotel manager"})
+        self.assertEqual(st, 200)
+        tid = r["id"]
+        st, r = self.call("POST", "/api/careers/tracks", {"label": "Bad", "intent": "nope", "titles": "x"})
+        self.assertEqual(st, 400)
+        self.assertIn("intent must be one of", r["error"])
+        st, r = self.call("GET", "/api/careers")
+        self.assertEqual(st, 200)
+        self.assertEqual([t["label"] for t in r["tracks"]], ["Hospitality"])
+        self.assertEqual(r["tracks"][0]["search_titles"], ["Hotel manager"])
+        self.assertEqual(r["classes"], careers.CLASSES)
+        self.assertEqual({int(k): v for k, v in r["tiers"].items()}, careers.TIERS)
+        self.assertEqual(r["meta"]["source"], "O*NET test fixture")
+        self.assertIn("11-9081.00", [s["code"] for s in r["suggestions"]])  # the track's field is a Requested target
+        st, r = self.call("POST", "/api/run/careers_search", {"track": tid})  # a background task, polled
+        self.assertEqual(st, 200)
+        for _ in range(100):
+            t = self.call("GET", f"/api/tasks/{r['task']}")[1]
+            if t["status"] != "running":
+                break
+            time.sleep(0.05)
+        self.assertEqual(t["status"], "done", t)
+        r = t["result"]
+        self.assertEqual(([x["url"] for x in r["results"]], r["coverage"]["asked"]), (["https://inn.test/2"], ["remotive"]))
+        self.assertIn("id", r["results"][0])  # the All jobs row, for its Track button
+        st, r = self.call("POST", f"/api/careers/tracks/{tid}/delete", {})
+        self.assertEqual((st, careers.tracks()), (200, []))
+        self.assertEqual(self.call("POST", "/api/run/careers_search", {"track": 99999})[0], 400)
+
+    def test_careers_route_survives_missing_data(self):
+        occupations.DATA = Path(self.tmp) / "nope.json.gz"
+        st, r = self.call("GET", "/api/careers")
+        self.assertEqual(st, 200)
+        self.assertIn("occupation data", r["error"])
+        self.assertEqual((r["tracks"], r["suggestions"]), ([], []))
 
 
 if __name__ == "__main__":

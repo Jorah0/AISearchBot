@@ -21,6 +21,7 @@
   <button data-tab="inbox"><span class="ico" aria-hidden="true">✓</span>Inbox<span class="badge zero" id="inboxN" aria-label="pending approvals and questions">0</span></button>
   <button data-tab="contacts"><span class="ico" aria-hidden="true">☏</span>Contacts</button>
   <button data-tab="search"><span class="ico" aria-hidden="true">⌕</span>Jobs</button>
+<button data-tab="careers"><span class="ico" aria-hidden="true">✧</span>Careers</button>
   <button data-tab="monitor"><span class="ico" aria-hidden="true">◉</span>Monitor</button>
   <button data-tab="ideas"><span class="ico" aria-hidden="true">✦</span>Ideas</button>
   <button data-tab="answers"><span class="ico" aria-hidden="true">≡</span>Answers</button>
@@ -143,6 +144,29 @@
     <div id="ajList" role="list"></div></div>
 </section>
 
+<section id="careers">
+  <h2>Careers</h2>
+  <p class="muted">Occupations your profile points to and the fields you choose, from the O*NET occupation database. Your resume is evidence, not a boundary: add any field as a career track. A career class is a reading of your evidence, never a hiring probability.</p>
+  <div class="panel">
+    <h3>Career tracks</h3>
+    <div class="row">
+      <input id="trackLabel" placeholder="name, e.g. Hospitality" aria-label="Track name" style="width:180px">
+      <select id="trackIntent" aria-label="Intent">
+        <option value="desired_field">Desired field</option><option value="pivot">Career pivot</option>
+        <option value="combined">Combined</option><option value="resume_led">From my resume</option><option value="exploration">Exploration</option>
+      </select>
+      <input id="trackTitles" class="grow" placeholder="job titles, comma-separated (e.g. hotel manager, front office manager)" aria-label="Job titles">
+      <input id="trackLoc" placeholder="location (optional)" aria-label="Track location" style="width:160px">
+      <button class="b" id="trackAdd" onclick="trackAdd(this)">Add track</button>
+    </div>
+    <fieldset class="row tiers" aria-label="Expansion tiers to search"><legend class="muted">Search these tiers (blank: the intent's default)</legend><span id="trackTiers"></span></fieldset>
+    <div id="trackErr" class="err" role="alert"></div>
+    <div id="trackList"></div>
+  </div>
+  <div id="careerRes"></div>
+  <div id="careerSug"></div>
+  <p class="muted credit" id="careerCredit"></p>
+</section>
 <section id="monitor">
   <h2>Monitor</h2>
   <div class="aihead" data-adv-slot="searches"></div>

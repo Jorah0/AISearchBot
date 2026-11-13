@@ -75,6 +75,7 @@ supports them.
   - [Settings in this area](#settings-in-this-area)
   - [Safety rules in this area, in short](#safety-rules-in-this-area-in-short)
 - [Finding and tracking jobs](#finding-and-tracking-jobs)
+  - [Career discovery (Careers tab, `lodestar careers`)](#career-discovery-careers-tab-lodestar-careers)
   - [Job search (Search tab, `lodestar jobs search`)](#job-search-search-tab-lodestar-jobs-search)
   - [The fit score](#the-fit-score)
   - [All jobs and job sources](#all-jobs-and-job-sources)
@@ -2405,6 +2406,44 @@ where anything Lodestar wants to do on its own waits for your approval.
 2. Link at least one AI key (Setup > Link an AI key, or `lodestar keys link anthropic`). Searching, tracking, the
    Board, watches, company boards, H-1B hints and the Inbox all work without AI. AI ranking, auto-tracking, the fit
    verdict and the document steps of the pipeline need a provider.
+
+### Career discovery (Careers tab, `lodestar careers`)
+
+Career discovery reads your profile bank as evidence about you, never as a boundary. Your past titles are matched to
+occupations in the bundled O*NET 31.0 database (by O*NET's own lists of job titles; a title it does not know is left
+alone, never guessed). Related occupations are then grouped in expansion tiers:
+
+| Tier | Label | What it means |
+|---|---|---|
+| 0 | Requested target | a field you chose in a career track |
+| 1 | Equivalent roles | your own occupation (and, in a track, its O*NET title and job titles) |
+| 2 | Closely related | related in O*NET and in the same major occupation group |
+| 3 | Transferable fit | related in O*NET in another group: some of your work carries over |
+| 4 | Bridge opportunity | a role that leads into a target needing more preparation than you show |
+| 5 | Longer-term pathway | related, but needs at least two Job Zones more preparation |
+
+Each suggestion gets a career class: **Qualified now**, **Competitive with framing**, **Bridge required**,
+**Longer-term development**, **Currently ineligible** (a word you excluded) or **Insufficient evidence**. The class
+compares the occupation's O*NET Job Zone (1 = little preparation ... 5 = extensive) with yours: your own occupations'
+zones (a title O*NET files under several occupations counts at the lowest), or your degree. It is a reading of your
+evidence, never a hiring probability. Each card says why it fits, what is missing (technology the occupation uses that
+your profile does not list), what does not transfer (core tasks sharing nothing with your experience) and how to close
+the gap. Licensed occupations carry a warning and are never Qualified now without a matching credential.
+
+**Career tracks** are fields you want to search, any field, even one your resume does not show. A desired field
+searches its own words only; tick tier 1 to add the occupation's O*NET titles. Search live openings asks the job
+boards (three titles per round) and lists what it found with a Track button, then the boards asked, the ones that
+failed and the ones that need a key. Lodestar never searches every job board.
+
+```powershell
+lodestar careers suggest                       # by career class
+lodestar careers track-add Hospitality --intent desired_field --titles "hotel manager, front office manager"
+lodestar careers search 1
+lodestar careers occupation 11-9081.00         # one O*NET occupation
+```
+
+A new O*NET release: download its Text zip from https://www.onetcenter.org/database.html and run
+`python -I scripts/build_onet.py db_XX_X_text.zip --version XX.X`.
 
 ### Job search (Search tab, `lodestar jobs search`)
 

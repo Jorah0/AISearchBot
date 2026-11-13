@@ -283,3 +283,10 @@ a.chip.attr-adzuna { display: inline-block; min-width: 116px; min-height: 23px; 
 .intel-row { padding: 2px 0; overflow-wrap: anywhere; }
 #drawer .group h5 { margin: 8px 0 2px; font-size: 11px; color: var(--dim); }
 .intel-sum pre { white-space: pre-wrap; margin: 4px 0 8px; }
+/* Careers tab (pass 23) */
+#careers .err { color: var(--bad); font-size: 13px; }
+#careers .career-card { border-top: 1px solid var(--line); padding: 8px 0; }
+#careers .career-card:first-of-type { border-top: 0; }
+#careers .tiers { border: 0; padding: 0; margin: 4px 0; }
+#careers .career-results { list-style: none; padding: 0; margin: 0; }
+#careers .coverage { margin-top: 8px; }

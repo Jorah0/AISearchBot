@@ -1,5 +1,24 @@
 # Changelog (development passes, newest first)
 
+## Pass 23 (2026-11-13): career discovery foundation (blueprint v1.1, first vertical slice)
+
+**Your resume is evidence, not a boundary**
+- New Careers tab and `lodestar careers`: the occupations your profile points to, from the O*NET 31.0 occupation
+  database (1,016 occupations, bundled; Source: O*NET 31.0 Database by the U.S. Department of Labor, Employment and
+  Training Administration, used under the CC BY 4.0 license).
+- Your past titles map to O*NET occupations by O*NET's own title lists (never a guess). Their related occupations
+  become expansion tiers: Equivalent roles, Closely related, Transferable fit, Longer-term pathway; the fields you
+  choose are Requested targets, with Bridge opportunity roles into them when they need more preparation than you show.
+- Each suggestion has a career class (Qualified now, Competitive with framing, Bridge required, Longer-term
+  development, Currently ineligible, Insufficient evidence) from O*NET's Job Zones against yours, and says why it
+  fits, what is missing, what does not transfer and how to close the gap. Licensed occupations (nursing, law, CDL
+  driving, trades ...) carry a licensing warning and are never "Qualified now" without a matching credential.
+- Career tracks: any field, even one your resume does not show. A desired field searches its own words only until you
+  turn on Equivalent roles; nothing is broadened silently. Searching a track shows which job boards were asked, which
+  failed and which need a key, and always says coverage is partial.
+- Deliberately later (pass 24): hard eligibility gates kept apart from the fit score, the class on job cards, AI open
+  exploration.
+
 ## Pass 21 (2026-11-11): fit score, sourcing everywhere, alerts, listing monitor, chance boosters
 
 **Fit score: how well a job suits you, 0 to 100**

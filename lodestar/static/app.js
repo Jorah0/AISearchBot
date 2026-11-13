@@ -44,6 +44,7 @@ function go(tab) {
   if (tab === 'setup') { loadEmail(); loadAiHistory(); restoreLoad(); acctLoad(); }
   if (tab === 'studio') loadStudio();
   if (tab === 'search') { loadAllJobs(); spLoad(); }
+  if (tab === 'careers') loadCareers();
   if (tab === 'profile') loadMaster();  // the master card follows background rebuilds
 }
 
@@ -3138,3 +3139,71 @@ document.addEventListener('keydown', e => {  // capture phase: before the drawer
   else if (e.key === 'Tab') e.preventDefault();  // the search box is the dialog's only stop
 }, true);
 load(); loadProfile(); loadBank(); loadReviews(); loadMaster(); setInterval(load, 60000);
+
+/* ---- Careers (pass 23, careers.py): suggestions by career class, career tracks, track search with coverage ---- */
+let CAREERS = null;
+async function loadCareers() {
+  const r = await api('/api/careers'); CAREERS = r;
+  if (!$('#trackTiers').childElementCount)
+    $('#trackTiers').innerHTML = Object.entries(r.tiers).filter(([t]) => t !== '6')
+      .map(([t, label]) => `<label class="muted"><input type="checkbox" value="${esc(t)}"> ${esc(t)} ${esc(label)}</label>`).join(' ');
+  $('#trackList').innerHTML = (r.tracks || []).map(t => `<div class="track-row row">
+      <b>${esc(t.label)}</b> <span class="muted">${esc(t.intent.replace('_', ' '))}${t.enabled ? '' : ' (off)'}</span>
+      <span class="chips">${t.tiers.map(x => `<span class="chip">${esc(r.tiers[x])}</span>`).join('')}</span>
+      <span class="muted grow">searches: ${esc((t.search_titles || t.titles).join(', '))}${t.location ? ' · ' + esc(t.location) : ''}</span>
+      <button class="b sm" onclick="trackSearch(${Number(t.id)}, this)">Search live openings</button>
+      <button class="b sm ghost" onclick="trackRemove(${Number(t.id)}, this)">Remove</button></div>`).join('')
+    || '<p class="muted">No tracks yet. Add any field you want to work in, even one your resume does not show.</p>';
+  const err = r.error ? `<div class="warnbox">${esc(r.error)}</div>` : '';
+  const sug = r.suggestions || [];
+  const bands = Object.entries(r.classes).map(([k, label]) => {
+    const g = sug.filter(x => x.cls === k);
+    return g.length ? `<div class="panel band"><h3>${esc(label)}</h3>${g.map(x => careerCard(x, sug.indexOf(x))).join('')}</div>` : '';
+  }).join('');
+  $('#careerSug').innerHTML = err + (r.note ? `<p class="muted">${esc(r.note)}</p>` : '') + bands;
+  $('#careerCredit').textContent = (r.meta && r.meta.credit) || '';
+}
+function careerCard(x, i) {  // i: the suggestion's index, so no page text ever lands inside an onclick
+  const list = (head, items) => items && items.length ? `<div><span class="muted">${head}:</span> ${items.map(esc).join('; ')}</div>` : '';
+  return `<div class="career-card"><div class="row"><b>${esc(x.title)}</b>
+      <span class="chip">${esc(x.tier_label)}</span><span class="chip">${esc(x.cls_label)}</span>
+      <span class="muted grow">${esc(x.code)} · ${esc(x.source)}</span>
+      <button class="b sm ghost" onclick="careerSearchCode(${Number(i)}, this)">Search live openings</button></div>
+    ${x.regulated ? `<div class="warnbox">Licensing: ${esc(x.regulated)}. Lodestar cannot confirm eligibility.</div>` : ''}
+    ${list('Why it fits', x.why)}${list('What is missing', x.missing)}${list('What does not transfer', x.not_transfer)}${list('To close the gap', x.close_gap)}</div>`;
+}
+async function trackAdd(btn) {
+  const tiers = $$('#trackTiers input:checked').map(i => Number(i.value));
+  const body = { label: $('#trackLabel').value, intent: $('#trackIntent').value, titles: $('#trackTitles').value,
+                 location: $('#trackLoc').value, tiers: tiers.length ? tiers : null };
+  btn.disabled = true; const r = await api('/api/careers/tracks', body); btn.disabled = false;
+  $('#trackErr').textContent = r.error || '';
+  if (r.error) return;
+  ['#trackLabel', '#trackTitles', '#trackLoc'].forEach(s => $(s).value = ''); $$('#trackTiers input').forEach(i => i.checked = false);
+  toast('career track added', 'ok'); loadCareers();
+}
+async function trackRemove(id, btn) {
+  btn.disabled = true; const r = await api(`/api/careers/tracks/${Number(id)}/delete`, {});
+  if (r.error) { btn.disabled = false; return toast('error: ' + r.error, 'err'); }
+  loadCareers();
+}
+async function careerSearchCode(i, btn) {  // a suggestion's own search: a resume-led track for that occupation
+  const o = (CAREERS.suggestions || [])[i]; if (!o) return;
+  const r = await api('/api/careers/tracks', { label: o.title, intent: 'resume_led', codes: [o.code], tiers: [1] });
+  if (r.error) return toast('error: ' + r.error, 'err');
+  await loadCareers(); trackSearch(r.id, btn);
+}
+function trackSearch(id, btn) {
+  run('careers_search', { track: Number(id) }, renderCareerRes, btn, e => { $('#careerRes').innerHTML = `<div class="warnbox">${esc(e)}</div>`; });
+}
+function renderCareerRes(r) {
+  const c = r.coverage;
+  const cov = `<div class="coverage muted">${c.checked ? '' : '<b>Nothing was checked: no job board answered.</b> '}Boards asked: ${esc(c.asked.join(', ') || 'none')} (${c.asked.length} of ${c.total})`
+    + (c.failed.length ? ` · could not read: ${esc(c.failed.join('; '))}` : '') + (c.not_ready.length ? ` · need a key: ${esc(c.not_ready.join(', '))}` : '')
+    + `. ${esc(c.note)}</div>`;
+  const rows = r.results.map(x => `<li class="row"><b>${esc(x.title)}</b> <span>${esc(x.company)}</span> <span class="muted grow">${esc(x.location || '')}</span>
+      ${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">open</a>` : ''}
+      ${x.tracked ? '<span class="muted">on your Board</span>' : x.id ? `<button class="b sm" onclick="trackFit(${Number(x.id)}, this)">Track</button>` : ''}</li>`).join('');
+  $('#careerRes').innerHTML = `<div class="panel"><h3>${esc(r.track.label)}: live openings</h3><p class="muted">searched: ${esc(r.titles.join(', '))}</p>`
+    + (rows ? `<ul class="career-results">${rows}</ul>` : `<p class="muted">${c.checked ? 'No openings found on the boards asked.' : ''}</p>`) + cov + '</div>';
+}

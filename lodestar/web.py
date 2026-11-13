@@ -382,6 +382,10 @@ def _do(action: str, p: dict):
             from . import fit
 
             return {"fit": fit.ai_judge(job["id"], prov)}
+        case "careers_search":  # {track, location?}: one career track's titles on the job boards, with the coverage
+            from . import careers
+
+            return careers.search_track(int(p["track"]), location=str(p.get("location") or "") or None)
         case "search":  # filters: location (or 'remote'), min_salary, posted_within (days), seniority
             from .contacts import with_warm
 
@@ -1092,6 +1096,16 @@ class Handler(BaseHTTPRequestHandler):
                                 "ai": bool(ai.available())})
                 else:
                     self._json({"error": "not found"}, 404)
+            elif path == "/api/careers":  # Careers tab: suggestions, your tracks, labels; missing O*NET data is said, not a 500
+                from . import careers
+
+                out = {"classes": careers.CLASSES, "tiers": careers.TIERS, "tracks": careers.tracks(), "suggestions": []}
+                try:
+                    out["tracks"] = [t | {"search_titles": careers.search_titles(t)} for t in out["tracks"]]
+                    out |= careers.suggest()
+                except SystemExit as e:
+                    out["error"] = str(e)
+                self._json(out)
             elif path == "/api/listings":  # All jobs: ?q&source(,)&min_fit&remote&min_salary&days&new&show&sort&offset
                 from urllib.parse import parse_qs
 
@@ -1367,6 +1381,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(extension.new_code() | {"port": self.server.server_address[1]})
             elif path == "/api/extension/revoke":
                 self._json({"ok": extension.revoke(str(p.get("id") or ""))})
+            elif path == "/api/careers/tracks":  # {label, intent, titles, codes?, tiers?, exclusions?, location?, ...}
+                from . import careers
+
+                self._json({"id": careers.add_track(
+                    str(p.get("label") or ""), str(p.get("intent") or ""), titles=p.get("titles") or (),
+                    codes=p.get("codes") or (), tiers=p.get("tiers"), exclusions=p.get("exclusions") or (),
+                    location=str(p.get("location") or ""), training=str(p.get("training") or "none"),
+                    priority=str(p.get("priority") or "medium"))})
+            elif path.startswith("/api/careers/tracks/") and len(parts) == 6 and parts[4].isdigit() and parts[5] == "delete":
+                from . import careers
+
+                careers.remove_track(int(parts[4]))
+                self._json({"ok": True})
             elif path.startswith("/api/listings/") and len(parts) == 5 and parts[4] == "track":
                 self._json({"id": track_posting(int(parts[3]))})
             elif path.startswith("/api/listings/") and len(parts) == 5 and parts[4] == "dismiss":
@@ -1797,6 +1824,10 @@ class Handler(BaseHTTPRequestHandler):
                     advisor.helper_check(p.get("helper"), p.get("target"))
                 if parts[3] in ("pipeline_run", "pipeline_bulk"):
                     _check_pipeline(parts[3], p)
+                if parts[3] == "careers_search":  # an unknown track: 400 before a task starts
+                    from . import careers
+
+                    careers.get_track(int(p.get("track") or 0))
                 if parts[3] == "restore":  # a bad pick, a bad zip or something in flight: refused before a task starts
                     if why := extras.restore_busy():
                         raise SystemExit(f"restore refused: {why}; nothing was changed")
