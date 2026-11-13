@@ -3317,6 +3317,10 @@ const GO_KEYS = { t: ['home', 'Today'], i: ['inbox', 'Inbox'], b: ['board', 'Boa
   e: ['careers', 'Careers'], m: ['monitor', 'Monitor'], p: ['profile', 'Profile'], r: ['studio', 'Studio'], a: ['answers', 'Answers'],
   n: ['insights', 'Insights'], s: ['setup', 'Setup'] };
 let GO_PENDING = 0;
+document.addEventListener('keydown', e => {  // capture phase: Esc closes the sheet only, before the drawer's own Esc
+  const el = $('#keysHelp');
+  if (e.key === 'Escape' && el && el.style.display !== 'none') { e.stopPropagation(); e.preventDefault(); keysHelp(false); }
+}, true);
 function keysHelp(show) {
   let el = $('#keysHelp');
   if (!el) {
@@ -3330,8 +3334,8 @@ function keysHelp(show) {
 }
 document.addEventListener('keydown', e => {
   const t = e.target, typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
-  if (e.key === 'Escape' && $('#keysHelp') && $('#keysHelp').style.display !== 'none') { keysHelp(false); return; }
-  if (typing || e.ctrlKey || e.metaKey || e.altKey || ($('#palette') && !$('#palette').hidden)) return;
+  const modal = $('#drawer').classList.contains('open') || ($('#viewer') && !$('#viewer').hidden);  // never switch pages behind them
+  if (typing || modal || e.ctrlKey || e.metaKey || e.altKey || ($('#palette') && !$('#palette').hidden)) return;
   if (e.key === '?') { e.preventDefault(); keysHelp(true); return; }
   if (e.key === 'g') { GO_PENDING = Date.now(); return; }
   if (GO_PENDING && Date.now() - GO_PENDING < 1500 && GO_KEYS[e.key]) { e.preventDefault(); go(GO_KEYS[e.key][0]); }

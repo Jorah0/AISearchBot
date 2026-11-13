@@ -638,7 +638,11 @@ def _has_all(words, blob) -> bool:
     """Every query word as a whole word (a plural counts): 'intern' never matches 'Internal', 'nurse' never
     'Nursery' (blueprint: never broaden a search silently)."""
     b = str(blob or "").lower()
-    return all(re.search(rf"(?<![\w+#]){re.escape(w)}(?:e?s)?(?![\w+#])", b) for w in words)
+    def rx(w):  # the guard only where the word itself starts / ends with a word character ('.net' in 'ASP.NET')
+        left = r"(?<![\w+#])" if w[:1].isalnum() else ""
+        right = r"(?:e?s)?(?![\w+#])" if w[-1:].isalnum() else ""
+        return left + re.escape(w) + right
+    return all(re.search(rx(w), b) for w in words)
 
 
 def _remotive(q):
@@ -721,7 +725,9 @@ def _jobicy(q):
 
 # The Muse's own categories, asked only for an unambiguous phrase: 'civil engineer', 'security officer' or 'data entry
 # clerk' must not be narrowed to software / IT / analytics listings (blueprint: never narrow a search silently)
-MUSE_CATEGORIES = {"software": "Software Engineering", "developer": "Software Engineering",
+MUSE_CATEGORIES = {"software engineer": "Software Engineering", "software developer": "Software Engineering",
+                   "web developer": "Software Engineering", "frontend developer": "Software Engineering",
+                   "backend developer": "Software Engineering",
                    "data scientist": "Data and Analytics", "data analyst": "Data and Analytics",
                    "ux designer": "Design and UX", "product manager": "Product Management", "marketing": "Marketing",
                    "sales": "Sales", "accountant": "Accounting and Finance", "accounting": "Accounting and Finance",

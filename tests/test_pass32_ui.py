@@ -23,6 +23,11 @@ class VisualSystem(unittest.TestCase):
         self.assertTrue(colours <= tokens(auto), colours - tokens(auto))
         self.assertIn(':root:not([data-theme="dark"])', auto)
 
+    def test_drawer_index_is_a_row_and_pills_follow_the_theme(self):  # review fixes
+        rule = self.css.split("#drawer .jIndex {", 1)[1].split("}", 1)[0]
+        self.assertIn("flex-direction: row", rule)
+        self.assertNotRegex(self.css, r"#1f4d33|#4d3b1f")
+
     def test_focus_is_always_visible(self):
         self.assertRegex(self.css, r":focus-visible\s*\{[^}]*outline:\s*2px solid")
         for m in re.finditer(r"([^{}]+)\{[^}]*outline:\s*none", self.css):

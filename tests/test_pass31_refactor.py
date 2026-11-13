@@ -28,11 +28,14 @@ class Contradictions(Base):
         self.assertTrue(wm._has_all(["engineer"], "Civil Engineers wanted"))  # a plural still counts
         self.assertTrue(wm._has_all(["c++", "developer"], "Senior C++ Developer"))
         self.assertTrue(wm._has_all([], "anything"))
+        self.assertTrue(wm._has_all([".net"], "ASP.NET developer"))  # review fix: a word starting with punctuation
+        self.assertTrue(wm._has_all(["c#"], "C# engineer"))
 
     def test_the_muse_is_never_narrowed_by_an_ambiguous_word(self):
         asked = []
         with patched(wm, fetch_json=lambda url, **k: asked.append(url) or {"results": []}):
-            for q in ("civil engineer", "security officer", "data entry clerk", "interior designer", "it support"):
+            for q in ("civil engineer", "security officer", "data entry clerk", "interior designer", "it support",
+                      "real estate developer", "business developer"):  # a software sales rep is a Sales job: fine
                 wm._muse(q)
             self.assertFalse([u for u in asked if "category=" in u], asked)
             asked.clear()

@@ -78,6 +78,17 @@ class UI(E2ETestCase):
         self.assertFalse(sheet.is_visible())
 
 
+    def test_keys_wait_while_the_drawer_is_open_and_esc_closes_only_the_sheet(self):  # review fixes
+        self.open_job(self.ids["saved"])
+        self.page.locator("#drawer h4").first.click()
+        self.page.keyboard.press("g")
+        self.page.keyboard.press("p")
+        self.assertTrue(self.page.locator("section#board.on").count())  # no page switch behind an open drawer
+        self.page.evaluate("keysHelp(true)")
+        self.page.keyboard.press("Escape")
+        self.assertFalse(self.page.locator("#keysHelp").is_visible())
+        self.assertTrue(self.page.locator("#drawer.open").count())  # one Esc, one thing closed
+
     def test_apply_agent_controls_in_the_drawer(self):  # blueprint 2.2 human control: start, mode and stop in the page
         import json
 
