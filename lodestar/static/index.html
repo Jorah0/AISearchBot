@@ -471,6 +471,9 @@
       <h4>AI changes</h4>
       <p class="muted">Every change Apply suggestions and Full AI made to your content, newest first, with what it was before. Undo puts a batch back exactly; a field you changed since keeps your version.</p>
       <div id="aiHist" class="list"></div></div>
+    <div class="panel" id="auditCard"><h3>Audit log</h3>
+      <p class="muted">Every decision the policy made about an automatic action (allowed, waits for you, blocked) with its reasons, and every action that ran, newest first. Kept for good: the log cannot be edited. <span id="auditVer"></span></p>
+      <div id="auditLog" class="list"></div></div>
     <div class="panel" id="updCard"><h3>Updates</h3>
       <div class="row"><label>Updates <select id="uMode" onchange="setPref('update_mode',this.value)"><option value="off">off</option><option value="notify">tell me (notify)</option><option value="auto">install automatically</option></select></label>
         <label>check every <input id="uEvery" type="number" min="1" max="720" style="width:70px" onchange="setPref('update_every_hours',Number(this.value))"> hours</label>

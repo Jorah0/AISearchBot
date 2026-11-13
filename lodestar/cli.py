@@ -479,6 +479,22 @@ def cmd_careers(a):
         print(cov["note"])
 
 
+def cmd_audit(a):
+    """lodestar audit: the append-only trail of policy decisions and executor runs (policy.py)."""
+    import json as _json
+
+    from . import policy
+
+    rows = policy.log(a.limit)
+    for r in rows:
+        why = ", ".join(_json.loads(r["reasons"] or "[]"))
+        print(f"{r['at']}  {r['action']:<26} {r['result']:<17} {r['tool'] or '-':<18} {r['target'] or '-':<9}"
+              + (f" inbox #{r['approval_id']}" if r["approval_id"] else "") + (f"  ({why})" if why else ""))
+    if not rows:
+        print("nothing recorded yet: decisions appear here when a tool proposes an action")
+    print(f"policy version {policy.VERSION}")
+
+
 def _kv(pairs: list[str], fields) -> dict:
     kv = [p.partition("=") for p in pairs]
     if bad := [k for k, sep, _ in kv if not sep or not k.strip()]:
@@ -2288,6 +2304,8 @@ def build() -> argparse.ArgumentParser:
     v.add_parser("list")
     x = v.add_parser("rm"); x.add_argument("id", type=int)
     s.set_defaults(f=cmd_companies)
+    s = sub.add_parser("audit", help="the append-only audit trail: every policy decision (allow / needs you / block, with reasons) and every action run")
+    s.add_argument("--limit", type=int, default=50); s.set_defaults(f=cmd_audit)
     s = sub.add_parser("careers", help="career discovery: occupations your profile fits (O*NET), career tracks you choose, track search with board coverage")
     v = s.add_subparsers(dest="op", required=True)
     x = v.add_parser("suggest", help="occupations by career class: why it fits, what is missing, what does not transfer, how to close the gap")

@@ -41,7 +41,7 @@ function go(tab) {
   if (tab !== 'board' || CT) closeDrawer();
   if (tab === 'contacts') loadContacts();
   if (tab === 'insights') loadInsights();
-  if (tab === 'setup') { loadEmail(); loadAiHistory(); restoreLoad(); acctLoad(); }
+  if (tab === 'setup') { loadEmail(); loadAiHistory(); restoreLoad(); acctLoad(); loadAudit(); }
   if (tab === 'studio') loadStudio();
   if (tab === 'search') { loadAllJobs(); spLoad(); }
   if (tab === 'careers') loadCareers();
@@ -2981,6 +2981,17 @@ function advRefresh(scope, target) {  // the component the change touched shows 
   }
   if (scope === 'contacts') { loadContacts(); if (CT && (target == null || CT.contact.id === target)) openContact(CT.contact.id); }
   if ($('#setup').classList.contains('on')) loadAiHistory();
+}
+const AUDIT_RESULT = { ALLOW: 'allowed', REQUIRE_APPROVAL: 'waits for you', BLOCK: 'blocked', APPROVED_BY_YOU: 'approved by you',
+  done: 'done', error: 'failed', rejected: 'not run (stale)', send_failed: 'send failed, kept in the Inbox' };
+async function loadAudit() {  // Setup > Audit log (policy.py): decisions and runs, reasons in words
+  const r = await api('/api/audit'); if (r.error) return toast('error: ' + r.error, 'err');
+  $('#auditVer').textContent = 'policy version ' + r.version;
+  $('#auditLog').innerHTML = r.rows.map(x => {
+    const why = JSON.parse(x.reasons || '[]').map(k => r.reasons[k] || k).join('; ');
+    return `<div class="audit-row"><span class="muted">${esc(x.at)}</span> <b>${esc(x.action)}</b> ${esc(AUDIT_RESULT[x.result] || x.result)}`
+      + `${x.target ? ' · ' + esc(x.target) : ''}${x.approval_id ? ' · Inbox #' + Number(x.approval_id) : ''}${why ? `<div class="muted">${esc(why)}</div>` : ''}</div>`;
+  }).join('') || '<div class="muted">Nothing yet: decisions appear here when a tool proposes an action.</div>';
 }
 async function loadAiHistory() {  // Setup > Data: recent AI change batches, each with its diffs and an Undo
   const r = await api('/api/advise/history?limit=30'); if (r.error) return toast('error: ' + r.error, 'err');

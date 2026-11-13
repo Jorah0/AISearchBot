@@ -119,6 +119,11 @@ CREATE TABLE IF NOT EXISTS career_tracks(id INTEGER PRIMARY KEY, label TEXT NOT 
   titles TEXT NOT NULL DEFAULT '[]', codes TEXT NOT NULL DEFAULT '[]', tiers TEXT NOT NULL DEFAULT '[0]',
   exclusions TEXT NOT NULL DEFAULT '[]', location TEXT DEFAULT '', training TEXT DEFAULT 'none',
   priority TEXT DEFAULT 'medium', enabled INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')));
+-- the audit trail (policy.py, pass 25): every policy decision and executor run; append-only (the triggers refuse changes)
+CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, at TEXT DEFAULT (datetime('now')), action TEXT NOT NULL, tool TEXT,
+  target TEXT, result TEXT NOT NULL, reasons TEXT, policy_version TEXT, approval_id INTEGER);
+CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit BEGIN SELECT RAISE(ABORT, 'the audit trail is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit BEGIN SELECT RAISE(ABORT, 'the audit trail is append-only'); END;
 """
 MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "TEXT",  # ponytail: additive only
               # tracker fields (pass 15); every user write goes through set_fields

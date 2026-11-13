@@ -1100,6 +1100,10 @@ class Handler(BaseHTTPRequestHandler):
                                 "ai": bool(ai.available())})
                 else:
                     self._json({"error": "not found"}, 404)
+            elif path == "/api/audit":  # Setup > Audit log: policy decisions and action runs, newest first (policy.py)
+                from . import policy
+
+                self._json({"rows": policy.log(100), "reasons": policy.REASONS, "version": policy.VERSION})
             elif path == "/api/careers":  # Careers tab: suggestions, your tracks, labels; missing O*NET data is said, not a 500
                 from . import careers
 

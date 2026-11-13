@@ -1,5 +1,17 @@
 # Changelog (development passes, newest first)
 
+## Pass 25 (2026-11-13): one policy for every automatic action, and an audit log
+
+- Every action a tool proposes now goes through one deterministic policy (no AI decides): allowed (the tool is on auto
+  and nothing needs you), waits for you (the Inbox), or blocked, always with its reasons.
+- Some things always wait for you, whatever a tool's auto switch says: a withdrawal or acceptance, a scheduling
+  commitment (an interview slot), mail to a job at the offer stage (offers and negotiation), a reply to a sender
+  Lodestar could not verify, and mail with attachments.
+- The apply agent never submits by itself for a licensed occupation (nursing, law, CDL driving, trades ...): it goes
+  to review.
+- Setup > Audit log and `lodestar audit`: every decision and every action that ran, newest first, with the reasons in
+  words. The log cannot be edited or deleted (the database refuses it).
+
 ## Pass 24 (2026-11-13): eligibility gates, career class on every job, Explore further
 
 **Hard requirements are no longer hidden inside the fit score**

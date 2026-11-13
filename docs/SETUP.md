@@ -36,6 +36,7 @@ supports them.
   - [Where your data lives](#where-your-data-lives)
   - [Settings and secrets: .env and the keyring vault](#settings-and-secrets-env-and-the-keyring-vault)
   - [lodestar doctor](#lodestar-doctor)
+  - [The policy and the audit log (Setup > Audit log, `lodestar audit`)](#the-policy-and-the-audit-log-setup--audit-log-lodestar-audit)
   - [Backups, export and restore](#backups-export-and-restore)
   - [Obsidian export](#obsidian-export)
   - [Auto-update](#auto-update)
@@ -857,6 +858,16 @@ code is 1 only in the last case.
 | `last update` FAIL with `ROLLBACK FAILED` | Run the `git reset --hard` command the line prints, from the install folder; see "Auto-update". |
 
 `--live` costs a few tokens (one short call per configured provider); without it doctor never goes on the network.
+
+### The policy and the audit log (Setup > Audit log, `lodestar audit`)
+
+Every automatic action (a mail, a status change, a new job, a saved answer, a submission) is proposed through one
+policy that decides, the same way every time and never by AI: **allowed** when its tool is on auto and nothing needs
+you, **waits for you** (the Inbox) otherwise, or **blocked** (the tool is off, or Full AI is running). These always
+wait for you whatever the tool's switch says: a withdrawal or acceptance, a scheduling commitment, mail to a job at the
+offer stage, a reply to a sender Lodestar could not verify, and mail with attachments. The apply agent's auto mode
+also sends a licensed occupation to review. Each decision and each action that ran is written to the audit log with
+its reasons and the policy version; the database refuses any change or deletion of it.
 
 ### Backups, export and restore
 

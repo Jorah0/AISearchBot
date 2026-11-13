@@ -124,7 +124,20 @@ def auto_blockers(job, ats: str | None) -> list[str]:
                          (ats or "",)).fetchone()[0]
     if n < AUTO_AFTER:
         out.append(f"auto starts after {AUTO_AFTER} applications you approved went through on {ats or 'this site'} ({n} so far)")
+    if note := _licensed(job["title"]):  # blueprint 4.5: safety-sensitive / licensed work gets your review first
+        out.append(f"licensed occupation ({note}): you review the submission")
     return out
+
+
+def _licensed(title: str) -> str | None:
+    """The licensing note of the O*NET occupation this title is (careers.regulated), else None."""
+    from . import careers, occupations
+
+    try:
+        hit = next((c for c, s in occupations.match_title(title or "", 1) if s >= 0.8), None)
+    except SystemExit:  # no occupation data: nothing to look up (the other gates still apply)
+        return None
+    return careers.regulated(hit) if hit else None
 
 
 def effective_mode(job, ats: str | None, requested: str | None = None) -> tuple[str, list[str]]:

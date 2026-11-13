@@ -37,10 +37,14 @@ def propose(tool: str, kind: str, payload: dict, summary: str, job_id: int | Non
         payload = payload | {"unverified": True}
     if payload.get("unverified"):  # a reply to unverified mail: the Inbox card says so, and sending it moves no job
         payload = {k: v for k, v in payload.items() if k != "new_status"}
+    from . import policy
+
+    decision = policy.authorize(tool, kind, payload, job_id, force_pending)  # the one deterministic gate (pass 25)
     pid = db.add_pending(tool, kind, job_id, summary, json.dumps(payload))
-    if settings.auto(tool) and not force_pending:
+    policy.record(f"propose:{kind}", tool, job_id, decision["result"], decision["reasons"], pid)
+    if decision["result"] == "ALLOW":
         try:
-            return approve(pid)
+            return approve(pid, _auto=True)
         except SystemExit as e:  # refused before the claim (a clashing slot): it waits in the Inbox, nothing sent
             return {"id": pid, "status": "pending", "summary": summary, "result": str(e)}
     if job_id:
@@ -52,7 +56,10 @@ def propose(tool: str, kind: str, payload: dict, summary: str, job_id: int | Non
 MAIL_EDITS = ("to", "subject", "body", "chosen_time", "attachments")
 
 
-def approve(pid: int, edits: dict | None = None) -> dict:
+def approve(pid: int, edits: dict | None = None, _auto: bool = False) -> dict:
+    """Run an Inbox item: your approval, or (_auto) the policy's ALLOW from propose. Both leave audit rows."""
+    from . import policy
+
     full_ai_check("approves an Inbox item")
     if edits is not None and not isinstance(edits, dict):  # checked before the claim, or the item would stick claimed
         raise ValueError("edits must be a JSON object")
@@ -66,6 +73,8 @@ def approve(pid: int, edits: dict | None = None) -> dict:
     if row["status"] != "pending" or not db.claim_pending(pid):
         row = db.get_pending(pid)
         return {"id": pid, "status": row["status"], "result": row["result"]}
+    if not _auto:
+        policy.record(f"approve:{row['kind']}", row["tool"], row["job_id"], "APPROVED_BY_YOU", ["your approval"], pid)
     payload = json.loads(row["payload"]) | (edits or {})
     try:
         result = EXECUTORS[row["kind"]](payload)
@@ -78,10 +87,12 @@ def approve(pid: int, edits: dict | None = None) -> dict:
             # your edited subject and body and the error, for a retry once mail works.
             # ponytail: an SMTP error after the server accepted the message would also land here; rare, see Sent first
             db.requeue_pending(pid, json.dumps(payload), f"send failed: {result}")
+            policy.record(f"execute:{row['kind']}", row["tool"], row["job_id"], "send_failed", [result[:200]], pid)
             if row["job_id"]:
                 db.add_event(row["job_id"], "send_failed", f"inbox #{pid}: {result[:180]}")
             return {"id": pid, "status": "pending", "result": f"not sent, kept in the Inbox to retry: {result}"}
     db.decide_pending(pid, status, str(result))
+    policy.record(f"execute:{row['kind']}", row["tool"], row["job_id"], status, [str(result)[:200]] if status != "done" else [], pid)
     if row["job_id"]:
         db.add_event(row["job_id"], row["kind"], str(result)[:200])
     if status != "done":  # done: the run itself refreshes the summary
