@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import build_onet  # noqa: E402
 from careers_fixture import BANK, write_fixture  # noqa: E402
 
-from lodestar import occupations  # noqa: E402
+from lodestar import careers, occupations, profile, settings  # noqa: E402
 
 REAL_DATA = occupations.DATA
 
@@ -107,6 +107,110 @@ class Ontology(FixtureCase):
         self.assertEqual(occupations.meta()["version"], "31.0")
         self.assertTrue(occupations.get("41-1011.00")["title"].startswith("First-Line Supervisors"))
         self.assertIn("CC BY 4.0", occupations.meta()["credit"])
+
+
+class Discovery(FixtureCase):
+    def suggest(self, **kw):
+        return careers.suggest(bank=kw.pop("bank", BANK), **kw)
+
+    def test_resume_led_tiers_and_classes(self):
+        got = {s["code"]: (s["tier"], s["cls"]) for s in self.suggest()["suggestions"]}
+        self.assertEqual(got, {
+            "41-1011.00": (1, "qualified_now"),  # the user's own title
+            "41-2031.00": (2, "qualified_now"),  # same major group, lower zone
+            "11-9051.00": (3, "competitive_with_framing"),
+            "43-4051.00": (3, "competitive_with_framing"),
+            "11-2022.00": (3, "bridge_required"),  # zone 4 = candidate zone 3 + 1
+            "13-1081.00": (3, "bridge_required"),
+            "11-1011.00": (5, "longer_term"),  # zone 5 >= 3 + 2
+        })
+        self.assertEqual(self.suggest()["zone"], 3)
+
+    def test_every_suggestion_names_its_source_and_four_explanations(self):
+        out = self.suggest()["suggestions"]
+        for s in out:
+            self.assertEqual(s["source"], "O*NET test fixture")
+            self.assertEqual((s["tier_label"], s["cls_label"]), (careers.TIERS[s["tier"]], careers.CLASSES[s["cls"]]))
+            for k in ("why", "missing", "not_transfer", "close_gap"):
+                self.assertIsInstance(s[k], list)
+            self.assertTrue(s["why"])
+        logi = next(s for s in out if s["code"] == "13-1081.00")
+        self.assertIn("SAP software", logi["missing"])
+        self.assertEqual(logi["close_gap"], [occupations.ZONE_PREP[4]])
+        own = next(s for s in out if s["code"] == "41-1011.00")
+        self.assertIn("Store Manager", own["why"][0])
+        self.assertNotIn("Microsoft Excel", own["missing"])  # a skill you list is not missing
+        self.assertIn("Formulate pricing policies for merchandise.", own["not_transfer"])  # no shared word with your text
+
+    def test_tiers_are_never_broadened(self):
+        self.assertEqual([s["code"] for s in self.suggest(tiers=(1,))["suggestions"]], ["41-1011.00"])
+
+    def test_exclusions_drop_or_show_as_ineligible(self):
+        old = settings.pref("excluded_title_words")
+        try:
+            settings.set_pref("excluded_title_words", "salespersons, sales managers")
+            codes = {s["code"] for s in self.suggest()["suggestions"]}
+            self.assertFalse({"41-2031.00", "11-2022.00"} & codes)
+            self.assertIn("41-1011.00", codes)
+            shown = {s["code"]: s["cls"] for s in self.suggest(show_excluded=True)["suggestions"]}
+            self.assertEqual(shown["11-2022.00"], "ineligible")
+        finally:
+            settings.set_pref("excluded_title_words", old or "")
+
+    def test_unmatched_title_is_insufficient_evidence(self):
+        bank = {**BANK, "experience": [{"title": "Ninja Rockstar", "company": "X"}], "education": []}
+        out = self.suggest(bank=bank)
+        self.assertEqual(out["suggestions"], [])
+        self.assertIn("Insufficient evidence", out["note"])
+
+    def test_empty_profile_is_insufficient_evidence(self):
+        out = self.suggest(bank=profile.empty())
+        self.assertEqual((out["suggestions"], out["zone"]), ([], None))
+        self.assertIn("Insufficient evidence", out["note"])
+
+    def test_desired_field_target_and_its_bridges(self):
+        got = {s["code"]: s for s in self.suggest(targets=["11-9081.00"], tiers=(0, 1, 2, 3, 4, 5))["suggestions"]}
+        self.assertEqual((got["11-9081.00"]["tier"], got["11-9081.00"]["cls"]), (0, "bridge_required"))
+        self.assertEqual((got["43-4081.00"]["tier"], got["43-4081.00"]["cls"]), (4, "bridge_required"))
+        self.assertEqual(got["11-9051.00"]["tier"], 3)  # the lowest tier wins ...
+        self.assertTrue(any("Lodging Managers" in w for w in got["11-9051.00"]["why"]))  # ... and names the route
+
+    def test_regulated_target_is_flagged_and_never_qualified(self):
+        s = self.suggest(targets=["29-1141.00"], tiers=(0,))["suggestions"][0]
+        self.assertIn("license", s["regulated"].lower())
+        self.assertEqual(s["cls"], "bridge_required")  # no RN credential in the evidence
+        self.assertIn(s["regulated"], s["close_gap"])
+        rn = {**BANK, "certifications": [{"name": "Registered Nurse (RN) license"}]}
+        self.assertEqual(self.suggest(bank=rn, targets=["29-1141.00"], tiers=(0,))["suggestions"][0]["cls"],
+                         "competitive_with_framing")
+
+    def test_classify_table(self):
+        C = careers.classify
+        self.assertEqual(C(1, 3, 3), "qualified_now")
+        self.assertEqual(C(2, 2, 3), "qualified_now")  # closely related and needs less preparation
+        self.assertEqual(C(2, 3, 3), "competitive_with_framing")  # related, same preparation: not proven
+        self.assertEqual(C(3, 3, 3), "competitive_with_framing")
+        self.assertEqual(C(0, 3, 3), "competitive_with_framing")
+        self.assertEqual(C(3, 4, 3), "bridge_required")
+        self.assertEqual(C(4, 2, 3), "bridge_required")
+        self.assertEqual(C(3, 5, 3), "longer_term")
+        self.assertEqual(C(1, 3, None), "insufficient_evidence")
+        self.assertEqual(C(1, None, 3), "insufficient_evidence")
+        self.assertEqual(C(1, 3, 3, excluded=True), "ineligible")
+        self.assertEqual(C(1, 3, 3, regulated_unmet=True), "bridge_required")
+
+    def test_candidate_zone_is_conservative_per_title(self):
+        Z = careers.candidate_zone
+        self.assertEqual(Z({"Store Manager": ["41-1011.00", "11-2022.00"]}, []), 3)  # one title, two zones: the lower
+        self.assertEqual(Z({"Store Manager": ["41-1011.00"], "Sales Manager": ["11-2022.00"]}, []), 4)  # across titles: max
+        self.assertEqual(Z({"Store Manager": ["41-1011.00"]}, ["Bachelor of Science"]), 4)  # a degree can raise it
+        self.assertEqual(Z({}, ["Associate of Arts"]), 3)
+        self.assertIsNone(Z({}, []))
+
+    def test_regulated_prefixes(self):
+        self.assertIn("license", careers.regulated("29-1141.00").lower())
+        self.assertIn("CDL", careers.regulated("53-3032.00"))
+        self.assertIsNone(careers.regulated("41-1011.00"))
 
 
 if __name__ == "__main__":
