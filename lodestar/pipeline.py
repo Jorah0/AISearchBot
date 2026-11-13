@@ -418,9 +418,12 @@ def _score(job, ctx):
             ctx.spent += "budget is used up" not in str(e)  # an unusable reply still cost the call
             log.get("pipeline").info("#%s AI fit skipped: %s", job["id"], e)
     chips = [f"{c['sign']} {c['text']}" for c in fit.top(f)]
-    skip = f["blocked"] or f["score"] < int(settings.pref("auto_track_min_score"))
+    unknown = [f"{g['requirement']}: unknown" for g in f.get("gates") or [] if g["state"] == "unknown"]
+    # a gate not met, or one nobody knows (unknown is never met), keeps Autopilot away; a click still runs the next step
+    skip = f["blocked"] or bool(unknown) or f["score"] < int(settings.pref("auto_track_min_score"))
     return {"fp": _h(json.dumps([f["score"], f["rev"], chips])), "score": f["score"], "known": f["known"], "chips": chips,
-            "verdict": "skip" if skip else "go", "why": "; ".join(chips) or f"fit {f['score']}",
+            "class": fit.job_class(f), "verdict": "skip" if skip else "go",
+            "why": "; ".join(["needs you: " + ", ".join(unknown)] * bool(unknown) + chips) or f"fit {f['score']}",
             "missing": ((f.get("parts") or {}).get("skills") or {}).get("missing") or []}
 
 

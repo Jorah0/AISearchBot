@@ -472,7 +472,8 @@ def auto_track(listings: list[dict], provider: str | None = None) -> list[dict]:
                                   "notes": f"auto-track fit {f['score']} ({how}): {j['why']} (via {j['source']})",
                                   "posting_key": j.get("key") or posting_key(j), **listing_fields(j)},
                                  f"track {j['title']} @ {j['company']} (fit {f['score']} ({how}))",
-                                 force_pending=how == "rules")  # a rules-only guess always waits in the Inbox
+                                 # a rules-only guess, or a hard requirement nobody knows (unknown is never met), waits
+                                 force_pending=how == "rules" or bool(f.get("gates_unknown")))
         out.append({**j, "proposal": prop})
     return out
 

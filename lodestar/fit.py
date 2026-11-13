@@ -469,12 +469,34 @@ def top(fit: dict, n: int = 3) -> list[dict]:
     return [ch for ch in (fit or {}).get("chips") or [] if not ch.get("info")][:n]
 
 
+CLASS_BANDS = ((75, "qualified_now"), (55, "competitive_with_framing"), (35, "bridge_required"))
+
+
+def job_class(fit: dict | None) -> str | None:
+    """A job's career class (blueprint 4.4 / 7.3; careers.CLASSES): a gate not met -> Currently ineligible; an unknown
+    gate or a partial fit -> Insufficient evidence; else by score band. ponytail: fixed bands; a reading of the fit,
+    never a hiring probability."""
+    if not fit:
+        return None
+    states = {g["state"] for g in fit.get("gates") or []}
+    if "not_met" in states:
+        return "ineligible"
+    if "unknown" in states or fit.get("partial"):
+        return "insufficient_evidence"
+    return next((k for floor, k in CLASS_BANDS if fit["score"] >= floor), "longer_term")
+
+
 def light(fit: dict | None, cur_rev: str | None = None) -> dict:
-    """What the board and lists carry per item (about 150 bytes): score, known, partial, stale, blocked, top chips."""
+    """What the board and lists carry per item (about 200 bytes): score, confidence, partial, stale, blocked, class,
+    top chips."""
+    from .careers import CLASSES
+
     if not fit:
         return {"fit_score": None}
-    return {"fit_score": fit["score"], "fit_known": fit["known"], "fit_partial": fit.get("partial", False),
-            "fit_blocked": fit.get("blocked", False), "fit_stale": bool(cur_rev and fit.get("rev") != cur_rev),
+    cls = job_class(fit)
+    return {"fit_score": fit["score"], "fit_known": fit["known"], "fit_confidence": fit.get("confidence", fit["known"]),
+            "fit_partial": fit.get("partial", False), "fit_blocked": fit.get("blocked", False),
+            "fit_stale": bool(cur_rev and fit.get("rev") != cur_rev), "fit_class": cls, "fit_class_label": CLASSES.get(cls),
             "fit_chips": [f"{c['sign']} {c['text']}" for c in top(fit)]}
 
 

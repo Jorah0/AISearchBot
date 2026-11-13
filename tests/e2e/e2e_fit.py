@@ -71,6 +71,17 @@ class Fit(E2ETestCase):
         self.assertNotIn("165,000", prompt); self.assertNotIn('"chips"', prompt)
         self.assertEqual(json.loads(db.get_job(self.ids["fit"])["ai_fit"])["score"], 88)
 
+    def test_career_class_on_the_card_and_hard_requirements_in_the_drawer(self):  # pass 24
+        card = self.page.locator(f'.card[data-id="{self.ids["fit"]}"]')
+        self.assertEqual(card.locator(".chip.fit-class").text_content(), "Currently ineligible")  # its deal-breaker
+        group = self.open_job(self.ids["fit"]).locator("#jFit")
+        self.assertEqual(group.locator(".chip.fit-class").text_content(), "Currently ineligible")
+        gates = group.locator(".gates").text_content()
+        self.assertIn("Hard requirements (kept out of the score)", gates)
+        self.assertIn("Deal-breaker: not met", gates)
+        self.assertRegex(group.text_content(), r"confidence \d+%")
+        self.assertIsNone(self.page.evaluate("window.__xss"))
+
     def test_today_top_new_fit_tracks_the_listing(self):
         today = self.page.locator("#today")
         self.assertIn("Top new fits", today.text_content())

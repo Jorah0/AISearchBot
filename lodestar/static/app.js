@@ -152,8 +152,10 @@ function fitBadge(j) {
   if (j.fit_score == null) return '';
   const tip = [...(j.fit_chips || []), j.fit_partial ? `partial: measured ${Math.round((j.fit_known || 0) * 100)}% of the fit (open the job for what is missing)` : '',
     j.fit_stale ? 'out of date: your profile, preferences or weights changed; re-scoring' : ''].filter(Boolean).join('\n');
-  return `<span class="chip fit fit-${fitBand(j.fit_score)}${j.fit_stale ? ' stale-fit' : ''}" title="${esc(tip)}">fit ${esc(j.fit_score)}${j.fit_partial ? ' · partial' : ''}${j.fit_blocked ? ' · blocked' : ''}</span>`;
+  return `<span class="chip fit fit-${fitBand(j.fit_score)}${j.fit_stale ? ' stale-fit' : ''}" title="${esc(tip)}">fit ${esc(j.fit_score)}${j.fit_partial ? ' · partial' : ''}${j.fit_blocked ? ' · blocked' : ''}</span>`
+    + (j.fit_class_label ? ` <span class="chip fit-class" title="career class: a reading of the fit and its hard requirements, never a hiring probability">${esc(j.fit_class_label)}</span>` : '');
 }
+const GATE_STATE = { met: 'met', not_met: 'not met', unknown: 'unknown (never counted as met)' };
 let FIT_ASKED = null;  // stale fits are re-scored on the server (no AI, silent), then the board reloads; asked again only
 function fitRefresh() {  // when the rev or the stale count moved, so a job that cannot be scored never loops
   const key = S.fit_rev + ':' + S.fit_stale;
@@ -171,9 +173,11 @@ function fitGroup(d) {
     + (v.s == null ? '<span class="muted">not measured</span><span></span>' : `<span class="bar" role="img" aria-label="${esc(PART_NAME_FIT[p] || p)} ${esc(v.s)} of 100"><i style="width:${Math.max(0, Math.min(100, Number(v.s) || 0))}%"></i></span><span>${esc(v.s)}</span>`)
     + `</div><div class="chips">${chipsOf(p)}</div>`).join('');
   const mods = chipsOf('mod');
+  const gates = (f.gates || []).map(g => `<li><b>${esc(g.requirement)}</b>: ${esc(GATE_STATE[g.state] || g.state)}<span class="muted"> (${esc(g.evidence)})</span></li>`).join('');
   return `<div class="group" id="jFit"><h4>Fit</h4>
-    <div class="row"><b class="cov-score fit-${fitBand(f.score)}">fit ${esc(f.score)}</b>${f.partial ? '<span class="chip">partial</span>' : ''}${f.blocked ? '<span class="chip due">blocked</span>' : ''}
-      ${j.fit_stale ? '<span class="chip stale">out of date</span>' : ''}<span class="muted">${esc(f.note || '')} · measured ${esc(Math.round(f.known * 100))}%</span></div>
+    <div class="row"><b class="cov-score fit-${fitBand(f.score)}">fit ${esc(f.score)}</b>${j.fit_class_label ? `<span class="chip fit-class">${esc(j.fit_class_label)}</span>` : ''}${f.partial ? '<span class="chip">partial</span>' : ''}${f.blocked ? '<span class="chip due">blocked</span>' : ''}
+      ${j.fit_stale ? '<span class="chip stale">out of date</span>' : ''}<span class="muted">${esc(f.note || '')} · confidence ${esc(Math.round((f.confidence ?? f.known) * 100))}%</span></div>
+    ${gates ? `<div class="gates"><span class="muted">Hard requirements (kept out of the score):</span><ul>${gates}</ul></div>` : ''}
     ${rows}${mods ? `<div class="chips"><span class="muted">modifiers:</span> ${mods}</div>` : ''}
     <div class="row">${btns}</div><div id="jFitWhy"></div>
     <div class="muted">Deterministic and private: your skills, role, years, location and pay against this posting, from your profile and Preferences. It never goes to an employer or an AI provider. Weights: Tools &gt; Preferences &gt; Fit weights.</div></div>`;

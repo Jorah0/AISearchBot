@@ -88,5 +88,62 @@ class Gates(Base):
         self.assertFalse({"clearance", "dealbreaker"} & set(fit.config()["modifiers"]))
 
 
+def F(score=80, partial=False, gates=()):
+    return {"score": score, "partial": partial, "gates": [{"requirement": r, "state": s, "evidence": ""} for r, s in gates],
+            "known": 0.9, "chips": []}
+
+
+class JobClass(Base):
+    def test_job_class_table(self):
+        C = fit.job_class
+        self.assertEqual(C(F(90, gates=[("Excluded company", "not_met")])), "ineligible")
+        self.assertEqual(C(F(90, gates=[("Security clearance", "unknown")])), "insufficient_evidence")
+        self.assertEqual(C(F(90, partial=True)), "insufficient_evidence")
+        self.assertEqual(C(F(90, gates=[("Class A CDL license", "met")])), "qualified_now")
+        self.assertEqual(C(F(75)), "qualified_now")
+        self.assertEqual(C(F(60)), "competitive_with_framing")
+        self.assertEqual(C(F(40)), "bridge_required")
+        self.assertEqual(C(F(20)), "longer_term")
+        self.assertIsNone(C(None))
+
+    def test_light_carries_the_class_and_confidence(self):
+        settings.set_pref("excluded_companies", "Acme")
+        lt = fit.light(fit.score(L()))
+        self.assertEqual((lt["fit_class"], lt["fit_class_label"]), ("ineligible", "Currently ineligible"))
+        self.assertIn("fit_confidence", lt)
+        settings.set_pref("excluded_companies", "")
+
+    def test_auto_track_waits_for_you_on_an_unknown_gate(self):
+        from lodestar import ai, apply, web_monitor
+        from test_pass21_fit import patched
+
+        old = settings.load()["tools"]["auto_track"]
+        settings.set_tool("auto_track", enabled=True, auto=True)
+        settings.set_pref("work_authorization", "needs_sponsorship")
+
+        def rank(listings, provider=None):
+            for j in listings:
+                j["score"], j["why"] = 100, "ai says so"
+            return listings
+        try:
+            with patched(ai, available=lambda: ["anthropic"]), patched(web_monitor, rank=rank):
+                out = apply.auto_track([L(company="Silentco")])  # says nothing about sponsorship: unknown
+            self.assertEqual(out[0]["proposal"]["status"], "pending")  # AI-judged, tool on auto, still yours to decide
+        finally:
+            settings.set_tool("auto_track", enabled=old["enabled"], auto=old["auto"])
+
+    def test_pipeline_fit_gate_skips_an_unknown_gate_and_says_why(self):
+        from lodestar import db, pipeline
+
+        settings.set_pref("auto_track_min_score", 0)
+        jid = db.add_job("Acme", "Senior Data Engineer", None, JD + " An active secret clearance is required.", "via test")
+        pipeline.run(jid, "score")
+        out = {e["name"]: e for e in pipeline.status(jid)}["score"]["output"]
+        self.assertEqual(out["verdict"], "skip")  # Autopilot stays away; a click still runs the next step
+        self.assertIn("Security clearance: unknown", out["why"])
+        self.assertEqual(out["class"], "insufficient_evidence")
+        self.assertTrue(pipeline.fit_skip(pipeline.status(jid)))
+
+
 if __name__ == "__main__":
     unittest.main()
