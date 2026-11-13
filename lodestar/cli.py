@@ -236,6 +236,10 @@ def cmd_jobs(a):
     elif op == "status":
         db.set_status(a.id, a.status, a.note or "")
         print(f"#{a.id} -> {a.status}")
+    elif op == "stage":
+        db.set_stage(a.id, a.stage, a.note or "")
+        j = db.get_job(a.id)
+        print(f"#{a.id} -> {j['stage']} (board: {j['status']})")
     elif op == "note":
         j = db.get_job(a.id)
         db.update_job(a.id, notes=((j["notes"] or "") + "\n" + a.text).strip())
@@ -2097,6 +2101,8 @@ def build() -> argparse.ArgumentParser:
     x.add_argument("id", type=int); x.add_argument("pairs", nargs="+", metavar="key=value")
     x = v.add_parser("show", help="every field plus the event timeline"); x.add_argument("id", type=int)
     x = v.add_parser("status", help="move a job: applied stamps applied_at; accepted offers to withdraw the others"); x.add_argument("id", type=int); x.add_argument("status", choices=db.STATUSES); x.add_argument("--note")
+    x = v.add_parser("stage", help="the fine-grained stage (acknowledged, recruiter_screen, assessment, technical/panel/final_interview, references, negotiation, on_hold, no_response, position_closed, declined_offer ...); the board column follows")
+    x.add_argument("id", type=int); x.add_argument("stage", choices=list(db.STAGES)); x.add_argument("--note")
     x = v.add_parser("note", help="append a note (also logged on the timeline)"); x.add_argument("id", type=int); x.add_argument("text")
     x = v.add_parser("jd", help="replace the job description"); x.add_argument("id", type=int); x.add_argument("source", help="url, file, or text")
     x = v.add_parser("rm", help="delete a job and its timeline"); x.add_argument("id", type=int)

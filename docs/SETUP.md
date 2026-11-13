@@ -2554,6 +2554,15 @@ on your Board is never proposed again. Auto-tracked jobs never count as applicat
 
 **AI helpers (Search):** **AI rank vs my profile**, **Auto-track strong fits**, the toolbar (saved-search keywords) and **✦ AI help** > **Suggest search terms** (queries and filters from your profile; you type the one you want).
 
+**Stages and history (pass 26).** Beside its board column every job has a stage: saved, applied, acknowledged,
+screening, recruiter_screen, assessment, interview, technical_interview, panel_interview, final_interview, references,
+offer, negotiation, accepted, rejected, no_response, position_closed, withdrawn, declined_offer, on_hold. Setting one
+in the job drawer (or `lodestar jobs stage ID STAGE`) moves the column with it (on_hold keeps the column). Each move is
+kept in the drawer's Stage history with who moved it and the evidence; it cannot be edited. Moving a job to applied
+copies the resume, cover letter and form answers as they were into the job's `submitted/` folder with a SHA-256
+manifest. The drawer also shows when the posting last answered; the apply agent stops before submitting a posting
+that looked removed.
+
 ### The fit score
 
 **What it is for.** One number from 0 to 100 per job and per listing that says how well the posting matches you, with

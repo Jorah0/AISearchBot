@@ -515,7 +515,9 @@ def _apply(info: dict, dry: bool) -> None:
         db.add_event(job["id"], "email" if info["trusted"] else "email_unverified", detail)
         if new and db.STATUSES.index(new) > db.STATUSES.index(job["status"]):
             approvals.propose("email_classify", "set_status",
-                              {"job_id": job["id"], "status": new, "note": f"(email: {info['subject'][:60]})"},
+                              {"job_id": job["id"], "status": new, "note": f"(email: {info['subject'][:60]})",
+                               "evidence": {"mail": info.get("message_id") or "", "category": info["category"],
+                                            "trusted": bool(info.get("trusted"))}},
                               f"move #{job['id']} {job['company']} to {new} ({info['category']} email)", job["id"],
                               force_pending=not info.get("trusted", False))  # unauthenticated mail never moves a job unreviewed
         if info["category"] == "interview" and info.get("deadline"):

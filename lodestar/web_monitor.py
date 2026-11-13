@@ -493,6 +493,8 @@ def _gone(job, why: str, proposed: list) -> None:
 
 
 def _open(job, how: str) -> None:
+    """The posting answered (its feed lists it, or its page is up): stamp the day (blueprint 6.4, last verified)."""
+    db.update_job(job["id"], touch=False, posting_checked_at=datetime.now().strftime("%Y-%m-%d"))
     if removed_event(job["id"]):
         db.add_event(job["id"], "posting_reopened", f"the posting is up again ({how})")
 
@@ -859,6 +861,17 @@ ATTRIBUTION = {"adzuna": ("Adzuna", "https://www.adzuna.com/"), "himalayas": ("H
                "remoteok": ("Remote OK", "https://remoteok.com/"), "usajobs": ("USAJOBS", "https://www.usajobs.gov/"),
                "jobicy": ("Jobicy", "https://jobicy.com/"), "arbeitnow": ("Arbeitnow", "https://www.arbeitnow.com/"),
                "themuse": ("The Muse", "https://www.themuse.com/"), "hn": ("HN Who is hiring", "https://news.ycombinator.com/")}
+# blueprint 6.3: what each board can do. Discovery only: no board is an apply API (apply: "handoff" = you or the apply
+# agent apply on the posting's own page). terms_reviewed: the date its terms were last reviewed, None = not recorded.
+_CAP = {"search": "supported", "full_description": "supported", "apply": "handoff", "auth": "none", "terms_reviewed": None}
+CAPABILITIES = {
+    "remotive": _CAP | {"regions": "remote, worldwide"}, "arbeitnow": _CAP | {"regions": "Europe, remote"},
+    "remoteok": _CAP | {"regions": "remote, worldwide"}, "hn": _CAP | {"regions": "worldwide (monthly thread)"},
+    "jobicy": _CAP | {"regions": "remote, worldwide"}, "themuse": _CAP | {"regions": "mostly US"},
+    "himalayas": _CAP | {"regions": "remote, worldwide"}, "wwr": _CAP | {"regions": "remote, worldwide"},
+    "adzuna": _CAP | {"full_description": "partial (a snippet)", "auth": "key", "regions": "the adzuna_country preference"},
+    "usajobs": _CAP | {"full_description": "partial (a summary)", "auth": "key", "regions": "US federal"},
+}
 WATCH_CACHE_DEFAULT = 2 * 3600  # a board not in EVERY (tests' fakes): saved searches reuse its answer this long
 _ANSWERS: dict = {}  # (source function, query) -> (monotonic time, listings); ponytail: in memory, a restart refetches
 _CACHE: dict = {}  # GLOBAL (url, parser) -> (epoch time, parsed answer); also saved per board on disk (_board_file)

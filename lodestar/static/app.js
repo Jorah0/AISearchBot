@@ -156,6 +156,29 @@ function fitBadge(j) {
     + (j.fit_class_label ? ` <span class="chip fit-class" title="career class: a reading of the fit and its hard requirements, never a hiring probability">${esc(j.fit_class_label)}</span>` : '');
 }
 const GATE_STATE = { met: 'met', not_met: 'not met', unknown: 'unknown (never counted as met)' };
+const ACTOR = { user: 'you', agent: 'Lodestar', integration: 'a connected service', system: 'Lodestar' };
+function stageGroup(d) {  // pass 26: the fine-grained stage, its append-only history, when the posting last answered
+  const j = d.job, hist = (d.stages || []).map(e => {
+    const ev = e.evidence ? JSON.parse(e.evidence) : null;
+    return `<li>${esc(e.at)} · ${esc(e.from_stage || '')} → ${esc(e.to_stage)} by ${esc(ACTOR[e.actor_type] || e.actor_type)}`
+      + `${e.actor_id ? ' (' + esc(e.actor_id) + ')' : ''}${e.approval_id ? ' · Inbox #' + Number(e.approval_id) : ''}`
+      + `${ev ? ' · evidence: ' + esc(Object.entries(ev).map(([k, v]) => k + ' ' + v).join(', ')) : ''}</li>`;
+  }).join('');
+  return `<div class="row muted" id="jStage">stage <select id="jStageSel" aria-label="Stage">${opt(S.stages || [], j.stage || j.status)}</select>
+      <button class="b ghost sm" onclick="setStage(${Number(j.id)}, this)">set stage</button>
+      ${j.posting_checked_at ? `<span>posting last answered ${esc(j.posting_checked_at)}</span>` : ''}</div>
+    ${hist ? `<details><summary class="muted">Stage history</summary><ul id="jStageHist">${hist}</ul></details>` : ''}`;
+}
+async function setStage(id, btn) {
+  btn.disabled = true; const r = await api(`/api/jobs/${Number(id)}/stage`, { stage: $('#jStageSel').value, note: '(set by you)' });
+  btn.disabled = false; if (r.error) return toast('error: ' + r.error, 'err');
+  await load(); openJob(id);
+}
+function coverageLine(c) {  // which boards a search asked (blueprint 6.5): never "no jobs" when nothing was checked
+  return `<div class="coverage muted">${c.checked ? '' : '<b>Nothing was checked: no job board answered.</b> '}Boards asked: ${esc(c.asked.join(', ') || 'none')} (${c.asked.length} of ${c.total})`
+    + (c.failed.length ? ` · could not read: ${esc(c.failed.join('; '))}` : '') + (c.not_ready.length ? ` · need a key: ${esc(c.not_ready.join(', '))}` : '')
+    + `. ${esc(c.note)}</div>`;
+}
 let FIT_ASKED = null;  // stale fits are re-scored on the server (no AI, silent), then the board reloads; asked again only
 function fitRefresh() {  // when the rev or the stale count moved, so a job that cannot be scored never loops
   const key = S.fit_rev + ':' + S.fit_stale;
@@ -344,6 +367,7 @@ async function openJob(id) {
       <select id="jStatus" aria-label="Status">${opt(S.statuses, j.status)}</select><button class="b ghost sm" onclick="moveJob(${j.id},$('#jStatus').value)">move</button>
       <button class="b ghost sm close" onclick="closeDrawer()" aria-label="Close job details">✕</button></div>
     <div class="muted">contact: ${esc(j.contact_name || '')} ${esc(j.contact_email || '(none; replies and follow-ups need one)')}</div>
+    ${stageGroup(d)}
     ${aiMenu('job', j.id)}
 ${fitGroup(d)}
 ${boostGroup(d)}
@@ -1369,7 +1393,8 @@ function doSearch(btn) {
       ? 'No job board could be reached, so nothing was checked. Check your connection and try again.' : 'nothing found';
     $('#sRes').innerHTML = (!$('#sQ').value.trim() && r.query ? `<div class="muted">searched your roles: ${esc(r.query)}</div>` : '')
       + (errs.length ? `<div class="warnbox" role="alert">${errs.map(e => 'could not ' + (e.startsWith('AI rank') ? 'rank: ' + esc(e.slice(9)) : 'read ' + esc(e))).join('<br>')}</div>` : '')
-      + `<div class="list">` + (RESULTS.map(listingHtml).join('') || `<div class="empty">${esc(none)}</div>`) + '</div>';
+      + `<div class="list">` + (RESULTS.map(listingHtml).join('') || `<div class="empty">${esc(none)}</div>`) + '</div>'
+      + (r.coverage ? coverageLine(r.coverage) : '');
   }, btn);
 }
 async function saveSearch() {
@@ -3219,10 +3244,7 @@ function trackSearch(id, btn) {
   run('careers_search', { track: Number(id) }, renderCareerRes, btn, e => { $('#careerRes').innerHTML = `<div class="warnbox">${esc(e)}</div>`; });
 }
 function renderCareerRes(r) {
-  const c = r.coverage;
-  const cov = `<div class="coverage muted">${c.checked ? '' : '<b>Nothing was checked: no job board answered.</b> '}Boards asked: ${esc(c.asked.join(', ') || 'none')} (${c.asked.length} of ${c.total})`
-    + (c.failed.length ? ` · could not read: ${esc(c.failed.join('; '))}` : '') + (c.not_ready.length ? ` · need a key: ${esc(c.not_ready.join(', '))}` : '')
-    + `. ${esc(c.note)}</div>`;
+  const c = r.coverage, cov = coverageLine(c);
   const rows = r.results.map(x => `<li class="row"><b>${esc(x.title)}</b> <span>${esc(x.company)}</span> <span class="muted grow">${esc(x.location || '')}</span>
       ${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">open</a>` : ''}
       ${x.tracked ? '<span class="muted">on your Board</span>' : x.id ? `<button class="b sm" onclick="trackFit(${Number(x.id)}, this)">Track</button>` : ''}</li>`).join('');

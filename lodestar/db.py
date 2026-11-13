@@ -124,6 +124,14 @@ CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, at TEXT DEFAULT (dateti
   target TEXT, result TEXT NOT NULL, reasons TEXT, policy_version TEXT, approval_id INTEGER);
 CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit BEGIN SELECT RAISE(ABORT, 'the audit trail is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit BEGIN SELECT RAISE(ABORT, 'the audit trail is append-only'); END;
+-- application stage history (pass 26, blueprint 11.3 / appendix A.4): who moved it, why, on what evidence; append-only.
+-- delete_job removes a deleted job's rows through stage_events_job_gone (the only delete allowed)
+CREATE TABLE IF NOT EXISTS stage_events(id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, from_stage TEXT, to_stage TEXT NOT NULL,
+  actor_type TEXT NOT NULL, actor_id TEXT, evidence TEXT, approval_id INTEGER, at TEXT DEFAULT (datetime('now')),
+  schema_version TEXT NOT NULL DEFAULT '1');
+CREATE TRIGGER IF NOT EXISTS stage_events_no_update BEFORE UPDATE ON stage_events BEGIN SELECT RAISE(ABORT, 'stage history is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS stage_events_no_delete BEFORE DELETE ON stage_events WHEN EXISTS (SELECT 1 FROM jobs WHERE id=OLD.job_id)
+  BEGIN SELECT RAISE(ABORT, 'stage history is append-only'); END;
 """
 MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "TEXT",  # ponytail: additive only
               # tracker fields (pass 15); every user write goes through set_fields
@@ -137,7 +145,9 @@ MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "T
               # fit score (fit.py, code-set, never a user field): score 0-100, the breakdown JSON, the fit.rev() it was
               # scored at (stale when it differs), the score when the job left 'saved', the AI part {score, why, at}
               "fit_score": "INTEGER", "fit": "TEXT", "fit_rev": "TEXT", "fit_applied": "INTEGER", "ai_fit": "TEXT",
-              "apply_url": "TEXT"}  # the employer's application link the apply agent opens (set_fields, http(s) only)
+              "apply_url": "TEXT",  # the employer's application link the apply agent opens (set_fields, http(s) only)
+              # pass 26: the fine-grained stage (STAGES; the board column is status) and when the posting page last answered
+              "stage": "TEXT", "posting_checked_at": "TEXT"}
 WATCH_MIGRATIONS = {"filters": "TEXT",  # JSON search filters of a saved search (web_monitor.clean_filters)
                     "last_error": "TEXT"}  # what the last run could not read (shown on the watch); NULL after a clean run
 ANSWER_MIGRATIONS = {"star": "TEXT",  # JSON STAR fields when the row is a story (interview.save_story); NULL = a form answer
@@ -486,11 +496,45 @@ def update_job(job_id: int, touch: bool = True, **fields) -> None:
     con().commit()
 
 
-def set_status(job_id: int, status: str, detail: str = "") -> None:
+# blueprint 11.2: the fine-grained application stage -> its board column (None: the column stays where it is)
+STAGES = {"saved": "saved", "applied": "applied", "acknowledged": "applied", "screening": "screening",
+          "recruiter_screen": "screening", "assessment": "screening", "interview": "interview",
+          "technical_interview": "interview", "panel_interview": "interview", "final_interview": "interview",
+          "references": "interview", "offer": "offer", "negotiation": "offer", "accepted": "accepted",
+          "rejected": "rejected", "no_response": "rejected", "position_closed": "rejected", "withdrawn": "withdrawn",
+          "declined_offer": "withdrawn", "on_hold": None}
+
+
+def _stage_event(job_id: int, to_stage: str, actor: str, actor_id: str | None, evidence, approval_id) -> None:
+    job = get_job(job_id)
+    con().execute("INSERT INTO stage_events(job_id, from_stage, to_stage, actor_type, actor_id, evidence, approval_id) "
+                  "VALUES (?, ?, ?, ?, ?, ?, ?)", (job_id, job["stage"] or job["status"], to_stage, actor, actor_id,
+                                                   json.dumps(evidence) if evidence else None, approval_id))
+    update_job(job_id, touch=False, stage=to_stage)
+
+
+def set_stage(job_id: int, stage: str, detail: str = "", actor: str = "user", actor_id: str | None = None,
+              evidence=None, approval_id: int | None = None) -> None:
+    """Move a job to a fine-grained stage (STAGES); its board column follows, except on_hold (the column stays)."""
+    if stage not in STAGES:
+        raise SystemExit(f"stage must be one of {', '.join(STAGES)}")
+    status = STAGES[stage]
+    if status and status != get_job(job_id)["status"]:
+        return set_status(job_id, status, detail, stage, actor, actor_id, evidence, approval_id)
+    full_ai_check("changes a job's stage")
+    _stage_event(job_id, stage, actor, actor_id, evidence, approval_id)
+    add_event(job_id, "stage", f"{stage} {detail}".strip())
+
+
+def set_status(job_id: int, status: str, detail: str = "", stage: str | None = None, actor: str = "user",
+               actor_id: str | None = None, evidence=None, approval_id: int | None = None) -> None:
+    """Move a job's board column. Every move appends a stage event (blueprint 11.3): actor_type user | agent |
+    integration | system, the evidence it rests on (a mail id, an apply run) and the Inbox item that approved it."""
     full_ai_check("changes a job's status")
     if status not in STATUSES:
         raise SystemExit(f"status must be one of {STATUSES}")
     get_job(job_id)  # 'no job #N': a typo never writes an orphan timeline event the funnel would count
+    _stage_event(job_id, stage or status, actor, actor_id, evidence, approval_id)
     # applied_at is the day you applied where you are: an evening application must not be dated tomorrow (UTC)
     extra = {"applied_at": datetime.now().strftime("%Y-%m-%d")} if status == "applied" else {}
     # status proposals waiting in the Inbox were made against the old status: close them (the one running now is not
@@ -507,6 +551,13 @@ def set_status(job_id: int, status: str, detail: str = "") -> None:
         con().execute("UPDATE jobs SET fit_applied=fit_score WHERE id=? AND fit_applied IS NULL", (job_id,))
         con().commit()
     add_event(job_id, "status", f"{status} {detail}".strip())
+    if status == "applied":  # blueprint 8.6: the documents as they were sent, never overwritten afterwards
+        from .resume import snapshot_submitted
+
+        try:
+            snapshot_submitted(get_job(job_id))
+        except OSError as e:  # a locked file never blocks recording the application
+            add_event(job_id, "snapshot_failed", str(e)[:200])
     if status == "accepted":  # a hire: offer to close the other live applications, always through the Inbox
         from . import approvals
 
@@ -536,6 +587,7 @@ def delete_job(job_id: int) -> None:
     con().execute("DELETE FROM meta WHERE key=?", (f"pagemiss:{job_id}",))
     con().execute("DELETE FROM intel WHERE key IN (?, ?)", (f"ai:{job_id}", f"boost:{job_id}"))  # co: facts stay
     con().execute("DELETE FROM jobs WHERE id=?", (job_id,))
+    con().execute("DELETE FROM stage_events WHERE job_id=?", (job_id,))  # allowed now: its job is gone (the trigger)
     con().commit()
     from .config import SNAPSHOTS
 

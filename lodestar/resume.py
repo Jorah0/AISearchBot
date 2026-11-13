@@ -66,6 +66,31 @@ def app_dir(job) -> Path:
     return d
 
 
+SUBMITTED = ("resume.md", "resume.docx", "resume.pdf", "cover_letter.md", "cover_letter.docx", "cover_letter.pdf",
+             "form_answers.md")
+
+
+def snapshot_submitted(job) -> Path | None:
+    """Copy the employer-facing documents of an application into its submitted/ folder with a sha256 manifest, once:
+    what was sent stays as it was when you edit the working copies later (blueprint 8.6). None when already taken."""
+    import hashlib
+    from datetime import datetime
+
+    d = app_dir(job)
+    sub = d / "submitted"
+    if (sub / "manifest.json").is_file():
+        return None
+    sub.mkdir(exist_ok=True)
+    files = {}
+    for name in SUBMITTED:
+        if (d / name).is_file():
+            shutil.copy2(d / name, sub / name)
+            files[name] = hashlib.sha256((sub / name).read_bytes()).hexdigest()
+    (sub / "manifest.json").write_text(json.dumps({"job_id": job["id"], "at": datetime.now().isoformat(timespec="seconds"),
+                                                   "files": files}, indent=1), encoding="utf-8")
+    return sub
+
+
 def write_doc(path: Path, text: str) -> Path:
     """Write a generated per-job document. A previous version that differs (possibly hand-edited) moves to history/."""
     from datetime import datetime

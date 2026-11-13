@@ -149,6 +149,10 @@ def effective_mode(job, ats: str | None, requested: str | None = None) -> tuple[
         return "stop", ["this link is not on a known application system: stop mode only (you press Submit)"]
     if mode != "stop" and not settings.enabled("apply_agent"):
         return "stop", ["the apply_agent tool is off (Tools): stop mode (you press Submit)"]
+    from .web_monitor import removed_event
+
+    if mode != "stop" and (gone := removed_event(job["id"])):  # blueprint 6.4: re-verify before submitting
+        return "stop", [f"the posting looked removed ({gone['detail'][:80]}): the agent fills it, you decide whether to submit"]
     if mode == "auto" and (why := auto_blockers(job, ats)):
         return "review", why
     return mode, []

@@ -156,8 +156,10 @@ class Feeds(Base):
         self.assertIn("posting removed", " ".join(removed["reasons"]))
         fit_gone = db.get_job(jid)["fit_score"]
         self.feed = gh((301, "Other", "Remote", DESC), (302, "Data Engineer", "Remote", DESC * 4))
+        self.assertIsNone(db.get_job(jid)["posting_checked_at"])  # pass 26: never seen live yet
         self.check(1)
         self.assertEqual(self.kinds(jid), ["posting_removed", "posting_reopened"])
+        self.assertTrue(db.get_job(jid)["posting_checked_at"])  # the day its posting last answered
         back = wm.ghost_signals(db.get_job(jid))
         self.assertNotIn("posting removed", " ".join(back["reasons"]))
         self.assertLess(back["score"], removed["score"])

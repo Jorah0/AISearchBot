@@ -186,6 +186,7 @@ def sources_view() -> dict:
         row = db.con().execute("SELECT value FROM meta WHERE key=?", (f"src:{n}",)).fetchone()
         out[n] = {"label": label, "home": home, "ready": n in ready, "every_h": round(web_monitor.EVERY.get(n, 0) / 3600, 1),
                   "global": n in web_monitor.GLOBAL, "last": row["value"] if row else None,
+                  "capabilities": web_monitor.CAPABILITIES.get(n, {}),
                   "keys": [{"name": k, "set": bool(setting(k))} for k in web_monitor.KEYED.get(n, ())]}
     return out
 
@@ -405,7 +406,10 @@ def _do(action: str, p: dict):
                     found = web_monitor.rank(found, prov)
                 except SystemExit as e:  # no provider / rejected model: the listings still show, unranked, with why
                     errs.append(f"AI rank: {e}")
+            from .careers import coverage
+
             return {"results": found, "errors": errs, "boards": len(ran), "ids": [j["id"] for j in found if j.get("id")],
+                    "coverage": coverage(ran, errs),
                     "query": query}
         case "chat":
             return {"reply": ai.chat(p["messages"], _coach_system(), prov)}
@@ -880,7 +884,7 @@ def state() -> dict:
         "sources": sources_view(),  # Setup > Job sources and the Jobs tab: ready / needs keys, throttle, credit
         "alert_sites": alert_sites(),  # Setup > Job alerts: per site, the last alert mail read and its job count
         "contact_roles": ROLES,
-        "statuses": db.STATUSES,
+        "statuses": db.STATUSES, "stages": list(db.STAGES),
         "doc_names": sorted(DOC_NAMES),  # the drawer offers Edit / Adjust for these only
         "stats": db.stats(),
         "followups": [j["id"] for j in db.needs_followup()],
@@ -1079,7 +1083,8 @@ class Handler(BaseHTTPRequestHandler):
                 from . import fit, listings
 
                 self._json({"job": {k: v for k, v in dict(job).items() if k not in ("fit", "ai_fit")}
-                            | fit.light(fit.stored(job), fit.rev()), "fit": fit.stored(job), "events": [dict(e) for e in db.events(job["id"])], "docs": _docs(job),
+                            | fit.light(fit.stored(job), fit.rev()), "fit": fit.stored(job), "events": [dict(e) for e in db.events(job["id"])],
+                            "stages": [dict(r) for r in db.con().execute("SELECT * FROM stage_events WHERE job_id=? ORDER BY id", (job["id"],))], "docs": _docs(job),
                             "people": job_people(job["id"]), "warm": warm(job["company"]),
                             "rounds": interview.rounds(job["id"]), "bank": interview.question_bank(job, False)[:30],
                             "stress": interview.story_prompt(job), "mail": [dict(r) for r in db.list_mail(job["id"])],
@@ -1417,6 +1422,8 @@ class Handler(BaseHTTPRequestHandler):
                 jid, op, out = int(parts[3]), parts[4], {"ok": True}
                 if op == "status":
                     db.set_status(jid, p["status"], p.get("note", ""))
+                elif op == "stage":  # pass 26: the fine-grained stage; the board column follows (db.STAGES)
+                    db.set_stage(jid, str(p.get("stage") or ""), p.get("note", ""))
                 elif op == "note":
                     text = str(p.get("text") or "").strip()
                     if not text:

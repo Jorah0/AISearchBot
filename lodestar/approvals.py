@@ -77,7 +77,7 @@ def approve(pid: int, edits: dict | None = None, _auto: bool = False) -> dict:
         policy.record(f"approve:{row['kind']}", row["tool"], row["job_id"], "APPROVED_BY_YOU", ["your approval"], pid)
     payload = json.loads(row["payload"]) | (edits or {})
     try:
-        result = EXECUTORS[row["kind"]](payload)
+        result = EXECUTORS[row["kind"]](payload | {"_pid": pid, "_tool": row["tool"]})  # who and which item, for the record
         status = "done"
     except BaseException as e:  # SystemExit from helpers carries the user-facing message
         db.release(close=False)  # a half-done executor write is undone, not committed by the bookkeeping below
@@ -204,7 +204,8 @@ def _send(p: dict) -> str:
         if p.get("job_id") and p.get("new_status"):
             job = db.get_job(p["job_id"])
             if db.STATUSES.index(p["new_status"]) > db.STATUSES.index(job["status"]):
-                db.set_status(p["job_id"], p["new_status"], "(after reply)")
+                db.set_status(p["job_id"], p["new_status"], "(after reply)", actor="agent", actor_id=p.get("_tool"),
+                              evidence={"mail_sent": p.get("subject", "")}, approval_id=p.get("_pid"))
     except BaseException as e:
         note += f" (sent; follow-up step failed: {e})"
     return f"sent to {p['to']}: {p['subject']}{note}"
@@ -214,7 +215,8 @@ def _status(p: dict) -> str:
     now = db.get_job(p["job_id"])["status"]
     if p.get("from_status") and now != p["from_status"]:
         raise Stale(f"stale: #{p['job_id']} moved from {p['from_status']} to {now} since this was proposed; nothing changed")
-    db.set_status(p["job_id"], p["status"], p.get("note", ""))
+    db.set_status(p["job_id"], p["status"], p.get("note", ""), actor="agent", actor_id=p.get("_tool"),
+                  evidence=p.get("evidence"), approval_id=p.get("_pid"))
     return f"#{p['job_id']} -> {p['status']}"
 
 
@@ -287,7 +289,8 @@ def record_submission(run_id: int) -> str:
     note = (f"(apply agent run #{run_id}, {'automatic' if run['submitted_by'] == 'auto' else 'approved by you'}: "
             f"{('confirmation ' + run['confirmation']) if run['confirmation'] else 'confirmation page seen'})")
     if db.STATUSES.index(job["status"]) < db.STATUSES.index("applied"):  # saved only: never moves a closed job
-        db.set_status(job["id"], "applied", note)
+        db.set_status(job["id"], "applied", note, actor="agent", actor_id="apply_agent", evidence={"apply_run": run_id},
+                      approval_id=run["pending_id"])
     db.add_event(job["id"], "apply_evidence", run["evidence"] or "")
     return note
 

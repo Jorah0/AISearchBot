@@ -1,5 +1,19 @@
 # Changelog (development passes, newest first)
 
+## Pass 26 (2026-11-13): source capabilities, coverage, posting freshness, application stages, submitted copies
+
+- Every job board declares what it can do (search, full descriptions, how you apply, keys, regions): none is an apply
+  API, applying always happens on the posting's own page. Every Jobs search now says which boards were asked, which
+  failed and which need a key, and that coverage is partial.
+- The job drawer shows when the posting last answered (its feed listed it or its page was up). The apply agent never
+  submits by itself for a posting that looked removed: it fills it and you decide.
+- Applications have fine-grained stages (acknowledged, recruiter screen, assessment, technical / panel / final
+  interview, references, negotiation, on hold, no response, position closed, declined offer ...) on top of the board
+  columns, and every move is kept in a stage history: who moved it (you, or Lodestar with its tool and Inbox item) and
+  on what evidence (the mail it read, the apply run). The history cannot be edited. `lodestar jobs stage ID STAGE`.
+- When a job moves to applied, the resume, cover letter and form answers as they were are copied to the job's
+  submitted/ folder with a SHA-256 manifest; later edits never touch them.
+
 ## Pass 25 (2026-11-13): one policy for every automatic action, and an audit log
 
 - Every action a tool proposes now goes through one deterministic policy (no AI decides): allowed (the tool is on auto
