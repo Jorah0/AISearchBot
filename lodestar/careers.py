@@ -43,7 +43,9 @@ def evidence(bank: dict | None = None) -> dict:
         from . import profile
 
         bank = profile.load()
-    rows = lambda k: [r for r in bank.get(k) or [] if isinstance(r, dict)]  # noqa: E731
+    from .profile import is_disputed
+
+    rows = lambda k: [r for r in bank.get(k) or [] if isinstance(r, dict) and not is_disputed(k, r, bank)]  # noqa: E731
     titles = [str(r.get("title") or "").strip() for r in rows("experience")]
     titles += [str(r.get("role") or "").strip() for r in rows("volunteering")]
     titles = [t for t in titles if t]

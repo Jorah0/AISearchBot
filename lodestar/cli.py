@@ -674,7 +674,11 @@ def cmd_profile(a):
         print(f"removed {profile.remove(a.kind, a.name)['removed']} {a.kind}")
     elif a.op == "rebuild":
         print(f"rebuilt {profile.rebuild_master()} from the bank (previous version in profile-history/)")
-    if a.op in ("add", "remove", "rebuild", "link"):
+    elif a.op == "dispute":
+        profile.set_disputed(a.kind, a.values, not a.undo)
+        print(f"{a.kind} {' / '.join(a.values)}: " + ("no longer disputed" if a.undo else
+              "disputed (left out of resumes, letters and career suggestions until you clear it with --undo)"))
+    if a.op in ("add", "remove", "rebuild", "link", "dispute"):
         _sync_master()
 
 
@@ -2144,7 +2148,7 @@ def build() -> argparse.ArgumentParser:
             x.add_argument("--tone", default="confident, warm, specific")
             x.add_argument("--words", type=int, default=300)
             x.add_argument("--docx", action="store_true")
-    x = v.add_parser("import", help="bring in an existing resume (.docx/.pdf/.md/.txt); --merge folds it into the profile")
+    x = v.add_parser("import", help="bring in an existing resume (.docx/.pdf/.odt/.rtf/.html/.md/.txt); --merge folds it into the profile")
     x.add_argument("file"); x.add_argument("--merge", action="store_true"); x.add_argument("--save", action="store_true")
     x = v.add_parser("adjust", help="AI-revise the master profile or a job document with an instruction")
     x.add_argument("instruction"); x.add_argument("--job", type=int); x.add_argument("--doc", help="resume.md (default) or cover_letter.md"); x.add_argument("--save", action="store_true")
@@ -2234,7 +2238,7 @@ def build() -> argparse.ArgumentParser:
     s = sub.add_parser("profile", help="profile bank: saved resumes, skills, languages, LinkedIn import")
     v = s.add_subparsers(dest="op", required=True)
     v.add_parser("show", help="what the bank holds: contact, skills, languages, roles, saved resumes")
-    for name, what in (("import", "a resume (.docx/.pdf/.md/.txt): saves the original, reads its facts into a review"),
+    for name, what in (("import", "a resume (.docx/.pdf/.odt/.rtf/.html/.md/.txt): saves the original, reads its facts into a review"),
                        ("linkedin", "LinkedIn 'Download your data' .zip, or the profile 'Save to PDF' file")):
         x = v.add_parser(name, help=what); x.add_argument("file")
         x.add_argument("--no-ai", action="store_true", help="offline extraction only (never sent to an AI provider)")
@@ -2250,6 +2254,9 @@ def build() -> argparse.ArgumentParser:
         if name == "add":
             x.add_argument("--detail", help="category (skills), proficiency (languages) or issuer (certifications)")
     v.add_parser("rebuild", help="regenerate profile.md from the bank (snapshots the old one)")
+    x = v.add_parser("dispute", help="mark a fact wrong: kept, but left out of every document and career suggestion (--undo clears it)")
+    x.add_argument("kind", help="experience, education, skills, certifications ..."); x.add_argument("values", nargs="+", help="its identifying values in order (experience: company title)")
+    x.add_argument("--undo", action="store_true")
     s.set_defaults(f=cmd_profile)
 
     s = sub.add_parser("email", help="connect your mailbox; IMAP monitor: classify replies, update tracker")

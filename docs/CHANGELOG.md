@@ -1,5 +1,14 @@
 # Changelog (development passes, newest first)
 
+## Pass 27 (2026-11-13): more resume formats, disputed facts, the claim check
+
+- Resume import also reads .odt (OpenDocument), .rtf and .html files. A PDF with no text layer (a scan) is refused
+  with what to do instead; nothing is guessed from it.
+- `lodestar profile dispute KIND VALUES...` marks a fact in your profile bank as wrong: it stays in the bank but is
+  left out of the master resume, studio versions, letters and career suggestions until you clear it (--undo).
+- Studio versions show a Claim check: every claim beside the fact it cites, marked as written, reworded (checked
+  against your facts) or put back by the guard with the reason.
+
 ## Pass 26 (2026-11-13): source capabilities, coverage, posting freshness, application stages, submitted copies
 
 - Every job board declares what it can do (search, full descriptions, how you apply, keys, regions): none is an apply

@@ -72,7 +72,34 @@ TEMPLATE_MARKERS = ("Full Name", "Two or three sentences", "Achievement bullet w
 
 def empty() -> dict:
     return {"schema": SCHEMA, "contact": {k: "" for k in CONTACT}, "summary": "", **{k: [] for k in FIELDS}, "resumes": [],
-            "updated": ""}
+            "updated": "", "disputed": []}
+
+
+def _dispute_key(kind: str, entry: dict) -> str:
+    return kind + "|" + "|".join(_key(entry, kind))
+
+
+def is_disputed(kind: str, entry: dict, bank: dict | None = None) -> bool:
+    """A fact you marked wrong (blueprint 8.2 'disputed'): kept in the bank, left out of every document and of career
+    evidence until you clear it."""
+    return _dispute_key(kind, entry) in set((bank or load()).get("disputed") or [])
+
+
+def set_disputed(kind: str, values: list[str], on: bool = True) -> str:
+    """Mark (or clear) the fact identified by its KEYS values in order (experience: company, title)."""
+    from .config import full_ai_check
+
+    full_ai_check("changes your profile")
+    if kind not in KEYS:
+        raise SystemExit(f"kind must be one of {', '.join(KEYS)}")
+    if len(values) != len(KEYS[kind]):
+        raise SystemExit(f"{kind} is identified by {', '.join(KEYS[kind])}")
+    entry = dict(zip(KEYS[kind], values))
+    bank, key = load(), _dispute_key(kind, entry)
+    have = [k for k in bank.get("disputed") or [] if k != key]
+    bank["disputed"] = have + [key] if on else have
+    save(bank)
+    return key
 
 
 def load() -> dict:
@@ -2003,6 +2030,8 @@ def structured(employer: bool = True) -> dict:
                         have[f] = v
             else:
                 doc[kind].append(item | {"on_file": True})
+        disputed = set(bank.get("disputed") or [])  # pass 27: a fact you dispute reaches no document until fixed
+        doc[kind] = [e for e in doc[kind] if _dispute_key(kind, e) not in disputed]
         for n, e in enumerate(doc[kind], 1):
             e["id"] = f"{PREFIX[kind]}{n}"
     doc["ids"] = {"headline": "h0", "summary": "s0", "contact": "c0"}

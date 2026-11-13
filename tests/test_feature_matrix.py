@@ -42,7 +42,7 @@ intel-sources intel-local intel-ai boosters-rules boosters-ai boosters-ui
 apply-agent-policy apply-agent-modes apply-agent-plan apply-agent-runs apply-agent-safety apply-agent-surfaces
 apply-agent-accounts-vault apply-agent-accounts-flows apply-agent-accounts-verify
 apply-agent-accounts-general apply-agent-find-posting search-profile
-careers-ontology careers-discovery careers-tracks careers-search careers-cli careers-ui gates-eligibility gates-job-class careers-explore policy-audit sources-capabilities lifecycle-stages""".split())  # built out of order (pass 17, 19); ui-sweep-68 is still planned
+careers-ontology careers-discovery careers-tracks careers-search careers-cli careers-ui gates-eligibility gates-job-class careers-explore policy-audit sources-capabilities lifecycle-stages profile-formats profile-disputed studio-claims""".split())  # built out of order (pass 17, 19); ui-sweep-68 is still planned
 PLANNED = set("""tracker-sourcing-39
 profile-resume-ai-42
 mail-people-interviews-47 ui-sweep-68 ui-sweep-71 ui-sweep-72

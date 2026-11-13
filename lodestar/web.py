@@ -1221,7 +1221,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "not found"}, 404)
                 read = lambda ext: (studio.file_path(v["vid"], v["files"][ext]).read_text(encoding="utf-8")  # noqa: E731
                                     if ext in v["files"] else "")
-                self._json(v | {"html": read("html"), "md": read("md"), "txt": read("txt")})
+                self._json(v | {"html": read("html"), "md": read("md"), "txt": read("txt"), "claims": studio.claim_diff(v)})
             elif path == "/api/profile/bank":
                 self._json(_bank_view())
             elif path == "/api/keys":  # linked AI keys and their last check; never a key

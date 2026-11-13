@@ -2546,6 +2546,13 @@ async function deleteVersion(i) {
   if (SV && SV.vid === v.vid) { SV = null; $('#sResult').style.display = 'none'; }
   toast('version deleted', 'ok'); loadStudio();
 }
+function claimsHtml(cs) {  // pass 27, blueprint 8.5: each claim beside the fact it cites
+  if (!cs.length) return '';
+  const n = k => cs.filter(c => c.change === k).length;
+  return `<details id="sClaims"><summary class="muted">Claim check: ${n('verbatim')} as written, ${n('rewritten')} reworded, ${n('reverted')} put back</summary><ul>`
+    + cs.map(c => `<li><b>${esc(c.change)}</b> <span class="muted">${esc(c.ref)}</span>: ${esc(c.after)}`
+      + (c.change !== 'verbatim' ? `<div class="muted">your fact: ${esc(c.before)}${c.why ? ' · ' + esc(c.why) : ''}</div>` : '') + '</li>').join('') + '</ul></details>';
+}
 async function showVersion(v) {
   if (!v.html) v = await api('/api/studio/' + encodeURIComponent(v.vid));  // a build result carries no page text
   if (v.error) return toast('error: ' + v.error, 'err');
@@ -2561,6 +2568,7 @@ async function showVersion(v) {
     <div class="row"><label class="muted">use for <select id="sUseJob">${jobs.map(j => `<option value="${j.id}" ${j.id === v.job_id ? 'selected' : ''}>${esc(j.company)} - ${esc(j.title)} (#${j.id})</option>`).join('')}</select></label><button class="b sm" onclick="studioUse(this)" ${jobs.length ? '' : 'disabled'}>Use for this job</button><span class="muted">replaces its resume.md / .docx / .pdf (the old ones go to history/)</span></div>
     ${v.coverage && v.coverage.missing.length ? `<div class="muted">not covered: ${esc(v.coverage.missing.join(', '))}</div>` : ''}
     <div id="sWarn">${warn.map(([k, x]) => `<div class="${k === 'warning' ? 'warnbox' : 'muted'}">${esc(k)}: ${esc(x)}</div>`).join('')}</div>
+    ${claimsHtml(v.claims || [])}
     <details><summary class="muted">ATS checks (${(v.lint || []).length + Object.values(v.audit || {}).flat().length})</summary>${issuesHtml({ issues: [...(v.lint || []), ...Object.values(v.audit || {}).flat()] })}</details>
     <iframe id="sFrame" sandbox="" title="Resume preview" style="width:100%;height:640px;border:1px solid var(--line);border-radius:8px;background:#fff"></iframe>
     <div class="row"><input id="sRefine" class="grow" placeholder="refine this version: shorter / warmer summary / lead with the Kafka migration" ${STU && STU.ai ? '' : 'disabled title="needs an AI provider"'}><button class="b ghost" onclick="studioRefine(this)" ${STU && STU.ai ? '' : 'disabled'}>Refine</button></div>`;
