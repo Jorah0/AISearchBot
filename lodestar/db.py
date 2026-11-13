@@ -166,7 +166,9 @@ POSTING_INDEXES = ("CREATE INDEX IF NOT EXISTS postings_last_seen ON postings(la
                    "CREATE INDEX IF NOT EXISTS postings_job ON postings(job_id)",
                    "CREATE INDEX IF NOT EXISTS postings_fit ON postings(fit_score)")
 MAIL_MIGRATIONS = {"attachments": "TEXT",  # JSON [{name, size, type, path?} | {name, skipped}] (mailfiles.py)
-                   "link_reason": "TEXT"}  # why ATS mail was filed under its job (email_monitor._ats_match); never trust
+                   "link_reason": "TEXT",  # why ATS mail was filed under its job (email_monitor._ats_match); never trust
+                   # pass 33 (Mail page): the whole text as scanned (codes masked), what the classifier read from it
+                   "body": "TEXT", "action": "TEXT", "deadline": "TEXT"}  # why ATS mail was filed under its job (email_monitor._ats_match); never trust
 BACKFILL_KEY = "backfill:fields-v1"
 CONTACTS_KEY = "backfill:contacts-v1"
 ATS_FEED_RE = re.compile(r"(greenhouse|lever|ashby|smartrecruiters|recruitee|personio):[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
@@ -708,7 +710,10 @@ def add_watch(url: str, keywords: str | None = "", filters: dict | None = None) 
     (re-adding a saved search without filter fields never silently drops them), {} clears them. keywords None keeps
     its keywords too. True when a watch with this url already existed (updated, not added)."""
     full_ai_check("adds or changes a watch (automation)")
-    old = con().execute("SELECT keywords, filters FROM watches WHERE url=?", (url,)).fetchone()
+    url, key = str(url or "").strip(), watch_key(url)
+    old = next((w for w in watches() if watch_key(w["url"]) == key), None)  # ponytail: a scan, watches are few
+    if old:
+        url = old["url"]  # the same search or page spelled another way updates the watch already there
     if filters is None:
         filters = watch_filters(old) if old else {}
     if keywords is None:
@@ -719,6 +724,24 @@ def add_watch(url: str, keywords: str | None = "", filters: dict | None = None) 
                   (url, keywords, json.dumps(filters) if filters else None))
     con().commit()
     return old is not None
+
+
+def watch_key(url: str) -> str:
+    """What makes two watches the same: a saved search ignores case and spacing (around commas too); a page ignores
+    the scheme, www., the host's case, a default port, a trailing slash and the #fragment (path and query count)."""
+    from urllib.parse import urlsplit
+
+    u = str(url or "").strip()
+    if u[:7].lower() == "search:":
+        return "search:" + ",".join(p for p in (" ".join(x.split()) for x in u[7:].casefold().split(",")) if p)
+    s = urlsplit(u if "://" in u else "https://" + u)
+    host = (s.hostname or "").removeprefix("www.")
+    try:
+        port = s.port
+    except ValueError:
+        port = None
+    port = "" if port in (None, 80, 443) else f":{port}"
+    return f"{host}{port}{s.path.rstrip('/')}" + (f"?{s.query}" if s.query else "")
 
 
 def watch_filters(w) -> dict:
@@ -1104,7 +1127,9 @@ def delete_idea(iid: int) -> None:
 
 # --- mail (email_monitor records relevant mail it scans, approvals._send what it sends) -----------------------
 MAIL_COLS = ("message_id", "in_reply_to", "refs", "job_id", "direction", "from_addr", "to_addr", "subject", "sent_at",
-             "category", "summary", "snippet", "trusted", "linked_by", "company", "title", "attachments", "link_reason")
+             "category", "summary", "snippet", "trusted", "linked_by", "company", "title", "attachments", "link_reason",
+             "body", "action", "deadline")
+MAIL_LIST = ", ".join(c for c in ("id", "created_at", *MAIL_COLS) if c not in ("body", "snippet", "refs"))
 
 
 def add_mail(**fields) -> None:
@@ -1112,6 +1137,9 @@ def add_mail(**fields) -> None:
     att = fields.get("attachments")
     f = {k: fields.get(k) for k in MAIL_COLS} | {"trusted": int(bool(fields.get("trusted"))),
                                                  "snippet": (fields.get("snippet") or "")[:1500],
+                                                 "body": (fields.get("body") or "")[:100_000] or None,
+                                                 "action": (fields.get("action") or "")[:300] or None,
+                                                 "deadline": (fields.get("deadline") or "")[:40] or None,
                                                  "attachments": json.dumps(att) if isinstance(att, list) and att else None}
     con().execute(f"INSERT OR IGNORE INTO mail({','.join(f)}) VALUES({','.join('?' * len(f))})", tuple(f.values()))
     con().commit()
@@ -1131,6 +1159,19 @@ def list_mail(job_id: int | None = None, unmatched: bool = False, limit: int = 2
         q, args = q + " WHERE job_id=?", (job_id,)
     elif unmatched:
         q += " WHERE job_id IS NULL AND direction='in'"
+    return con().execute(q + " ORDER BY COALESCE(sent_at, created_at) DESC, id DESC LIMIT ?", (*args, limit)).fetchall()
+
+
+def all_mail(category: str | None = None, limit: int = 500):
+    """Every recorded mail both ways for the Mail page, newest first, without its text (GET /api/mail/<id> has it).
+    category 'sent' = what Lodestar sent, 'unmatched' = received mail no job claims, else the classifier's category."""
+    q, args = f"SELECT {MAIL_LIST} FROM mail", tuple()
+    if category == "sent":
+        q += " WHERE direction='out'"
+    elif category == "unmatched":
+        q += " WHERE job_id IS NULL AND direction='in'"
+    elif category:
+        q, args = q + " WHERE category=? AND direction='in'", (category,)
     return con().execute(q + " ORDER BY COALESCE(sent_at, created_at) DESC, id DESC LIMIT ?", (*args, limit)).fetchall()
 
 

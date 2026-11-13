@@ -41,6 +41,13 @@ class Monitor(E2ETestCase):
         self.page.check("#wSearch")
         self.run_click("#monitor >> text=Add >> nth=0")
         self.assertIn("search:platform engineer", self.watch_urls())
+        n = len(self.watch_urls())
+        for again, search in (("  Platform   ENGINEER ", True), ("http://www.careers.example.org/jobs/#top", False)):
+            self.page.fill("#wUrl", again)
+            self.page.set_checked("#wSearch", search)
+            self.run_click("#monitor >> text=Add >> nth=0")
+            self.expect_toast("already watched", "ok")  # the same search / page spelled another way: no second watch
+            self.assertEqual(len(self.watch_urls()), n, again)
         self.run_click(row.get_by_role("button", name="remove"))
         self.assertNotIn("https://careers.example.org/jobs", self.watch_urls())
         self.assertEqual(self.page.locator("#wList .list > div", has_text="https://careers.example.org/jobs").count(), 0)

@@ -46,6 +46,7 @@ function go(tab) {
   if (tab === 'search') { loadAllJobs(); spLoad(); }
   if (tab === 'careers') loadCareers();
   if (tab === 'profile') loadMaster();  // the master card follows background rebuilds
+  if (tab === 'mail') loadMailPage();
 }
 
 /* ---- background tasks ---- */
@@ -1231,6 +1232,7 @@ async function useLiveJd(btn) {
 function mailGroup(d) {
   return `<div class="group"><h4>Mail</h4>${(d.mail || []).map(m => { MAILS[m.id] = m; const id = Number(m.id);
     return mailItem(m, (m.linked_by === 'user' ? `<button class="b ghost sm" onclick="mailOp(${id},'unlink')">Unlink</button>` : '')
+      + `<button class="b ghost sm" onclick="go('mail');openMail(${id})">Read in Mail</button>`
       + (m.direction === 'in' ? `<button class="b ghost sm" onclick="replyMail(${id},this)" title="up to 3 reply drafts, one recommended; the one you use goes to the Inbox for review">Reply with options</button>` : ''));
   }).join('') || '<div class="muted">no mail on file for this job yet (scanned replies and mail Lodestar sends show here)</div>'}</div>`;
 }
@@ -1247,6 +1249,73 @@ function trackMail(id) {
 }
 function replyMail(id, btn) { if (cur) draftOptions('reply', { id: cur.job.id, mail_id: Number(id) }, 'jOpts', btn); }
 
+/* ---- Mail page (pass 33): every filed mail by type, one opened in full, a reply composer. Mail text is a third
+   party's: always escaped, never rendered as HTML. Replies go through draft_use (the Inbox, with review); the
+   recipient comes from the server, never from this page. ---- */
+const MAIL_TYPES = [['', 'All'], ['interview', 'Interview'], ['offer', 'Offer'], ['recruiter_outreach', 'Recruiter'],
+  ['application_received', 'Application received'], ['assessment', 'Assessment'], ['rejection', 'Rejection'],
+  ['unclassified', 'Not classified'], ['other', 'Other'], ['unmatched', 'Not filed under a job'], ['sent', 'Sent']];
+const mailType = m => m.direction === 'out' ? 'sent' : (m.category || 'other');
+const typeLabel = k => (MAIL_TYPES.find(t => t[0] === k) || [k, String(k).replace(/_/g, ' ')])[1];
+let MV = { list: [], type: '', q: '', open: null };
+async function loadMailPage() { const r = await api('/api/mail?all=1'); if (r.error) return toast('error: ' + r.error, 'err'); MV.list = r.mail || []; renderMailPage(); }
+function mvIn(m, k) { return !k || (k === 'unmatched' ? m.direction === 'in' && m.job_id == null : mailType(m) === k); }
+function renderMailPage() {
+  const n = k => MV.list.filter(m => mvIn(m, k)).length;
+  $('#mvTypes').innerHTML = MAIL_TYPES.filter(([k]) => !k || n(k)).map(([k, l]) =>
+    `<button class="b ghost sm${MV.type === k ? ' on' : ''}" aria-pressed="${MV.type === k}" data-type="${esc(k)}" onclick="MV.type=this.dataset.type;renderMailPage()">${esc(l)} <span class="muted">${n(k)}</span></button>`).join('');
+  const q = MV.q.trim().toLowerCase();
+  const rows = MV.list.filter(m => mvIn(m, MV.type) && (!q || [m.subject, m.from_addr, m.to_addr, m.company, m.title, m.summary].join(' ').toLowerCase().includes(q)));
+  $('#mvList').innerHTML = rows.map(m => `<button class="mvrow${MV.open && MV.open.id === m.id ? ' on' : ''}" data-type="${esc(mailType(m))}" onclick="openMail(${Number(m.id)})">
+      <span class="hd"><span class="pill">${esc(typeLabel(mailType(m)))}</span><span class="muted">${esc(localTs(m.sent_at || m.created_at, 16))}</span></span>
+      <b>${esc(m.subject || '(no subject)')}</b><span class="muted">${esc(m.direction === 'out' ? 'to ' + (m.to_addr || '') : (m.from_addr || ''))}${m.company ? ' · ' + esc(m.company) : ''}</span>
+      ${m.summary ? `<span class="muted small">${esc(m.summary)}</span>` : ''}</button>`).join('')
+    || `<div class="empty">${MV.list.length ? 'No mail matches.' : 'No mail yet. Check email (top bar) files the relevant mail it finds; what Lodestar sends shows under Sent.'}</div>`;
+}
+async function openMail(id) {
+  const r = await api('/api/mail/' + Number(id)); if (r.error) return toast('error: ' + r.error, 'err');
+  const m = MV.open = r.mail, out = m.direction === 'out'; MAILS[m.id] = m; renderMailPage();
+  const jobs = S.jobs.map(j => `<option value="${Number(j.id)}">#${Number(j.id)} ${esc(j.company)} - ${esc(j.title)}</option>`).join('');
+  const sender = out ? '' : m.trusted ? '<span class="pill ok" title="DKIM/DMARC-aligned and tied to the job">verified sender</span>' : '<span class="pill warn" title="not authenticated, or not tied to this company: nothing is done with it unreviewed">unverified sender</span>';
+  const reply = out ? '' : m.job_id == null
+    ? `<div class="group"><h4>Reply</h4><div class="muted">File this mail under a job first: a reply goes to the job's thread.</div>
+        <div class="row"><select id="mvJob" aria-label="job to file this mail under"><option value="">choose a job…</option>${jobs}</select>
+        <button class="b ghost sm" onclick="mvLink()">Link to job</button><button class="b ghost sm" onclick="trackMail(${Number(m.id)})">Track as new job</button></div></div>`
+    : `<div class="group" id="mvReply"><h4>Reply</h4>
+        <input id="mvSub" class="grow" aria-label="Reply subject" value="${esc(/^re:/i.test(m.subject || '') ? m.subject : 'Re: ' + (m.subject || ''))}">
+        <textarea id="mvBody" rows="8" aria-label="Your reply" placeholder="Write your reply, or let the AI draft one below"></textarea>
+        <div class="row"><button class="b" onclick="mvSend(this)">Send for review</button>
+          ${hasAI() ? `<button class="b ghost" onclick="mvWrite(this)" title="one AI call: up to 3 replies, one recommended">AI: write replies</button>
+          <span class="muted">improve my text:</span>${HOWS.map(([k, l]) => `<button class="b ghost sm" onclick="mvRewrite('${k}',this)">${l}</button>`).join('')}<button class="b ghost sm" onclick="mvRewrite('',this)">custom…</button>`
+            : '<span class="muted">Link an AI key in Setup to have the AI write or improve replies.</span>'}</div>
+        <div id="mvOpts"></div>
+        <div class="muted">Send for review puts the reply in the Inbox; it is sent when you approve it there. The recipient is the sender Lodestar has on file.</div></div>`;
+  $('#mvRead').innerHTML = `<div class="mvhead"><h3>${esc(m.subject || '(no subject)')}</h3>
+      <div class="row"><span class="pill">${esc(typeLabel(mailType(m)))}</span>${sender}
+        ${m.job ? `<button class="b ghost sm" onclick="go('board');openJob(${Number(m.job.id)})">#${Number(m.job.id)} ${esc(m.job.company)} - ${esc(m.job.title)}</button>` : ''}</div>
+      <div class="muted">${out ? 'To' : 'From'}: ${esc(out ? m.to_addr || '' : m.from_addr || '')}${!out && m.to_addr ? ' · To: ' + esc(m.to_addr) : ''} · ${esc(localTs(m.sent_at || m.created_at, 16))}</div></div>
+    ${m.summary || m.action || m.deadline ? `<div class="mvfacts">${m.summary ? `<div><b>Summary</b> ${esc(m.summary)}</div>` : ''}${m.action ? `<div><b>Next step</b> ${esc(m.action)}</div>` : ''}${m.deadline ? `<div><b>Date named</b> ${esc(m.deadline)}</div>` : ''}${m.link_reason ? `<div class="muted">${esc(m.link_reason)}</div>` : ''}</div>` : ''}
+    <pre class="mvbody">${esc(m.body || '(no text on file)')}</pre>
+    ${mailFiles(m)}${reply}`;
+}
+async function mvLink() {
+  const v = $('#mvJob').value; if (!v) return toast('choose the job first', 'err');
+  const r = await api(`/api/mail/${MV.open.id}/link`, { job_id: Number(v) }); if (r.error) return toast('error: ' + r.error, 'err');
+  toast('filed under the job: you can reply now', 'ok'); await loadMailPage(); openMail(MV.open.id);
+}
+function mvSend(btn) {
+  const m = MV.open, subject = $('#mvSub').value.trim(), body = $('#mvBody').value.trim();
+  if (!body) return toast('write the reply first, or let the AI draft one', 'err');
+  run('draft_use', { kind: 'reply', id: m.job_id, mail_id: m.id, subject, body }, r => { $('#mvBody').value = ''; toast(mailText(r).split('\n').pop(), 'ok'); load(); }, btn);
+}
+function mvWrite(btn) { const m = MV.open; draftOptions('reply', { id: m.job_id, mail_id: m.id }, 'mvOpts', btn); }
+function mvRewrite(how, btn) {
+  const body = $('#mvBody').value.trim(); if (!body) return toast('write something first: the AI improves your text', 'err');
+  if (!how && !(how = (prompt('How should your reply change?') || '').trim())) return;
+  run('draft_rewrite', { kind: 'email', subject: $('#mvSub').value, body, how }, r => { $('#mvBody').value = r.body; if (r.subject) $('#mvSub').value = r.subject; toast('your reply was rewritten: read it before sending', 'ok'); }, btn);
+}
+function mvEdit(i) { const o = OPTS.list[i]; if (!o) return; $('#mvBody').value = o.body; if (o.subject) $('#mvSub').value = o.subject; closeOpts(); $('#mvBody').focus(); }
+
 /* ---- draft options (lodestar/drafts.py): up to 3 from one AI call, one recommended. Option text stays in OPTS; markup
    carries only indexes. 'Use this' never changes who a mail goes to: the server takes the recipient from the job, the
    mail being answered or the contact, and a pending item keeps everything but its subject and body ---- */
@@ -1261,7 +1330,7 @@ function optsHtml(target) {
   return `<div class="opts">` + OPTS.list.map((o, i) => `<div class="item opt${o.recommended ? ' rec' : ''}">
     <div class="hd"><b>${esc(o.label)}</b>${o.tone ? `<span class="chip">${esc(o.tone)}</span>` : ''}${o.recommended ? `<span class="pill ok">recommended</span><span class="muted">${esc(o.why)}</span>` : ''}</div>
     ${o.subject ? `<div><b>Subject:</b> ${esc(o.subject)}</div>` : ''}<pre>${esc(o.body)}</pre>
-    <div class="row"><button class="b sm" onclick="useOpt(${i},this)">Use this</button>${OPTS.ai ? HOWS.map(([k, l]) => `<button class="b ghost sm" onclick="rewriteOpt(${i},'${k}',this)">${l}</button>`).join('') + `<button class="b ghost sm" onclick="rewriteOpt(${i},'',this)">custom…</button>` : ''}</div></div>`).join('')
+    <div class="row"><button class="b sm" onclick="useOpt(${i},this)">Use this</button>${target === 'mvOpts' ? `<button class="b ghost sm" onclick="mvEdit(${i})">Edit first</button>` : ''}${OPTS.ai ? HOWS.map(([k, l]) => `<button class="b ghost sm" onclick="rewriteOpt(${i},'${k}',this)">${l}</button>`).join('') + `<button class="b ghost sm" onclick="rewriteOpt(${i},'',this)">custom…</button>` : ''}</div></div>`).join('')
     + `<div class="row"><button class="b ghost sm" onclick="closeOpts()">close options</button></div></div>`;
 }
 function renderOpts() { if (OPTS.target.startsWith('p')) renderInbox(); else { const el = $('#' + OPTS.target); if (el) el.innerHTML = optsHtml(OPTS.target); } }
@@ -1280,7 +1349,7 @@ async function useOpt(i, btn) {
   if (OPTS.kind === 'cover') { openEditor('cover_letter.md', o.body); closeOpts(); return toast('the letter is in the editor: review, then Save document', 'ok'); }
   run('draft_use', { kind: OPTS.kind, ...OPTS.ctx, subject: o.subject, body: o.body }, r => {
     const txt = mailText(r); closeOpts();
-    if (t === 'ctrOpts') show('ctrOut', txt); else if (cur) openJob(cur.job.id).then(() => { $('#jOut').textContent = txt; });
+    if (t === 'mvOpts') { toast(txt.split('\n').pop(), 'ok'); load(); } else if (t === 'ctrOpts') show('ctrOut', txt); else if (cur) openJob(cur.job.id).then(() => { $('#jOut').textContent = txt; });
   }, btn);
 }
 function rewriteOpt(i, how, btn) {
@@ -1591,6 +1660,7 @@ function exportObsidian(btn) {  // writes outside Lodestar's folder: name the ta
 async function addWatch() {
   const r = await api('/api/watches', { url: $('#wUrl').value, keywords: $('#wKw').value, search: $('#wSearch').checked });
   if (r.error) return toast('error: ' + r.error, 'err');
+  toast(r.updated ? 'already watched: the existing watch was updated, not added again' : 'watch added', 'ok');
   $('#wUrl').value = ''; load();
 }
 async function addCompany() {
@@ -3315,7 +3385,7 @@ function toggleTheme() {
 /* ---- go-to keys (pass 32): g then a letter opens a page, ? lists the keys; never while you type or with the palette ---- */
 const GO_KEYS = { t: ['home', 'Today'], i: ['inbox', 'Inbox'], b: ['board', 'Board'], c: ['contacts', 'Contacts'], j: ['search', 'Jobs'],
   e: ['careers', 'Careers'], m: ['monitor', 'Monitor'], p: ['profile', 'Profile'], r: ['studio', 'Studio'], a: ['answers', 'Answers'],
-  n: ['insights', 'Insights'], s: ['setup', 'Setup'] };
+  n: ['insights', 'Insights'], s: ['setup', 'Setup'], l: ['mail', 'Mail'] };
 let GO_PENDING = 0;
 document.addEventListener('keydown', e => {  // capture phase: Esc closes the sheet only, before the drawer's own Esc
   const el = $('#keysHelp');

@@ -319,3 +319,21 @@ a.chip.attr-adzuna { display: inline-block; min-width: 116px; min-height: 23px; 
 #careers .coverage { margin-top: 8px; }
 .keys-help { position: fixed; z-index: 60; top: 72px; left: 50%; transform: translateX(-50%); width: min(420px, 92vw); box-shadow: var(--shadow); }
 .keys-help ul { margin: 0; padding-left: 18px; } kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, monospace; }
+
+/* Mail page (pass 33): list + reading pane, one column when narrow */
+.mailview { display: grid; grid-template-columns: minmax(260px, 360px) minmax(0, 1fr); gap: 14px; align-items: start; margin-top: 10px; }
+.mvlist { display: flex; flex-direction: column; gap: 6px; max-height: 75vh; overflow-y: auto; }
+.mvrow { display: flex; flex-direction: column; gap: 3px; text-align: left; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: var(--r); padding: 8px 10px; cursor: pointer; font: inherit; }
+.mvrow:hover { border-color: var(--acc); }
+.mvrow.on { border-left-color: var(--acc); background: color-mix(in srgb, var(--acc) 10%, var(--panel)); }
+.mvrow .hd { display: flex; justify-content: space-between; gap: 8px; }
+.mvrow b, .mvrow .muted { overflow-wrap: anywhere; }
+.mvrow[data-type="offer"], .mvrow[data-type="interview"] { border-left-color: var(--ok, #3fb37f); }
+.mvrow[data-type="rejection"] { border-left-color: var(--bad, #d05a5a); }
+.mvread { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; min-width: 0; }
+.mvread h3 { margin: 0 0 6px; overflow-wrap: anywhere; }
+.mvfacts { border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; margin: 10px 0; display: grid; gap: 4px; }
+.mvbody { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.5; max-height: 60vh; overflow-y: auto; border-top: 1px solid var(--line); padding-top: 10px; }
+#mvReply textarea { width: 100%; min-height: 140px; }
+#mvReply input#mvSub { width: 100%; margin-bottom: 6px; }
+@media (max-width: 860px) { .mailview { grid-template-columns: 1fr; } .mvlist { max-height: 40vh; } }

@@ -2654,6 +2654,19 @@ def _review_args(x) -> None:
     x.add_argument("--no-master", action="store_true", help="bank only: leave profile.md as it is")
 
 
+def main_hidden(argv=None):
+    """The windowless launcher (lodestarw.exe, pythonw, a restart without a console): output that has no console to
+    go to is appended to HOME/logs/console.log instead of being lost or raising. With a console it is plain main()."""
+    if sys.stdout is None or sys.stderr is None:
+        from .config import HOME
+
+        (HOME / "logs").mkdir(parents=True, exist_ok=True)
+        log_file = open(HOME / "logs" / "console.log", "a", encoding="utf-8", errors="replace", buffering=1)
+        sys.stdout = sys.stdout or log_file
+        sys.stderr = sys.stderr or log_file
+    return main(argv)
+
+
 def main(argv=None):
     from . import log
 

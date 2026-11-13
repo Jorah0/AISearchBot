@@ -186,7 +186,8 @@ def add_company(src: str, name: str = "", keywords: str = "") -> dict:
     vendor, slug = found
     # re-adding a board keeps its name and keywords unless new ones are given (as saved-search filters do)
     # ponytail: so keywords are cleared by remove + add, not by re-adding with none
-    old = next((c for c in db.companies() if (c["vendor"], c["slug"]) == (vendor, slug)), None)
+    old = next((c for c in db.companies() if (c["vendor"], c["slug"].casefold()) == (vendor, slug.casefold())), None)
+    slug = old["slug"] if old else slug  # board slugs ignore case: 'Acme' and 'acme' are one board, kept as first added
     keywords = keywords or (old["keywords"] or "" if old else "")
     name = name or (old["name"] if old else "") or slug.replace("-", " ").replace("_", " ").title()
     return {"id": db.add_company(vendor, slug, name, keywords), "vendor": vendor, "slug": slug, "name": name}

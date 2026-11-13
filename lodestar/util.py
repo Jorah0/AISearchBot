@@ -11,6 +11,8 @@ from html.parser import HTMLParser
 
 from .config import ALERTS, full_ai_check, setting
 
+NO_WINDOW = getattr(__import__("subprocess"), "CREATE_NO_WINDOW", 0)  # helper programs never open a console window
+
 UA = "Mozilla/5.0 (compatible; lodestar/0.1; +https://github.com/)"
 MAIL_TIMEOUT = 60  # seconds per IMAP/SMTP socket operation: a server that accepts and goes quiet must not hang the loop
 
@@ -325,7 +327,7 @@ def desktop_notify(title: str, body: str) -> bool:
             cmd = ["osascript", "-e", 'display notification (system attribute "LS_BODY") with title (system attribute "LS_TITLE")']
         else:
             cmd = ["notify-send", "--", env["LS_TITLE"], env["LS_BODY"]]
-        r = subprocess.run(cmd, env=env, capture_output=True, timeout=20, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        r = subprocess.run(cmd, env=env, capture_output=True, timeout=20, creationflags=NO_WINDOW)
         return r.returncode == 0
     except Exception:  # ponytail: a notification is a nicety; nothing upstream may fail because of it
         return False

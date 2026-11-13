@@ -581,6 +581,19 @@ context with a temp profile and blocks 8765-8774, so a test never reaches a Lode
 |---|---|---|---|
 | search-live-fixes | Live board check fixes: Arbeitnow (ignores its search parameter) and Himalayas (loose match) are filtered by the query here; double-encoded board text (RemoteOK) is repaired for every listing; an HN header link is never the job title | `test_search_live_fixes.LiveFixes.test_arbeitnow_and_himalayas_answers_are_filtered_by_the_query`<br>`test_search_live_fixes.LiveFixes.test_double_encoded_text_is_repaired`<br>`test_search_live_fixes.LiveFixes.test_hn_header_link_is_never_the_title` |  |
 | verification-crawl | Full live verification crawl: every GET route and page action on a seeded home answers cleanly; an action missing a field names it in words, never a bare KeyError | `test_verification_fixes.Crawl.test_a_missing_field_is_named_in_words` |  |
+| watch-dedupe | No duplicate watches: a saved search differing in case or spacing, a page URL differing in scheme, www., host case, default port, trailing slash or #fragment, and a company board slug differing in case update the existing watch (same id, first spelling kept); the page says 'already watched' | `test_watch_dedupe.NoDuplicates.test_saved_searches_differing_in_case_or_spacing_are_one`<br>`test_watch_dedupe.NoDuplicates.test_page_urls_that_name_the_same_page_are_one`<br>`test_watch_dedupe.NoDuplicates.test_company_board_slug_case_is_one_board` |  |
+
+## Mail
+
+| ID | Feature | Unit / integration | E2E |
+|---|---|---|---|
+| mail-viewer | Mail page (pass 33): every filed mail sorted by type with counts and search; one mail opens in full (headers, verified / unverified sender, the job, the classifier's summary, next step and date, the whole text as text, attachments); reply in your own words, AI rewrite chips on your text, or AI-written replies (one recommended, floor guard) used as is or edited first; every reply goes to the Inbox for review | `test_mail_viewer.Viewer.test_a_filed_mail_keeps_its_full_text_action_and_deadline`<br>`test_mail_viewer.Viewer.test_all_mail_lists_both_ways_and_filters_by_type`<br>`test_mail_viewer.ViewerRoutes.test_list_has_no_body_and_one_mail_opens_in_full` | `e2e_mail.Mail.test_types_counts_search_and_full_text`<br>`e2e_mail.Mail.test_mail_text_is_shown_as_text`<br>`e2e_mail.Mail.test_own_reply_goes_to_the_inbox_for_review`<br>`e2e_mail.Mail.test_ai_writes_replies_and_improves_your_text`<br>`e2e_mail.Mail.test_drawer_mail_opens_in_the_mail_page_and_420px` |
+
+## Packaging and install
+
+| ID | Feature | Unit / integration | E2E |
+|---|---|---|---|
+| hidden-console | No console window behind the desktop app: the Lodestar shortcut, start.ps1 and the scheduled task use the windowless lodestarw launcher (output to logs/console.log); git, the update gate, headless Edge, taskkill, schtasks and a restart start without a console | `test_hidden_console.Hidden.test_desktop_shortcut_and_scheduled_task_use_the_windowless_launcher`<br>`test_hidden_console.Hidden.test_windowless_output_goes_to_a_log_file`<br>`test_hidden_console.Hidden.test_helper_programs_start_without_a_console` |  |
 
 ## Planned (not built yet; rows get tests when they exist)
 

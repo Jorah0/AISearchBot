@@ -8,12 +8,13 @@ Set-Location $PSScriptRoot
 if (-not (Test-Path .venv)) { Write-Host "creating .venv ..."; python -m venv .venv }
 $py = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 $jb = Join-Path $PSScriptRoot ".venv\Scripts\lodestar.exe"
+$jbw = Join-Path $PSScriptRoot ".venv\Scripts\lodestarw.exe"  # no console window
 & $py -m pip install --quiet --disable-pip-version-check -e ".[all]"
 & $jb init
 & $jb providers
 if (-not $Browser) {
   $args_ = @("desktop", "--every", "$Every"); if ($NoLoop) { $args_ += "--no-loop" }; if ($Port -gt 0) { $args_ += @("--port", "$Port") }
-  & $jb @args_
+  Start-Process -FilePath $jbw -ArgumentList $args_  # the desktop window alone; this console closes
   exit
 }
 if (-not $NoLoop) {

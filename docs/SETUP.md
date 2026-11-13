@@ -1663,6 +1663,33 @@ lodestar digest --send     # try it: prints where it went
 If sending fails, the alert still lands in `~/.lodestar/alerts.log` and the terminal shows `(email notify failed: ...)`.
 Pop-up notifications on this computer are a separate switch (Setup > Desktop notifications).
 
+### The Mail page: read and answer your job mail
+
+**Mail** (under Inbox in the sidebar, or press g then l) lists every email Lodestar filed and everything it sent,
+newest first. The buttons along the top sort it by type, each with its count: Interview, Offer, Recruiter,
+Application received, Assessment, Rejection, Not classified, Other, Not filed under a job, and Sent. The search box
+narrows by subject, sender, company or summary.
+
+Click a message to read it:
+
+- **The header**: subject, type, sender (marked *verified sender* when it passed DKIM/DMARC and is tied to the job,
+  *unverified sender* otherwise), recipient, date, and the job it is filed under (click it to open the job).
+- **What the AI read from it**: a one-line summary, the next step it asks of you, and a date it names (an interview
+  time or a deadline).
+- **The whole email** as plain text (links and images in mail are never loaded), and its attachments.
+
+To reply (mail filed under a job; link other mail to a job first, or Track it as a new job):
+
+- **Write it yourself** and click **Send for review**.
+- **Improve your text**: shorter, warmer, more formal, more direct, or your own instruction ("custom…"). The AI
+  rewrites your draft in place; read it before sending.
+- **AI: write replies**: up to three replies from one AI call, one recommended with the reason. **Use this** sends it
+  for review as written; **Edit first** puts it in the box above for you to change.
+
+Nothing is sent from this page. Every reply goes to the **Inbox**, where you approve it (one click), edit it or
+reject it; the recipient is always the sender Lodestar has on file, never one typed into the page. Mail scanned before
+this page existed shows its first 1,500 characters; mail scanned from now on keeps its whole text.
+
 ### Email commands
 
 | Command | What it does |

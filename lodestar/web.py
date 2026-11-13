@@ -1163,7 +1163,19 @@ class Handler(BaseHTTPRequestHandler):
 
                 q = parse_qs(urlparse(self.path).query)
                 job = q.get("job", [""])[0]
-                self._json({"mail": [dict(r) for r in db.list_mail(int(job) if job else None, bool(q.get("unmatched")))]})
+                if q.get("all"):  # the Mail page: every mail both ways, without its text; ?category= narrows it
+                    self._json({"mail": [dict(r) for r in db.all_mail(q.get("category", [""])[0] or None)]})
+                else:
+                    self._json({"mail": [dict(r) for r in db.list_mail(int(job) if job else None, bool(q.get("unmatched")))]})
+            elif path.startswith("/api/mail/") and path.count("/") == 3 and path[10:].isdigit():  # one mail, its full text
+                row = db.con().execute("SELECT * FROM mail WHERE id=?", (int(path[10:]),)).fetchone()
+                if not row:
+                    self._json({"error": "no such mail"}, 404)
+                else:
+                    m = dict(row) | {"body": row["body"] or row["snippet"] or ""}
+                    j = db.get_job(m["job_id"]) if m["job_id"] else None
+                    m["job"] = {"id": j["id"], "company": j["company"], "title": j["title"]} if j else None
+                    self._json({"mail": m})
             elif path == "/api/contacts":
                 from .contacts import ROLES, rows
 

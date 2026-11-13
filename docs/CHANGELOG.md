@@ -1,5 +1,21 @@
 # Changelog (development passes, newest first)
 
+## Pass 33 (2026-11-13): the Mail page
+
+- A Mail page lists every email Lodestar filed and everything it sent, sorted by type with counts, with search.
+- Open a message to read it in full: header, verified or unverified sender, the job, the AI's summary, the next step
+  it asks of you and the date it names, the whole text and its attachments. New mail keeps its whole text (codes
+  masked as before), and the classifier's next step and date are kept with it.
+- Reply in your own words, have the AI improve your text, or have the AI write the reply (up to three options, one
+  recommended; use one as is or edit it first). Every reply goes to the Inbox for your approval.
+- The job drawer's mail has a Read in Mail button; g then l opens the page.
+- No duplicate watches: the same saved search typed with other capitals or spacing, the same careers page with
+  http / https, www., a trailing slash or a #part, and the same company board slug in other capitals update the
+  watch you already have instead of adding a second one (Monitor says "already watched").
+- No cmd window behind the desktop app: the Lodestar shortcut opens the new windowless launcher `lodestarw.exe`
+  (its output goes to `logs\console.log`), and git, the update check, PDF printing and the scheduled task start
+  without a console. Re-run install.ps1 (or point your Lodestar shortcut at `.venv\Scripts\lodestarw.exe desktop`).
+
 ## Fix (2026-11-13): The Muse retired; profile skills are key terms only
 
 - A PDF whose text comes out one word per line (some resume builders write it that way) is now read in layout mode,

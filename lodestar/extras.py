@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import ai, db, util
 from .config import ALERTS, APPS_DIR
-from .util import slug
+from .util import NO_WINDOW, slug
 
 
 def _job_dir(j) -> Path:
@@ -187,14 +187,17 @@ def schedule(action: str, every: int = 30) -> str:
     from .config import HOME
 
     # the interpreter running this command, wherever it lives; the PyInstaller exe takes the subcommand directly
-    cmd = f'"{sys.executable}" ' + ("run --once" if getattr(sys, "frozen", False) else "-m lodestar run --once")
+    exe = Path(sys.executable)
+    if platform.system() == "Windows" and not getattr(sys, "frozen", False) and exe.with_name("pythonw.exe").is_file():
+        exe = exe.with_name("pythonw.exe")  # the scheduled task runs without a console window popping up
+    cmd = f'"{exe}" ' + ("run --once" if getattr(sys, "frozen", False) else "-m lodestar run --once")
     if platform.system() != "Windows":
         return f"add to crontab -e:\n*/{every} * * * * {cmd} >> \"{HOME / 'cron.log'}\" 2>&1"
     if action == "install":
         r = subprocess.run(["schtasks", "/Create", "/SC", "MINUTE", "/MO", str(every), "/TN", "lodestar", "/TR", cmd, "/F"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, creationflags=NO_WINDOW)
         return (r.stdout or r.stderr).strip() + f"\n(task 'lodestar' runs `{cmd}` every {every} min)"
-    r = subprocess.run(["schtasks", "/Delete", "/TN", "lodestar", "/F"], capture_output=True, text=True)
+    r = subprocess.run(["schtasks", "/Delete", "/TN", "lodestar", "/F"], capture_output=True, text=True, creationflags=NO_WINDOW)
     return (r.stdout or r.stderr).strip()
 
 
