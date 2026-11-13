@@ -569,7 +569,9 @@ def cover_letter(job, use_council: bool = False, provider: str | None = None, to
     from .drafts import leaks, screen
 
     d = app_dir(job)
-    research = (d / "research.md").read_text(encoding="utf-8-sig")[:2500] if (d / "research.md").is_file() else ""
+    from .extras import research_for_prompts
+
+    research = research_for_prompts(job)  # never a line the research marked (unverified)
     gapj = json.loads((d / "gap.json").read_text(encoding="utf-8")) if (d / "gap.json").is_file() else {}
     # the gap check is a private judgement (it weighs pay against the floor): only its items that name no floor go in
     gapj = {k: [x for x in v if not leaks(str(x))] if isinstance(v := gapj.get(k), list) else (None if leaks(str(v or "")) else v)

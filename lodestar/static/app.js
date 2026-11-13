@@ -1372,7 +1372,7 @@ function spPaint() {
   // a place you saved in Preferences fills the filter; one only read off your resume is a suggestion (no hidden filter)
   if (!$('#sLoc').value && SP.location && SP.location_from === 'Preferences') $('#sLoc').value = SP.location;
   $('#sLoc').placeholder = SP.location ? `e.g. "${SP.location}"` : 'location, e.g. "Austin, TX or remote"';
-  $('#sQ').placeholder = SP.query ? `blank: ${SP.query}` : 'roles, e.g. "data engineer, analytics engineer"';
+  $('#sQ').placeholder = SP.query ? `blank: ${SP.query}` : 'roles, e.g. "store manager, hotel manager"';
 }
 async function spLoad() { const r = await api('/api/search/defaults'); if (!r.error) { SP = r; spPaint(); } }
 function spUse(i) { $('#sQ').value = (SP.roles || [])[i] || ''; $('#sQ').focus(); }

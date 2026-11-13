@@ -473,6 +473,16 @@ def company_pages(company: str, site: str | None, refresh: bool = False) -> list
 
 
 # ----------------------------------------------------------------------------- company research pack
+def research_for_prompts(job, limit: int = 2500) -> str:
+    """The research pack as employer-facing prompts may read it: lines the model marked (unverified) are left out
+    (blueprint: evidence before claims). The full pack stays in the drawer for you."""
+    from .resume import app_dir
+
+    p = app_dir(job) / "research.md"
+    text = p.read_text(encoding="utf-8-sig") if p.is_file() else ""
+    return "\n".join(ln for ln in text.splitlines() if "(unverified)" not in ln.lower())[:limit]
+
+
 def research(job, provider: str | None = None):
     """Pull what is publicly reachable (job page, company site, a web search page) and summarize for the interview."""
     from urllib.parse import quote, urlparse

@@ -27,7 +27,10 @@ class Agnostic(Base):
     def test_page_examples_are_not_software_only(self):
         for name in ("index.html", "app.js"):
             text = (PKG / "static" / name).read_text(encoding="utf-8")
-            bad = [m[0] for m in re.finditer(r"placeholder=[\"'][^\"']*[\"']", text) if SOFTWARE.search(m[0])]
+            # attributes and JS assignments (.placeholder = '...', a ternary's string branches included): pass 31
+            found = [m[0] for m in re.finditer(r"placeholder=[\"'][^\"']*[\"']", text)]
+            found += [ln for ln in text.splitlines() if re.search(r"\.placeholder\s*=", ln)]
+            bad = [x for x in found if SOFTWARE.search(x)]
             self.assertEqual(bad, [], f"{name}: placeholders should show examples from more than one industry")
 
     def test_software_wording_reaches_prompts_only_for_software_jobs(self):

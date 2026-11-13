@@ -635,8 +635,10 @@ def _words_in(q) -> list[str]:
 
 
 def _has_all(words, blob) -> bool:
+    """Every query word as a whole word (a plural counts): 'intern' never matches 'Internal', 'nurse' never
+    'Nursery' (blueprint: never broaden a search silently)."""
     b = str(blob or "").lower()
-    return all(w in b for w in words)
+    return all(re.search(rf"(?<![\w+#]){re.escape(w)}(?:e?s)?(?![\w+#])", b) for w in words)
 
 
 def _remotive(q):
@@ -662,7 +664,7 @@ def _remoteok(q):
     out = []
     for j in (d or [])[1:]:  # element 0 is a legal notice
         blob = f"{j.get('position', '')} {' '.join(j.get('tags', []))} {j.get('company', '')}".lower()
-        if all(w in blob for w in words):
+        if _has_all(words, blob):
             sal = f"{j.get('salary_min', '')}-{j.get('salary_max', '')}".strip("-")
             out.append(_listing(j.get("position"), j.get("company"), j.get("url"), j.get("location"), sal, j.get("date"),
                                 j.get("description"), "remoteok"))
@@ -686,7 +688,7 @@ def _hn(q):
             if str(h.get("parent_id")) != sid:
                 continue  # a reply, not a posting
             text = strip_html(h.get("comment_text") or "")
-            if not all(w in text.lower() for w in words):
+            if not _has_all(words, text):
                 continue
             lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
             header = next((ln for ln in lines[:4] if "|" in ln), lines[0] if lines else "")[:200]
@@ -710,22 +712,26 @@ def _jobicy(q):
     out = []
     for j in d.get("jobs", []):
         blob = f"{j.get('jobTitle', '')} {j.get('jobExcerpt', '')} {j.get('jobIndustry', '')}".lower()
-        if all(w in blob for w in words):
+        if _has_all(words, blob):
             sal = f"{j.get('annualSalaryMin', '')}-{j.get('annualSalaryMax', '')}".strip("-")
             out.append(_listing(j.get("jobTitle"), j.get("companyName"), j.get("url"), j.get("jobGeo"), sal,
                                 j.get("pubDate"), j.get("jobDescription"), "jobicy"))
     return out
 
 
-MUSE_CATEGORIES = {"engineer": "Software Engineering", "developer": "Software Engineering", "software": "Software Engineering",
-                   "data": "Data and Analytics", "design": "Design and UX", "product": "Product Management",
-                   "marketing": "Marketing", "sales": "Sales", "finance": "Accounting and Finance", "hr": "HR",
-                   "support": "Customer Service", "project": "Project Management", "security": "IT"}
+# The Muse's own categories, asked only for an unambiguous phrase: 'civil engineer', 'security officer' or 'data entry
+# clerk' must not be narrowed to software / IT / analytics listings (blueprint: never narrow a search silently)
+MUSE_CATEGORIES = {"software": "Software Engineering", "developer": "Software Engineering",
+                   "data scientist": "Data and Analytics", "data analyst": "Data and Analytics",
+                   "ux designer": "Design and UX", "product manager": "Product Management", "marketing": "Marketing",
+                   "sales": "Sales", "accountant": "Accounting and Finance", "accounting": "Accounting and Finance",
+                   "hr": "HR", "human resources": "HR", "customer service": "Customer Service",
+                   "project manager": "Project Management"}
 
 
 def _muse(q):
     words = q.lower().split()
-    cat = next((c for w in words for k, c in MUSE_CATEGORIES.items() if w.startswith(k)), None)  # 'three' is not 'hr'
+    cat = next((c for k, c in MUSE_CATEGORIES.items() if _has_all(k.split(), q)), None)  # whole words: 'three' is not 'hr'
     out, seen_urls = [], set()
     for page in (1, 2):
         d = fetch_json(f"https://www.themuse.com/api/public/jobs?page={page}" + (f"&category={urllib.parse.quote(cat)}" if cat else ""))
@@ -733,7 +739,7 @@ def _muse(q):
             desc = strip_html(r.get("contents") or "")
             blob = f"{r.get('name', '')} {' '.join(c.get('name', '') for c in r.get('categories', []))} {desc[:4000]}".lower()
             url = (r.get("refs") or {}).get("landing_page") or ""
-            if all(w in blob for w in words) and url not in seen_urls:  # the API can repeat a job across pages
+            if _has_all(words, blob) and url not in seen_urls:  # the API can repeat a job across pages
                 seen_urls.add(url)
                 out.append(_listing(r.get("name"), (r.get("company") or {}).get("name"), url,
                                     ", ".join(loc.get("name", "") for loc in r.get("locations", [])[:2]), "",

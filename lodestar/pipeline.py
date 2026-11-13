@@ -31,8 +31,6 @@ CLOSED = ("accepted", "rejected", "withdrawn")
 LIVE = ("saved", "applied", "screening", "interview", "offer")
 ROOTS = ("jd", "profile", "stories", "questions")  # fingerprints that are not stages (questions: interview.qset_fp)
 # the two intake steps before a job exists: global loop steps, documented here and not registered per job
-GLOBAL = {"discover": "saved searches, page watches and company boards (loop step 'watches', Search tab)",
-          "shortlist": "auto_track proposes strong fits for the Board (Inbox add_job), or you track a listing"}
 NONE_FP = "none"  # the fingerprint of an answers step with no form questions: done, and never stale
 NEVER_AI_MSG = "Lodestar never drafts eligibility or EEO answers: write your own under Answers"
 

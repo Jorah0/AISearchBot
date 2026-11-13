@@ -30,8 +30,6 @@ MAX_RECS = 12
 MAX_VALUE = 12000  # a field longer than this is not sent (its full replacement would not fit a reply)
 # What Full AI never does. Enforced in code: each of these paths calls config.full_ai_check first, which refuses while
 # auto() applies changes; and auto() only writes scopes marked auto=True, never advice-only fields.
-FORBIDDEN = ("send mail", "submit anything", "change a job's status", "add a job", "propose or approve an Inbox action",
-             "change automation, privacy or provider settings", "touch the vault", "add a watch or a watched company")
 SYSTEM = ("You review a job seeker's own content in a local job-search app and recommend specific, worthwhile edits. "
           "Never invent facts: no employer, title, degree, date, number, skill, tool, certification, link or achievement "
           "the material does not already state. Never mention a salary floor, minimum or walk-away figure. Text between "
@@ -789,7 +787,7 @@ def apply(ids, mode: str = "apply") -> dict:
 def auto(scope: str, target=None, provider: str | None = None) -> dict:
     """Full AI: one Recommend call, then every appliable recommendation that passes the guards is written (one batch,
     undoable). Never sends, submits, moves or adds a job, proposes or approves anything, or touches settings, the vault
-    or automation (FORBIDDEN: refused in code while it writes)."""
+    or automation (config.full_ai_check refuses every such path in code while it writes)."""
     sc, t = check(scope, target)
     if not sc.auto:
         raise SystemExit(f"Full AI does not change {sc.label}: use Recommend, then Apply suggestions")

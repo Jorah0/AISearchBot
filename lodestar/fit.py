@@ -1,7 +1,8 @@
 """Fit score: one deterministic 0-100 compatibility score for a tracked job or a listing, with a chip per reason.
 
-Five measured parts (skills, role, experience, location, pay) plus modifiers (dealbreakers, sponsorship, clearance,
-watched company, people you know, staleness) and, when judged, an AI part. A part that cannot be measured drops out
+Five measured parts (skills, role, experience, location, pay) plus soft modifiers (watched company, people you know,
+staleness) and, when judged, an AI part. Hard requirements (work authorization, clearance, licenses, your exclusions)
+are gates (gates()), never points. A part that cannot be measured drops out
 and the score shrinks toward 50 by the unmeasured share, so a title-only listing never outranks a fully read posting.
 Weights and patterns live in data/fit.json; the pref fit_weights overrides them.
 
@@ -398,11 +399,10 @@ def _mods(x, ctx) -> list[dict]:
 
     m, rx, out = config()["modifiers"], _rx(), []
     co = norm_company(x["company"])
-    if ctx["auth"] == "needs_sponsorship" and not rx["no_sponsor"].search(x["desc"]):
-        if rx["sponsor_yes"].search(x["desc"]):
-            out.append({"d": m["sponsor_yes"], "why": "sponsor_yes", "chip": ("+", "offers sponsorship")})
-        elif x["company"] and sponsor_hint(x["company"]):
-            out.append({"d": m["sponsor_hint"], "why": "sponsor_hint", "chip": ("+", "possible H-1B sponsor")})
+    # work authorization is a gate (gates()), never points: a sponsorship hint is shown, it moves nothing (pass 31)
+    if ctx["auth"] == "needs_sponsorship" and not rx["no_sponsor"].search(x["desc"]) and not rx["sponsor_yes"].search(x["desc"]):
+        if x["company"] and sponsor_hint(x["company"]):
+            out.append({"d": 0, "why": "sponsor_hint", "chip": ("+", "possible H-1B sponsor")})
     if co and co in ctx["watched"]:
         out.append({"d": m["watched"], "why": "watched", "chip": ("+", "a company you watch")})
     if x["company"] and (people := warm(x["company"], ctx["warm"])):

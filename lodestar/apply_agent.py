@@ -29,7 +29,6 @@ from .config import HOME
 
 MODES = ("stop", "review", "auto")
 LIVE = db.LIVE_RUN
-DONE = ("confirmed", "by_user", "stopped", "failed", "unknown")
 STOP = HOME / "apply-agent.stop"  # touched by stop() in any process; cleared by the next enqueue
 PROFILE_DIR = HOME / "browser-profile"  # sign-ins (cookies) live here: never backed up or exported
 KEYSTORE_ARGS = [] if sys.platform.startswith("win") else ["--password-store=basic", "--use-mock-keychain"]  # = Playwright's

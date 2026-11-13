@@ -83,7 +83,7 @@ class Gates(Base):
         self.assertEqual(f["confidence"], f["known"])
 
     def test_gates_change_the_fit_revision(self):
-        self.assertEqual(fit.config()["version"], 2)  # every stored fit is stale once: the loop rescores it
+        self.assertGreaterEqual(fit.config()["version"], 2)  # every stored fit is stale once: the loop rescores it
         self.assertNotIn("blocked_cap", fit.config())
         self.assertFalse({"clearance", "dealbreaker"} & set(fit.config()["modifiers"]))
 

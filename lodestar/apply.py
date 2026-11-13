@@ -36,8 +36,9 @@ def answer(job, question: str, provider: str | None = None, need_facts: bool = F
     seen_q = {a["question"] for a in prior}
     prior = prior + [a for a in db.employer_answers() if a["question"] not in seen_q][:10]  # the model picks what fits
     bank = "\n".join(f"Q: {a['question']}\nA: {a['answer']}" for a in prior) or "(none)"
-    rp = app_dir(job) / "research.md"
-    research = rp.read_text(encoding="utf-8")[:1500] if rp.is_file() else ""
+    from .extras import research_for_prompts
+
+    research = research_for_prompts(job, 1500)  # never a line the research marked (unverified)
     mine = f"\nTHE CANDIDATE'S ANSWERS FOR THIS APPLICATION (facts to use):\n{notes[:2000]}\n" if notes else ""
     prompt = f"""Answer this job-application form question for the candidate: first person, concise, honest, ready to paste.
 Reuse the candidate's prior answers below when they fit (adapt wording, never contradict them). Never invent facts.

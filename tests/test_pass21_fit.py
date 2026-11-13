@@ -197,7 +197,8 @@ class Modifiers(Base):
         # pass 24: a failed hard requirement is a gate (blocked), never a cut in the score (blueprint 7.2)
         self.assertTrue(f["blocked"]); self.assertEqual(f["score"], fit.score(L(desc=JD + " We cannot sponsor visas for this role."))["score"])
         self.assertEqual(f["chips"][0]["text"], "says no visa sponsorship")  # blocks first
-        self.assertIn("offers sponsorship", [c["text"] for c in fit.score(L(desc=JD + " Visa sponsorship is available."))["chips"]])
+        yes = fit.score(L(desc=JD + " Visa sponsorship is available."))  # pass 31: a gate met, never points
+        self.assertIn("offers sponsorship", [g["evidence"] for g in yes["gates"]])
         settings.set_pref("work_authorization", "authorized")
         base = fit.score(L())["score"]
         settings.set_pref("excluded_companies", "Acme")
