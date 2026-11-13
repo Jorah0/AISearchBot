@@ -262,13 +262,9 @@ def _listing_host(host: str) -> bool:
 
 
 def _registrable(host: str) -> str:
-    """The label a host is registered under: 'careers.acme.com' -> 'acme', 'jobs.acme.co.uk' -> 'acme'.
-    ponytail: a two-letter TLD after a 2-3 letter label reads as a public suffix (co.uk, com.au); the full Public
-    Suffix List if a real company's site is misread"""
-    labels = host.lower().rstrip(".").split(".")
-    if len(labels) >= 3 and len(labels[-1]) == 2 and len(labels[-2]) <= 3:
-        return labels[-3]
-    return labels[-2] if len(labels) >= 2 else ""
+    """The label a host is registered under: 'careers.acme.com' -> 'acme', 'jobs.ibm.ca' -> 'ibm' (util.org_label,
+    the same rule mail trust uses)."""
+    return util.org_label(host)
 
 
 def _names_company(host: str, words) -> bool:

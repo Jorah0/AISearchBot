@@ -109,5 +109,18 @@ class Helpers(unittest.TestCase):  # one home per helper (util); the old private
         self.assertEqual(util.utc_to_local(aware), want)
 
 
+class Domains(unittest.TestCase):  # pass 31 Task 6: one registrable-domain rule for mail trust and company pages
+    def test_company_pages_and_mail_read_hosts_the_same_way(self):
+        from lodestar import email_monitor, util
+
+        for host, label in (("jobs.ibm.ca", "ibm"), ("careers.sap.de", "sap"), ("hr.bt.uk", "bt"),
+                            ("jobs.acme.co.uk", "acme"), ("careers.globex.com", "globex"), ("globex.attacker.net", "attacker")):
+            self.assertEqual(util.org_label(host), label, host)
+            self.assertEqual(email_monitor.org_label(host), label, host)
+            self.assertEqual(extras._registrable(host), label, host)
+        self.assertTrue(extras._names_company("jobs.ibm.ca", ["ibm"]))  # IBM's own careers site in Canada
+        self.assertFalse(extras._names_company("ibm.jobs-hub.example", ["ibm"]))  # still fail-closed
+
+
 if __name__ == "__main__":
     unittest.main()

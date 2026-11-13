@@ -538,3 +538,24 @@ def write_atomic(path, text: str, private: bool = False, tries: int = 40) -> Non
             if i == tries - 1:
                 raise
             time.sleep(0.025)
+
+
+# --- registrable domains: one rule for mail trust and company-page vetting (moved from email_monitor, pass 31) ---
+TWO_PART_SUFFIXES = {"co.uk", "org.uk", "ac.uk", "gov.uk", "ltd.uk", "plc.uk", "me.uk", "com.au", "net.au", "org.au",
+                     "co.nz", "org.nz", "co.jp", "ne.jp", "or.jp", "co.in", "net.in", "org.in", "com.br", "com.mx",
+                     "com.ar", "com.cn", "com.hk", "com.sg", "com.tw", "com.tr", "co.kr", "co.il", "co.id", "com.my",
+                     "com.ph", "co.th", "co.za", "com.ua", "com.pl", "com.es", "com.co", "com.pe", "com.vn", "com.sa"}
+
+
+def registrable(dom: str) -> str:
+    """The domain its owner registered, label plus public suffix: careers.globex.com -> globex.com, a.globex.co.uk ->
+    globex.co.uk ('' for a bare name)."""
+    parts = [p for p in (dom or "").lower().strip(".").split(".") if p]
+    n = 3 if len(parts) >= 3 and ".".join(parts[-2:]) in TWO_PART_SUFFIXES else 2
+    return ".".join(parts[-n:]) if len(parts) >= n else ""
+
+
+def org_label(dom: str) -> str:
+    """The label a domain's owner registered, hyphens dropped: careers.globex.com / globex.co.uk -> 'globex'. Only
+    this label can name a company: globex.attacker.net -> 'attacker', globex-hiring.com -> 'globexhiring'."""
+    return registrable(dom).split(".")[0].replace("-", "")

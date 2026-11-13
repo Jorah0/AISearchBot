@@ -40,24 +40,7 @@ FREEMAIL = {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.c
 
 # ponytail: the common two-part public suffixes, not the full Public Suffix List; a domain under an unlisted one
 # (e.g. acme.co.za) reads its label as 'co' and so never names a company: it fails closed, not open
-TWO_PART_SUFFIXES = {"co.uk", "org.uk", "ac.uk", "gov.uk", "ltd.uk", "plc.uk", "me.uk", "com.au", "net.au", "org.au",
-                     "co.nz", "org.nz", "co.jp", "ne.jp", "or.jp", "co.in", "net.in", "org.in", "com.br", "com.mx",
-                     "com.ar", "com.cn", "com.hk", "com.sg", "com.tw", "com.tr", "co.kr", "co.il", "co.id", "com.my",
-                     "com.ph", "co.th", "co.za", "com.ua", "com.pl", "com.es", "com.co", "com.pe", "com.vn", "com.sa"}
-
-
-def registrable(dom: str) -> str:
-    """The domain its owner registered, label plus public suffix: careers.globex.com -> globex.com, a.globex.co.uk ->
-    globex.co.uk ('' for a bare name)."""
-    parts = [p for p in (dom or "").lower().strip(".").split(".") if p]
-    n = 3 if len(parts) >= 3 and ".".join(parts[-2:]) in TWO_PART_SUFFIXES else 2
-    return ".".join(parts[-n:]) if len(parts) >= n else ""
-
-
-def org_label(dom: str) -> str:
-    """The label a domain's owner registered, hyphens dropped: careers.globex.com / globex.co.uk -> 'globex'. Only
-    this label can name a company: globex.attacker.net -> 'attacker', globex-hiring.com -> 'globexhiring'."""
-    return registrable(dom).split(".")[0].replace("-", "")
+from .util import org_label, registrable  # noqa: E402  one rule (pass 31): util
 
 
 def names_company(dom: str, company: str) -> bool:
