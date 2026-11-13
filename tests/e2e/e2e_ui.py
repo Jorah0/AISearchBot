@@ -55,5 +55,28 @@ class UI(E2ETestCase):
         self.assertLess(abs(top - self.page.evaluate("document.querySelector('#drawer').getBoundingClientRect().top")), 40)  # still on top
 
 
+    def test_go_to_keys_and_the_cheat_sheet(self):
+        self.page.locator("body").click(position={"x": 5, "y": 300})
+        self.page.keyboard.press("g")
+        self.page.keyboard.press("b")
+        self.page.wait_for_selector("section#board.on")
+        self.page.keyboard.press("g")
+        self.page.keyboard.press("t")
+        self.page.wait_for_selector("section#home.on")
+        self.go("search")
+        self.page.fill("#sQ", "")
+        self.page.focus("#sQ")
+        self.page.keyboard.type("gb")  # typing in a field never navigates
+        self.assertTrue(self.page.locator("section#search.on").count())
+        self.assertEqual(self.page.input_value("#sQ"), "gb")
+        self.page.locator("body").click(position={"x": 5, "y": 300})
+        self.page.keyboard.press("?")
+        sheet = self.page.locator("#keysHelp")
+        self.assertTrue(sheet.is_visible())
+        self.assertIn("g then b", sheet.text_content())
+        self.page.keyboard.press("Escape")
+        self.assertFalse(sheet.is_visible())
+
+
 if __name__ == "__main__":
     unittest.main()

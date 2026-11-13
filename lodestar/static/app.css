@@ -316,3 +316,5 @@ a.chip.attr-adzuna { display: inline-block; min-width: 116px; min-height: 23px; 
 #careers .tiers { border: 0; padding: 0; margin: 4px 0; }
 #careers .career-results { list-style: none; padding: 0; margin: 0; }
 #careers .coverage { margin-top: 8px; }
+.keys-help { position: fixed; z-index: 60; top: 72px; left: 50%; transform: translateX(-50%); width: min(420px, 92vw); box-shadow: var(--shadow); }
+.keys-help ul { margin: 0; padding-left: 18px; } kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, monospace; }

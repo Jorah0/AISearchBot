@@ -3290,3 +3290,29 @@ function toggleTheme() {
   try { localStorage.setItem('ls_theme', root.dataset.theme); } catch (e) { /* no storage: this visit only */ }
   toast(root.dataset.theme === 'light' ? 'Light theme' : 'Dark theme', 'ok');
 }
+
+/* ---- go-to keys (pass 32): g then a letter opens a page, ? lists the keys; never while you type or with the palette ---- */
+const GO_KEYS = { t: ['home', 'Today'], i: ['inbox', 'Inbox'], b: ['board', 'Board'], c: ['contacts', 'Contacts'], j: ['search', 'Jobs'],
+  e: ['careers', 'Careers'], m: ['monitor', 'Monitor'], p: ['profile', 'Profile'], r: ['studio', 'Studio'], a: ['answers', 'Answers'],
+  n: ['insights', 'Insights'], s: ['setup', 'Setup'] };
+let GO_PENDING = 0;
+function keysHelp(show) {
+  let el = $('#keysHelp');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'keysHelp'; el.className = 'panel keys-help'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Keyboard shortcuts');
+    el.innerHTML = '<h3>Keyboard shortcuts</h3><ul>' + Object.entries(GO_KEYS).map(([k, [, label]]) => `<li><kbd>g</kbd> then <kbd>${k}</kbd> <span class="muted">(g then ${k})</span>: ${esc(label)}</li>`).join('')
+      + '<li><kbd>Ctrl</kbd>+<kbd>K</kbd>: commands</li><li><kbd>Esc</kbd>: close</li></ul>';
+    document.body.appendChild(el);
+  }
+  el.style.display = show ? '' : 'none';
+}
+document.addEventListener('keydown', e => {
+  const t = e.target, typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+  if (e.key === 'Escape' && $('#keysHelp') && $('#keysHelp').style.display !== 'none') { keysHelp(false); return; }
+  if (typing || e.ctrlKey || e.metaKey || e.altKey || ($('#palette') && !$('#palette').hidden)) return;
+  if (e.key === '?') { e.preventDefault(); keysHelp(true); return; }
+  if (e.key === 'g') { GO_PENDING = Date.now(); return; }
+  if (GO_PENDING && Date.now() - GO_PENDING < 1500 && GO_KEYS[e.key]) { e.preventDefault(); go(GO_KEYS[e.key][0]); }
+  GO_PENDING = 0;
+});
