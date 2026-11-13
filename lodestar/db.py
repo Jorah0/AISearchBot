@@ -114,6 +114,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS apply_runs_live ON apply_runs(job_id)
 CREATE TABLE IF NOT EXISTS site_accounts(id INTEGER PRIMARY KEY, site TEXT NOT NULL UNIQUE, login_url TEXT NOT NULL,
   username TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_by TEXT, created_at TEXT DEFAULT (datetime('now')),
   last_login TEXT, last_error TEXT, reset_url TEXT, auto_verify INTEGER NOT NULL DEFAULT 0, jobs TEXT);
+-- career tracks (careers.py, pass 23): a field you chose to search; list columns are JSON
+CREATE TABLE IF NOT EXISTS career_tracks(id INTEGER PRIMARY KEY, label TEXT NOT NULL, intent TEXT NOT NULL,
+  titles TEXT NOT NULL DEFAULT '[]', codes TEXT NOT NULL DEFAULT '[]', tiers TEXT NOT NULL DEFAULT '[0]',
+  exclusions TEXT NOT NULL DEFAULT '[]', location TEXT DEFAULT '', training TEXT DEFAULT 'none',
+  priority TEXT DEFAULT 'medium', enabled INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')));
 """
 MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "TEXT",  # ponytail: additive only
               # tracker fields (pass 15); every user write goes through set_fields
@@ -139,7 +144,8 @@ POSTING_MIGRATIONS = {"title": "TEXT", "company": "TEXT", "location": "TEXT", "s
                       "jd": "TEXT", "urls": "TEXT", "sources": "TEXT", "ats_id": "TEXT", "ats_feed": "TEXT",
                       "last_seen": "TEXT", "seen_count": "INTEGER", "fit_score": "INTEGER", "fit": "TEXT", "fit_rev": "TEXT",
                       "ai_fit": "TEXT", "job_id": "INTEGER", "dismissed": "INTEGER", "closed_at": "TEXT",
-                      "reposted_at": "TEXT"}
+                      "reposted_at": "TEXT",
+                      "track_id": "INTEGER"}  # the career track whose search found it (careers.search_track)
 POSTING_INDEXES = ("CREATE INDEX IF NOT EXISTS postings_last_seen ON postings(last_seen)",
                    "CREATE INDEX IF NOT EXISTS postings_job ON postings(job_id)",
                    "CREATE INDEX IF NOT EXISTS postings_fit ON postings(fit_score)")

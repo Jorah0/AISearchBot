@@ -4,6 +4,7 @@ a career class and says why it fits, what is missing, what does not transfer and
 no AI. Candidate-only: never in employer text or prompts, and the salary floor is never read here."""
 import json
 import re
+import sqlite3
 from functools import lru_cache
 from pathlib import Path
 
@@ -206,5 +207,141 @@ def suggest(tiers=(1, 2, 3, 4, 5), limit: int = 12, per_group: int = 2, bank: di
     return {"suggestions": kept[:limit], "zone": cz, "meta": meta, "note": "" if kept else NOTE_NO_EVIDENCE}
 
 
+# --- career tracks (blueprint appendix A.1): a field you chose to search -----------------------------------------
+INTENTS = ("resume_led", "desired_field", "combined", "exploration", "pivot")
+TRAINING = ("none", "short_course", "certification", "apprenticeship", "degree", "open")
+PRIORITY = ("high", "medium", "exploratory")
+TITLE_CAP = 6  # ponytail: titles searched per track; each 3 is one round of board requests
+_LISTS = ("titles", "codes", "tiers", "exclusions")
+
+
+def _clean_list(v) -> list[str]:
+    items = v.split(",") if isinstance(v, str) else list(v or [])
+    out: dict[str, str] = {}
+    for x in items:
+        x = " ".join(str(x).split())
+        if x and x.casefold() not in out:
+            out[x.casefold()] = x
+    return list(out.values())
+
+
+def _check(t: dict) -> dict:
+    if not str(t.get("label") or "").strip():
+        raise SystemExit("a track needs a name")
+    if t["intent"] not in INTENTS:
+        raise SystemExit(f"intent must be one of {', '.join(INTENTS)}")
+    if not t["titles"] and not t["codes"]:
+        raise SystemExit("a track needs a title or an occupation")
+    try:
+        t["tiers"] = sorted({int(x) for x in t["tiers"]})
+    except (TypeError, ValueError):
+        raise SystemExit("tiers are 0-6") from None
+    if not t["tiers"] or any(x not in TIERS for x in t["tiers"]):
+        raise SystemExit("tiers are 0-6")
+    if t["training"] not in TRAINING:
+        raise SystemExit(f"training must be one of {', '.join(TRAINING)}")
+    if t["priority"] not in PRIORITY:
+        raise SystemExit(f"priority must be one of {', '.join(PRIORITY)}")
+    bad = [c for c in t["codes"] if not occupations.get(c)]
+    if bad:
+        raise SystemExit(f"unknown O*NET occupation: {', '.join(bad)}")
+    return t
+
+
+def _row(r) -> dict:
+    t = dict(r)
+    for k in _LISTS:
+        t[k] = json.loads(t[k] or "[]")
+    t["enabled"] = bool(t["enabled"])
+    return t
+
+
+def add_track(label: str, intent: str, titles=(), codes=(), tiers=None, exclusions=(), location: str = "",
+              training: str = "none", priority: str = "medium") -> int:
+    """Save a career track. Default tiers: a desired field searches its own words only (0), resume-led your
+    occupations' titles (1), the others both. Occupation codes are resolved from the titles (score >= 0.8) but used
+    only when tier 1 is on."""
+    from . import db
+    from .config import full_ai_check
+
+    full_ai_check("changes a career track")
+    titles = _clean_list(titles)
+    codes = _clean_list(codes) or list(dict.fromkeys(c for t in titles for c, s in occupations.match_title(t, 1) if s >= 0.8))
+    tiers = [0] if tiers is None and intent == "desired_field" else [1] if tiers is None and intent == "resume_led" else (
+        [0, 1] if tiers is None else tiers)
+    t = _check({"label": str(label or "").strip(), "intent": intent, "titles": titles, "codes": codes, "tiers": tiers,
+                "exclusions": _clean_list(exclusions), "location": str(location or "").strip(), "training": training,
+                "priority": priority})
+    cur = db.con().execute(
+        "INSERT INTO career_tracks(label, intent, titles, codes, tiers, exclusions, location, training, priority) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (t["label"], t["intent"], *(json.dumps(t[k]) for k in _LISTS), t["location"], t["training"], t["priority"]))
+    db.con().commit()
+    return cur.lastrowid
+
+
+def get_track(track_id: int) -> dict:
+    from . import db
+
+    r = db.con().execute("SELECT * FROM career_tracks WHERE id=?", (track_id,)).fetchone()
+    if r is None:
+        raise SystemExit(f"no career track #{track_id}")
+    return _row(r)
+
+
+def tracks(enabled_only: bool = False) -> list[dict]:
+    from . import db
+
+    q = "SELECT * FROM career_tracks" + (" WHERE enabled=1" if enabled_only else "") + " ORDER BY id"
+    return [_row(r) for r in db.con().execute(q)]
+
+
+def update_track(track_id: int, **fields) -> dict:
+    from . import db
+    from .config import full_ai_check
+
+    full_ai_check("changes a career track")
+    t = get_track(track_id)
+    unknown = set(fields) - {"label", "intent", "titles", "codes", "tiers", "exclusions", "location", "training",
+                             "priority", "enabled"}
+    if unknown:
+        raise SystemExit(f"unknown track field: {', '.join(sorted(unknown))}")
+    t.update({k: _clean_list(v) if k in ("titles", "codes", "exclusions") else v for k, v in fields.items()})
+    t["enabled"] = bool(t["enabled"]) if not isinstance(t["enabled"], str) else t["enabled"].lower() in ("1", "true", "on", "yes")
+    _check(t)
+    db.con().execute("UPDATE career_tracks SET label=?, intent=?, titles=?, codes=?, tiers=?, exclusions=?, location=?, "
+                     "training=?, priority=?, enabled=? WHERE id=?",
+                     (t["label"], t["intent"], *(json.dumps(t[k]) for k in _LISTS), str(t["location"] or ""),
+                      t["training"], t["priority"], int(t["enabled"]), track_id))
+    db.con().commit()
+    return get_track(track_id)
+
+
+def remove_track(track_id: int) -> None:
+    from . import db
+    from .config import full_ai_check
+
+    full_ai_check("changes a career track")
+    get_track(track_id)
+    with db.con():
+        db.con().execute("UPDATE postings SET track_id=NULL WHERE track_id=?", (track_id,))
+        db.con().execute("DELETE FROM career_tracks WHERE id=?", (track_id,))
+
+
+def search_titles(track: dict) -> list[str]:
+    """The titles a track searches: your own words (tier 0) and, only when tier 1 is on, each occupation's O*NET title
+    and its first two job titles. De-duplicated, at most TITLE_CAP: never broadened beyond the tiers you chose."""
+    out = list(track["titles"])
+    if 1 in track["tiers"]:
+        for c in track["codes"]:
+            o = occupations.get(c) or {}
+            out += [o.get("title") or ""] + list(o.get("titles") or [])[:2]
+    return _clean_list(out)[:TITLE_CAP]
+
+
 def _track_targets() -> list[str]:
-    return []
+    """Tier-0 targets: the occupations of your enabled tracks other than resume-led ones."""
+    try:
+        return list(dict.fromkeys(c for t in tracks(enabled_only=True) if t["intent"] != "resume_led" for c in t["codes"]))
+    except sqlite3.OperationalError:  # a database from before pass 23 opened read-only: no targets
+        return []

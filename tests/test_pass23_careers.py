@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import build_onet  # noqa: E402
 from careers_fixture import BANK, write_fixture  # noqa: E402
 
-from lodestar import careers, occupations, profile, settings  # noqa: E402
+from lodestar import careers, db, occupations, profile, settings  # noqa: E402
 
 REAL_DATA = occupations.DATA
 
@@ -211,6 +211,58 @@ class Discovery(FixtureCase):
         self.assertIn("license", careers.regulated("29-1141.00").lower())
         self.assertIn("CDL", careers.regulated("53-3032.00"))
         self.assertIsNone(careers.regulated("41-1011.00"))
+
+
+class TrackCase(FixtureCase):
+    def tearDown(self):
+        db.con().execute("DELETE FROM career_tracks")
+        db.con().execute("DELETE FROM postings WHERE url LIKE 'https://%.test/%'")
+        db.con().commit()
+        super().tearDown()
+
+
+class Tracks(TrackCase):
+    def test_desired_field_unrelated_to_resume_is_accepted(self):
+        tid = careers.add_track("Hospitality", "desired_field", titles=["Hotel manager"])
+        t = careers.get_track(tid)
+        self.assertEqual((t["label"], t["intent"], t["tiers"], t["codes"]), ("Hospitality", "desired_field", [0], ["11-9081.00"]))
+        self.assertEqual([x["id"] for x in careers.tracks()], [tid])
+
+    def test_validation(self):
+        for kw in ({"intent": "nope", "titles": ["x"]}, {"intent": "pivot"}, {"intent": "pivot", "titles": ["x"], "tiers": [7]},
+                   {"intent": "pivot", "titles": ["x"], "training": "phd"}, {"intent": "pivot", "titles": ["x"], "priority": "max"}):
+            with self.assertRaises(SystemExit):
+                careers.add_track("T", **kw)
+        with self.assertRaises(SystemExit):
+            careers.add_track(" ", "pivot", titles=["x"])
+        with self.assertRaises(SystemExit):
+            careers.get_track(99999)
+
+    def test_search_titles_respects_tiers(self):
+        t = careers.get_track(careers.add_track("H", "desired_field", titles=["Hotel manager"]))
+        self.assertEqual(careers.search_titles(t), ["Hotel manager"])
+        t = careers.update_track(t["id"], tiers=[0, 1])
+        self.assertEqual(careers.search_titles(t), ["Hotel manager", "Lodging Managers", "Hospitality Manager"])
+
+    def test_titles_are_deduped_and_capped(self):
+        t = careers.get_track(careers.add_track("M", "desired_field",
+                                                titles=["Chef", "chef ", "Cook", "Baker", "Barista", "Server", "Host", "Busser"]))
+        self.assertEqual(careers.search_titles(t), ["Chef", "Cook", "Baker", "Barista", "Server", "Host"])
+
+    def test_remove_track_clears_posting_tags(self):
+        tid = careers.add_track("H", "desired_field", titles=["Hotel manager"])
+        db.con().execute("INSERT INTO postings(key, url, track_id) VALUES ('k1.test', 'https://x.test/1', ?)", (tid,))
+        db.con().commit()
+        careers.remove_track(tid)
+        self.assertIsNone(db.con().execute("SELECT track_id FROM postings WHERE key='k1.test'").fetchone()[0])
+        self.assertEqual(careers.tracks(), [])
+
+    def test_suggestions_include_your_tracks_targets(self):
+        careers.add_track("Hospitality", "desired_field", titles=["Hotel manager"])
+        off = careers.add_track("Nursing", "pivot", titles=["Registered nurse"])
+        careers.update_track(off, enabled=False)  # a disabled track is not a target
+        got = {s["code"]: s["tier"] for s in careers.suggest(bank=BANK, tiers=(0, 4))["suggestions"]}
+        self.assertEqual(got, {"11-9081.00": 0, "43-4081.00": 4})
 
 
 if __name__ == "__main__":
