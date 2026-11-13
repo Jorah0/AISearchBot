@@ -1,5 +1,15 @@
 # Changelog (development passes, newest first)
 
+## Pass 30 (2026-11-13): industry-agnostic audit and the v1.1 acceptance journey
+
+- The page's examples no longer assume software work (store manager, hotel manager, medical office coordinator,
+  electrician ...); a guard test keeps placeholders from turning software-only again, keeps "stack and engineering
+  culture" wording behind the occupation check, and checks a blank profile starts no software search.
+- An end-to-end acceptance test walks the blueprint's journey with a retail resume: suggestions across different
+  occupation groups with their source, a nursing pivot accepted and labelled honestly (licensed, so never Qualified
+  now), a live search with its coverage, a tracked posting whose license requirement shows as unknown, and a stage
+  move kept in its history.
+
 ## Pass 29 (2026-11-13): skill-gap planner, career tracks in Insights
 
 - Insights > Skill gaps and `lodestar gaps`: what your open jobs keep asking for that your profile does not show

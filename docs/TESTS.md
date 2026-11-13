@@ -542,6 +542,12 @@ context with a temp profile and blocks 8765-8774, so a test never reaches a Lode
 |---|---|---|---|
 | gaps-planner | Skill-gap planner and analytics by track (gaps.py, blueprint 13.1 / 13.2 / 13.3): over your open jobs' stored fits, required skills missing and hard requirements not met or unknown (your exclusions left out), counted per job, most repeated first, legal requirements (license, certification, clearance, work authorization) marked apart, possible actions (certification, degree, project, short course, supervised experience); closed jobs left out; fewer than MIN_N jobs said; per career track the listings found, the ones tracked and those by career class; Insights panel, lodestar gaps, GET /api/gaps | `test_pass29_gaps.Planner.test_repeated_required_skills_rank_first_with_actions`<br>`test_pass29_gaps.Planner.test_a_required_license_is_a_legal_gap_with_a_credential_action`<br>`test_pass29_gaps.Planner.test_closed_jobs_are_left_out_and_a_small_sample_is_said`<br>`test_pass29_gaps.ByTrack.test_listings_and_tracked_jobs_per_track_and_class` | `e2e_insights.Insights.test_skill_gaps_and_career_tracks_panel` |
 
+## Industry-agnostic audit and acceptance (pass 30)
+
+| ID | Feature | Unit / integration | E2E |
+|---|---|---|---|
+| agnostic-acceptance | Industry-agnostic guard and the v1.1 acceptance journey (blueprint 2.2, 20.2, 20.3): no software-only placeholder examples in the page; stack / engineering-culture wording only behind the occupation check (careers.work_focus); a blank profile starts no software search; end to end with a retail resume: suggestions across occupation groups naming their source, an unrelated licensed pivot accepted as Requested target / Bridge required with its licensing note, a track search with coverage, a tracked posting whose license gate shows unknown and its career class, a stage move | `test_pass30_agnostic.Agnostic.test_page_examples_are_not_software_only`<br>`test_pass30_agnostic.Agnostic.test_software_wording_reaches_prompts_only_for_software_jobs`<br>`test_pass30_agnostic.Agnostic.test_a_blank_profile_starts_no_software_search` | `e2e_acceptance.Acceptance.test_resume_to_tracks_to_a_live_job_to_its_gates_and_stage` |
+
 ## Planned (not built yet; rows get tests when they exist)
 
 - tracker-sourcing-39, ui-sweep-68, profile-resume-ai-42, mail-people-interviews-47, outcomes-platform-planned-pipeline:

@@ -111,12 +111,12 @@
   <div class="aihead" data-adv-slot="searches"></div>
   <div class="aihead" data-ai-menu="search"></div>
   <details id="sProfile"><summary class="muted">Search profile <span id="sProfFrom"></span></summary>
-    <div class="row"><input id="spRoles" class="grow" placeholder="roles you want, comma-separated (e.g. Data Engineer, Analytics Engineer)" aria-label="Target roles">
+    <div class="row"><input id="spRoles" class="grow" placeholder="roles you want, comma-separated (e.g. Store Manager, Medical Office Coordinator, Data Analyst)" aria-label="Target roles">
       <input id="spLoc" placeholder='where, e.g. "Austin, TX or remote"' aria-label="Locations or remote" style="width:220px">
       <button class="b sm" onclick="spSave(this)">Save to my Preferences</button></div>
     <div class="chips" id="spChips" aria-label="Search one role"></div>
     <p class="muted">Blank Jobs searches use these roles. They start from Preferences (Target roles, Locations / remote), else your resume's latest titles and location. Saved here, they also feed the fit score. Commas search each role on its own; "or remote" keeps remote jobs too.</p></details>
-  <div class="row"><input id="sQ" placeholder='roles, e.g. "data engineer, analytics engineer" (blank: your search profile)' style="width:300px"><input id="sK" placeholder="must-have keywords (comma)" style="width:220px">
+  <div class="row"><input id="sQ" placeholder='roles, e.g. "store manager, hotel manager" (blank: your search profile)' style="width:300px"><input id="sK" placeholder="must-have keywords (comma)" style="width:220px">
     <label class="muted"><input type="checkbox" id="sRank"> AI rank vs my profile</label><button class="b" onclick="doSearch(this)">Search boards now</button>
     <button class="b ghost" title="AI-judge the results; strong fits go to the Inbox (tool: auto_track). Listings that look stale are skipped." onclick="run('auto_track',searchParams(),r=>toast(r.results.length+' strong fit(s) proposed (Inbox, or tracked if auto_track is auto)'+((r.errors||[]).length?'\ncould not read: '+r.errors.join('; '):''),(r.errors||[]).length?'err':'ok'),this)">Auto-track strong fits</button>
     <button class="b ghost" title="alert on new listings for this query and these filters (Monitor > Watches)" onclick="saveSearch()">Save as watch</button></div>
@@ -436,7 +436,7 @@
       <p class="muted">AI keys and email have their own cards above. Local: OLLAMA_MODEL (or "Local only" above). Optional: OBSIDIAN_VAULT (folder for the Obsidian export), LODESTAR_NOTIFY_EMAIL (where alerts and the emailed digest go; the digest falls back to your connected mailbox), BLS_API_KEY (free from data.bls.gov/registrationEngine: raises market pay lookups from 25 to 500 a day; renew it yearly).</p></div>
     <div class="panel"><h3>Market rates</h3>
       <p class="muted">Your own annual pay ranges by title keyword (and city). Lodestar never guesses pay: gap checks, offer evaluation and interview prep quote these plus figures stated in postings.</p>
-      <div class="row"><input id="mTitle" placeholder="title keyword, e.g. data engineer" style="width:200px"><input id="mCity" placeholder="city (empty = any)" style="width:130px"><input id="mLow" type="number" min="0" placeholder="low" style="width:100px"><input id="mHigh" type="number" min="0" placeholder="high" style="width:100px"><button class="b" onclick="compOp({op:'set',title:$('#mTitle').value,city:$('#mCity').value,low:$('#mLow').value,high:$('#mHigh').value})">Record</button></div>
+      <div class="row"><input id="mTitle" placeholder="title keyword, e.g. electrician" style="width:200px"><input id="mCity" placeholder="city (empty = any)" style="width:130px"><input id="mLow" type="number" min="0" placeholder="low" style="width:100px"><input id="mHigh" type="number" min="0" placeholder="high" style="width:100px"><button class="b" onclick="compOp({op:'set',title:$('#mTitle').value,city:$('#mCity').value,low:$('#mLow').value,high:$('#mHigh').value})">Record</button></div>
       <div id="compList" class="list"></div></div>
     <div class="panel" id="extCard"><h3>Browser extension</h3>
       <p class="muted">Sends the posting on your tab to the Board and fills application forms; it never clicks, submits or ticks anything. Install: edge://extensions or chrome://extensions &gt; Developer mode &gt; Load unpacked &gt; the <code>extension</code> folder of your Lodestar install. Not for LinkedIn: its User Agreement bans browser add-ons that scrape or copy it, so capture and fill do nothing there.</p>

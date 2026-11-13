@@ -2585,7 +2585,7 @@ async function showVersion(v) {
     ${claimsHtml(v.claims || [])}
     <details><summary class="muted">ATS checks (${(v.lint || []).length + Object.values(v.audit || {}).flat().length})</summary>${issuesHtml({ issues: [...(v.lint || []), ...Object.values(v.audit || {}).flat()] })}</details>
     <iframe id="sFrame" sandbox="" title="Resume preview" style="width:100%;height:640px;border:1px solid var(--line);border-radius:8px;background:#fff"></iframe>
-    <div class="row"><input id="sRefine" class="grow" placeholder="refine this version: shorter / warmer summary / lead with the Kafka migration" ${STU && STU.ai ? '' : 'disabled title="needs an AI provider"'}><button class="b ghost" onclick="studioRefine(this)" ${STU && STU.ai ? '' : 'disabled'}>Refine</button></div>`;
+    <div class="row"><input id="sRefine" class="grow" placeholder="refine this version: shorter / warmer summary / lead with the store turnaround" ${STU && STU.ai ? '' : 'disabled title="needs an AI provider"'}><button class="b ghost" onclick="studioRefine(this)" ${STU && STU.ai ? '' : 'disabled'}>Refine</button></div>`;
   $('#sFrame').srcdoc = v.html || '';  // sandbox without scripts: the page cannot reach the token
 }
 async function studioOpen(ext) { const r = await api(`/api/studio/${encodeURIComponent(SV.vid)}/open`, { file: SV.files[ext] }); toast(r.error ? 'error: ' + r.error : 'opened ' + r.path, r.error ? 'err' : 'ok'); }
