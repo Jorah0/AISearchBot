@@ -1,6 +1,6 @@
 """One listing monitored both ways (pass 21): the drawer's Listing activity (posting checks, an alert sighting, ATS mail
 filed with its link reason and never trusted, all escaped), its posting line and Use live description; Today's
-'posting closed' item; Setup > Job alerts (each site's last alert read, the job_alerts switch)."""
+'posting closed' item; Accounts > Job alerts (each site's last alert read, the job_alerts switch)."""
 import json
 import unittest
 
@@ -59,7 +59,7 @@ class Listing(E2ETestCase):
         today = self.page.locator("#today")
         btn = today.get_by_role("button", name="posting closed · #%d Larchmont Data - Data Engineer" % self.ids["listing"])
         self.assertEqual(btn.count(), 1)
-        self.go("setup")
+        self.go("accounts")
         card = self.page.locator("#alertCard")
         self.assertIn("never opens an alert's links", card.text_content())
         li = card.locator("#alertList div", has_text="LinkedIn")

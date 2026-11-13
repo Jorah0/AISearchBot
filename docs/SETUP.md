@@ -1663,6 +1663,28 @@ lodestar digest --send     # try it: prints where it went
 If sending fails, the alert still lands in `~/.lodestar/alerts.log` and the terminal shows `(email notify failed: ...)`.
 Pop-up notifications on this computer are a separate switch (Setup > Desktop notifications).
 
+### The Accounts tab: every connection, and when one stops working
+
+**Accounts** (Settings in the sidebar) is where every link Lodestar uses lives:
+
+- **Connections** lists them grouped, each with its state and when it was last checked: your mailbox, your AI keys,
+  every job board (*Working* after its last search answered, *Failed* when it did not, *Needs a key* for Adzuna and
+  USAJOBS until you link one) and your site accounts (from their last sign-in).
+- A link that worked and then stopped shows **Disconnected since** the moment it stopped, with the reason. A red
+  count on the Accounts tab and a line on Today say the same, so you see it even if it happened while you were away.
+  A key, your mailbox or a site account that stops working also sends a notice (the alert log, and your notify email
+  when set); a job board that blips does not.
+- **What changed** is the history: every change of state with its time (a key verified, a board that stopped
+  answering, a sign-in refused).
+- **Check all now** re-checks every AI key and the mailbox (no tokens are spent). The running app also does this when
+  it starts and every 6 hours.
+- **Job sources**, **Site accounts** and **Job alerts** (described below) are on this tab. A site account is linked
+  either by saving its username and password (*Save login*) or by signing in yourself (*Re-login* opens the site in
+  the agent's window); a successful sign-in shows the account as *Working*.
+
+LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired cannot be linked: their terms forbid automated access, and
+signing in for you could get your account closed. Their jobs reach Lodestar through their job-alert emails.
+
 ### The Mail page: read and answer your job mail
 
 **Mail** (under Inbox in the sidebar, or press g then l) lists every email Lodestar filed and everything it sent,

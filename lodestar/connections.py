@@ -36,7 +36,7 @@ REGISTRY = {
                 "prefix": ""},
     "ollama": {"label": "Ollama (local, no key)", "key": None, "get": "https://ollama.com/download",
                "hint": "runs on this computer; no key", "prefix": ""},
-    # job-data keys (kind "jobs"): a second value `id` goes with the key; Setup > Job sources links them, never the AI card
+    # job-data keys (kind "jobs"): a second value `id` goes with the key; Accounts > Job sources links them, never the AI card
     "adzuna": {"label": "Adzuna (job search)", "key": "ADZUNA_APP_KEY", "id": "ADZUNA_APP_ID", "id_label": "Application ID",
                "get": "https://developer.adzuna.com/signup", "hint": "the Application Key and Application ID", "prefix": "",
                "kind": "jobs"},
@@ -95,11 +95,89 @@ def record(kind: str, name: str | None, result: dict, key_fp: str) -> None:
     rec |= {"checked_at": _now(), "fp": key_fp}
     with _LOCK:
         data = _load()
+        old = (data.get("mail") if kind == "mail" else data["keys"].get(name)) or {}
         if kind == "mail":
             data["mail"] = rec
         else:
             data["keys"][name] = rec
+        lost = _change(data, kind, name or "mail", old.get("status", ""), rec.get("status", ""), rec.get("detail", ""))
         _save(data)
+    if lost:
+        notify(lost)
+
+
+# ----------------------------------------------------------------------------- history (pass 34, the Accounts tab)
+OK = {"verified", "ok"}  # a link that works
+BAD = {"failed", "unreachable", "locked"}  # one that does not (unreachable: the network, shown, never a notice)
+HISTORY_MAX = 300
+KINDS = {"keys": "AI / job-data key", "mail": "Email", "boards": "Job board", "sites": "Site account"}
+
+
+def notify(msg: str) -> None:
+    util.notify(msg)
+
+
+def label(kind: str, name: str) -> str:
+    if kind == "keys":
+        return REGISTRY.get(name, {}).get("label", name)
+    if kind == "mail":
+        return "Your mailbox"
+    if kind == "boards":
+        from .web_monitor import ATTRIBUTION
+
+        return ATTRIBUTION.get(name, (name,))[0]
+    return name
+
+
+def _change(data: dict, kind: str, name: str, old: str, new: str, detail: str = "") -> str | None:
+    """A history line when the state changed; returns the notice to send when a link that worked stopped (keys, mail
+    and site accounts; a board only shows it)."""
+    if not new or new == old:
+        return None
+    hist = data["history"] = ([{"at": _now(), "kind": kind, "name": name, "label": label(kind, name), "from": old,
+                                "to": new, "detail": str(detail or "")[:200]}] + list(data.get("history") or []))[:HISTORY_MAX]
+    if old in OK and new in BAD - {"unreachable"} and kind != "boards":
+        return f"CONNECTION LOST: {hist[0]['label']} ({KINDS.get(kind, kind)}) stopped working: {hist[0]['detail'] or new}"
+    return None
+
+
+def track(kind: str, name: str, status: str, detail: str = "") -> None:
+    """Latest state of a board's last search ('ok' / 'failed') or a site account's last sign-in ('ok' / 'failed' /
+    'locked'), with a history line when it changed. Never raises: bookkeeping must not break a search or a sign-in."""
+    try:
+        with _LOCK:
+            data = _load()
+            group = data[kind] = data.get(kind) if isinstance(data.get(kind), dict) else {}
+            old = (group.get(name) or {}).get("status", "")
+            group[name] = {"status": status, "checked_at": _now(), "detail": str(detail or "")[:200]}
+            lost = _change(data, kind, name, old, status, detail)
+            _save(data)
+        if lost:
+            notify(lost)
+    except Exception:  # ponytail: a locked or unwritable connections.json skips one line of history
+        pass
+
+
+def history(n: int = 60) -> list[dict]:
+    """Changes of state, newest first."""
+    return list(_load().get("history") or [])[:n]
+
+
+def lost() -> list[dict]:
+    """Links whose latest state is not working although they worked before: [{kind, name, label, since, detail}]."""
+    data, out = _load(), []
+    current = [("keys", n, r) for n, r in data["keys"].items()] + ([("mail", "mail", data["mail"])] if data.get("mail") else [])
+    current += [(k, n, r) for k in ("boards", "sites") for n, r in (data.get(k) or {}).items()]
+    hist = data.get("history") or []
+    for kind, name, rec in current:
+        if (rec or {}).get("status") not in BAD:
+            continue
+        drop = next((h for h in hist if h["kind"] == kind and h["name"] == name and h["from"] in OK), None)
+        if drop and drop["to"] in BAD and not any(h["kind"] == kind and h["name"] == name and h["to"] in OK
+                                                  and h["at"] > drop["at"] for h in hist):
+            out.append({"kind": kind, "name": name, "label": label(kind, name), "since": drop["at"],
+                        "detail": rec.get("detail") or drop["detail"], "status": rec["status"]})
+    return out
 
 
 def _forget(name: str) -> None:
@@ -309,7 +387,8 @@ def status() -> dict:
     if mail and (mail.get("fp") != mailconn._fingerprint(util.mail_settings()) or not util.mail_login()[1]):
         mail = {}  # another mailbox, or disconnected: an old result says nothing about it
     return {"keys": keys, "mail": {k: mail[k] for k in ("status", "detail", "checked_at") if k in mail} or {"status": "unchecked"},
-            "checking": CHECKING.is_set()}
+            "checking": CHECKING.is_set(), "boards": data.get("boards") or {}, "sites": data.get("sites") or {},
+            "history": (data.get("history") or [])[:60], "lost": lost()}
 
 
 def check(name: str) -> dict:

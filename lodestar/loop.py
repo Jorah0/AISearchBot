@@ -231,6 +231,22 @@ def _backup() -> None:
         db.mark_seen(day)
 
 
+RECHECK_EVERY = 6 * 3600
+
+
+def _recheck() -> None:
+    """Every linked key and the mailbox re-verified every 6 hours (no tokens), so a link that stopped working shows on
+    the Accounts tab (and as a notice) without waiting for the next app start."""
+    from . import connections
+    from .web_monitor import _due, _ran
+
+    if not connections._STARTED:  # only the long-running commands (app, ui, desktop, run): never tests or --once
+        return
+    if _due("conn:check", RECHECK_EVERY):
+        _ran("conn:check")
+        connections.check_all()
+
+
 def cycle(a) -> None:
     STATUS["last_cycle"], STATUS["cycles"] = time.strftime("%H:%M"), STATUS["cycles"] + 1
     print(f"\n--- lodestar cycle {STATUS['last_cycle']} ---")
@@ -245,6 +261,7 @@ def cycle(a) -> None:
         _step("email", lambda: email_monitor.check(a.days, provider=a.provider))
     from . import fit, web_monitor
 
+    _step("connection check", _recheck)
     _step("watches", web_monitor.check_watches)
     _step("listing check", web_monitor.check_listings)  # daily: tracked jobs' postings removed / changed
     _step("fit", fit.refresh)  # stale fit scores (profile, preferences, weights changed), no AI

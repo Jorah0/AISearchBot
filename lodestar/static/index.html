@@ -33,6 +33,7 @@
     <symbol id="i-insights" viewBox="0 0 24 24"><path d="M5 20V11M11 20V5M17 20v-7M3 20h18"/></symbol>
     <symbol id="i-tools" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4"/></symbol>
     <symbol id="i-setup" viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
     <symbol id="i-mail" viewBox="0 0 24 24"><path d="M3 6h18v12H3zM3 7l9 6 9-6"/></symbol>
     <symbol id="i-today" viewBox="0 0 24 24"><path d="M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></symbol>
   </svg>
@@ -57,6 +58,7 @@
     <button data-tab="insights"><svg class="ico" aria-hidden="true"><use href="#i-insights"/></svg>Insights</button></div>
   <span class="sep"></span>
   <div class="nav-group" role="group" aria-labelledby="nh-set"><div class="nav-h" id="nh-set">Settings</div>
+    <button data-tab="accounts"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg>Accounts<span class="badge zero" id="lostN" aria-label="connections that stopped working">0</span></button>
     <button data-tab="tools"><svg class="ico" aria-hidden="true"><use href="#i-tools"/></svg>Tools</button>
     <button data-tab="setup"><svg class="ico" aria-hidden="true"><use href="#i-setup"/></svg>Setup</button></div>
   <div class="foot">localhost only · Esc closes a job · Ctrl+K commands</div>
@@ -66,6 +68,7 @@
 <section id="home" class="on">
   <h2>Today</h2>
   <p class="sub">What needs you now: due actions, interviews, the Inbox, suggested emails and new fits. Each block hides when there is nothing in it.</p>
+  <div id="homeLost" role="alert"></div>
   <div class="panel" id="onboard" style="display:none"></div>
   <div class="aihead" data-adv-slot="today"></div>
   <div class="panel today" id="today" style="display:none"></div>
@@ -112,7 +115,7 @@
   <details class="panel" id="codesPanel" ontoggle="if(this.open)codesLoad()"><summary><b>Emailed sign-in codes</b> <span class="muted" id="codesN"></span></summary>
     <div class="row"><button class="b ghost sm" onclick="codesCheck(this)">Check for a code now</button></div>
     <div id="codesList" role="status" aria-live="polite"></div>
-    <p class="muted">Codes that job sites email you, from senders that pass DKIM/DMARC, received in the last 15 minutes. They are kept in memory only and never saved. Lodestar enters one only into a site account's form in the agent's window, when you click Fill code under Setup &gt; Site accounts (or by itself on a site where you allowed that).</p></details>
+    <p class="muted">Codes that job sites email you, from senders that pass DKIM/DMARC, received in the last 15 minutes. They are kept in memory only and never saved. Lodestar enters one only into a site account's form in the agent's window, when you click Fill code under Accounts &gt; Site accounts (or by itself on a site where you allowed that).</p></details>
   <div id="questions"></div>
   <div id="inboxList"></div>
   <h3>Unmatched mail</h3>
@@ -130,6 +133,43 @@
     <button class="b ghost sm" onclick="loadMailPage()">Refresh</button></div>
   <div class="mailview"><div id="mvList" class="mvlist" aria-label="messages"></div>
     <article id="mvRead" class="mvread" aria-live="polite"><div class="empty">Choose a message to read it.</div></article></div>
+</section>
+
+<section id="accounts">
+  <h2>Accounts</h2>
+  <p class="sub">Every place Lodestar connects to, whether it works right now, and what changed. Link job-board keys and the logins for employer application sites here. Keys and passwords stay in Windows Credential Manager (the OS keyring) and never come back to this page.</p>
+  <div class="panel" id="connCard"><h3>Connections</h3>
+    <div id="connLost" role="alert"></div>
+    <div class="row"><button class="b" id="connCheck" onclick="connCheck(this)">Check all now</button>
+      <span class="muted">AI keys and your mailbox are checked without spending tokens: when Lodestar starts, every 6 hours while it runs, and when you click. Job boards are checked by every search; a site account by every sign-in.</span></div>
+    <div id="connList" class="list" role="status" aria-live="polite"></div>
+    <details id="connHistD"><summary><b>What changed</b> <span class="muted" id="connHistN"></span></summary><div id="connHist" class="list"></div></details>
+    <p class="muted">LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired cannot be linked: their terms forbid automated access, and signing in for you could get your account closed. Their jobs reach Lodestar through their job-alert emails (Job alerts below); apply to those on the site yourself.</p></div>
+  <div class="panel" id="srcCard"><h3>Job sources</h3>
+    <p class="muted">Where Jobs searches and saved searches look. Keyless boards always run; Adzuna and USAJOBS run once you add their free keys here (stored in the OS keyring, checked with one small search). Saved searches ask each board at most once per window (Remotive every 6 hours for all your searches together), so Lodestar stays inside each board's published limits. Listings from Adzuna, Himalayas and We Work Remotely always show the source's name as a link: their terms ask for that credit. LinkedIn, Indeed, Glassdoor and ZipRecruiter are never fetched (their terms forbid it).</p>
+    <div id="srcList" class="list" role="status" aria-live="polite"></div></div>
+  <div class="panel" id="acctCard"><h3>Site accounts</h3>
+    <p class="muted">Your accounts on employer application sites (a Workday tenant, an iCIMS portal), one per site. When an application asks you to sign in, the apply agent signs in with the saved account, or fills the site's sign-up form with your email and a new strong password and stops: you tick the terms and press Create yourself. Passwords stay in the OS keyring and show only when you press Reveal. Codes and verification links come from your connected inbox: used when you click Fill code or Open link, or by themselves on a site where you tick "use my inbox". A CAPTCHA is always yours. Never for LinkedIn, Indeed, Glassdoor, ZipRecruiter or SimplyHired.</p>
+    <div id="acctWait" role="status" aria-live="polite"></div>
+    <details id="acctGen"><summary class="muted">General login for new accounts <span id="acctGenState"></span></summary>
+      <div class="row"><input id="acctGenUser" autocomplete="off" placeholder="username (empty: your profile email)" aria-label="general username" style="width:240px">
+        <input id="acctGenPw" type="password" autocomplete="new-password" placeholder="general password" aria-label="general password" style="width:200px">
+        <button class="b sm" onclick="acctGeneral(this)">Save</button><button class="b ghost sm" onclick="acctGeneral(this,true)">Clear</button></div>
+      <div class="row"><label class="muted"><input type="checkbox" id="acctAutoCreate" onchange="acctAutoCreate(this)"> finish sign-ups for me: tick only the terms / privacy box, press Create and use that site's emailed code or link (a CAPTCHA stays yours)</label></div>
+      <p class="muted">New accounts use this password instead of a generated one, and a site that already knows your email gets one sign-in try with it. It lives only in the OS keyring. One password on many sites means a leak on one site opens the others.</p></details>
+    <div class="row"><input id="acctQ" type="search" class="grow" placeholder="search sites, usernames, jobs" aria-label="search site accounts" oninput="acctPaint()"></div>
+    <div id="acctList" class="list"></div>
+    <details id="acctNew"><summary class="muted">Save a login, or create an account</summary>
+      <div class="row"><input id="acctUrl" class="grow" autocomplete="off" placeholder="the site's sign-in page link" aria-label="sign-in page link">
+        <input id="acctUser" autocomplete="off" placeholder="username or email" aria-label="username or email" style="width:200px">
+        <input id="acctPw" type="password" autocomplete="new-password" placeholder="password (empty: Lodestar makes one)" aria-label="password" style="width:220px"></div>
+      <div class="row"><button class="b" onclick="acctAdd(this)">Save login</button><button class="b ghost" onclick="acctCreate(this)">Create an account there</button>
+        <span class="muted">Create opens the link in the agent's window and fills the sign-up form; you press Create.</span></div></details></div>
+  <div class="panel" id="alertCard"><h3>Job alerts</h3>
+    <p class="muted">Subscribe to job alerts on LinkedIn (Jobs &gt; search &gt; Set alert), Indeed, Glassdoor or ZipRecruiter, delivered to the mailbox you connected under Connect email. The mail monitor reads only your own inbox: an alert counts only when its sender is the site's known alert address and the mail passed DKIM/DMARC, and its jobs go to All jobs (Jobs tab), merged with every other source. Lodestar never opens an alert's links (the sites' terms forbid automated visits, and those links can carry one-click sign-in tokens): a link opens only when you click it. Alert mails are not stored. Reading alert mail is low risk under those sites' terms, but not none: switch it off here if you prefer.</p>
+    <div class="row"><label><input type="checkbox" id="alertsOn" onchange="alertsToggle(this.checked)"> Read job-alert emails (tool job_alerts)</label></div>
+    <div id="alertList" class="list" role="status" aria-live="polite"></div>
+    <div class="muted">An alert that cannot be read sends one notice a day; save it as a .eml file and run <code>lodestar email parse-alert FILE.eml</code> to see what Lodestar finds in it.</div></div>
 </section>
 
 <section id="contacts">
@@ -167,9 +207,9 @@
     <input id="sLoc" placeholder='location, e.g. "Austin, TX or remote"' aria-label="Location filter" style="width:200px">
     <input id="sSal" type="number" min="0" step="1000" placeholder="min salary" aria-label="Minimum salary" style="width:110px">
     <input id="sDays" type="number" min="1" max="3650" placeholder="posted within (days)" aria-label="Posted within days" style="width:150px">
-    <select id="sLevel" aria-label="Seniority"><option value="">any seniority</option><option>intern</option><option>junior</option><option>mid</option><option>senior</option><option>staff</option><option>lead</option><option>manager</option></select>
+    <select id="sLevel" aria-label="Seniority"><option value="">any seniority</option><option>intern</option><option>junior</option><option>mid</option><option>senior</option><option>staff</option><option>lead</option><option>manager</option></select><span id="sLevelHint"></span>
     <span class="muted">Listings that do not state a salary, location or date are kept and marked "unknown". Your private dealbreakers (Tools &gt; Preferences: excluded_companies, excluded_title_words) are dropped first.</span></div>
-  <div class="muted" id="sBoards">Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, Himalayas and We Work Remotely need no key; Adzuna and USAJOBS run once you add their free keys (Setup &gt; Job sources). The same posting found on several boards is shown once with every link. LinkedIn, Indeed, Glassdoor and ZipRecruiter are never fetched: use the browser extension or capture bookmarklet there. Monitor &gt; Companies follows a company's own job board.</div>
+  <div class="muted" id="sBoards">Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, Himalayas and We Work Remotely need no key; Adzuna and USAJOBS run once you add their free keys (Accounts &gt; Job sources). The same posting found on several boards is shown once with every link. LinkedIn, Indeed, Glassdoor and ZipRecruiter are never fetched: use the browser extension or capture bookmarklet there. Monitor &gt; Companies follows a company's own job board.</div>
   <div class="panel" id="sRes"><div class="empty">No results yet.</div></div>
   <div class="panel" id="allJobs"><h3>All jobs <span class="muted" id="ajCount"></span></h3>
     <p class="muted">Every listing any source found: searches, saved searches, company boards and captures, merged across sources. Untracked listings not seen again for 45 days drop off.</p>
@@ -437,31 +477,6 @@
     <div class="muted" id="apLast"></div>
     <div class="row"><button class="b ghost" onclick="pipeLog(this)">Show the run log</button><span class="muted">every step run: by you, Autopilot or an approval, with its outcome and AI calls (also <code>lodestar pipeline log</code>)</span></div>
     <div id="apLog"></div></div>
-  <div class="panel" id="srcCard"><h3>Job sources</h3>
-    <p class="muted">Where Jobs searches and saved searches look. Keyless boards always run; Adzuna and USAJOBS run once you add their free keys here (stored in the OS keyring, checked with one small search). Saved searches ask each board at most once per window (Remotive every 6 hours for all your searches together), so Lodestar stays inside each board's published limits. Listings from Adzuna, Himalayas and We Work Remotely always show the source's name as a link: their terms ask for that credit. LinkedIn, Indeed, Glassdoor and ZipRecruiter are never fetched (their terms forbid it).</p>
-    <div id="srcList" class="list" role="status" aria-live="polite"></div></div>
-  <div class="panel" id="alertCard"><h3>Job alerts</h3>
-    <p class="muted">Subscribe to job alerts on LinkedIn (Jobs &gt; search &gt; Set alert), Indeed, Glassdoor or ZipRecruiter, delivered to the mailbox you connected under Connect email. The mail monitor reads only your own inbox: an alert counts only when its sender is the site's known alert address and the mail passed DKIM/DMARC, and its jobs go to All jobs (Jobs tab), merged with every other source. Lodestar never opens an alert's links (the sites' terms forbid automated visits, and those links can carry one-click sign-in tokens): a link opens only when you click it. Alert mails are not stored. Reading alert mail is low risk under those sites' terms, but not none: switch it off here if you prefer.</p>
-    <div class="row"><label><input type="checkbox" id="alertsOn" onchange="alertsToggle(this.checked)"> Read job-alert emails (tool job_alerts)</label></div>
-    <div id="alertList" class="list" role="status" aria-live="polite"></div>
-    <div class="muted">An alert that cannot be read sends one notice a day; save it as a .eml file and run <code>lodestar email parse-alert FILE.eml</code> to see what Lodestar finds in it.</div></div>
-  <div class="panel" id="acctCard"><h3>Site accounts</h3>
-    <p class="muted">Your accounts on employer application sites (a Workday tenant, an iCIMS portal), one per site. When an application asks you to sign in, the apply agent signs in with the saved account, or fills the site's sign-up form with your email and a new strong password and stops: you tick the terms and press Create yourself. Passwords stay in the OS keyring and show only when you press Reveal. Codes and verification links come from your connected inbox: used when you click Fill code or Open link, or by themselves on a site where you tick "use my inbox". A CAPTCHA is always yours. Never for LinkedIn, Indeed, Glassdoor, ZipRecruiter or SimplyHired.</p>
-    <div id="acctWait" role="status" aria-live="polite"></div>
-    <details id="acctGen"><summary class="muted">General login for new accounts <span id="acctGenState"></span></summary>
-      <div class="row"><input id="acctGenUser" autocomplete="off" placeholder="username (empty: your profile email)" aria-label="general username" style="width:240px">
-        <input id="acctGenPw" type="password" autocomplete="new-password" placeholder="general password" aria-label="general password" style="width:200px">
-        <button class="b sm" onclick="acctGeneral(this)">Save</button><button class="b ghost sm" onclick="acctGeneral(this,true)">Clear</button></div>
-      <div class="row"><label class="muted"><input type="checkbox" id="acctAutoCreate" onchange="acctAutoCreate(this)"> finish sign-ups for me: tick only the terms / privacy box, press Create and use that site's emailed code or link (a CAPTCHA stays yours)</label></div>
-      <p class="muted">New accounts use this password instead of a generated one, and a site that already knows your email gets one sign-in try with it. It lives only in the OS keyring. One password on many sites means a leak on one site opens the others.</p></details>
-    <div class="row"><input id="acctQ" type="search" class="grow" placeholder="search sites, usernames, jobs" aria-label="search site accounts" oninput="acctPaint()"></div>
-    <div id="acctList" class="list"></div>
-    <details id="acctNew"><summary class="muted">Save a login, or create an account</summary>
-      <div class="row"><input id="acctUrl" class="grow" autocomplete="off" placeholder="the site's sign-in page link" aria-label="sign-in page link">
-        <input id="acctUser" autocomplete="off" placeholder="username or email" aria-label="username or email" style="width:200px">
-        <input id="acctPw" type="password" autocomplete="new-password" placeholder="password (empty: Lodestar makes one)" aria-label="password" style="width:220px"></div>
-      <div class="row"><button class="b" onclick="acctAdd(this)">Save login</button><button class="b ghost" onclick="acctCreate(this)">Create an account there</button>
-        <span class="muted">Create opens the link in the agent's window and fills the sign-up form; you press Create.</span></div></details></div>
   <div class="grid2">
     <div class="panel" id="keysCard"><h3>Link an AI key</h3>
       <div class="row"><select id="kProv" aria-label="AI provider" onchange="keyHint()"></select><input id="kVal" type="password" autocomplete="off" class="grow" placeholder="paste the key" aria-label="API key"><button class="b" onclick="keyLink(this)">Link</button></div>

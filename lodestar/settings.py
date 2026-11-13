@@ -155,7 +155,7 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "auto_track_daily_max": ("Auto-track proposals a day", "at most this many 'track this' items a day; the rest stay "
                              "scored in your results (0-100)"),
     "adzuna_country": ("Adzuna country", "two letters, e.g. us, gb, de, ca, au: which Adzuna site searches go to "
-                       "(only with an Adzuna key, Setup > Job sources)"),
+                       "(only with an Adzuna key, Accounts > Job sources)"),
     "apply_agent_mode": ("Apply agent mode", "stop: it fills and you press Submit; review: each submission waits in the "
                          "Inbox; auto: it submits on its own (tool apply_agent on auto, every gate passed)"),
     "apply_agent_daily_cap": ("Apply agent: automatic submissions a day", "at most this many (0-25)"),

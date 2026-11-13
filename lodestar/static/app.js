@@ -47,6 +47,7 @@ function go(tab) {
   if (tab === 'careers') loadCareers();
   if (tab === 'profile') loadMaster();  // the master card follows background rebuilds
   if (tab === 'mail') loadMailPage();
+  if (tab === 'accounts') { acctLoad(); renderConnections(); }
 }
 
 /* ---- background tasks ---- */
@@ -81,6 +82,7 @@ async function load() {
   badge.textContent = S.pending.length + nq; badge.classList.toggle('zero', !(S.pending.length + nq));
   renderOnboard(); renderLoop(); renderUpdate(); renderAutopilot(); $('#ver').textContent = 'Lodestar ' + S.version;
   if (!$('#fStatus').options.length) initFilters();
+  renderConnections();
   renderBoard(); renderQuestions(); renderInbox(); renderSearchless(); renderMonitor(); renderAnswers(); renderStories(); renderIdeas(); renderTools(); renderSetup(); fillCoachJobs(); renderTrend();
   fitRefresh();
   if (ADV_AI !== hasAI()) aiSlots();  // the tab headers' AI toolbars: painted once, again when a provider comes or goes
@@ -201,6 +203,7 @@ async function setStage(id, btn) {
 function coverageLine(c) {  // which boards a search asked (blueprint 6.5): never "no jobs" when nothing was checked
   return `<div class="coverage muted">${c.checked ? '' : '<b>Nothing was checked: no job board answered.</b> '}Boards asked: ${esc(c.asked.join(', ') || 'none')} (${c.asked.length} of ${c.total})`
     + (c.failed.length ? ` · could not read: ${esc(c.failed.join('; '))}` : '') + (c.not_ready.length ? ` · need a key: ${esc(c.not_ready.join(', '))}` : '')
+    + ((c.skipped || []).length ? ` · skipped (asked by another search moments ago; search again shortly): ${esc(c.skipped.join(', '))}` : '')
     + `. ${esc(c.note)}</div>`;
 }
 let FIT_ASKED = null;  // stale fits are re-scored on the server (no AI, silent), then the board reloads; asked again only
@@ -1470,6 +1473,11 @@ function spPaint() {
   if (!$('#sLoc').value && SP.location && SP.location_from === 'Preferences') $('#sLoc').value = SP.location;
   $('#sLoc').placeholder = SP.location ? `e.g. "${SP.location}"` : 'location, e.g. "Austin, TX or remote"';
   $('#sQ').placeholder = SP.query ? `blank: ${SP.query}` : 'roles, e.g. "store manager, hotel manager"';
+  // your target level: from Preferences it fills the filter; one worked out from your years is offered, never set
+  if (!$('#sLevel').value && SP.seniority && SP.seniority_from === 'Preferences') $('#sLevel').value = SP.seniority;
+  const lv = $('#sLevelHint');
+  if (lv) lv.innerHTML = SP.seniority && SP.seniority_from !== 'Preferences' && !$('#sLevel').value
+    ? `<button class="b ghost sm" onclick="$('#sLevel').value=SP.seniority;this.parentNode.textContent=''" title="set Target level in Setup > Preferences to start from it every time">Use ${esc(SP.seniority)} (from ${esc(SP.seniority_from)})</button>` : '';
 }
 async function spLoad() { const r = await api('/api/search/defaults'); if (!r.error) { SP = r; spPaint(); } }
 function spUse(i) { $('#sQ').value = (SP.roles || [])[i] || ''; $('#sQ').focus(); }
@@ -1559,7 +1567,7 @@ function ajDetail(d) {
     <pre class="ajdesc">${esc(d.desc || '(no description: open the posting, or capture it with the extension)')}</pre></div>`;
 }
 function renderAllJobs() {
-  $('#ajList').innerHTML = AJ.map(ajRow).join('') || `<div class="empty">No jobs yet. Run a search, save one as a watch, add companies, or set up job alerts (Setup &gt; Job sources).</div>`;
+  $('#ajList').innerHTML = AJ.map(ajRow).join('') || `<div class="empty">No jobs yet. Run a search, save one as a watch, add companies, or set up job alerts (Accounts &gt; Job sources).</div>`;
   if (AJ.length < AJ_TOTAL) $('#ajList').insertAdjacentHTML('beforeend', `<div class="row"><button class="b ghost" onclick="loadAllJobs(true)">Load ${Math.min(100, AJ_TOTAL - AJ.length)} more</button></div>`);
 }
 async function ajExpand(i) {
@@ -1593,7 +1601,7 @@ async function ajSeen(btn) {
   if (r.error) return toast('error: ' + r.error, 'err');
   toast('all marked seen', 'ok'); loadAllJobs();
 }
-/* ---- Setup > Job alerts: per site, the last alert mail read and its job count; the job_alerts switch ---- */
+/* ---- Accounts > Job alerts: per site, the last alert mail read and its job count; the job_alerts switch ---- */
 function renderAlertSites() {
   const el = $('#alertList'); if (!el) return;
   const a = S.alert_sites || {}, tool = (S.tools || []).find(t => t.tool === 'job_alerts') || {};
@@ -1605,7 +1613,7 @@ async function alertsToggle(on) {
   if (r.error) return toast('error: ' + r.error, 'err');
   toast(`job alerts ${on ? 'on' : 'off'}`, 'ok'); load();
 }
-/* ---- Setup > Job sources: each board's state; Adzuna and USAJOBS keys link here (verified with one small search) ---- */
+/* ---- Accounts > Job sources: each board's state; Adzuna and USAJOBS keys link here (verified with one small search) ---- */
 let BOARDS = [];
 function renderSources() {
   const src = S.sources || {}, keys = (S.connections || {}).keys || {};
@@ -1846,10 +1854,46 @@ async function delVault(i) {  // names stay in JS; markup carries only an index
 }
 /* ---- link an AI key (the key goes in once and never comes back from the server) ---- */
 let KEYS = [];  // provider names stay in JS; markup carries only an index
+/* ---- Accounts > Connections (pass 34): every link's state now, the ones that stopped working, and what changed ---- */
+const CONN_OK = { verified: 1, ok: 1 }, CONN_BAD = { failed: 1, locked: 1, unreachable: 1 };
+const CONN_WORD = { verified: 'Verified', ok: 'Working', failed: 'Failed', locked: 'Locked', unreachable: "Couldn't reach", unchecked: 'Not checked yet', '': 'Not checked yet' };
+function connPill(status, lostRow) {
+  if (lostRow) return `<span class="pill bad">Disconnected since ${esc(localTs(lostRow.since, 16))}</span>`;
+  return `<span class="pill ${CONN_OK[status] ? 'ok' : CONN_BAD[status] ? (status === 'unreachable' ? 'warn' : 'bad') : ''}">${esc(CONN_WORD[status] || status)}</span>`;
+}
+function connRows() {  // [{group, label, status, at, detail, kind, name}] for everything Lodestar connects to
+  const c = S.connections || {}, keys = c.keys || {}, src = S.sources || {}, out = [];
+  if ((c.mail || {}).status !== 'unchecked' || (S.setup || {}).email_ready || (S.setup || {}).email_needs_signin) out.push({ group: 'Email', kind: 'mail', name: 'mail', label: 'Your mailbox', status: (c.mail || {}).status, at: (c.mail || {}).checked_at, detail: (c.mail || {}).detail });
+  Object.entries(keys).filter(([, k]) => k.linked && k.kind !== 'jobs').forEach(([n, k]) => out.push({ group: 'AI', kind: 'keys', name: n, label: k.label, status: k.status, at: k.checked_at, detail: k.status === 'verified' ? '' : k.detail }));
+  Object.entries(src).forEach(([n, s]) => {
+    const b = (c.boards || {})[n] || {}, k = keys[n];
+    const st = k && !s.ready ? 'needs a key' : b.status || '';
+    out.push({ group: 'Job boards', kind: 'boards', name: n, label: s.label, status: st, at: b.checked_at, detail: k && !s.ready ? 'link its free key below' : b.detail || (k && k.linked ? `key: ${(CONN_WORD[k.status] || k.status).toLowerCase()}` : 'no sign-in needed') });
+  });
+  Object.entries(c.sites || {}).forEach(([n, s]) => out.push({ group: 'Site accounts', kind: 'sites', name: n, label: n, status: s.status, at: s.checked_at, detail: s.detail }));
+  return out;
+}
+function renderConnections() {
+  const c = S.connections || {}, lost = c.lost || [], key = r => `${r.kind}:${r.name}`, lostBy = Object.fromEntries(lost.map(l => [key(l), l]));
+  const badge = $('#lostN'); if (badge) { badge.textContent = lost.length; badge.classList.toggle('zero', !lost.length); }
+  const banner = lost.length ? `<div class="warnbox"><b>${lost.length} connection${lost.length === 1 ? '' : 's'} stopped working</b> since ${lost.length === 1 ? 'it was' : 'they were'} last verified: `
+    + lost.map(l => `${esc(l.label)} (since ${esc(localTs(l.since, 16))}${l.detail ? ': ' + esc(l.detail) : ''})`).join('; ') + '</div>' : '';
+  if ($('#homeLost')) $('#homeLost').innerHTML = lost.length ? banner.replace('</div>', ` <button class="b ghost sm" onclick="go('accounts')">Open Accounts</button></div>`) : '';
+  if (!$('#connList')) return;
+  $('#connLost').innerHTML = banner;
+  let g = '';
+  $('#connList').innerHTML = connRows().map(r => (r.group !== g ? `<h4>${esc(g = r.group)}</h4>` : '')
+    + `<div class="connrow" data-kind="${esc(r.kind)}" data-name="${esc(r.name)}"><b>${esc(r.label)}</b> ${r.status === 'needs a key' ? '<span class="pill warn">Needs a key</span>' : connPill(r.status, lostBy[key(r)])}`
+    + ` <span class="muted">${r.at ? 'checked ' + esc(localTs(r.at, 16)) : ''}${r.detail ? (r.at ? ' · ' : '') + esc(r.detail) : ''}</span></div>`).join('');
+  const hist = c.history || [];
+  $('#connHistN').textContent = hist.length ? `(${hist.length} recent)` : '(nothing yet)';
+  $('#connHist').innerHTML = hist.map(x => `<div><span class="muted">${esc(localTs(x.at, 16))}</span> ${esc(x.label)}: ${esc(CONN_WORD[x.from] || x.from || 'new')} → <b>${esc(CONN_WORD[x.to] || x.to)}</b>${x.detail ? ` <span class="muted">${esc(x.detail)}</span>` : ''}</div>`).join('') || '<div class="muted">Changes of state show here: a key verified, a board that stopped answering, a sign-in refused.</div>';
+}
+function connCheck(btn) { run('keys_check', {}, () => { load(); toast('checked every key and your mailbox', 'ok'); }, btn); }
 const KSTAT = { verified: ['Verified', 'ok'], failed: ['Failed', 'bad'], unreachable: ["Couldn't reach, will retry", 'warn'], unchecked: ['Not checked', ''] };
 function renderKeys() {
   const c = S.connections || { keys: {} }, sel = $('#kProv'), was = sel.value;
-  KEYS = Object.keys(c.keys).filter(n => c.keys[n].kind !== 'jobs');  // job-data keys link under Setup > Job sources
+  KEYS = Object.keys(c.keys).filter(n => c.keys[n].kind !== 'jobs');  // job-data keys link under Accounts > Job sources
   sel.innerHTML = KEYS.map(n => `<option value="${esc(n)}">${esc(c.keys[n].label + (c.keys[n].linked ? ' (linked)' : ''))}</option>`).join('');
   if (KEYS.includes(was)) sel.value = was;
   keyHint();
@@ -3241,6 +3285,7 @@ function palBase() {
     ...$$('nav button[data-tab]').map(b => ({ kind: 'tab', label: 'Go to ' + label(b), run: () => palTab(b.dataset.tab) })),
     ...(S.jobs || []).map(j => ({ kind: 'job', label: `#${j.id} ${j.company} - ${j.title}`, hint: j.status, run: () => { palTab('board'); openJob(j.id); } })),
     ...$$('#setup .panel > h3').map(h => ({ kind: 'setting', label: h.textContent, hint: 'Setup', run: () => { go('setup'); palFocus(h.parentElement.querySelector(FOCUSABLE)); } })),
+    ...$$('#accounts .panel > h3').map(h => ({ kind: 'setting', label: h.textContent, hint: 'Accounts', run: () => { go('accounts'); palFocus(h.parentElement.querySelector(FOCUSABLE)); } })),
   ];
   Object.keys(S.prefs || {}).forEach((k, i) => items.push({ kind: 'setting', label: ((S.pref_help || {})[k] || [k])[0], hint: 'Tools > Preferences',
     run: () => { go('tools'); palFocus($(`#prefs [aria-labelledby="pl${i}"]`)); } }));

@@ -424,6 +424,7 @@ def coverage(ran: list[str], errors: list[str]) -> dict:
     failed = {str(e).split(":", 1)[0].strip() for e in errors}  # 'remotive: HTTP 500' -> asked, but answered nothing
     return {"asked": asked, "failed": list(dict.fromkeys(errors)), "total": len(web_monitor.SOURCES),
             "not_ready": [s for s in web_monitor.SOURCES if s not in ready], "checked": bool(set(asked) - failed),
+            "skipped": [s for s in web_monitor.SOURCES if s in ready and s not in asked],  # asked too recently elsewhere
             "note": COVERAGE_NOTE}
 
 

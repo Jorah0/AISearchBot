@@ -6,7 +6,7 @@ keyring (vault name site:<host>) and comes back only on Reveal or to be typed in
 The rules:
 - Never for LinkedIn, Indeed, Glassdoor, ZipRecruiter or SimplyHired (apply_agent.forbidden).
 - Creating: the agent fills the sign-up form with your email and a password (saved first): your general login when you
-  set one (Setup > Site accounts), else a new strong one. Then it stops: you tick any terms box and press Create. Only
+  set one (Accounts > Site accounts), else a new strong one. Then it stops: you tick any terms box and press Create. Only
   when you turned on accounts_auto_create does it tick the terms / privacy box itself (never a marketing one), press
   Create and use your inbox's code or link for that site. A site that already knows your email: one sign-in try with
   your general password, else you sign in yourself.
@@ -55,20 +55,20 @@ EXISTS_RE = re.compile(r"already (?:have an account|registered|in use|exists)|ac
                        r"already|e-?mail (?:address )?(?:is )?already (?:registered|in use|taken)", re.I)
 HINT = {
     "captcha": "solve the check in the agent window, then press Continue",
-    "create": "Lodestar filled the sign-up form with your email and a new password (saved under Setup > Site accounts). "
+    "create": "Lodestar filled the sign-up form with your email and a new password (saved under Accounts > Site accounts). "
               "Tick the terms box if you agree, fill anything else it asks and press the Create button in the window. "
               "Already have an account on this site? Press 'I have an account' instead",
     "code": "type the code the site sent you (email, text or your authenticator app) in the agent window, or press Fill code "
-            "under Setup > Site accounts, then Continue",
-    "link": "open the verification link the site emailed you (Setup > Site accounts > Open link uses the agent's window), "
+            "under Accounts > Site accounts, then Continue",
+    "link": "open the verification link the site emailed you (Accounts > Site accounts > Open link uses the agent's window), "
             "then press Continue",
     "signin": "press Sign in in the agent window, then Continue",
     "exists": "this site already has an account for your email: sign in with it in the window, then press Continue "
-              "(Setup > Site accounts > Save login keeps that password for next time)",
-    "own": "sign in with your own account in the window, then press Continue (Setup > Site accounts > Save login keeps it)",
-    "failed": "the saved password did not work: reset it on the site (Setup > Site accounts > Reset password), store the "
+              "(Accounts > Site accounts > Save login keeps that password for next time)",
+    "own": "sign in with your own account in the window, then press Continue (Accounts > Site accounts > Save login keeps it)",
+    "failed": "the saved password did not work: reset it on the site (Accounts > Site accounts > Reset password), store the "
               "new one with Change password, then sign in in the window and press Continue",
-    "locked": "the site locked this account: unlock or reset it on the site (Setup > Site accounts > Reset password), "
+    "locked": "the site locked this account: unlock or reset it on the site (Accounts > Site accounts > Reset password), "
               "then sign in in the window and press Continue",
     "yours": "sign in (or create the account) in the agent window, then press Continue",
 }
@@ -240,12 +240,17 @@ def _mark(site: str, status: str, error=_KEEP, login: bool = False, reset=None) 
         {"last_login": db._now()} if login else {}) | ({"reset_url": reset} if reset else {})
     db.con().execute(f"UPDATE site_accounts SET {', '.join(k + '=?' for k in sets)} WHERE site=?", (*sets.values(), site))
     db.con().commit()
+    if login or status in ("failed", "locked"):  # the Accounts tab's history: signed in, or stopped working
+        from . import connections
+
+        connections.track("sites", site, "ok" if login and status == "active" else status,
+                          "" if error is _KEEP else str(error or ""))
 
 
 def _secret(a: dict) -> str:
     pw = vault.get(_name(a["site"]))
     if not pw:
-        raise SystemExit(f"the OS keyring has no password for {a['site']}: Setup > Site accounts > Change password")
+        raise SystemExit(f"the OS keyring has no password for {a['site']}: Accounts > Site accounts > Change password")
     return pw
 
 

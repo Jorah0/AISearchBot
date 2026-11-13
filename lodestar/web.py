@@ -176,7 +176,7 @@ def track_posting(pid: int) -> int:
 
 
 def sources_view() -> dict:
-    """Setup > Job sources and the Jobs tab: each board, ready or needing keys (vault names), its throttle and credit."""
+    """Accounts > Job sources and the Jobs tab: each board, ready or needing keys (vault names), its throttle and credit."""
     from . import web_monitor
     from .config import setting
 
@@ -883,8 +883,8 @@ def state() -> dict:
         "jobs": [_job_view(j, idx, revs, pidx, frev) for j in db.list_jobs()],
         "fit_rev": frev,  # a job whose fit was scored at another rev is stale (dimmed); the page asks for a refresh
         "fit_stale": fstale,
-        "sources": sources_view(),  # Setup > Job sources and the Jobs tab: ready / needs keys, throttle, credit
-        "alert_sites": alert_sites(),  # Setup > Job alerts: per site, the last alert mail read and its job count
+        "sources": sources_view(),  # Accounts > Job sources and the Jobs tab: ready / needs keys, throttle, credit
+        "alert_sites": alert_sites(),  # Accounts > Job alerts: per site, the last alert mail read and its job count
         "contact_roles": ROLES,
         "statuses": db.STATUSES, "stages": list(db.STAGES), "career_classes": careers.CLASSES,
         "doc_names": sorted(DOC_NAMES),  # the drawer offers Edit / Adjust for these only
@@ -916,7 +916,7 @@ def state() -> dict:
         "companies": [dict(c) for c in db.companies()],
         "alerts": ALERTS.read_text(encoding="utf-8").splitlines()[-30:] if ALERTS.is_file() else [],
         "vault": [{"name": n, "user": u} for n, u in vault.names() if n not in mailconn.MANAGED and n not in oauth.CLIENT_KEYS
-                  and n not in linked and not n.startswith("site:")],  # site passwords: Setup > Site accounts
+                  and n not in linked and not n.startswith("site:")],  # site passwords: Accounts > Site accounts
         "obsidian_dir": str(extras.vault_root() / "jobs"),  # Export tracker to Obsidian asks before writing there
         "comp": comp.load(),
         "upcoming": [i | {"when": f"{i['when']:%a %Y-%m-%d %H:%M}"} for i in extras.upcoming_interviews(14)],

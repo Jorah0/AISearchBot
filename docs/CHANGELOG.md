@@ -1,5 +1,22 @@
 # Changelog (development passes, newest first)
 
+## Pass 34 (2026-11-13): the Accounts tab, connection history, search seniority
+
+- A new **Accounts** tab (under Settings) lists everything Lodestar connects to, grouped: your mailbox, AI keys, each
+  job board (from its last search) and each site account (from its last sign-in), with its state and when it was
+  checked. Job sources (Adzuna / USAJOBS keys), Site accounts (username + password, or sign in to verify) and Job
+  alerts moved here from Setup.
+- Every change of state is kept in a history ("What changed"). A link that worked and then stopped is flagged as
+  *Disconnected since* the time it stopped, on the tab, on its nav badge and on Today; a key, the mailbox or a site
+  account that stops working also sends a notice. The running app re-checks keys and the mailbox every 6 hours (no
+  tokens), and **Check all now** checks them at once.
+- Seniority reads numbered levels (Engineer I / II / III / IV, Analyst 2), working-student roles, C-level titles,
+  'Associate' and 'Early-career' starts and 'Supervisor'. The Jobs tab starts from Setup > Preferences > Target level,
+  and offers the level your years suggest. Must-have keywords match whole words ('git' no longer matches 'digital').
+  A board a search could not ask (asked by another search moments ago) is named instead of left out silently.
+- LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired still cannot be linked or signed into (their terms forbid
+  automated access); their jobs keep arriving through their job-alert emails.
+
 ## Pass 33 (2026-11-13): the Mail page
 
 - A Mail page lists every email Lodestar filed and everything it sent, sorted by type with counts, with search.

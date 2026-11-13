@@ -6,7 +6,7 @@ from harness import E2ETestCase
 
 GROUPS = {"Pipeline": ["board", "contacts"], "Discover": ["search", "careers", "monitor"],
           "Resume": ["profile", "studio"], "Prepare": ["answers", "coach", "ideas"], "Progress": ["insights"],
-          "Settings": ["tools", "setup"]}
+          "Settings": ["accounts", "tools", "setup"]}
 
 
 class UI(E2ETestCase):

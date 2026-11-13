@@ -928,7 +928,7 @@ def cmd_apply_agent(a):
 
 def cmd_accounts(a):
     """`lodestar accounts list|add|password|remove`: your site accounts (docs/APPLY_AGENT.md > Site accounts). Re-login and
-    Create run in the agent's window from Setup > Site accounts."""
+    Create run in the agent's window from Accounts > Site accounts."""
     from . import accounts
 
     if a.op in (None, "list"):
@@ -1281,6 +1281,10 @@ def cmd_run(a):
 
     studio.AUTO = True  # the master resume follows profile edits (never set by web.start_server)
     updater.startup()  # an interrupted update is rolled back first; then later updates know this process runs
+    if not getattr(a, "once", False):  # the long-running loop re-checks its links; a scheduled --once run does not
+        from . import connections
+
+        connections.start_checks()
     loop.run(a)
 
 

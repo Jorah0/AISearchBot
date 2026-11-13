@@ -289,7 +289,7 @@ details.aimenu .row { margin: 4px 0; } .aimenu .aitopic { max-width: 100%; } .ai
 .palk { display: inline-block; min-width: 74px; color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .palhint { font-size: 11px; padding: 0 4px; }
 #rsPick { width: min(100%, 360px); }  /* long backup names must not widen the Setup grid at 420px */
-/* All jobs (Jobs tab) and Setup > Job sources */
+/* All jobs (Jobs tab) and Accounts > Job sources */
 .ajrow { border-bottom: 1px solid var(--line); padding: 8px 0; overflow-wrap: anywhere; }
 .ajrow.new { border-left: 3px solid var(--ok); padding-left: 8px; }
 .ajrow.hi { background: rgba(127, 127, 255, .06); }
@@ -337,3 +337,9 @@ a.chip.attr-adzuna { display: inline-block; min-width: 116px; min-height: 23px; 
 #mvReply textarea { width: 100%; min-height: 140px; }
 #mvReply input#mvSub { width: 100%; margin-bottom: 6px; }
 @media (max-width: 860px) { .mailview { grid-template-columns: 1fr; } .mvlist { max-height: 40vh; } }
+
+/* Accounts > Connections (pass 34) */
+#connList h4 { margin: 12px 0 4px; }
+.connrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.connrow .muted { overflow-wrap: anywhere; }
+#homeLost:empty, #connLost:empty { display: none; }

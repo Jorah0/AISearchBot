@@ -10,7 +10,7 @@ import urllib.parse
 from datetime import date, datetime, timezone
 from functools import lru_cache
 
-from . import ai, db, settings
+from . import ai, connections, db, settings
 from .config import SNAPSHOTS
 from .util import fetch, fetch_json, notify, robots_ok, strip_html
 
@@ -1026,7 +1026,11 @@ def search(query: str, keywords: str = "", only_new: bool = False, sources=None,
                 if errors is not None:
                     errors.append(f"{name}: {msg[:160]}")
                 asked = True
+                connections.track("boards", name, "failed", msg)
                 break  # the board is down: one line, not one per role
+        else:
+            if asked:
+                connections.track("boards", name, "ok")
         if ran is not None and asked:
             ran.append(name)
     out = [j for j in refine(dedupe([j for j in raw if j["url"]]), keywords=keywords, **filters) if not (only_new and _seen(j))]
@@ -1101,21 +1105,29 @@ def dedupe(listings: list[dict]) -> list[dict]:
 
 
 SENIORITY = ("intern", "junior", "mid", "senior", "staff", "lead", "manager")
-_LEVEL_RX = [("intern", r"\bintern(ship)?s?\b|\bco-?op\b|\btrainee\b|\bapprentice"),
-             ("manager", r"\b(head of|director|vp|vice president|chief)\b|(?<!product )(?<!program )(?<!project )(?<!account )"
-                         r"(?<!marketing )(?<!community )\bmanager\b"),
+_LEVEL_RX = [("intern", r"\bintern(ship)?s?\b|\bco-?op\b|\btrainee\b|\bapprentice|\bworking student\b|\bwerkstudent"
+                        r"|\bpraktik"),
+             ("junior", r"^associate\b(?! (director|vice president|vp)\b)"),  # 'Associate Product Manager' starts a career
+             ("manager", r"\b(head of|director|vp|vice president|chief|ceo|coo|cto|cfo|cmo|cio|ciso|cpo)\b|(?<!product )"
+                         r"(?<!program )(?<!project )(?<!account )(?<!marketing )(?<!community )\bmanager\b"),
              ("staff", r"\b(staff|principal|distinguished)\b"),
-             ("lead", r"\blead\b"),
+             ("lead", r"\b(lead|supervisor)\b"),
              ("senior", r"\b(senior|sr)\b"),
-             ("junior", r"\b(junior|jr|entry[ -]level|graduate|new grad)\b"),
+             ("junior", r"\b(junior|jr|entry[ -]level|graduate|new grad|early[ -]career)\b"),
              ("mid", r"\b(mid[ -]?level|intermediate)\b")]
+# 'Engineer II', 'Analyst 3': a level number after the role (never a support 'Tier III', never 'I'm', never '2+ days')
+_LEVEL_NUM = re.compile(r"(?<!tier )(?<![$\d.,/])\b(iv|iii|ii|i|[1-4])(?=\s*(?:$|[()/|:–—-]|,(?!\d)))")  # not '$1,000'
+_NUM_LEVEL = {"i": "junior", "1": "junior", "ii": "mid", "2": "mid", "iii": "senior", "3": "senior", "iv": "staff", "4": "staff"}
 
 
 def seniority_of(title) -> str:
     """Level read off the title, first match wins (a 'Senior Engineering Manager' is a manager); no marker is 'mid'.
     ponytail: title regex only; 'Product Manager' and friends stay individual contributors."""
     t = " ".join(str(title or "").casefold().replace(".", " ").split())
-    return next((lvl for lvl, rx in _LEVEL_RX if re.search(rx, t)), "mid")
+    if found := next((lvl for lvl, rx in _LEVEL_RX if re.search(rx, t)), None):
+        return found
+    m = _LEVEL_NUM.search(t)
+    return _NUM_LEVEL[m[1]] if m else "mid"
 
 
 def clean_filters(location="", min_salary=None, posted_within=None, seniority="") -> dict:
@@ -1189,8 +1201,25 @@ def defaults() -> dict:
     mine = str((doc or {}).get("contact", {}).get("location") or "")
     loc_src = "Preferences" if loc else "your profile" if mine else ""
     loc = re.sub(r"(?i)\s*[,;/]\s*(remote|anywhere)\b", r" or \1", loc or mine)
+    level, level_src = settings.pref("target_seniority") or "", "Preferences"
+    if not level and (yrs := _years()) is not None:
+        from .fit import _level_of_years
+
+        level, level_src = _level_of_years(yrs), f"your experience ({yrs:g} years)"
     return {"roles": roles[:5], "query": ", ".join(roles[:3]), "roles_from": src, "location": loc.strip()[:80],
-            "location_from": loc_src}
+            "location_from": loc_src, "seniority": level, "seniority_from": level_src if level else ""}
+
+
+def _years() -> float | None:
+    """Years of experience the way the fit score reads them: Preferences years_experience, else your dated roles."""
+    from . import profile
+    from .fit import years_from
+
+    try:
+        y = float(settings.pref("years_experience") or 0) or years_from(profile.structured(employer=False)["experience"])
+    except (Exception, SystemExit):
+        return None
+    return None if y is None else round(y, 1)
 
 
 def _prefs_list(key) -> list[str]:
@@ -1212,7 +1241,7 @@ def refine(listings: list[dict], keywords: str = "", today: date | None = None, 
     out = []
     for j in listings:
         title = norm_title(j["title"])
-        if kws and not any(k in f"{j['title']} {j['desc']}".lower() for k in kws):
+        if kws and not any(_has_all(k.split(), f"{j['title']} {j['desc']}") for k in kws):  # whole words: 'git' never 'digital'
             continue
         if norm_company(j["company"]) in bad_co or any(re.search(rf"(?<!\S){re.escape(w)}(?!\S)", title) for w in bad_words if w):
             continue

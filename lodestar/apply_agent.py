@@ -339,7 +339,7 @@ def login_window(url: str | None = None) -> dict:
     from .accounts import session_live
 
     if session_live():
-        raise SystemExit("an account window (Setup > Site accounts) is open on the agent's profile: finish or close it first")
+        raise SystemExit("an account window (Accounts > Site accounts) is open on the agent's profile: finish or close it first")
     u = http_only(url) if url else None
     if url and not u:
         raise SystemExit("the sign-in page must be an http(s) link")
