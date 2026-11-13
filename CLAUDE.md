@@ -69,8 +69,8 @@
   never in employer text or prompts, a pipeline stage output, or an AI prompt (except "Explain my readiness": the five
   parts, no fit data); the chance is a band, always "not a probability", never a percentage. Question `source` tags are
   code-set after quote checks (`_clean_qset`); the AI cannot assign `logged`/`general`; "reported" is off unless the
-  `reported_questions` pref is on. Company material goes into prompts inside `extras._fence` nonce fences as untrusted
-  data; labels are cleaned when stored (`extras.clean_label`). Never fetch `util.NEVER_FETCH` hosts (checked in
+  `reported_questions` pref is on. Company material goes into prompts inside `ai._fence` nonce fences (re-exported from extras) as untrusted
+  data; labels are cleaned when stored (`ai.clean_label`). Never fetch `util.NEVER_FETCH` hosts (checked in
   `_check_url`, so every redirect hop) or pasted URLs; company pages only via `extras.company_pages` (robots.txt, 12
   requests, 30-day cache, never board / ATS hosts). Tests set `extras.PAGE_PAUSE = 0` and put it back.
 - **AI advisor** (`advisor.py`, pass 19): Recommend / Apply suggestions / Full AI / Undo for the user's own content.
@@ -212,7 +212,7 @@ PORT`, PORT = the server's own
   Candidate-only: never in employer text or prompts, never the salary floor. Track search reports coverage
   (`careers.coverage`: asked / failed / not ready / checked) and never claims every board. Tests patch
   `occupations.DATA` to `tests/careers_fixture.py` and put it back. Tier 6 (`careers.explore`, pass 24) is the only AI
-  path: `candidate_text(private=False)` minus Preferences, titles through `extras.clean_label`, an unmapped role is
+  path: `candidate_text(private=False)` minus Preferences, titles through `ai.clean_label`, an unmapped role is
   labelled `careers.UNMAPPED`.
 - **Eligibility gates** (`fit.gates`, pass 24): hard requirements are met / not_met / unknown, never a score cut
   (no `blocked_cap`, no clearance / deal-breaker modifiers); `blocked` = a gate not met; unknown is never met:
@@ -232,7 +232,7 @@ PORT`, PORT = the server's own
 - **Disputed facts / claim check** (pass 27): `bank['disputed']` keys (`profile._dispute_key`) are dropped by
   `profile.structured()` (master, studio, letters) and `careers.evidence`; never read a bank row for an employer
   document around `structured()`. Studio versions store `sources` (`studio.cited_sources`) and `studio.claim_diff`
-  reads plan + sources + events. Imports: .odt / .rtf / .html in `extras.import_document`; a PDF under 40 chars of
+  reads plan + sources + events. Imports: .odt / .rtf / .html in `ingest.import_document` (re-exported as extras.import_document); a PDF under 40 chars of
   text is refused (no OCR).
 - **Calendar busy** (`calendar_busy.py`, pass 28): Google FreeBusy only, only with pref `calendar_freebusy` (then
   `oauth.auth_url` adds `calendar.freebusy`; never add a scope unconditionally). `busy()` never raises: [] + `LAST`

@@ -2,6 +2,7 @@
 OpenRouter, Mistral, Ollama). `council()` asks several providers and synthesizes the answers.
 """
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -294,3 +295,20 @@ def council(prompt: str, system: str | None = None, providers: list[str] | None 
         except (Exception, SystemExit):  # a failed judge keeps the synthesis already made
             pass
     return {"answers": answers, "synthesis": synthesis}
+
+
+# --- untrusted text in prompts (moved from extras.py in pass 31; extras re-exports them) -----------------
+def _fence(blocks) -> tuple[str, str]:
+    """[(id, attrs, text)] -> (fenced text, nonce). Every block sits between '<<<nonce BLOCK id attrs>>>' and
+    '<<<nonce END id>>>'; the nonce is removed from the material, so no block can close its own fence."""
+    import secrets
+
+    n = secrets.token_hex(6)
+    out = [f"<<<{n} BLOCK {i}{' ' + a.replace(n, '') if a else ''}>>>\n{str(t or '').replace(n, '')}\n<<<{n} END {i}>>>"
+           for i, a, t in blocks]
+    return "\n".join(out), n
+
+
+def clean_label(s, n: int = 120) -> str:
+    """A label that reaches prompts, chips and the CLI (page <title>s are untrusted): one line of [\\w .,:/()-]."""
+    return re.sub(r"[^\w .,:/()-]", "", " ".join(str(s or "").split()))[:n].strip()
