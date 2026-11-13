@@ -2100,7 +2100,14 @@ def candidate_text(limit: int | None = None, strict: bool = True, private: bool 
             raise SystemExit(f"your master profile is still the template: fill in {PROFILE} or import a resume "
                              "(lodestar profile import <file>, or the Profile tab)")
         master = render_markdown(bank, master)
-    extra = extras_text(master)
+    bank = load()
+    if disputed := set(bank.get("disputed") or []):  # pass 27: a fact you dispute reaches no prompt either
+        doc = extract_heuristic(master)
+        for kind in FIELDS:
+            doc[kind] = [e for e in doc.get(kind) or [] if _dispute_key(kind, e) not in disputed]
+            bank[kind] = [e for e in bank.get(kind) or [] if isinstance(e, dict) and _dispute_key(kind, e) not in disputed]
+        master = render_markdown(doc, master)
+    extra = extras_text(master, bank)
     text = master.rstrip() + ("\n\n" + extra if extra else "")
     if not private:
         text = employer_safe(text)

@@ -21,7 +21,9 @@ def _read(path: str, mtime: float) -> dict:
     try:
         data = json.loads(gzip.decompress(Path(path).read_bytes()))
         occ = data["occ"]
-    except (OSError, ValueError, KeyError, EOFError) as e:
+        if not isinstance(occ, dict) or not all(isinstance(o, dict) for o in occ.values()):
+            raise ValueError("occ is not a table of occupations")
+    except Exception as e:  # missing, truncated, corrupt (zlib.error), or the wrong shape: one clear message
         raise SystemExit(f"occupation data missing or unreadable: {path} ({e.__class__.__name__}); reinstall Lodestar "
                          "or run scripts/build_onet.py") from None
     index: dict[str, set] = {}

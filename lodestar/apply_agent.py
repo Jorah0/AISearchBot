@@ -124,6 +124,12 @@ def auto_blockers(job, ats: str | None) -> list[str]:
                          (ats or "",)).fetchone()[0]
     if n < AUTO_AFTER:
         out.append(f"auto starts after {AUTO_AFTER} applications you approved went through on {ats or 'this site'} ({n} so far)")
+    from . import fit as fitmod
+
+    if (f := fitmod.stored(job)) and f.get("blocked"):  # blueprint 7.2: a hard requirement not met never auto-submits
+        out.append("a hard requirement is not met (the job's Fit: hard requirements)")
+    elif f and f.get("gates_unknown"):  # unknown is never met
+        out.append("a hard requirement is unknown (the job's Fit: hard requirements): you review the submission")
     if note := _licensed(job["title"]):  # blueprint 4.5: safety-sensitive / licensed work gets your review first
         out.append(f"licensed occupation ({note}): you review the submission")
     return out

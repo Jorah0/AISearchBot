@@ -126,6 +126,11 @@ def _excluded_words(extra=()) -> list[str]:
     return [w.strip().casefold() for w in list(words) + list(extra) if len(w.strip()) >= 3]
 
 
+def _word_in(word: str, text: str) -> bool:
+    """An excluded word as a whole word or phrase ('sales' excludes Sales Managers, never Wholesale), like fit.gates."""
+    return bool(re.search(rf"(?<!\w){re.escape(word)}(?!\w)", text, re.I))
+
+
 def _has(hay: str, needle: str) -> bool:
     a, b = hay.casefold(), needle.casefold()
     return bool(a and b) and (a in b or b in a)
@@ -195,7 +200,7 @@ def _card(o: dict, tier: int, why: list[str], ev: dict, bad: list[str], source: 
     show_excluded, then Currently ineligible)."""
     code, cz = o["code"], ev["zone"]
     names = [o["title"]] + list(o.get("titles") or [])
-    excluded = any(w in n.casefold() for w in bad for n in names)
+    excluded = any(_word_in(w, n) for w in bad for n in names)
     if excluded and not show_excluded:
         return None
     tech = o.get("tech") or []
@@ -263,7 +268,7 @@ def explore(interests: str, provider: str | None = None, bank: dict | None = Non
             if hit not in seen and (c := _card(occ[hit], 6, why, ev, bad, source, False)):
                 seen.add(hit)
                 out.append(c)
-        elif title.casefold() not in seen and not any(w in title.casefold() for w in bad):
+        elif title.casefold() not in seen and not any(_word_in(w, title) for w in bad):
             seen.add(title.casefold())
             out.append({"code": None, "title": title, "tier": 6, "tier_label": TIERS[6], "cls": "insufficient_evidence",
                         "cls_label": CLASSES["insufficient_evidence"], "zone": None, "overlap": 0.0, "why": why,
@@ -280,7 +285,7 @@ _LISTS = ("titles", "codes", "tiers", "exclusions")
 
 
 def _clean_list(v) -> list[str]:
-    items = v.split(",") if isinstance(v, str) else list(v or [])
+    items = [x for item in ([v] if isinstance(v, str) else list(v or [])) for x in str(item).split(",")]
     out: dict[str, str] = {}
     for x in items:
         x = " ".join(str(x).split())
@@ -399,8 +404,13 @@ def search_titles(track: dict) -> list[str]:
     if 1 in track["tiers"]:
         for c in track["codes"]:
             o = occupations.get(c) or {}
-            out += [o.get("title") or ""] + list(o.get("titles") or [])[:2]
+            # an O*NET title with a comma or 'or' ('Hotel, Motel, and Resort Desk Clerks') would be split into broader
+            # searches by web_monitor.alternatives: only clean titles are searched (its job titles usually are)
+            out += [t for t in [o.get("title") or ""] + list(o.get("titles") or [])[:3] if not _SPLITS.search(t)][:3]
     return _clean_list(out)[:TITLE_CAP]
+
+
+_SPLITS = re.compile(r"[,;|]|\bor\b", re.I)
 
 
 COVERAGE_NOTE = "Partial coverage: only the boards listed were searched. Lodestar never searches every job board or employer."
@@ -413,8 +423,10 @@ def coverage(ran: list[str], errors: list[str]) -> dict:
 
     ready = set(web_monitor.sources_ready())
     asked = list(dict.fromkeys(ran))
+    failed = {str(e).split(":", 1)[0].strip() for e in errors}  # 'remotive: HTTP 500' -> asked, but answered nothing
     return {"asked": asked, "failed": list(dict.fromkeys(errors)), "total": len(web_monitor.SOURCES),
-            "not_ready": [s for s in web_monitor.SOURCES if s not in ready], "checked": bool(asked), "note": COVERAGE_NOTE}
+            "not_ready": [s for s in web_monitor.SOURCES if s not in ready], "checked": bool(set(asked) - failed),
+            "note": COVERAGE_NOTE}
 
 
 def search_track(track_id: int, location: str | None = None) -> dict:

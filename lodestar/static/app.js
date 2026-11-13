@@ -3268,7 +3268,7 @@ function trackSearch(id, btn) {
 function renderCareerRes(r) {
   const c = r.coverage, cov = coverageLine(c);
   const rows = r.results.map(x => `<li class="row"><b>${esc(x.title)}</b> <span>${esc(x.company)}</span> <span class="muted grow">${esc(x.location || '')}</span>
-      ${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">open</a>` : ''}
+      ${safeUrl(x.url) ? `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">open</a>` : ''}
       ${x.tracked ? '<span class="muted">on your Board</span>' : x.id ? `<button class="b sm" onclick="trackFit(${Number(x.id)}, this)">Track</button>` : ''}</li>`).join('');
   $('#careerRes').innerHTML = `<div class="panel"><h3>${esc(r.track.label)}: live openings</h3><p class="muted">searched: ${esc(r.titles.join(', '))}</p>`
     + (rows ? `<ul class="career-results">${rows}</ul>` : `<p class="muted">${c.checked ? 'No openings found on the boards asked.' : ''}</p>`) + cov + '</div>';
