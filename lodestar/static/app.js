@@ -156,6 +156,26 @@ function fitBadge(j) {
     + (j.fit_class_label ? ` <span class="chip fit-class" title="career class: a reading of the fit and its hard requirements, never a hiring probability">${esc(j.fit_class_label)}</span>` : '');
 }
 const GATE_STATE = { met: 'met', not_met: 'not met', unknown: 'unknown (never counted as met)' };
+function applyGroup(j) {  // pass 32: the apply agent from the page (blueprint 2.2 human control); stop mode = you press Submit
+  return `<div class="group" id="jApply"><h4>Apply</h4>
+    <div class="row"><label class="muted">mode <select id="jApplyMode" aria-label="Apply agent mode"><option value="stop">fill, I press Submit</option><option value="review">fill, submit after my Inbox approval</option></select></label>
+      <button class="b sm" onclick="applyStart(${Number(j.id)}, this)">Fill application</button>
+      <button class="b ghost sm" onclick="applyStop(this)">Stop the agent</button></div>
+    <div class="muted" id="jApplyOut" role="status" aria-live="polite">The agent opens the posting's own application page in its own window and fills what it knows; it never submits without your click or approval.</div></div>`;
+}
+async function applyStart(id, btn) {
+  btn.disabled = true;
+  const r = await api('/api/apply/start', { ids: [Number(id)], mode: $('#jApplyMode').value });
+  btn.disabled = false;
+  const out = $('#jApplyOut');
+  if (r.error) { out.textContent = 'Not started: ' + r.error; return; }
+  out.textContent = (r.runs || []).map(x => `Run #${x.run_id} queued (${x.mode})${(x.reasons || []).length ? ': ' + x.reasons.join('; ') : ''}`).join(' ')
+    || (r.refused || []).map(x => 'Not started: ' + x.error).join(' ') || 'Nothing to do';
+}
+async function applyStop(btn) {
+  btn.disabled = true; const r = await api('/api/apply/stop', {}); btn.disabled = false;
+  $('#jApplyOut').textContent = r.error ? 'error: ' + r.error : 'Stop sent: any run stops at its next step.';
+}
 // pass 32: the drawer's section index (links, so no button name changes): jumps to groups the job has
 const JOB_INDEX = [['jFit', 'Fit'], ['jDocs', 'Documents'], ['jComm', 'Messages'], ['jReady', 'Interview'], ['jActivity', 'Timeline']];
 function jumpTo(id) { const g = document.getElementById(id); if (g) { g.scrollIntoView({ block: 'start' }); g.tabIndex = -1; g.focus({ preventScroll: true }); } }
@@ -390,6 +410,7 @@ ${roundsGroup(d)}
       <div class="muted">JD coverage is the share of the posting's keywords your current resume (tailored, else your profile) mentions: a guide for tailoring, not an ATS pass/fail. No AI involved.</div>
       <div id="jMatch"></div><div id="jCheck"></div></div>
 
+    ${applyGroup(j)}
     <div class="group" id="jDocs"><h4>Documents</h4>${profileBadge(j.id)}${aiBar('docs', j.id)}<div class="row">
       <button class="b" onclick="jobRun('gap',{},this)">Gap check (coverage + AI verdict)</button>
       <button class="b" onclick="jobRun('tailor',{docx:true,base:baseOpt()},this)">Tailor resume (+docx)</button>

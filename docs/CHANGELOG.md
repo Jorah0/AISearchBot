@@ -1,5 +1,28 @@
 # Changelog (development passes, newest first)
 
+## Pass 32 (2026-11-13): a clearer page
+
+- The sidebar is grouped into sections (Pipeline, Discover, Resume, Prepare, Progress, Settings) under Today and the
+  Inbox, with line icons; every page is where it was, under its section.
+- Today is the home page: Getting started, what is due, interviews, the Inbox count, suggested emails and new fits;
+  an empty Today says so and offers the next step. No more jump to Setup on a first run.
+- A light theme (follows your system until you pick one with the Theme button), readable section headings and a
+  visible focus ring on every control.
+- The job drawer's header stays on top while you scroll, and a section index jumps to Fit, Documents, Messages,
+  Interview and Timeline. The drawer's new Apply group starts the apply agent (fill only, or submit after your Inbox
+  approval) and stops it.
+- Keyboard: g then a letter opens a page (g t Today, g i Inbox, g b Board, g j Jobs ...); ? lists the keys.
+
+## Pass 31 (2026-11-13): refactor and cleanup to the blueprint
+
+- Board keyword filters match whole words ('intern' no longer finds 'Internal Auditor'); The Muse is no longer
+  narrowed to software or IT listings by an ambiguous word such as 'engineer' or 'security'.
+- Research the AI marked (unverified) never reaches a cover letter or form answer; sponsorship signals are a hard
+  requirement only, never points in the fit score.
+- Company careers sites on country domains (jobs.ibm.ca, careers.sap.de) are recognised as the company's own.
+- Code: dead constants removed; small helpers have one home (util: atomic writes with the Windows retry, hashing,
+  word matching, UTC times); resume readers moved to ingest.py, untrusted-text fences to ai.py.
+
 ## Pass 30 (2026-11-13): industry-agnostic audit and the v1.1 acceptance journey
 
 - The page's examples no longer assume software work (store manager, hotel manager, medical office coordinator,

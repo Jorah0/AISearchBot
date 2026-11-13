@@ -78,5 +78,25 @@ class UI(E2ETestCase):
         self.assertFalse(sheet.is_visible())
 
 
+    def test_apply_agent_controls_in_the_drawer(self):  # blueprint 2.2 human control: start, mode and stop in the page
+        import json
+
+        sent = []
+
+        def start(route):
+            sent.append(json.loads(route.request.post_data))
+            route.fulfill(json={"runs": [], "refused": [{"job_id": sent[-1]["ids"][0], "error": "no application link: add one"}]})
+        self.page.route("**/api/apply/start", start)
+        self.page.route("**/api/apply/stop", lambda r: r.fulfill(json={"stopped": True}))
+        d = self.open_job(self.ids["saved"])
+        grp = d.locator("#jApply")
+        grp.locator("#jApplyMode").select_option("review")
+        grp.get_by_role("button", name="Fill application").click()
+        self.page.wait_for_function("() => document.querySelector('#jApplyOut').textContent.includes('no application link')")
+        self.assertEqual(sent[-1], {"ids": [self.ids["saved"]], "mode": "review"})
+        with self.page.expect_request("**/api/apply/stop"):
+            grp.get_by_role("button", name="Stop the agent").click()
+
+
 if __name__ == "__main__":
     unittest.main()

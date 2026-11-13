@@ -215,11 +215,15 @@ and Groq have free tiers; [Local models (Ollama)](#local-models-ollama) need no 
 
 ### The app at a glance
 
-- **Left sidebar** (the tabs): **Board** (your tracked jobs, Today, Getting started), **Inbox** (approvals, questions,
-  sign-in codes, unmatched mail), **Contacts**, **Search**, **Monitor** (watches, company boards, alerts, digest),
-  **Ideas** (idea crafting across providers, `lodestar ideas`), **Answers** (answer bank, form answers, STAR stories),
-  **Coach** (career-coach chat, `lodestar chat`, and mock interviews), **Insights**, **Profile**, **Studio**, and at
-  the bottom **Tools** (tool switches and preferences) and **Setup** (keys, email, data, updates, diagnostics).
+- **Left sidebar**, grouped (pass 32): **Today** (the home page: Getting started, what is due, interviews, the Inbox
+  count, suggested emails, new fits), **Inbox** (approvals, questions, sign-in codes, unmatched mail); **Pipeline**:
+  Board (your tracked jobs) and Contacts; **Discover**: Jobs (search, All jobs), Careers (career discovery) and
+  Monitor (watches, company boards, alerts, digest); **Resume**: Profile and Studio; **Prepare**: Answers (answer
+  bank, form answers, STAR stories), Coach (chat and mock interviews) and Ideas; **Progress**: Insights (skill gaps,
+  goals, offers, activity); **Settings**: Tools (tool switches and preferences) and Setup (keys, email, data, audit
+  log, updates, diagnostics). Keys: g then a letter opens a page (? lists them), Ctrl+K opens commands. The Theme
+  button switches light and dark. In a job's drawer the header stays on top, a section index jumps to Fit,
+  Documents, Messages, Interview and Timeline, and the Apply group starts or stops the apply agent.
 - **Top bar**: **Check email**, **Run watches**, the monitor-loop status line, the **Autopilot** pill, and badges such
   as **Update available** or **Codes** when they apply.
 - **Job drawer**: the panel that opens when you click a card on the Board ([The job drawer](#the-job-drawer)). Esc closes it.
