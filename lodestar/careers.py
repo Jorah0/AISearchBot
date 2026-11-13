@@ -129,18 +129,18 @@ def _has(hay: str, needle: str) -> bool:
     return bool(a and b) and (a in b or b in a)
 
 
-def suggest(tiers=(1, 2, 3, 4, 5), limit: int = 12, per_group: int = 2, bank: dict | None = None,
+def suggest(tiers=(0, 1, 2, 3, 4, 5), limit: int = 12, per_group: int = 2, bank: dict | None = None,
             targets: list[str] | None = None, exclude=(), show_excluded: bool = False) -> dict:
     """Career suggestions from your evidence (tiers 1-5) and the targets you chose (tier 0, plus their tier-4 bridges).
     Only the tiers asked for are returned: the search is never broadened silently. Returns {suggestions, zone, meta,
     note}; each suggestion names its source taxonomy and version."""
-    ev, meta = evidence(bank), occupations.meta()
+    ev, meta, occ = evidence(bank), occupations.meta(), occupations.load()["occ"]
     targets = _track_targets() if targets is None else list(targets)
     cz, direct = ev["zone"], ev["direct"]
     found: dict[str, dict] = {}
 
     def add(code: str, tier: int, why: str) -> None:
-        if not occupations.get(code):
+        if code not in occ:
             return
         hit = found.setdefault(code, {"tier": tier, "why": []})
         hit["tier"] = min(hit["tier"], tier)
@@ -148,22 +148,22 @@ def suggest(tiers=(1, 2, 3, 4, 5), limit: int = 12, per_group: int = 2, bank: di
             hit["why"].append(why)
 
     for code, (_, t) in direct.items():
-        add(code, 1, f"Your title '{t}' is an O*NET title for {occupations.get(code)['title']}")
+        add(code, 1, f"Your title '{t}' is an O*NET title for {occ[code]['title']}")
     for d in direct:
         for r in occupations.related(d):
             if r in direct:
                 continue
-            z = (occupations.get(r) or {}).get("zone")
+            z = occ.get(r, {}).get("zone")
             tier = 5 if z and cz and z >= cz + 2 else 2 if r[:2] in {c[:2] for c in direct} else 3
-            add(r, tier, f"Related to {occupations.get(d)['title']} in O*NET")
+            add(r, tier, f"Related to {occ[d]['title']} in O*NET")
     for t in targets:
-        o = occupations.get(t)
-        if not o:
+        if t not in occ:
             continue
+        o = occ[t]
         add(t, 0, "You chose this field")
         if cz and o.get("zone") and o["zone"] > cz:
             for r in occupations.related(t):
-                rz = (occupations.get(r) or {}).get("zone")
+                rz = occ.get(r, {}).get("zone")
                 if r != t and rz and rz <= cz:
                     add(r, 4, f"Also a route into {o['title']}")
     if not found or (cz is None and not targets):
@@ -175,7 +175,7 @@ def suggest(tiers=(1, 2, 3, 4, 5), limit: int = 12, per_group: int = 2, bank: di
     for code, hit in found.items():
         if hit["tier"] not in tiers:
             continue
-        o = occupations.get(code)
+        o = occ[code]
         names = [o["title"]] + list(o.get("titles") or [])
         excluded = any(w in n.casefold() for w in bad for n in names)
         if excluded and not show_excluded:
@@ -197,7 +197,8 @@ def suggest(tiers=(1, 2, 3, 4, 5), limit: int = 12, per_group: int = 2, bank: di
                     "missing": missing, "not_transfer": not_transfer, "close_gap": close, "regulated": note,
                     "source": source})
     out.sort(key=lambda s: (s["tier"], -s["overlap"], s["code"]))
-    kept, per = [], {}
+    kept: list[dict] = []
+    per: dict[str, int] = {}
     for s in out:
         g = s["code"][:4]
         if s["tier"] > 1 and per.get(g, 0) >= per_group:
@@ -277,7 +278,7 @@ def add_track(label: str, intent: str, titles=(), codes=(), tiers=None, exclusio
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (t["label"], t["intent"], *(json.dumps(t[k]) for k in _LISTS), t["location"], t["training"], t["priority"]))
     db.con().commit()
-    return cur.lastrowid
+    return int(cur.lastrowid or 0)
 
 
 def get_track(track_id: int) -> dict:
@@ -337,6 +338,39 @@ def search_titles(track: dict) -> list[str]:
             o = occupations.get(c) or {}
             out += [o.get("title") or ""] + list(o.get("titles") or [])[:2]
     return _clean_list(out)[:TITLE_CAP]
+
+
+COVERAGE_NOTE = "Partial coverage: only the boards listed were searched. Lodestar never searches every job board or employer."
+
+
+def coverage(ran: list[str], errors: list[str]) -> dict:
+    """Which boards a search asked, which failed and which were not ready (no key), against all of them (blueprint
+    6.5). checked=False means nothing was searched: never report that as 'no jobs'."""
+    from . import web_monitor
+
+    ready = set(web_monitor.sources_ready())
+    asked = list(dict.fromkeys(ran))
+    return {"asked": asked, "failed": list(dict.fromkeys(errors)), "total": len(web_monitor.SOURCES),
+            "not_ready": [s for s in web_monitor.SOURCES if s not in ready], "checked": bool(asked), "note": COVERAGE_NOTE}
+
+
+def search_track(track_id: int, location: str | None = None) -> dict:
+    """Search the job boards for one track's titles (three per round: web_monitor.search runs each on its own), merge
+    by link, tag the stored postings with the track and report the coverage."""
+    from . import db, web_monitor
+
+    t = get_track(track_id)
+    titles, ran, errs, results = search_titles(t), [], [], {}
+    loc = location or t["location"] or None
+    for i in range(0, len(titles), 3):
+        found = web_monitor.search(", ".join(titles[i:i + 3]), errors=errs, ran=ran, **({"location": loc} if loc else {}))
+        for r in found:
+            results.setdefault(r.get("url"), r)
+    results.pop(None, None)
+    with db.con():
+        for url in results:  # ponytail: tags by the first link, which listings.store keeps as `url`
+            db.con().execute("UPDATE postings SET track_id=? WHERE url=?", (track_id, url))
+    return {"track": t, "titles": titles, "results": list(results.values()), "coverage": coverage(ran, errs)}
 
 
 def _track_targets() -> list[str]:

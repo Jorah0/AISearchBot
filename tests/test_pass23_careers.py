@@ -24,7 +24,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import build_onet  # noqa: E402
 from careers_fixture import BANK, write_fixture  # noqa: E402
 
-from lodestar import careers, db, occupations, profile, settings  # noqa: E402
+from lodestar import careers, db, listings, occupations, profile, settings  # noqa: E402
+from lodestar import web_monitor as wm  # noqa: E402
 
 REAL_DATA = occupations.DATA
 
@@ -263,6 +264,74 @@ class Tracks(TrackCase):
         careers.update_track(off, enabled=False)  # a disabled track is not a target
         got = {s["code"]: s["tier"] for s in careers.suggest(bank=BANK, tiers=(0, 4))["suggestions"]}
         self.assertEqual(got, {"11-9081.00": 0, "43-4081.00": 4})
+
+
+class TrackSearch(TrackCase):
+    def setUp(self):
+        super().setUp()
+        self._wm = (wm.SOURCES, wm.search, wm.sources_ready)
+        wm.SOURCES = {"remotive": None, "adzuna": None}  # pinned: an earlier module may leave it patched
+        self.seen = []
+
+    def tearDown(self):
+        wm.SOURCES, wm.search, wm.sources_ready = self._wm
+        super().tearDown()
+
+    def fake(self, ready=("remotive",), fail=True, results=True):
+        wm.sources_ready = lambda: list(ready)
+
+        def search(query, errors=None, ran=None, **f):
+            self.seen.append((query, f.get("location")))
+            if not ready:
+                return []
+            ran.append("remotive")
+            if fail:
+                errors.append("adzuna: HTTP 500")
+            if not results:
+                return []
+            rows = [wm._listing("Hotel Manager", "Inn Co", "https://inn.test/1", source="remotive")]
+            listings.store(rows, source="remotive")
+            return rows
+        wm.search = search
+
+    def test_search_track_chunks_queries_tags_postings_and_reports_coverage(self):
+        self.fake()
+        tid = careers.add_track("H", "desired_field", titles=["Hotel manager"], tiers=[0, 1], location="Austin, TX")
+        out = careers.search_track(tid)
+        self.assertEqual(self.seen, [("Hotel manager, Lodging Managers, Hospitality Manager", "Austin, TX")])
+        self.assertEqual(out["titles"], ["Hotel manager", "Lodging Managers", "Hospitality Manager"])
+        cov = out["coverage"]
+        self.assertEqual((cov["asked"], cov["failed"], cov["not_ready"], cov["total"]), (["remotive"], ["adzuna: HTTP 500"], ["adzuna"], 2))
+        self.assertTrue(cov["checked"])
+        self.assertIn("never searches every job board", cov["note"])
+        self.assertEqual([r["url"] for r in out["results"]], ["https://inn.test/1"])
+        self.assertEqual(db.con().execute("SELECT track_id FROM postings WHERE url='https://inn.test/1'").fetchone()[0], tid)
+
+    def test_more_titles_than_one_round_are_searched_in_rounds_and_merged(self):
+        self.fake(fail=False)
+        out = careers.search_track(careers.add_track("M", "desired_field", titles=["Chef", "Cook", "Baker", "Barista"]))
+        self.assertEqual([q for q, _ in self.seen], ["Chef, Cook, Baker", "Barista"])
+        self.assertEqual(len(out["results"]), 1)  # the same posting from both rounds, once
+        self.assertEqual(out["coverage"]["asked"], ["remotive"])
+
+    def test_search_with_no_board_ready_says_nothing_checked(self):
+        self.fake(ready=())
+        out = careers.search_track(careers.add_track("H", "desired_field", titles=["Hotel manager"]))
+        self.assertEqual((out["results"], out["coverage"]["asked"], out["coverage"]["checked"]), ([], [], False))
+        self.assertEqual(out["coverage"]["not_ready"], ["remotive", "adzuna"])
+
+    def test_desired_field_searches_with_no_profile(self):
+        self.fake(results=False)
+        old = profile.BANK
+        try:
+            profile.BANK = Path(self.tmp) / "empty-profile.json"  # no bank at all
+            tid = careers.add_track("Nursing", "desired_field", titles=["Registered nurse"])
+            out = careers.search_track(tid)
+            self.assertEqual(careers.suggest()["suggestions"][0]["tier"], 0)  # the target is still suggested
+        finally:
+            profile.BANK = old
+        self.assertEqual(self.seen, [("Registered nurse", None)])
+        self.assertTrue(out["coverage"]["checked"])
 
 
 if __name__ == "__main__":
