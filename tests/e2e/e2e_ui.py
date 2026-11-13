@@ -21,6 +21,39 @@ class UI(E2ETestCase):
                 self.go(tab)  # every old tab still opens its own page
         self.assertEqual(self.page.locator("nav [role=group]").count(), len(GROUPS))
 
+    def test_today_is_the_home_page(self):
+        self.assertEqual(self.page.locator("nav button[data-tab]").first.get_attribute("data-tab"), "home")
+        self.page.wait_for_selector("section#home.on")  # the page opens on Today
+        for block in ("#onboard", "#today", "#upcoming"):
+            self.assertEqual(self.page.locator(f"section#home {block}").count(), 1, block)
+            self.assertEqual(self.page.locator(f"section#board {block}").count(), 0, block)
+        self.go("board")
+        self.assertTrue(self.page.locator("#nCo").is_visible())  # Board starts with its tracker
+        self.go("home")
+
+    def test_theme_switch_changes_the_colours_and_is_kept(self):
+        bg = lambda: self.page.evaluate("getComputedStyle(document.body).backgroundColor")  # noqa: E731
+        before, theme = bg(), self.page.evaluate("document.documentElement.dataset.theme || ''")
+        self.page.click("#themeBtn")
+        after = self.page.evaluate("document.documentElement.dataset.theme")
+        self.assertIn(after, ("light", "dark"))
+        self.assertNotEqual(after, theme)
+        self.assertNotEqual(bg(), before)
+        self.page.reload()
+        self.page.wait_for_selector("section#home.on")
+        self.assertEqual(self.page.evaluate("document.documentElement.dataset.theme"), after)  # kept for this browser
+        self.page.set_viewport_size({"width": 420, "height": 800})
+        self.assertEqual(self.overflow(), [])
+
+    def test_job_drawer_header_stays_and_the_index_jumps(self):
+        d = self.open_job(self.ids["saved"])
+        idx = d.locator("nav.jIndex")
+        self.assertEqual(idx.get_by_role("link").all_text_contents()[:2], ["Fit", "Documents"])
+        idx.get_by_role("link", name="Documents").click()
+        self.page.wait_for_function("() => { const g = document.querySelector('#jDocs').getBoundingClientRect(); return g.top < innerHeight / 2 && g.bottom > 0; }")
+        top = self.page.evaluate("document.querySelector('#drawer .head').getBoundingClientRect().top")
+        self.assertLess(abs(top - self.page.evaluate("document.querySelector('#drawer').getBoundingClientRect().top")), 40)  # still on top
+
 
 if __name__ == "__main__":
     unittest.main()

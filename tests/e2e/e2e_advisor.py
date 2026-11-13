@@ -65,7 +65,7 @@ class Advisor(E2ETestCase):
     # --- every scope has its toolbar, with the right buttons
     def test_every_tab_and_card_has_the_toolbar(self):
         j = self.ids
-        cases = [("board", "today", None, ["Recommend"]), ("inbox", "inbox", None, FULL), ("inbox", "inbox", j["p_reply"], FULL),
+        cases = [("home", "today", None, ["Recommend"]), ("inbox", "inbox", None, FULL), ("inbox", "inbox", j["p_reply"], FULL),
                  ("contacts", "contacts", None, FULL), ("search", "searches", None, FULL[:2] + FULL[3:]),
                  ("monitor", "searches", None, FULL[:2] + FULL[3:]), ("answers", "answers", None, FULL),
                  ("answers", "stories", None, FULL), ("answers", "stories", j["story"], FULL), ("insights", "insights", None, ["Recommend"]),
@@ -90,7 +90,7 @@ class Advisor(E2ETestCase):
         cases = [("profile", None, "profile", "Summary"), ("bank", None, "profile", "summary"), ("job", j["saved"], "drawer", "Your notes"),
                  ("docs", j["saved"], "drawer", "cover_letter"), ("answers", None, "answers", "Why do you want"),
                  ("stories", j["story"], "answers", "result"), ("contacts", j["c_maya"], "contact", "notes"),
-                 ("searches", None, "monitor", "Saved search"), ("today", None, "board", "Advice"),
+                 ("searches", None, "monitor", "Saved search"), ("today", None, "home", "Advice"),
                  ("insights", None, "insights", "Advice"), ("inbox", j["p_reply"], "inbox", "body")]
         for scope, target, where, part in cases:
             with self.subTest(scope=scope):

@@ -14,6 +14,7 @@
   <button class="b ghost sm" id="apPill" title="Autopilot runs pipeline steps in the monitor loop within its AI budgets" onclick="go('setup');$('#apCard').scrollIntoView()">Autopilot: off</button>
   <button class="b ghost sm" id="updPill" style="display:none" onclick="go('setup');$('#updCard').scrollIntoView()">Update available</button>
   <button class="b ghost sm" id="topEmail" onclick="run('email_check',{days:3},r=>toast((r.found||[]).length+' relevant email(s)'+(r.alerts?' · '+r.alerts+' new listing(s) from job alerts (Jobs tab)':'')+(r.note?'\n'+r.note:''),r.note?'err':'ok'),this)">Check email</button>
+  <button class="b ghost sm" id="themeBtn" onclick="toggleTheme()" title="Switch between the light and the dark theme">Theme</button>
   <button class="b ghost sm" id="topWatches" onclick="run('watch_run',{},r=>toast((r.alerts||[]).length+' alert(s)','ok'),this)">Run watches</button>
 </div>
 <nav aria-label="Sections">
@@ -34,9 +35,10 @@
     <symbol id="i-setup" viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></symbol>
     <symbol id="i-today" viewBox="0 0 24 24"><path d="M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></symbol>
   </svg>
+  <button data-tab="home" class="on"><svg class="ico" aria-hidden="true"><use href="#i-today"/></svg>Today</button>
   <button data-tab="inbox"><svg class="ico" aria-hidden="true"><use href="#i-inbox"/></svg>Inbox<span class="badge zero" id="inboxN" aria-label="pending approvals and questions">0</span></button>
   <div class="nav-group" role="group" aria-labelledby="nh-pipe"><div class="nav-h" id="nh-pipe">Pipeline</div>
-    <button data-tab="board" class="on"><svg class="ico" aria-hidden="true"><use href="#i-board"/></svg>Board</button>
+    <button data-tab="board"><svg class="ico" aria-hidden="true"><use href="#i-board"/></svg>Board</button>
     <button data-tab="contacts"><svg class="ico" aria-hidden="true"><use href="#i-contacts"/></svg>Contacts</button></div>
   <div class="nav-group" role="group" aria-labelledby="nh-disc"><div class="nav-h" id="nh-disc">Discover</div>
     <button data-tab="search"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg>Jobs</button>
@@ -59,16 +61,22 @@
 </nav>
 
 <main>
-<section id="board" class="on">
+<section id="home" class="on">
+  <h2>Today</h2>
+  <p class="sub">What needs you now: due actions, interviews, the Inbox, suggested emails and new fits. Each block hides when there is nothing in it.</p>
   <div class="panel" id="onboard" style="display:none"></div>
+  <div class="aihead" data-adv-slot="today"></div>
+  <div class="panel today" id="today" style="display:none"></div>
+  <div class="row" id="upcoming" style="margin-top:4px"></div>
+  <div class="panel" id="todayEmpty"><h3>Nothing is due right now</h3><div class="row">Track a job to start: <button class="b sm" onclick="go('board')">Open the Board</button> <button class="b ghost sm" onclick="go('search')">Search for jobs</button></div></div>
+</section>
+
+<section id="board">
   <div class="row" style="margin-top:0">
     <input id="nCo" placeholder="Company" style="width:160px"><input id="nTi" placeholder="Title" style="width:220px">
     <input id="nJd" class="grow" placeholder="Job description: URL or pasted text"><button class="b" onclick="addJob()">Add job</button>
   </div>
-  <div class="aihead" data-adv-slot="today"></div>
   <div class="aihead" data-ai-menu="board"></div>
-  <div class="panel today" id="today" style="display:none"></div>
-  <div class="row" id="upcoming" style="margin-top:4px"></div>
   <div class="muted" id="variants"></div>
   <div class="muted" id="funnel"></div>
   <div class="panel" id="boardEmpty" style="display:none"><h3>No jobs tracked yet</h3><div class="row">Paste a job description above and click Add job,

@@ -414,6 +414,7 @@ class Drawer(E2ETestCase):
         jid = self.ids["interview"]
         drawer = self.page.locator("#drawer")
         self.assertTrue(self.page.evaluate("document.querySelector('#drawer').inert"))
+        self.go("board")  # pass 32: the page opens on Today
         self.page.focus(f'.card[data-id="{jid}"]')
         self.press("Enter")
         self.page.wait_for_function("id => cur && cur.job.id === id", arg=jid)

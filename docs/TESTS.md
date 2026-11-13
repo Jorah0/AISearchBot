@@ -562,6 +562,9 @@ context with a temp profile and blocks 8765-8774, so a test never reaches a Lode
 | ID | Feature | Unit / integration | E2E |
 |---|---|---|---|
 | ui-nav-groups | Grouped sidebar (blueprint 18.1): Inbox, then Pipeline (Board, Contacts), Discover (Jobs, Careers, Monitor), Resume (Profile, Studio), Prepare (Answers, Coach, Ideas), Progress (Insights) and Settings (Tools, Setup) as labelled groups; every tab keeps its button, label and page; inline SVG icons (no font or CDN); at phone width the groups flow into the one scrolling row |  | `e2e_ui.UI.test_sidebar_groups_every_tab_under_its_section` |
+| ui-today-home | Today is the home page (data-tab home, labelled Today): Getting started, the Today agenda, its AI toolbar and upcoming interviews live there; an empty Today says so with the next step; Board starts with its tracker; no first-run jump to Setup |  | `e2e_ui.UI.test_today_is_the_home_page` |
+| ui-visual-system | Visual system: a light theme for every colour token (follows the system until you pick one; Theme button, kept per browser, works without storage), readable sentence-case section headings, a visible focus ring on every control | `test_pass32_ui.VisualSystem.test_light_theme_defines_every_token`<br>`test_pass32_ui.VisualSystem.test_focus_is_always_visible`<br>`test_pass32_ui.VisualSystem.test_theme_switch_is_wired_and_survives_without_storage` | `e2e_ui.UI.test_theme_switch_changes_the_colours_and_is_kept` |
+| ui-drawer-index | Job drawer: the header (company, title, status, close) stays on top while you scroll; a section index (Fit, Documents, Messages, Interview, Timeline: links, only the sections the job has) jumps to each group and focuses it |  | `e2e_ui.UI.test_job_drawer_header_stays_and_the_index_jumps` |
 
 ## Planned (not built yet; rows get tests when they exist)
 

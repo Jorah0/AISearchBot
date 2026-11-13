@@ -156,6 +156,9 @@ function fitBadge(j) {
     + (j.fit_class_label ? ` <span class="chip fit-class" title="career class: a reading of the fit and its hard requirements, never a hiring probability">${esc(j.fit_class_label)}</span>` : '');
 }
 const GATE_STATE = { met: 'met', not_met: 'not met', unknown: 'unknown (never counted as met)' };
+// pass 32: the drawer's section index (links, so no button name changes): jumps to groups the job has
+const JOB_INDEX = [['jFit', 'Fit'], ['jDocs', 'Documents'], ['jComm', 'Messages'], ['jReady', 'Interview'], ['jActivity', 'Timeline']];
+function jumpTo(id) { const g = document.getElementById(id); if (g) { g.scrollIntoView({ block: 'start' }); g.tabIndex = -1; g.focus({ preventScroll: true }); } }
 const ACTOR = { user: 'you', agent: 'Lodestar', integration: 'a connected service', system: 'Lodestar' };
 function stageGroup(d) {  // pass 26: the fine-grained stage, its append-only history, when the posting last answered
   const j = d.job, hist = (d.stages || []).map(e => {
@@ -244,6 +247,8 @@ function renderToday() {
     <button class="b ghost sm" onclick="suggestDraft(${i},this)">Draft options</button><button class="b ghost sm" onclick="suggestDismiss(${i})">Dismiss for now</button></div>`);
   const nq = (S.questions || []).filter(q => q.blocking).length, bo = BOOSTS.t = t.boosters || [];
   el.style.display = parts.length || em.length || fits.length || bo.length || t.pending || nq ? '' : 'none';
+  const empty = $('#todayEmpty');  // pass 32: one sentence and the next step when Today has nothing in it
+  if (empty) empty.style.display = el.style.display === 'none' && $('#onboard').style.display === 'none' && !$('#upcoming').textContent.trim() ? '' : 'none';
   el.innerHTML = `<h3>Today</h3><div class="row">${parts.join('')}${t.pending ? `<button class="b sm" onclick="go('inbox')">${t.pending} waiting in the Inbox</button>` : ''}${nq ? `<button class="b sm" onclick="go('inbox')">${nq} question${nq === 1 ? '' : 's'} for you</button>` : ''}</div>`
     + (em.length ? `<h4>Suggested emails</h4>${em.join('')}` : '') + (fits.length ? `<h4>Top new fits</h4>${fits.join('')}` : '')
     + (bo.length ? `<h4>Chance boosters</h4>${bo.map((b, i) => boostRow(b, 't', i)).join('')}` : '');
@@ -325,7 +330,7 @@ function renderOnboard() {
   const el = $('#onboard');
   el.style.display = todo.length ? '' : 'none';
   el.innerHTML = todo.length ? `<h3>Getting started</h3><div class="row" style="gap:18px">${todo.map(t => `<span>${t}</span>`).join('')}</div>` : '';
-  if (!s.provider_ready && !sessionStorage.getItem('ls_setup_shown') && !S.jobs.length) { sessionStorage.setItem('ls_setup_shown', '1'); go('setup'); }
+  // pass 32: no jump to Setup on a first run: Today's Getting started says what to do first
 }
 function renderLoop() {
   const l = S.loop, el = $('#loopStat');
@@ -367,6 +372,7 @@ async function openJob(id) {
       <select id="jStatus" aria-label="Status">${opt(S.statuses, j.status)}</select><button class="b ghost sm" onclick="moveJob(${j.id},$('#jStatus').value)">move</button>
       <button class="b ghost sm close" onclick="closeDrawer()" aria-label="Close job details">✕</button></div>
     <div class="muted">contact: ${esc(j.contact_name || '')} ${esc(j.contact_email || '(none; replies and follow-ups need one)')}</div>
+    <nav class="jIndex" aria-label="Job sections">${JOB_INDEX.map(([to, label]) => `<a href="#" data-to="${to}" onclick="jumpTo('${to}');return false">${label}</a>`).join('')}</nav>
     ${stageGroup(d)}
     ${aiMenu('job', j.id)}
 ${fitGroup(d)}
@@ -428,6 +434,7 @@ ${mailGroup(d)}
     <div class="row"><button class="b ghost sm" onclick="viewDoc()" title="paged preview, PDF / DOCX / TXT / MD, formatting, compare">View / format</button><button class="b ghost sm" onclick="editDoc()">Edit document</button><input id="dAdj" class="grow" placeholder="adjust this document with AI: shorter / warmer / lead with X"><button class="b ghost sm" onclick="adjustDoc(this)">Adjust</button><button class="b ghost sm" onclick="reviewDoc(this)">Review</button></div>
     <textarea id="docEdit" style="display:none; min-height:260px"></textarea><button class="b sm" id="docSave" style="display:none" onclick="saveDoc()">Save document</button>
     <div class="out"><h4 class="muted">AI output</h4><pre id="jOut">(run an action above)</pre></div>`;
+  $$('#drawer .jIndex a').forEach(a => { if (!document.getElementById(a.dataset.to)) a.remove(); });  // only sections this job has
   openDrawer('Job details');
   renderCoverage(savedCoverage(d));
   renderBullets(savedBullets(d), false);
@@ -3128,7 +3135,7 @@ function palRecommend() {  // the first AI toolbar on the open tab, as if you cl
   palFocus(b); b.click();
 }
 function palToday() {
-  palTab('board'); const t = $('#today');
+  palTab('home'); const t = $('#today');
   if (t.style.display === 'none') return toast('Nothing is due today', 'ok');
   t.tabIndex = -1; palFocus(t);
 }
@@ -3272,4 +3279,14 @@ function renderCareerRes(r) {
       ${x.tracked ? '<span class="muted">on your Board</span>' : x.id ? `<button class="b sm" onclick="trackFit(${Number(x.id)}, this)">Track</button>` : ''}</li>`).join('');
   $('#careerRes').innerHTML = `<div class="panel"><h3>${esc(r.track.label)}: live openings</h3><p class="muted">searched: ${esc(r.titles.join(', '))}</p>`
     + (rows ? `<ul class="career-results">${rows}</ul>` : `<p class="muted">${c.checked ? 'No openings found on the boards asked.' : ''}</p>`) + cov + '</div>';
+}
+
+/* ---- theme (pass 32): follows the system until you pick one; the choice is kept per browser ---- */
+try { const t = localStorage.getItem('ls_theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) { /* no storage: the system theme */ }
+function toggleTheme() {
+  const root = document.documentElement;
+  const now = root.dataset.theme || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  root.dataset.theme = now === 'light' ? 'dark' : 'light';
+  try { localStorage.setItem('ls_theme', root.dataset.theme); } catch (e) { /* no storage: this visit only */ }
+  toast(root.dataset.theme === 'light' ? 'Light theme' : 'Dark theme', 'ok');
 }

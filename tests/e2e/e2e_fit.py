@@ -33,6 +33,7 @@ class Fit(E2ETestCase):
         db.release()
 
     def test_board_badge_table_columns_and_best_fit_sort(self):
+        self.go("board")  # pass 32: the page opens on Today
         badge = self.page.locator(f'.card[data-id="{self.ids["fit"]}"] .chip.fit')
         self.assertRegex(badge.text_content(), r"^fit \d+")
         self.assertIn("fit-", badge.get_attribute("class"))
