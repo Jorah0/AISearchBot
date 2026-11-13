@@ -1,5 +1,5 @@
 """Pass 31: what still contradicted the blueprint after pass 30, and the refactor's one-home helpers. Board keyword
-filters match whole words; The Muse is never narrowed to software / IT by an ambiguous word; research text marked
+filters match whole words; The Muse is retired (its API is gone); research text marked
 (unverified) never reaches an employer-facing prompt; sponsorship signals no longer move the fit score. No network;
 every patched attribute is put back."""
 import os
@@ -31,16 +31,10 @@ class Contradictions(Base):
         self.assertTrue(wm._has_all([".net"], "ASP.NET developer"))  # review fix: a word starting with punctuation
         self.assertTrue(wm._has_all(["c#"], "C# engineer"))
 
-    def test_the_muse_is_never_narrowed_by_an_ambiguous_word(self):
-        asked = []
-        with patched(wm, fetch_json=lambda url, **k: asked.append(url) or {"results": []}):
-            for q in ("civil engineer", "security officer", "data entry clerk", "interior designer", "it support",
-                      "real estate developer", "business developer"):  # a software sales rep is a Sales job: fine
-                wm._muse(q)
-            self.assertFalse([u for u in asked if "category=" in u], asked)
-            asked.clear()
-            wm._muse("software engineer")
-            self.assertTrue(all("category=Software" in u for u in asked), asked)
+    def test_the_muse_is_retired(self):  # its public API answers 404 since 2026-11: a search must not report a dead board
+        for table in (wm.SOURCES, wm.EVERY, wm.ATTRIBUTION, wm.CAPABILITIES):
+            self.assertNotIn("themuse", table)
+        self.assertFalse(hasattr(wm, "_muse"))
 
     def test_unverified_research_never_reaches_employer_prompts(self):
         jid = db.add_job("Acme", "Data Engineer", None, JD, "via test")

@@ -2138,7 +2138,7 @@ def build() -> argparse.ArgumentParser:
     x.add_argument("--offset", type=int, default=0)
     x = v.add_parser("track-listing", help="add an All jobs listing (id L<n> from jobs all) to the tracker")
     x.add_argument("id", type=int)
-    x = v.add_parser("search", help="job APIs: Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse, "
+    x = v.add_parser("search", help="job APIs: Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, "
                                     "Himalayas, We Work Remotely; Adzuna and USAJOBS once their keys are set")
     x.add_argument("query"); x.add_argument("--keywords", help="comma list, must appear in title/desc")
     x.add_argument("--rank", action="store_true", help="AI fit score vs your profile"); x.add_argument("--limit", type=int, default=25)

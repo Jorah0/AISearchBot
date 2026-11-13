@@ -718,7 +718,9 @@ def start_task(action: str, params: dict) -> str:
             TASKS[tid] = {"status": "done", "action": action, "result": _act(action, params)}
         except BaseException as e:  # SystemExit from helpers carries the user-facing message
             log.get("tasks").exception("%s failed", action)
-            TASKS[tid] = {"status": "error", "action": action, "error": str(e) or traceback.format_exc()[-400:]}
+            msg = (f"this action needs {e.args[0]!r}, which was not sent" if type(e) is KeyError and e.args
+                   else str(e) or traceback.format_exc()[-400:])
+            TASKS[tid] = {"status": "error", "action": action, "error": msg}
         finally:
             db.release()  # a failed write must not keep the database locked after the task thread is gone
 

@@ -122,6 +122,9 @@ def load() -> dict:
                 bank["contact"].update({c: str(v.get(c) or "") for c in CONTACT})
             elif k in bank and k != "schema":
                 bank[k] = v
+    if isinstance(bank.get("skills"), list):  # junk an older import stored ('to', '&', 'teams.') leaves on read
+        bank["skills"] = [s | {"name": n} for s in bank["skills"]
+                          if isinstance(s, dict) and (n := skill_name(s.get("name", "")))]
     return bank
 
 
@@ -233,9 +236,29 @@ def _clean_item(kind: str, item, notes: list | None = None) -> dict | None:
             out[f] = "" if _personal_value(v, notes) else v
     if not any(out.get(f) for f in KEYS[kind]):
         return None
+    if kind == "skills":
+        out["name"] = skill_name(out["name"])
+        if not out["name"]:
+            return None
     if kind in ("skills", "languages") and not 1 <= len(out["name"]) <= 60:
         return None
     return out
+
+
+# words that are never a skill on their own: grammar, resume filler and section headings
+NOT_SKILLS = set("""a an the and or nor but of to in on at for with by from as into via per is are was were be been
+being this that these those it its our your my their etc also including include includes such using use used able
+ability proven strong focus skills skill technical summary experience profile objective tools other various key core
+competencies expertise knowledge proficient proficiency familiar excellent good great""".split())
+
+
+def skill_name(name: str) -> str:
+    """A skill as a key term: trailing punctuation dropped ('teams.' -> 'teams'); '' for a stopword, lone
+    punctuation, a section heading or a sentence (more than five words)."""
+    n = _norm(name).strip(" ,;:!?\"'()[]").rstrip(".")
+    if not re.search(r"\w", n) or n.casefold() in NOT_SKILLS or len(n.split()) > 5:
+        return ""
+    return n
 
 
 def _evidence(have: dict, source: str, quote) -> None:
@@ -752,6 +775,7 @@ def extract_heuristic(text: str, coverage: bool = False) -> dict:
     c["phone"] = _phone(header)
 
     used: set[int] = set()
+    skill_cat = ""
     unread: list[dict] = []
     head_lines: list[int] = []  # lines before the first section heading, and the Contact section
     sec, heading, summary = None, "", []
@@ -801,6 +825,9 @@ def extract_heuristic(text: str, coverage: bool = False) -> dict:
             cat = ""
             if ":" in item and len(item.split(":", 1)[0]) < 30:
                 cat, item = (x.strip() for x in item.split(":", 1))
+                skill_cat = cat if not item else ""  # 'Tools & DevOps:' alone: its list is on the next line
+            elif skill_cat:
+                cat, skill_cat = skill_cat, ""
             got = [{"name": s, "category": cat} for s in _split_list(item) if len(s) <= 40]
             for g in got:
                 add("skills", g, [n])

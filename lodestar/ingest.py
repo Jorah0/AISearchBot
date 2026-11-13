@@ -58,7 +58,17 @@ def pdf_text(data: bytes) -> str:
         from pypdf import PdfReader
     except ImportError:
         raise SystemExit("PDF import needs pypdf: pip install pypdf  (or pip install -e .[pdf])") from None
-    return "\n".join((pg.extract_text() or "") for pg in PdfReader(io.BytesIO(data)).pages).strip()
+    pages = PdfReader(io.BytesIO(data)).pages
+    text = "\n".join((pg.extract_text() or "") for pg in pages).strip()
+    if _word_per_line(text):  # some PDF writers place each word alone: plain mode then gives one word per line
+        lay = "\n".join((pg.extract_text(extraction_mode="layout") or "") for pg in pages)
+        text = "\n".join(" ".join(x.split()) for x in lay.splitlines() if x.strip())
+    return text
+
+
+def _word_per_line(text: str) -> bool:
+    lines = [x for x in text.splitlines() if x.strip()]
+    return len(lines) >= 12 and sum(len(x.split()) == 1 for x in lines) > 0.8 * len(lines)
 
 
 def _html_text(html: str) -> str:

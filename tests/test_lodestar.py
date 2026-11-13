@@ -512,12 +512,6 @@ class Development7(unittest.TestCase):
                 {"objectID": "5", "parent_id": "50", "author": "solo_founder", "comment_text": "<p>Hiring a python contractor for 3 months.</p>"}]},
             "jobicy": {"jobs": [{"jobTitle": "Python Dev", "companyName": "Initech", "url": "https://j/1", "jobGeo": "Anywhere",
                                  "jobExcerpt": "python", "pubDate": "2026-11-01 10:00:00", "jobDescription": "<b>x</b>"}]},
-            "themuse": {"results": [{"name": "Python Engineer", "company": {"name": "Umbrella"}, "refs": {"landing_page": "https://m/1"},
-                                     "locations": [{"name": "Austin, TX"}], "categories": [{"name": "Software Engineering"}],
-                                     "publication_date": "2026-11-01T00:00:00Z", "contents": "<p>py</p>"},
-                                    {"name": "Backend Engineer", "company": {"name": "Hooli"}, "refs": {"landing_page": "https://m/2"},
-                                     "locations": [], "categories": [{"name": "Software Engineering"}], "publication_date": "",
-                                     "contents": "<p>You will write <b>Python</b> services.</p>"}]},
         }
         def fake(url, **k):
             return next(v for key, v in pages.items() if key in url)
@@ -527,8 +521,6 @@ class Development7(unittest.TestCase):
                          [("Acme", "Senior Python Engineer", "Remote (US)"), ("Initrode", "Python Backend", "Lisbon / Remote"),
                           ("HN: solo_founder", "Hiring a python contractor for 3 months.", "")])
         self.assertEqual(wm._jobicy("python")[0]["company"], "Initech")
-        self.assertEqual([j["url"] for j in wm._muse("python engineer")], ["https://m/1", "https://m/2"])  # description counts
-        self.assertEqual(wm._muse("marketing"), [])
 
     def test_add_job_dedupes_by_url(self):
         a = db.add_job("Acme", "Eng", "https://x/1")

@@ -1,5 +1,18 @@
 # Changelog (development passes, newest first)
 
+## Fix (2026-11-13): The Muse retired; profile skills are key terms only
+
+- A PDF whose text comes out one word per line (some resume builders write it that way) is now read in layout mode,
+  so a summary sentence no longer turns into one "skill" per word. Skills never hold stopwords ('to', 'and'), lone
+  punctuation, headings or sentences, and lose trailing periods; junk an earlier import stored is dropped when the
+  profile loads. A lone 'Tools & DevOps:' line now names the skills listed below it.
+- Job search, checked live against every keyless board: Arbeitnow ignored the query (every search got the same 300
+  listings) and Himalayas matched loosely, so both are now filtered by your words; RemoteOK's garbled dashes and accents
+  are repaired; an HN post whose header starts with a link no longer uses the link as the job title.
+
+- The Muse's public jobs API now answers 404 everywhere, so every search ended with "could not read: themuse".
+  The source is removed; the other boards are unchanged.
+
 ## Pass 32 (2026-11-13): a clearer page
 
 - The sidebar is grouped into sections (Pipeline, Discover, Resume, Prepare, Progress, Settings) under Today and the

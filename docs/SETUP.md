@@ -2477,7 +2477,7 @@ A new O*NET release: download its Text zip from https://www.onetcenter.org/datab
 **What it is for.** (Since pass 21 the tab is called **Jobs**, it also searches Himalayas, We Work Remotely and, with
 your keys, Adzuna and USAJOBS, and every result is kept in All jobs: see [All jobs and job sources](#all-jobs-and-job-sources).)
 One search across the free job sources that need no account or key: Remotive, Arbeitnow,
-RemoteOK, HN Who is hiring, Jobicy and The Muse. Results are de-duplicated (the same company without Inc / LLC /
+RemoteOK, HN Who is hiring, and Jobicy. Results are de-duplicated (the same company without Inc / LLC /
 GmbH..., same title and same location is shown once, with the richest description and every link), filtered, and
 optionally ranked against your profile by AI. LinkedIn and Indeed have no public API: use the Capture bookmarklet
 (below) for those.
@@ -2612,7 +2612,7 @@ lodestar jobs list --sort fit
 searches, saved searches, company boards, captures and job-alert emails, merged across sources (the same company and
 title at the same place is one row with every link and source), each with its fit.
 
-**The sources.** Keyless: Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse, Himalayas (expired
+**The sources.** Keyless: Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, Himalayas (expired
 listings are removed) and We Work Remotely (RSS). With your own free keys: **Adzuna** and **USAJOBS**. Company feeds:
 Greenhouse, Lever, Ashby, and SmartRecruiters, Recruitee and Personio where the employer made the feed public (when it
 is not, Lodestar says so; add the careers page as a page watch instead). LinkedIn, Indeed, Glassdoor and ZipRecruiter

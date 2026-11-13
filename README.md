@@ -206,7 +206,7 @@ lodestar ui            # http://127.0.0.1:8765 (localhost only); --port N, --no-
 
 Today list and board by status (drag and drop, filters, table view), job detail with tracker fields, JD coverage and
 one-click gap / tailor / cover / prep, free-API search with filters and AI ranking (six free sources: Remotive,
-Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse) plus watched Greenhouse / Lever / Ashby company boards,
+Arbeitnow, RemoteOK, HN Who is hiring, Jobicy) plus watched Greenhouse / Lever / Ashby company boards,
 watches and email checks, approvals inbox with unmatched mail (link, track, dismiss), mail filed per job (threaded
 replies, trusted / unverified), AI draft options with one recommended and rewrite chips (drawer, Inbox, Answers,
 Offers) and suggested emails on Today, contacts with warm paths, interview rounds and a question bank, interview readiness with a chance band and

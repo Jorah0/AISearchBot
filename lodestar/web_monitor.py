@@ -601,8 +601,23 @@ def check_listings(now: datetime | None = None) -> list[int]:
 
 # --- free job APIs ----------------------------------------------------------
 def _listing(title, company, url, location="", salary="", date="", desc="", source=""):
-    return dict(title=title or "", company=company or "", url=url or "", location=location or "", salary=salary or "",
-                date=(date or "")[:10], desc=strip_html(desc or "")[:3000], source=source)
+    return dict(title=_fix_text(title), company=_fix_text(company), url=url or "", location=_fix_text(location),
+                salary=salary or "", date=(date or "")[:10], desc=_fix_text(strip_html(desc or ""))[:3000], source=source)
+
+
+_MOJIBAKE = re.compile(r"[\u00c2-\u00f4][\u0080-\u00bf]")
+
+
+def _fix_text(s) -> str:
+    """UTF-8 a board decoded as Latin-1 ('â' for an em dash: RemoteOK's own JSON) back to text; anything
+    that does not round-trip is kept as it came."""
+    s = str(s or "")
+    if _MOJIBAKE.search(s):
+        try:
+            return s.encode("latin-1").decode("utf-8")
+        except UnicodeError:
+            pass
+    return s
 
 
 def jd_with_salary(j: dict) -> str:
@@ -658,8 +673,10 @@ def _remotive(q):
 
 def _arbeitnow(q):
     d = fetch_json(f"https://www.arbeitnow.com/api/job-board-api?search={urllib.parse.quote(q)}")
+    words = _words_in(q)  # the API ignores `search` (live, 2026-11): every query got the same 300 listings
     return [_listing(j["title"], j["company_name"], j["url"], j.get("location"), "", "", j.get("description"), "arbeitnow")
-            for j in d.get("data", [])]
+            for j in d.get("data", [])
+            if _has_all(words, f"{j.get('title', '')} {' '.join(j.get('tags') or [])} {strip_html(j.get('description') or '')[:4000]}")]
 
 
 def _remoteok(q):
@@ -696,7 +713,7 @@ def _hn(q):
                 continue
             lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
             header = next((ln for ln in lines[:4] if "|" in ln), lines[0] if lines else "")[:200]
-            parts = [p.strip() for p in header.split("|")]
+            parts = [p for p in (x.strip() for x in header.split("|")) if p and not re.match(r"(?i)(https?://|www\.)", p)]
             if len(parts) >= 2:
                 company, title = parts[0] or h.get("author", ""), parts[1]
                 location = parts[2] if len(parts) > 2 else ""
@@ -720,36 +737,6 @@ def _jobicy(q):
             sal = f"{j.get('annualSalaryMin', '')}-{j.get('annualSalaryMax', '')}".strip("-")
             out.append(_listing(j.get("jobTitle"), j.get("companyName"), j.get("url"), j.get("jobGeo"), sal,
                                 j.get("pubDate"), j.get("jobDescription"), "jobicy"))
-    return out
-
-
-# The Muse's own categories, asked only for an unambiguous phrase: 'civil engineer', 'security officer' or 'data entry
-# clerk' must not be narrowed to software / IT / analytics listings (blueprint: never narrow a search silently)
-MUSE_CATEGORIES = {"software engineer": "Software Engineering", "software developer": "Software Engineering",
-                   "web developer": "Software Engineering", "frontend developer": "Software Engineering",
-                   "backend developer": "Software Engineering",
-                   "data scientist": "Data and Analytics", "data analyst": "Data and Analytics",
-                   "ux designer": "Design and UX", "product manager": "Product Management", "marketing": "Marketing",
-                   "sales": "Sales", "accountant": "Accounting and Finance", "accounting": "Accounting and Finance",
-                   "hr": "HR", "human resources": "HR", "customer service": "Customer Service",
-                   "project manager": "Project Management"}
-
-
-def _muse(q):
-    words = q.lower().split()
-    cat = next((c for k, c in MUSE_CATEGORIES.items() if _has_all(k.split(), q)), None)  # whole words: 'three' is not 'hr'
-    out, seen_urls = [], set()
-    for page in (1, 2):
-        d = fetch_json(f"https://www.themuse.com/api/public/jobs?page={page}" + (f"&category={urllib.parse.quote(cat)}" if cat else ""))
-        for r in d.get("results", []):
-            desc = strip_html(r.get("contents") or "")
-            blob = f"{r.get('name', '')} {' '.join(c.get('name', '') for c in r.get('categories', []))} {desc[:4000]}".lower()
-            url = (r.get("refs") or {}).get("landing_page") or ""
-            if _has_all(words, blob) and url not in seen_urls:  # the API can repeat a job across pages
-                seen_urls.add(url)
-                out.append(_listing(r.get("name"), (r.get("company") or {}).get("name"), url,
-                                    ", ".join(loc.get("name", "") for loc in r.get("locations", [])[:2]), "",
-                                    r.get("publication_date"), r.get("contents"), "themuse"))
     return out
 
 
@@ -828,8 +815,11 @@ def _himalayas(q):
     key = setting("HIMALAYAS_API_KEY")
     d = fetch_json(f"https://himalayas.app/jobs/api/search?q={urllib.parse.quote(q)}&sort=recent&page=1",
                    headers={"Authorization": f"Bearer {key}"} if key else None)
-    out = []
-    for j in d.get("jobs") or []:
+    out, words = [], _words_in(q)
+    for j in d.get("jobs") or []:  # its search matches loosely ('store manager' -> 'Marketing Manager'): filtered here
+        if not _has_all(words, f"{j.get('title', '')} {' '.join(map(str, j.get('categories') or []))} "
+                               f"{strip_html(j.get('description') or j.get('excerpt') or '')[:4000]}"):
+            continue
         locs = j.get("locationRestrictions") or []
         loc = ", ".join(x if isinstance(x, str) else str((x or {}).get("name") or "") for x in locs) or "Remote"
         cur = j.get("currency") or j.get("salaryCurrency") or ""
@@ -859,10 +849,10 @@ def _wwr(q):
 
 
 SOURCES = {"remotive": _remotive, "arbeitnow": _arbeitnow, "remoteok": _remoteok, "hn": _hn, "jobicy": _jobicy,
-           "themuse": _muse, "himalayas": _himalayas, "wwr": _wwr, "adzuna": _adzuna, "usajobs": _usajobs}
+           "himalayas": _himalayas, "wwr": _wwr, "adzuna": _adzuna, "usajobs": _usajobs}
 # how often a scheduled run (saved searches) may ask each board, in seconds. GLOBAL boards limit calls per user, not per
 # query: one unfiltered fetch per window serves every query (filtered here), and a manual search reuses it while fresh
-EVERY = {"remotive": 6 * 3600, "jobicy": 3600, "remoteok": 3600, "wwr": 3600, "himalayas": 3600, "themuse": 3600,
+EVERY = {"remotive": 6 * 3600, "jobicy": 3600, "remoteok": 3600, "wwr": 3600, "himalayas": 3600,
          "adzuna": 3 * 3600, "usajobs": 3600, "arbeitnow": 3600, "hn": 6 * 3600}
 GLOBAL = {"remotive", "jobicy", "remoteok", "wwr"}
 KEYED = {"adzuna": ("ADZUNA_APP_ID", "ADZUNA_APP_KEY"), "usajobs": ("USAJOBS_API_KEY", "USAJOBS_EMAIL")}
@@ -872,14 +862,14 @@ ATTRIBUTION = {"adzuna": ("Adzuna", "https://www.adzuna.com/"), "himalayas": ("H
                "wwr": ("We Work Remotely", "https://weworkremotely.com/"), "remotive": ("Remotive", "https://remotive.com/"),
                "remoteok": ("Remote OK", "https://remoteok.com/"), "usajobs": ("USAJOBS", "https://www.usajobs.gov/"),
                "jobicy": ("Jobicy", "https://jobicy.com/"), "arbeitnow": ("Arbeitnow", "https://www.arbeitnow.com/"),
-               "themuse": ("The Muse", "https://www.themuse.com/"), "hn": ("HN Who is hiring", "https://news.ycombinator.com/")}
+               "hn": ("HN Who is hiring", "https://news.ycombinator.com/")}
 # blueprint 6.3: what each board can do. Discovery only: no board is an apply API (apply: "handoff" = you or the apply
 # agent apply on the posting's own page). terms_reviewed: the date its terms were last reviewed, None = not recorded.
 _CAP = {"search": "supported", "full_description": "supported", "apply": "handoff", "auth": "none", "terms_reviewed": None}
 CAPABILITIES = {
     "remotive": _CAP | {"regions": "remote, worldwide"}, "arbeitnow": _CAP | {"regions": "Europe, remote"},
     "remoteok": _CAP | {"regions": "remote, worldwide"}, "hn": _CAP | {"regions": "worldwide (monthly thread)"},
-    "jobicy": _CAP | {"regions": "remote, worldwide"}, "themuse": _CAP | {"regions": "mostly US"},
+    "jobicy": _CAP | {"regions": "remote, worldwide"},
     "himalayas": _CAP | {"regions": "remote, worldwide"}, "wwr": _CAP | {"regions": "remote, worldwide"},
     "adzuna": _CAP | {"full_description": "partial (a snippet)", "auth": "key", "regions": "the adzuna_country preference"},
     "usajobs": _CAP | {"full_description": "partial (a summary)", "auth": "key", "regions": "US federal"},

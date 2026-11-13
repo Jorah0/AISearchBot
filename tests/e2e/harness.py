@@ -160,7 +160,6 @@ FETCH = {  # util.fetch canned by URL substring; first match wins, else a plain 
     "remoteok.com": [{"legal": "notice"}],
     "hn.algolia.com": {"hits": []},
     "jobicy.com": {"jobs": []},
-    "themuse.com": {"results": [], "page_count": 0},
     "himalayas.app": {"jobs": []},
     "weworkremotely.com": "<rss><channel></channel></rss>",  # a string is served as is (RSS / XML)
 }
