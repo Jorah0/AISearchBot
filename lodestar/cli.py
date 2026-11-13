@@ -385,6 +385,92 @@ def cmd_companies(a):
         print(f"removed #{a.id}")
 
 
+def _tiers(v: str) -> list[int]:
+    try:
+        return [int(x) for x in str(v).replace(" ", "").split(",") if x != ""]
+    except ValueError:
+        raise SystemExit("tiers are numbers 0-6, comma-separated (e.g. 0,1)") from None
+
+
+def _print_suggestion(sg: dict) -> None:
+    print(f"  {sg['code']}  {sg['title']}  [{sg['tier_label']}]  ({sg['source']})")
+    for head, key in (("Why it fits", "why"), ("What is missing", "missing"), ("What does not transfer", "not_transfer"),
+                      ("To close the gap", "close_gap")):
+        if sg[key]:
+            print(f"      {head}: " + "; ".join(sg[key]))
+
+
+def cmd_careers(a):
+    """lodestar careers ...: career discovery (careers.py): suggestions from your profile, career tracks, track search."""
+    from . import careers, occupations
+
+    if a.op == "suggest":
+        out = careers.suggest(tiers=tuple(_tiers(a.tiers)), limit=a.limit, show_excluded=a.show_excluded)
+        if out["note"]:
+            print(out["note"])
+        for key, label in careers.CLASSES.items():
+            group = [sg for sg in out["suggestions"] if sg["cls"] == key]
+            if group:
+                print(f"\n{label}")
+                for sg in group:
+                    _print_suggestion(sg)
+        print("\n" + occupations.meta().get("credit", ""))
+    elif a.op == "occupation":
+        o = occupations.get(a.code)
+        if not o:
+            raise SystemExit(f"unknown O*NET occupation: {a.code}")
+        print(f"{o['code']}  {o['title']}  (Job Zone {o.get('zone') or '?'}: {occupations.ZONE_PREP.get(o.get('zone'), 'unknown')})")
+        print(o.get("desc") or "")
+        for head, key in (("Also called", "titles"), ("Core tasks", "tasks"), ("Technology", "tech")):
+            if o.get(key):
+                print(f"{head}: " + "; ".join(o[key][:8]))
+        rel = [f"{c} {(occupations.get(c) or {}).get('title', '')}" for c in o.get("related") or []][:8]
+        if rel:
+            print("Related: " + "; ".join(rel))
+        if note := careers.regulated(a.code):
+            print(f"Licensing: {note}")
+        print(occupations.meta().get("credit", ""))
+    elif a.op == "tracks":
+        ts = careers.tracks()
+        for t in ts:
+            tiers = ", ".join(careers.TIERS[x] for x in t["tiers"])
+            print(f"#{t['id']:<3} {t['label'][:28]:<28} {t['intent']:<13} {'on ' if t['enabled'] else 'off'} tiers: {tiers}")
+            print(f"     titles: {', '.join(t['titles']) or '-'}  occupations: {', '.join(t['codes']) or '-'}"
+                  + (f"  location: {t['location']}" if t["location"] else ""))
+        if not ts:
+            print("no career tracks yet: lodestar careers track-add NAME --intent desired_field --titles \"a, b\"")
+    elif a.op == "track-add":
+        tid = careers.add_track(a.label, a.intent, titles=a.titles or "", codes=a.codes or "",
+                                tiers=_tiers(a.tiers) if a.tiers else None, exclusions=a.exclude or "",
+                                location=a.location or "", training=a.training, priority=a.priority)
+        t = careers.get_track(tid)
+        print(f"track #{tid} {t['label']}: searches {', '.join(careers.search_titles(t))}")
+    elif a.op == "track-set":
+        fields = _kv(a.pairs, ("label", "intent", "titles", "codes", "tiers", "exclusions", "location", "training",
+                               "priority", "enabled"))
+        if "tiers" in fields:
+            fields["tiers"] = _tiers(fields["tiers"])
+        t = careers.update_track(a.id, **fields)
+        print(f"track #{t['id']} {t['label']}: searches {', '.join(careers.search_titles(t))}")
+    elif a.op == "track-rm":
+        careers.remove_track(a.id)
+        print(f"removed track #{a.id}")
+    elif a.op == "search":
+        out = careers.search_track(a.id, location=a.location)
+        print(f"searched: {', '.join(out['titles'])}")
+        for r in out["results"]:
+            print(f"  {r.get('title', '')[:50]:<50} {r.get('company', '')[:24]:<24} {r.get('url', '')}")
+        cov = out["coverage"]
+        if not cov["checked"]:
+            print("nothing was checked: no job board answered")
+        print(f"boards asked: {', '.join(cov['asked']) or 'none'} ({len(cov['asked'])} of {cov['total']})")
+        if cov["failed"]:
+            print("failed: " + "; ".join(cov["failed"]))
+        if cov["not_ready"]:
+            print("not set up (need a key): " + ", ".join(cov["not_ready"]))
+        print(cov["note"])
+
+
 def _kv(pairs: list[str], fields) -> dict:
     kv = [p.partition("=") for p in pairs]
     if bad := [k for k, sep, _ in kv if not sep or not k.strip()]:
@@ -2194,6 +2280,25 @@ def build() -> argparse.ArgumentParser:
     v.add_parser("list")
     x = v.add_parser("rm"); x.add_argument("id", type=int)
     s.set_defaults(f=cmd_companies)
+    s = sub.add_parser("careers", help="career discovery: occupations your profile fits (O*NET), career tracks you choose, track search with board coverage")
+    v = s.add_subparsers(dest="op", required=True)
+    x = v.add_parser("suggest", help="occupations by career class: why it fits, what is missing, what does not transfer, how to close the gap")
+    x.add_argument("--tiers", default="0,1,2,3,4,5", help="expansion tiers to show (0 your targets, 1 your occupations ... 5 longer-term)")
+    x.add_argument("--limit", type=int, default=12); x.add_argument("--show-excluded", dest="show_excluded", action="store_true", help="show excluded ones as Currently ineligible")
+    x = v.add_parser("occupation", help="one O*NET occupation: titles, tasks, technology, related, licensing"); x.add_argument("code")
+    v.add_parser("tracks", help="your career tracks")
+    x = v.add_parser("track-add", help="save a career track (a field to search; any field, even one your resume does not show)")
+    x.add_argument("label"); x.add_argument("--intent", required=True, choices=["resume_led", "desired_field", "combined", "exploration", "pivot"])
+    x.add_argument("--titles", help="comma list of job titles"); x.add_argument("--codes", help="comma list of O*NET codes")
+    x.add_argument("--tiers", help="comma list 0-6 (default: desired_field 0, resume_led 1, others 0,1)")
+    x.add_argument("--exclude", help="comma list of words to leave out"); x.add_argument("--location")
+    x.add_argument("--training", default="none", choices=["none", "short_course", "certification", "apprenticeship", "degree", "open"])
+    x.add_argument("--priority", default="medium", choices=["high", "medium", "exploratory"])
+    x = v.add_parser("track-set", help="track fields: label, intent, titles, codes, tiers, exclusions, location, training, priority, enabled (key=value)")
+    x.add_argument("id", type=int); x.add_argument("pairs", nargs="+", metavar="key=value")
+    x = v.add_parser("track-rm", help="remove a track"); x.add_argument("id", type=int)
+    x = v.add_parser("search", help="search the job boards for a track's titles; shows which boards were asked"); x.add_argument("id", type=int); x.add_argument("--location")
+    s.set_defaults(f=cmd_careers)
     s = sub.add_parser("contacts", help="contacts CRM: people, the jobs they are linked to, last / next touch, LinkedIn import")
     v = s.add_subparsers(dest="op", required=True)
     x = v.add_parser("add", help="add a person by hand"); x.add_argument("name")

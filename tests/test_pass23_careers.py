@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import build_onet  # noqa: E402
 from careers_fixture import BANK, write_fixture  # noqa: E402
 
-from lodestar import careers, db, listings, occupations, profile, settings  # noqa: E402
+from lodestar import careers, cli, db, listings, occupations, profile, settings  # noqa: E402
 from lodestar import web_monitor as wm  # noqa: E402
 
 REAL_DATA = occupations.DATA
@@ -332,6 +332,40 @@ class TrackSearch(TrackCase):
             profile.BANK = old
         self.assertEqual(self.seen, [("Registered nurse", None)])
         self.assertTrue(out["coverage"]["checked"])
+
+
+def run(argv: list[str]) -> str:
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        cli.main(argv)
+    return out.getvalue()
+
+
+class Cli(TrackCase):
+    def test_careers_cli_round_trip(self):
+        out = run(["careers", "track-add", "Hospitality", "--intent", "desired_field", "--titles", "Hotel manager"])
+        self.assertIn("track #", out)
+        tid = careers.tracks()[0]["id"]
+        listing = run(["careers", "tracks"])
+        self.assertIn("Hospitality", listing)
+        self.assertIn("Requested target", listing)
+        run(["careers", "track-set", str(tid), "tiers=0,1", "location=Austin, TX"])
+        self.assertEqual((careers.get_track(tid)["tiers"], careers.get_track(tid)["location"]), ([0, 1], "Austin, TX"))
+        old = profile.BANK
+        try:
+            profile.BANK = Path(self.tmp) / "profile.json"
+            profile.BANK.write_text(json.dumps(BANK), encoding="utf-8")
+            s = run(["careers", "suggest"])
+        finally:
+            profile.BANK = old
+        for label in ("Qualified now", "Bridge required", "Longer-term development", "Requested target",
+                      "Why it fits", "What is missing", "O*NET test fixture", "test fixture credit"):
+            self.assertIn(label, s)
+        self.assertIn("Lodging Managers", run(["careers", "occupation", "11-9081.00"]))
+        with self.assertRaises(SystemExit):
+            run(["careers", "occupation", "99-9999.00"])
+        run(["careers", "track-rm", str(tid)])
+        self.assertEqual(careers.tracks(), [])
 
 
 if __name__ == "__main__":
