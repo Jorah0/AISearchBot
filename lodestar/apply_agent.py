@@ -9,7 +9,8 @@ The rules that hold everywhere:
 - Values come from you (profile, saved answers, questions you answered); a missing one is a pipeline question
   (pipeline.ask), never a guess. Eligibility / EEO only from your own answers; the salary floor never.
 - Nothing is submitted without the mode's approval; a run that clicked Submit and lost track is 'unknown', never retried.
-- CAPTCHAs, sign-in pages and codes are handed to you; nothing hides that the window is automated.
+- CAPTCHAs and codes are handed to you; a sign-in or sign-up page goes to your saved site account or a new one you
+  create (accounts.py, which alone types a password, and only on that site), else to you. Nothing hides automation.
 """
 import dataclasses
 import hashlib
@@ -184,9 +185,22 @@ def enqueue(job_ids, mode: str | None = None, eeo: bool | None = None, start: bo
             job = db.get_job(jid)
             if why := already_submitted(jid):
                 raise SystemExit(why)
-            url, how = resolve_url(job)
+            found = False
+            try:
+                url, how = resolve_url(job)
+            except SystemExit as e:  # no link the agent may open: look for the posting on the employer's own site
+                from . import apply_find
+
+                hit = apply_find.find(job)
+                if not hit["url"]:
+                    raise SystemExit(f"{e} (Lodestar looked for it on the employer's own site: "
+                                     f"{', '.join(hit['tried'][:6]) or 'nothing to read'})") from None
+                db.set_fields(jid, apply_url=hit["url"])
+                url, how, found = hit["url"], f"found via {hit['how']}: check it is this job", True
             ats = apply_ats.ats_of(apply_ats.host(url))
             m, reasons = effective_mode(job, ats, mode)
+            if found and m == "auto":  # a link Lodestar found itself is never submitted unseen
+                m, reasons = "review", [*reasons, "Lodestar found this link itself: review before it submits"]
             rid = db.add_run(jid, m, eeo)
             db.update_run(rid, url=url, ats=ats or "generic", hosts=apply_ats.hosts_for(url), reasons=reasons,
                           step=f"queued ({how})")
@@ -300,6 +314,10 @@ def login_window(url: str | None = None) -> dict:
         raise SystemExit("the apply agent is running: stop it (or let it finish) before opening the sign-in window")
     if _LOGIN and _LOGIN.poll() is None:
         raise SystemExit("the sign-in window is already open")
+    from .accounts import session_live
+
+    if session_live():
+        raise SystemExit("an account window (Setup > Site accounts) is open on the agent's profile: finish or close it first")
     u = http_only(url) if url else None
     if url and not u:
         raise SystemExit("the sign-in page must be an http(s) link")
@@ -317,8 +335,10 @@ def login_window(url: str | None = None) -> dict:
 def forget_logins() -> dict:
     """Delete the agent's browser profile (every site sign-in it holds). Refused while a run or the sign-in window is
     live; reports what could not be removed (a browser process still holding files) instead of hiding it."""
-    if any(alive(r) for r in db.live_runs() if r["state"] != "queued") or (_LOGIN and _LOGIN.poll() is None):
-        raise SystemExit("close the sign-in window and stop the apply agent first")
+    from .accounts import session_live
+
+    if any(alive(r) for r in db.live_runs() if r["state"] != "queued") or (_LOGIN and _LOGIN.poll() is None) or session_live():
+        raise SystemExit("close the sign-in window (and any account window) and stop the apply agent first")
     if not PROFILE_DIR.exists():
         return {"removed": False, "left": []}
     left = []
@@ -669,11 +689,11 @@ def _open_questions(job_id: int) -> set:
         "q.status='open'", (job_id,)).fetchall()}
 
 
-def _handoff(rid: int, tab, reason: str) -> None:
+def _handoff(rid: int, tab, reason: str, hint: str = "") -> None:
     hints = {"captcha": "solve the check in the agent window, then press Continue",
              "login": "sign in (or create the account) in the agent window, then press Continue",
              "code": "type the code the site sent you in the agent window, then press Continue"}
-    _wait(rid, tab, [{"reason": reason, "hint": hints.get(reason, reason)}],
+    _wait(rid, tab, [{"reason": reason, "hint": hint or hints.get(reason, reason)}],
           lambda run: run["answers"].get("_continue") or (reason == "code" and not tab.blocker()))  # then checked again
 
 
@@ -703,7 +723,15 @@ def _fill(rid: int, tab, n: int = 1, pages: list | None = None) -> None:
             _offsite(rid, tab)
             continue
         if reason := tab.blocker():
-            _handoff(rid, tab, reason)
+            hint = ""
+            if reason == "login":  # a sign-in or sign-up page: your saved site account, or a new one you create
+                from . import accounts
+
+                r, hint = accounts.handle(accounts.Page(tab), lambda needs, until: _wait(rid, tab, needs, until),
+                                          f"run:{rid}", run["job_id"])
+                if r in ("ok", "offsite"):
+                    continue
+            _handoff(rid, tab, reason, hint)
             continue
         if tab.already_applied():
             raise _End("failed", "the site says you already applied")

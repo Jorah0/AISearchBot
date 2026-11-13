@@ -78,7 +78,7 @@
   <details class="panel" id="codesPanel" ontoggle="if(this.open)codesLoad()"><summary><b>Emailed sign-in codes</b> <span class="muted" id="codesN"></span></summary>
     <div class="row"><button class="b ghost sm" onclick="codesCheck(this)">Check for a code now</button></div>
     <div id="codesList" role="status" aria-live="polite"></div>
-    <p class="muted">Codes that job sites email you, from senders that pass DKIM/DMARC, received in the last 15 minutes. They are kept in memory only, never saved, and Lodestar never enters them for you.</p></details>
+    <p class="muted">Codes that job sites email you, from senders that pass DKIM/DMARC, received in the last 15 minutes. They are kept in memory only and never saved. Lodestar enters one only into a site account's form in the agent's window, when you click Fill code under Setup &gt; Site accounts (or by itself on a site where you allowed that).</p></details>
   <div id="questions"></div>
   <div id="inboxList"></div>
   <h3>Unmatched mail</h3>
@@ -109,12 +109,18 @@
   <h2>Jobs</h2>
   <div class="aihead" data-adv-slot="searches"></div>
   <div class="aihead" data-ai-menu="search"></div>
-  <div class="row"><input id="sQ" placeholder='query, e.g. "python backend"' style="width:260px"><input id="sK" placeholder="must-have keywords (comma)" style="width:220px">
+  <details id="sProfile"><summary class="muted">Search profile <span id="sProfFrom"></span></summary>
+    <div class="row"><input id="spRoles" class="grow" placeholder="roles you want, comma-separated (e.g. Data Engineer, Analytics Engineer)" aria-label="Target roles">
+      <input id="spLoc" placeholder='where, e.g. "Austin, TX or remote"' aria-label="Locations or remote" style="width:220px">
+      <button class="b sm" onclick="spSave(this)">Save to my Preferences</button></div>
+    <div class="chips" id="spChips" aria-label="Search one role"></div>
+    <p class="muted">Blank Jobs searches use these roles. They start from Preferences (Target roles, Locations / remote), else your resume's latest titles and location. Saved here, they also feed the fit score. Commas search each role on its own; "or remote" keeps remote jobs too.</p></details>
+  <div class="row"><input id="sQ" placeholder='roles, e.g. "data engineer, analytics engineer" (blank: your search profile)' style="width:300px"><input id="sK" placeholder="must-have keywords (comma)" style="width:220px">
     <label class="muted"><input type="checkbox" id="sRank"> AI rank vs my profile</label><button class="b" onclick="doSearch(this)">Search boards now</button>
     <button class="b ghost" title="AI-judge the results; strong fits go to the Inbox (tool: auto_track). Listings that look stale are skipped." onclick="run('auto_track',searchParams(),r=>toast(r.results.length+' strong fit(s) proposed (Inbox, or tracked if auto_track is auto)'+((r.errors||[]).length?'\ncould not read: '+r.errors.join('; '):''),(r.errors||[]).length?'err':'ok'),this)">Auto-track strong fits</button>
     <button class="b ghost" title="alert on new listings for this query and these filters (Monitor > Watches)" onclick="saveSearch()">Save as watch</button></div>
   <div class="row filters" aria-label="Search filters">
-    <input id="sLoc" placeholder="location, or remote" aria-label="Location filter" style="width:160px">
+    <input id="sLoc" placeholder='location, e.g. "Austin, TX or remote"' aria-label="Location filter" style="width:200px">
     <input id="sSal" type="number" min="0" step="1000" placeholder="min salary" aria-label="Minimum salary" style="width:110px">
     <input id="sDays" type="number" min="1" max="3650" placeholder="posted within (days)" aria-label="Posted within days" style="width:150px">
     <select id="sLevel" aria-label="Seniority"><option value="">any seniority</option><option>intern</option><option>junior</option><option>mid</option><option>senior</option><option>staff</option><option>lead</option><option>manager</option></select>
@@ -361,6 +367,23 @@
     <div class="row"><label><input type="checkbox" id="alertsOn" onchange="alertsToggle(this.checked)"> Read job-alert emails (tool job_alerts)</label></div>
     <div id="alertList" class="list" role="status" aria-live="polite"></div>
     <div class="muted">An alert that cannot be read sends one notice a day; save it as a .eml file and run <code>lodestar email parse-alert FILE.eml</code> to see what Lodestar finds in it.</div></div>
+  <div class="panel" id="acctCard"><h3>Site accounts</h3>
+    <p class="muted">Your accounts on employer application sites (a Workday tenant, an iCIMS portal), one per site. When an application asks you to sign in, the apply agent signs in with the saved account, or fills the site's sign-up form with your email and a new strong password and stops: you tick the terms and press Create yourself. Passwords stay in the OS keyring and show only when you press Reveal. Codes and verification links come from your connected inbox: used when you click Fill code or Open link, or by themselves on a site where you tick "use my inbox". A CAPTCHA is always yours. Never for LinkedIn, Indeed, Glassdoor, ZipRecruiter or SimplyHired.</p>
+    <div id="acctWait" role="status" aria-live="polite"></div>
+    <details id="acctGen"><summary class="muted">General login for new accounts <span id="acctGenState"></span></summary>
+      <div class="row"><input id="acctGenUser" autocomplete="off" placeholder="username (empty: your profile email)" aria-label="general username" style="width:240px">
+        <input id="acctGenPw" type="password" autocomplete="new-password" placeholder="general password" aria-label="general password" style="width:200px">
+        <button class="b sm" onclick="acctGeneral(this)">Save</button><button class="b ghost sm" onclick="acctGeneral(this,true)">Clear</button></div>
+      <div class="row"><label class="muted"><input type="checkbox" id="acctAutoCreate" onchange="acctAutoCreate(this)"> finish sign-ups for me: tick only the terms / privacy box, press Create and use that site's emailed code or link (a CAPTCHA stays yours)</label></div>
+      <p class="muted">New accounts use this password instead of a generated one, and a site that already knows your email gets one sign-in try with it. It lives only in the OS keyring. One password on many sites means a leak on one site opens the others.</p></details>
+    <div class="row"><input id="acctQ" type="search" class="grow" placeholder="search sites, usernames, jobs" aria-label="search site accounts" oninput="acctPaint()"></div>
+    <div id="acctList" class="list"></div>
+    <details id="acctNew"><summary class="muted">Save a login, or create an account</summary>
+      <div class="row"><input id="acctUrl" class="grow" autocomplete="off" placeholder="the site's sign-in page link" aria-label="sign-in page link">
+        <input id="acctUser" autocomplete="off" placeholder="username or email" aria-label="username or email" style="width:200px">
+        <input id="acctPw" type="password" autocomplete="new-password" placeholder="password (empty: Lodestar makes one)" aria-label="password" style="width:220px"></div>
+      <div class="row"><button class="b" onclick="acctAdd(this)">Save login</button><button class="b ghost" onclick="acctCreate(this)">Create an account there</button>
+        <span class="muted">Create opens the link in the agent's window and fills the sign-up form; you press Create.</span></div></details></div>
   <div class="grid2">
     <div class="panel" id="keysCard"><h3>Link an AI key</h3>
       <div class="row"><select id="kProv" aria-label="AI provider" onchange="keyHint()"></select><input id="kVal" type="password" autocomplete="off" class="grow" placeholder="paste the key" aria-label="API key"><button class="b" onclick="keyLink(this)">Link</button></div>

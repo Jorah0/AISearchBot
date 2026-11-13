@@ -2110,6 +2110,32 @@ def pref_field(name: str, text: str | None = None) -> str:
     return m[1].strip().strip("*_ ").strip() if m else ""
 
 
+def set_pref_fields(values: dict) -> dict:
+    """Write labelled Preferences values ('Target roles', 'Locations / remote') into profile.md through write_master: an
+    existing label's value is replaced, a missing one appended to the section (made when absent). Private section: it
+    never reaches an employer. Returns the new values."""
+    from .config import full_ai_check
+
+    full_ai_check("writes your profile")
+    master = master_text()
+    if not master.strip():
+        raise SystemExit("fill in your profile first (Profile tab, or import a resume)")
+    s = _prefs_span(master)
+    if not s:
+        master = master.rstrip() + "\n\n## Preferences (used for job search ranking)\n"
+        s = _prefs_span(master)
+    sec = master[s[0]:s[1]]
+    for name, v in values.items():
+        v = " ".join(str(v or "").replace("|", ",").split())[:300]
+        rx = re.compile(rf"(?im)(\b{re.escape(name)}\s*:)[ \t]*([^|\n]*)")
+        if rx.search(sec):
+            sec = rx.sub(lambda m: f"{m[1]} {v}" + (" " if m[0].endswith(" ") and v else ""), sec, count=1)
+        else:
+            sec = sec.rstrip("\n") + f"\n{name}: {v}\n\n"
+    write_master(master[:s[0]] + sec.rstrip("\n") + "\n\n" + master[s[1]:].lstrip("\n"))
+    return {k: pref_field(k) for k in values}
+
+
 def redact_floor(text: str) -> str:
     """The text with the value after 'Salary floor:' withheld (what rank() sends the AI provider with Preferences).
     ponytail: the labelled value only; the figure written elsewhere in Preferences slips past"""

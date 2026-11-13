@@ -723,7 +723,7 @@ MUSE_CATEGORIES = {"engineer": "Software Engineering", "developer": "Software En
 
 def _muse(q):
     words = q.lower().split()
-    cat = next((c for w in words for k, c in MUSE_CATEGORIES.items() if k in w), None)
+    cat = next((c for w in words for k, c in MUSE_CATEGORIES.items() if w.startswith(k)), None)  # 'three' is not 'hr'
     out, seen_urls = [], set()
     for page in (1, 2):
         d = fetch_json(f"https://www.themuse.com/api/public/jobs?page={page}" + (f"&category={urllib.parse.quote(cat)}" if cat else ""))
@@ -766,7 +766,8 @@ def _adzuna(q):
         d = fetch_json(f"https://api.adzuna.com/v1/api/jobs/{country}/search/1?app_id="
                        f"{urllib.parse.quote(setting('ADZUNA_APP_ID') or '')}&app_key="
                        f"{urllib.parse.quote(setting('ADZUNA_APP_KEY') or '')}&what={urllib.parse.quote(q)}"
-                       "&results_per_page=50&content-type=application/json")
+                       + (f"&where={urllib.parse.quote(w)}&distance=40" if (w := getattr(_RUN, "where", "")) else "")
+                       + "&results_per_page=50&content-type=application/json")
     except urllib.error.HTTPError:  # Adzuna answered: the call counts
         raise
     except (urllib.error.URLError, TimeoutError, ConnectionError):  # never reached: it does not
@@ -787,7 +788,9 @@ def _usajobs(q):
     data.usajobs.gov, as its documented User-Agent). US federal jobs; annual pay only."""
     from .config import setting
 
-    d = fetch_json(f"https://data.usajobs.gov/api/search?Keyword={urllib.parse.quote(q)}&ResultsPerPage=100",
+    w = getattr(_RUN, "where", "")
+    d = fetch_json(f"https://data.usajobs.gov/api/search?Keyword={urllib.parse.quote(q)}&ResultsPerPage=100"
+                   + (f"&LocationName={urllib.parse.quote(w)}" if w else ""),
                    headers={"Host": "data.usajobs.gov", "User-Agent": setting("USAJOBS_EMAIL") or "",
                             "Authorization-Key": setting("USAJOBS_API_KEY") or ""})
     out = []
@@ -933,26 +936,52 @@ def _cached(name: str, url: str, parse=None):
     return data
 
 
-def _ask(name: str, query: str, scheduled: bool) -> list[dict]:
-    """One board's listings for a query. scheduled (saved searches in the monitor loop): reuse a recent answer, and a
-    board asked within its EVERY window is skipped (Throttled), so every cycle times every saved search stays within
-    each board's published limits. A manual search asks afresh (GLOBAL boards still reuse their fresh copy)."""
+LOCAL = {"adzuna", "usajobs"}  # boards that search near a place (_RUN.where); the others are filtered here (refine)
+
+
+def _ask(name: str, query: str, scheduled: bool, where: str = "") -> list[dict]:
+    """One board's listings for a query (near `where`, on the LOCAL boards). scheduled (saved searches in the monitor
+    loop): reuse a recent answer, and a board asked within its EVERY window is skipped (Throttled), so every cycle times
+    every saved search stays within each board's published limits. A manual search asks afresh (GLOBAL boards still
+    reuse their fresh copy)."""
+    w = where.casefold() if name in LOCAL else ""
     fn, now, q = SOURCES[name], time.monotonic(), query.casefold()
     every = EVERY.get(name, WATCH_CACHE_DEFAULT)
-    hit = _ANSWERS.get((fn, q))
+    hit = _ANSWERS.get((fn, q, w))
     if scheduled and hit and now - hit[0] < every:
         return [dict(j) for j in hit[1]]
     per_query = name in EVERY and name not in GLOBAL
-    if scheduled and per_query and not _due(f"src:{name}:{q}", every):
+    key = f"src:{name}:{q}" + (f"@{w}" if w else "")
+    if scheduled and per_query and not _due(key, every):
         raise Throttled(f"{name}: asked less than {max(1, every // 3600)} h ago")
-    _RUN.scheduled = scheduled
+    _RUN.scheduled, _RUN.where = scheduled, where if w else ""  # the place as typed; the cache key casefolded
     try:
-        hit = _ANSWERS[(fn, q)] = (now, fn(query))  # a failure raises and caches nothing
+        hit = _ANSWERS[(fn, q, w)] = (now, fn(query))  # a failure raises and caches nothing
     finally:
-        _RUN.scheduled = False
+        _RUN.scheduled, _RUN.where = False, ""
     if per_query:
-        _ran(f"src:{name}:{q}")
+        _ran(key)
     return [dict(j) for j in hit[1]]
+
+
+def alternatives(s, n: int = 3) -> list[str]:
+    """'data engineer, analytics engineer' / 'a or b' / 'a | b' -> each search on its own (at most n). Before this a
+    comma stayed inside a word ('engineer,') and matched nothing."""
+    out = [" ".join(x.split()) for x in re.split(r"\s*(?:[,;|]|\bor\b)\s*", str(s or ""), flags=re.I)]
+    return list(dict.fromkeys(x for x in out if x))[:n]
+
+
+def _loc_alts(s) -> list[str]:
+    """A location filter's alternatives: 'Austin, TX or remote' -> ['Austin, TX', 'remote'] (a comma stays inside one
+    place). 'anywhere' is remote."""
+    # a lowercase ' or ' only: 'Portland, OR' is a place
+    out = [" ".join(x.split()) for x in re.split(r"\s*[;|]\s*|\s+or\s+", str(s or ""))]
+    return list(dict.fromkeys("remote" if x.casefold() in ("remote", "anywhere", "remote only") else x for x in out if x))
+
+
+def _where(location) -> str:
+    """The place a LOCAL board searches near: the filter's first place (none for remote)."""
+    return next((x for x in _loc_alts(location) if x != "remote"), "")
 
 
 def search(query: str, keywords: str = "", only_new: bool = False, sources=None, mark: bool | None = None,
@@ -966,22 +995,24 @@ def search(query: str, keywords: str = "", only_new: bool = False, sources=None,
     'nothing new' from 'nothing checked'. scheduled: the monitor loop (see _ask): a board that is not due is skipped,
     never an error. ran: gets the name of every board actually asked."""
     mark = only_new if mark is None else mark
-    raw = []
+    raw, queries, where = [], alternatives(query) or [""], _where(filters.get("location"))
     for name in (sources or sources_ready()):
-        try:
-            got = _ask(name, query, scheduled)
-        except Throttled as e:
-            print(f"  skipped {e}")
-            continue
-        except Exception as e:
-            msg = _redact(str(e))
-            print(f"  {name}: {msg}")
-            if errors is not None:
-                errors.append(f"{name}: {msg[:160]}")
-            got = []
-        if ran is not None:
+        asked = False
+        for q in queries:  # each role on its own; dedupe merges what several find
+            try:
+                raw += _ask(name, q, scheduled, where)
+                asked = True
+            except Throttled as e:
+                print(f"  skipped {e}")
+            except Exception as e:
+                msg = _redact(str(e))
+                print(f"  {name}: {msg}")
+                if errors is not None:
+                    errors.append(f"{name}: {msg[:160]}")
+                asked = True
+                break  # the board is down: one line, not one per role
+        if ran is not None and asked:
             ran.append(name)
-        raw += got
     out = [j for j in refine(dedupe([j for j in raw if j["url"]]), keywords=keywords, **filters) if not (only_new and _seen(j))]
     if mark:
         for j in out:
@@ -1094,6 +1125,58 @@ def clean_filters(location="", min_salary=None, posted_within=None, seniority=""
     return out
 
 
+STATES = dict(zip(
+    "al ak az ar ca co ct de dc fl ga hi id il in ia ks ky la me md ma mi mn ms mo mt ne nv nh nj nm ny nc nd oh ok or "
+    "pa ri sc sd tn tx ut vt va wa wv wi wy".split(),
+    ["alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut", "delaware",
+     "district of columbia", "florida", "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa", "kansas", "kentucky",
+     "louisiana", "maine", "maryland", "massachusetts", "michigan", "minnesota", "mississippi", "missouri", "montana",
+     "nebraska", "nevada", "new hampshire", "new jersey", "new mexico", "new york", "north carolina", "north dakota",
+     "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina", "south dakota", "tennessee", "texas",
+     "utah", "vermont", "virginia", "washington", "west virginia", "wisconsin", "wyoming"]))
+PLACE_ALIASES = STATES | {"us": "united states", "usa": "united states", "u s": "united states", "u s a": "united states",
+                          "uk": "united kingdom", "nyc": "new york", "sf": "san francisco"}
+_REGIONS = set(STATES.values()) | {"united states", "united kingdom", "canada"}
+
+
+def _canon(part: str) -> str:
+    n = norm_location(part)
+    return PLACE_ALIASES.get(n, n)
+
+
+def place_ok(place: str, where: str) -> bool:
+    """A place filter matches a listing's location: its first part (the city, or the state / country when alone), as
+    whole words, after codes are spelled out ('Austin, TX' ~ 'Austin, Texas, United States'; 'TX' ~ 'Dallas, TX'). A
+    second part that names a state contradicts a listing naming another ('Portland, OR' is not 'Portland, ME').
+    ponytail: US states and a few aliases; a geocoder if other countries' codes misread"""
+    parts = [_canon(x) for x in place.split(",") if x.strip()]
+    loc = " " + " ".join(_canon(x) for x in re.split(r"[,/()|;]|\s-\s", where) if x.strip()) + " "
+    if not parts or f" {parts[0]} " not in loc:
+        return False
+    named = [r for r in _REGIONS if f" {r} " in loc]
+    return not (len(parts) > 1 and parts[1] in _REGIONS and named and parts[1] not in named)
+
+
+def defaults() -> dict:
+    """What the Jobs tab starts from, from your profile: the roles (Preferences > Target roles, else your latest job
+    titles) and the place (Preferences > Locations / remote, else your profile's location). {} parts when unset."""
+    from . import profile
+    from .fit import _split
+
+    pt = profile.preferences_text()
+    roles, src = _split(profile.pref_field("Target roles", pt)), "Preferences"
+    doc = profile.structured(employer=False) if not roles or not profile.pref_field("Locations / remote", pt) else None
+    if not roles:
+        roles = list(dict.fromkeys(t for e in doc["experience"][:4] if (t := " ".join(str(e.get("title") or "").split()))))
+        src = "your resume" if roles else ""
+    loc = profile.pref_field("Locations / remote", pt) or profile.pref_field("Locations", pt)
+    mine = str((doc or {}).get("contact", {}).get("location") or "")
+    loc_src = "Preferences" if loc else "your profile" if mine else ""
+    loc = re.sub(r"(?i)\s*[,;/]\s*(remote|anywhere)\b", r" or \1", loc or mine)
+    return {"roles": roles[:5], "query": ", ".join(roles[:3]), "roles_from": src, "location": loc.strip()[:80],
+            "location_from": loc_src}
+
+
 def _prefs_list(key) -> list[str]:
     return [x.strip() for x in str(settings.pref(key) or "").split(",") if x.strip()]
 
@@ -1108,7 +1191,8 @@ def refine(listings: list[dict], keywords: str = "", today: date | None = None, 
     kws = [k.strip().lower() for k in (keywords or "").split(",") if k.strip()]
     bad_co = {norm_company(c) for c in _prefs_list("excluded_companies")}
     bad_words = [norm_title(w) for w in _prefs_list("excluded_title_words")]
-    loc = f.get("location", "").casefold()
+    alts = _loc_alts(f.get("location", ""))
+    places = [a for a in alts if a != "remote"]
     out = []
     for j in listings:
         title = norm_title(j["title"])
@@ -1116,16 +1200,15 @@ def refine(listings: list[dict], keywords: str = "", today: date | None = None, 
             continue
         if norm_company(j["company"]) in bad_co or any(re.search(rf"(?<!\S){re.escape(w)}(?!\S)", title) for w in bad_words if w):
             continue
-        if loc == "remote":
-            kind = "remote" if j["source"] in db.REMOTE_BOARDS else db.remote_kind(f"{j['location']}\n{j['desc'][:1500]}")
-            if kind is None and not j["location"].strip():
+        if alts:
+            text, kind = j["location"].strip(), None
+            if "remote" in alts:
+                kind = "remote" if j["source"] in db.REMOTE_BOARDS else db.remote_kind(f"{j['location']}\n{j['desc'][:1500]}")
+            if kind == "remote" or (text and any(place_ok(p, text) for p in places)):
+                pass
+            elif not text and kind is None:
                 j["location_unknown"] = True
-            elif kind != "remote":
-                continue
-        elif loc:
-            if not j["location"].strip():
-                j["location_unknown"] = True
-            elif loc not in j["location"].casefold():
+            else:
                 continue
         if "min_salary" in f:
             pay = parse_salary(jd_with_salary(j))

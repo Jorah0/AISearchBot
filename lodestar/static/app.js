@@ -41,9 +41,9 @@ function go(tab) {
   if (tab !== 'board' || CT) closeDrawer();
   if (tab === 'contacts') loadContacts();
   if (tab === 'insights') loadInsights();
-  if (tab === 'setup') { loadEmail(); loadAiHistory(); restoreLoad(); }
+  if (tab === 'setup') { loadEmail(); loadAiHistory(); restoreLoad(); acctLoad(); }
   if (tab === 'studio') loadStudio();
-  if (tab === 'search') loadAllJobs();
+  if (tab === 'search') { loadAllJobs(); spLoad(); }
   if (tab === 'profile') loadMaster();  // the master card follows background rebuilds
 }
 
@@ -931,6 +931,120 @@ async function codeCopy(i) {
 async function codeDismiss(i) { const c = CODES[i]; if (!c) return; await api(`/api/codes/${encodeURIComponent(c.id)}/dismiss`, {}); codesLoad(); }
 setInterval(() => { if ($('#codesPanel').open && CODES.length) codesLoad(); }, 20000);
 
+/* ---- site accounts (lodestar/accounts.py): one per site; the password only in the OS keyring, shown on Reveal. Site
+   names, usernames, hints and errors come from pages and mail: every one goes through esc; markup carries only ids ---- */
+let ACCT = { accounts: [], waiting: [], links: [], session: {}, statuses: {} }, ACCT_T = null, ACCT_CODES = [];
+const ACCT_LIVE = ['opening', 'running', 'needs_you'];
+async function acctLoad() {
+  const r = await api('/api/accounts'); if (r.error) return toast('error: ' + r.error, 'err');
+  ACCT = r;
+  if ((r.waiting || []).some(w => (w.needs || []).some(n => n.reason === 'account_code'))) { const c = await api('/api/codes'); ACCT_CODES = c.codes || []; }
+  acctPaint();
+  clearTimeout(ACCT_T);
+  if ((r.waiting || []).length || ACCT_LIVE.includes((r.session || {}).state)) ACCT_T = setTimeout(() => { if ($('#setup').classList.contains('on')) acctLoad(); }, 1500);
+}
+function acctWaitRow(w) {
+  const n = (w.needs || [])[0] || {}, t = esc(w.target), again = `<button class="b ghost sm" onclick="acctCodes(this)">Check mail now</button>`;
+  const codes = n.reason === 'account_code' ? ACCT_CODES.map(c => `<button class="b sm" onclick="acctAct('${t}','code',this,'${esc(c.id)}')">Fill code from ${esc(c.domain)}</button>`).join('') + again : '';
+  const links = n.reason === 'account_link' ? (ACCT.links || []).filter(l => l.host === w.site).map(l => `<button class="b sm" onclick="acctAct('${t}','link',this,'${esc(l.id)}')">Open the link from ${esc(l.domain)}</button>`).join('') + again : '';
+  return `<div class="item acctwait" data-target="${t}"><div class="row"><b>${esc(w.site)}</b>${w.job_id ? ` <span class="muted">job #${Number(w.job_id)}</span>` : ''}<span class="grow">${esc(n.hint)}</span></div>
+    <div class="row">${w.mine ? codes + links : '<span class="muted">worked by another Lodestar process: do it in the window</span>'}
+      ${n.reason === 'account_create' ? `<button class="b ghost sm" onclick="acctAct('${t}','own',this)">I have an account</button>` : ''}
+      <button class="b sm" onclick="acctAct('${t}','continue',this)">${w.target === 'session' && n.reason === 'login' ? 'Done' : 'Continue'}</button></div></div>`;
+}
+function acctRow(a) {
+  const id = Number(a.id), bad = ['failed', 'locked'].includes(a.status), warn = ['pending', 'needs_verification'].includes(a.status);
+  const jobs = (a.jobs || []).map(j => `<button class="b ghost sm" onclick="go('board');openJob(${Number(j.id)})">#${Number(j.id)} ${esc(j.company)} - ${esc(j.title)}</button>`).join('');
+  return `<div class="item acct" data-acct="${id}"><div class="row"><b>${esc(a.site)}</b><span class="pill ${bad || warn ? 'warn' : 'ok'}">${esc(a.label)}</span>
+      <span>${esc(a.username)}</span><button class="b ghost sm" onclick="acctCopyUser(${id})">Copy username</button>
+      <span class="muted">created ${esc(localTs(a.created_at, 10))} · last sign-in ${a.last_login ? esc(localTs(a.last_login, 16)) : 'never'}${a.created_by === 'agent' ? ' · made by the agent' : ''}</span></div>
+    ${a.last_error ? `<div class="flagtxt">⚠ ${esc(a.last_error)}</div>` : ''}${jobs ? `<div class="row"><span class="muted">jobs</span>${jobs}</div>` : ''}
+    <div class="row"><button class="b ghost sm" onclick="acctOp(${id},'open',this)">Open site</button><button class="b sm" onclick="acctOp(${id},'relogin',this)">Re-login</button>
+      <button class="b ghost sm" onclick="acctReveal(${id},this)">Reveal</button><code id="acctShow${id}" aria-live="polite"></code>
+      ${bad && a.reset_url ? `<button class="b ghost sm" onclick="acctOp(${id},'reset',this)">Reset password on the site</button>` : ''}
+      <label class="muted"><input type="checkbox" ${a.auto_verify ? 'checked' : ''} onchange="acctAuto(${id},this)"> use my inbox's codes and links here without a click</label>
+      <button class="b danger sm" onclick="acctRemove(${id},this)">Remove</button></div>
+    <details><summary class="muted">Change password</summary><div class="row"><input id="acctNp${id}" type="password" autocomplete="new-password" placeholder="the new password" aria-label="new password for ${esc(a.site)}">
+      <button class="b sm" onclick="acctPassword(${id},false,this)">Save</button><button class="b ghost sm" onclick="acctPassword(${id},true,this)">Generate a new one</button>
+      <span class="muted">after you changed it on the site; a failed or locked account is tried again</span></div></details></div>`;
+}
+function acctPaint() {
+  const q = ($('#acctQ').value || '').trim().toLowerCase();
+  const list = (ACCT.accounts || []).filter(a => !q || JSON.stringify(a).toLowerCase().includes(q));
+  const g = ACCT.general || {};
+  $('#acctGenState').textContent = g.set ? `(set${g.username ? ', ' + g.username : ''}${g.auto_create ? ', finishes sign-ups' : ''})` : '(not set)';
+  $('#acctAutoCreate').checked = !!g.auto_create;
+  const s = ACCT.session || {};
+  const live = !s.state ? '' : ACCT_LIVE.includes(s.state)
+    ? `<div class="item"><b>Account window</b> (${esc(s.action)} on ${esc(s.site)}): ${esc(s.state)} · ${esc(s.step)} <button class="b danger sm" onclick="acctAct('session','stop',this)">Close window</button></div>`
+    : `<div class="muted">Last account window, ${esc(s.site)}: ${esc(s.step)}</div>`;
+  $('#acctWait').innerHTML = live + (ACCT.waiting || []).map(acctWaitRow).join('');
+  $('#acctList').innerHTML = list.map(acctRow).join('')
+    || `<div class="muted">${(ACCT.accounts || []).length ? 'no account matches' : 'no site accounts yet: the agent adds one when it creates it, or save a login below'}</div>`;
+}
+const acctFind = id => (ACCT.accounts || []).find(a => Number(a.id) === Number(id));
+async function acctCall(path, body, btn) {
+  if (btn) btn.disabled = true;
+  try { const r = await api(path, body || {}); if (r.error) { toast('error: ' + r.error, 'err'); return null; } return r; }
+  finally { if (btn) btn.disabled = false; }
+}
+async function acctAdd(btn) {
+  const r = await acctCall('/api/accounts/add', { url: $('#acctUrl').value, username: $('#acctUser').value, password: $('#acctPw').value }, btn);
+  if (!r) return; $('#acctPw').value = ''; $('#acctUser').value = ''; $('#acctUrl').value = ''; toast(`saved ${r.site}`, 'ok'); acctLoad();
+}
+async function acctCreate(btn) {
+  const url = $('#acctUrl').value.trim(); if (!url) return toast("paste the site's sign-in page link first", 'err');
+  if (!confirm(`Open ${url} in the agent's window and fill its sign-up form with your email and a new password? You tick the terms and press Create yourself.`)) return;
+  if (await acctCall('/api/accounts/create', { url }, btn)) { toast("the agent's window is opening", 'ok'); acctLoad(); }
+}
+async function acctOp(id, op, btn) {
+  const a = acctFind(id); if (!a) return;
+  if (op === 'relogin' && !confirm(`Sign in to ${a.site} as ${a.username} in the agent's window?`)) return;
+  if (!await acctCall(`/api/accounts/${id}/${op}`, {}, btn)) return;
+  toast(op === 'relogin' ? "the agent's window is opening" : "a sign-in window opened on the agent's profile", 'ok'); acctLoad();
+}
+async function acctAct(target, action, btn, id) {
+  if (!await acctCall('/api/accounts/act', { target, action, id: id || '' }, btn)) return;
+  toast(action === 'code' ? "filling the code in the agent's window" : action === 'link' ? "opening the link in the agent's window" : 'ok', 'ok');
+  setTimeout(acctLoad, 300);
+}
+async function acctCodes(btn) { const r = await acctCall('/api/codes/check', {}, btn); if (r) { ACCT_CODES = r.codes || []; acctLoad(); } }
+async function acctCopyUser(id) {
+  const a = acctFind(id); if (!a) return;
+  try { await navigator.clipboard.writeText(a.username); toast('username copied', 'ok'); } catch (_) { toast(a.username, 'ok'); }
+}
+async function acctReveal(id, btn) {
+  const out = $('#acctShow' + id);
+  if (out.textContent) { out.textContent = ''; btn.textContent = 'Reveal'; return; }
+  const r = await acctCall(`/api/accounts/${id}/reveal`, {}, btn); if (!r) return;
+  out.textContent = r.password; btn.textContent = 'Hide';
+  setTimeout(() => { if (out.isConnected) { out.textContent = ''; btn.textContent = 'Reveal'; } }, 30000);
+}
+async function acctPassword(id, generate, btn) {
+  const inp = $('#acctNp' + id);
+  if (!generate && !inp.value) return toast('type the new password, or Generate one', 'err');
+  const r = await acctCall(`/api/accounts/${id}/password`, generate ? { generate: true } : { password: inp.value }, btn); if (!r) return;
+  inp.value = ''; await acctLoad();
+  if (r.password) { $('#acctShow' + id).textContent = r.password; toast("a new password: type it into the site's change-password form", 'ok'); }
+  else toast('password changed', 'ok');
+}
+async function acctGeneral(btn, clear) {
+  if (clear && !confirm('Clear the general login? New accounts get a generated password again; saved accounts keep theirs.')) return;
+  const r = await acctCall('/api/accounts/general', clear ? { clear: true } : { username: $('#acctGenUser').value, password: $('#acctGenPw').value }, btn);
+  if (!r) return; $('#acctGenPw').value = ''; toast(clear ? 'general login cleared' : 'general login saved', 'ok'); acctLoad();
+}
+async function acctAutoCreate(box) {
+  if (box.checked && !confirm('Let the agent tick a sign-up\'s terms / privacy box and press Create for you? You agree to each site\'s terms when it does.')) { box.checked = false; return; }
+  const r = await api('/api/prefs', { key: 'accounts_auto_create', value: box.checked });
+  if (r.error) { box.checked = !box.checked; return toast('error: ' + r.error, 'err'); }
+  acctLoad();
+}
+async function acctAuto(id, box) { if (!await acctCall(`/api/accounts/${id}/auto`, { on: box.checked })) box.checked = !box.checked; }
+async function acctRemove(id, btn) {
+  const a = acctFind(id); if (!a || !confirm(`Remove the account for ${a.site} (${a.username})? Its password leaves the OS keyring; the account on the site stays.`)) return;
+  if (await acctCall(`/api/accounts/${id}/remove`, {}, btn)) { toast(`removed ${a.site}`, 'ok'); acctLoad(); }
+}
+
 /* ---- mail: Unmatched mail (Inbox) and the drawer's Mail group. Subjects, senders, snippets are attacker-controlled:
    every one goes through esc, and markup carries only the numeric mail id (MAILS keeps the rows) ---- */
 const MAILS = {};
@@ -1220,6 +1334,27 @@ function listingHtml(j, i) {
     ${safeUrl(j.url) ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">open ↗</a>` : ''} ${more} <button class="b ghost sm" onclick="saveListing(${i})">track</button>
     <div class="chips">${j.tracked ? `<span class="chip" title="already on your Board">tracked as #${esc(j.tracked)}</span>` : ''}${cov}${staleChip(j.ghost)}${sponsorChip(j.sponsor)}${warmChip(j.warm)}${unknown}${j.seniority ? `<span class="chip">${esc(j.seniority)}</span>` : ''}</div>${c}${g}${j.why ? `<div class="muted">${esc(j.why)}</div>` : ''}</div>`;
 }
+/* ---- search profile (web_monitor.defaults): roles and place from Preferences, else the resume; prefill only empty boxes ---- */
+let SP = {};
+function spPaint() {
+  $('#spRoles').value = (SP.roles || []).join(', '); $('#spLoc').value = SP.location || '';
+  $('#sProfFrom').textContent = SP.roles && SP.roles.length ? `(roles from ${SP.roles_from}${SP.location ? ', place from ' + SP.location_from : ''})` : '(empty: add the roles you want)';
+  $('#spChips').innerHTML = (SP.roles || []).map((r, i) => `<button class="b ghost sm" onclick="spUse(${i})">${esc(r)}</button>`).join('');
+  // a place you saved in Preferences fills the filter; one only read off your resume is a suggestion (no hidden filter)
+  if (!$('#sLoc').value && SP.location && SP.location_from === 'Preferences') $('#sLoc').value = SP.location;
+  $('#sLoc').placeholder = SP.location ? `e.g. "${SP.location}"` : 'location, e.g. "Austin, TX or remote"';
+  $('#sQ').placeholder = SP.query ? `blank: ${SP.query}` : 'roles, e.g. "data engineer, analytics engineer"';
+}
+async function spLoad() { const r = await api('/api/search/defaults'); if (!r.error) { SP = r; spPaint(); } }
+function spUse(i) { $('#sQ').value = (SP.roles || [])[i] || ''; $('#sQ').focus(); }
+async function spSave(btn) {
+  btn.disabled = true;
+  try {
+    const r = await api('/api/search/profile', { roles: $('#spRoles').value, location: $('#spLoc').value });
+    if (r.error) return toast('error: ' + r.error, 'err');
+    SP = r.defaults; $('#sLoc').value = ''; spPaint(); toast('saved to Preferences (private: never sent to employers)', 'ok');
+  } finally { btn.disabled = false; }
+}
 function doSearch(btn) {
   $('#sRes').innerHTML = '<div class="muted">searching…</div>';
   run('search', { ...searchParams(), rank: $('#sRank').checked }, r => {
@@ -1227,7 +1362,8 @@ function doSearch(btn) {
     AJ_HI = new Set(r.ids || []); loadAllJobs();  // stored in All jobs below, marked "from this search"
     const none = errs.length && !RESULTS.length && errs.filter(e => !e.startsWith('AI rank')).length >= (r.boards || Infinity)
       ? 'No job board could be reached, so nothing was checked. Check your connection and try again.' : 'nothing found';
-    $('#sRes').innerHTML = (errs.length ? `<div class="warnbox" role="alert">${errs.map(e => 'could not ' + (e.startsWith('AI rank') ? 'rank: ' + esc(e.slice(9)) : 'read ' + esc(e))).join('<br>')}</div>` : '')
+    $('#sRes').innerHTML = (!$('#sQ').value.trim() && r.query ? `<div class="muted">searched your roles: ${esc(r.query)}</div>` : '')
+      + (errs.length ? `<div class="warnbox" role="alert">${errs.map(e => 'could not ' + (e.startsWith('AI rank') ? 'rank: ' + esc(e.slice(9)) : 'read ' + esc(e))).join('<br>')}</div>` : '')
       + `<div class="list">` + (RESULTS.map(listingHtml).join('') || `<div class="empty">${esc(none)}</div>`) + '</div>';
   }, btn);
 }

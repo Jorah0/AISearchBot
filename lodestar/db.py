@@ -110,6 +110,10 @@ CREATE TABLE IF NOT EXISTS apply_runs(id INTEGER PRIMARY KEY, job_id INTEGER NOT
 CREATE INDEX IF NOT EXISTS apply_runs_job ON apply_runs(job_id);
 CREATE UNIQUE INDEX IF NOT EXISTS apply_runs_live ON apply_runs(job_id)
   WHERE state IN ('queued','running','needs_you','ready','awaiting_approval','approved','submitting');
+-- site accounts (accounts.py): one per employer site (exact host); the password lives only in the OS keyring (site:<host>)
+CREATE TABLE IF NOT EXISTS site_accounts(id INTEGER PRIMARY KEY, site TEXT NOT NULL UNIQUE, login_url TEXT NOT NULL,
+  username TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_by TEXT, created_at TEXT DEFAULT (datetime('now')),
+  last_login TEXT, last_error TEXT, reset_url TEXT, auto_verify INTEGER NOT NULL DEFAULT 0, jobs TEXT);
 """
 MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "TEXT",  # ponytail: additive only
               # tracker fields (pass 15); every user write goes through set_fields

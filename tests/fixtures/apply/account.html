@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Example Robotics Careers - Sign In</title>
+<!-- A fictional careers-site account portal for the site-account browser tests (tests/e2e/e2e_accounts.py). -->
+<style>body{font:15px system-ui;margin:24px;max-width:640px} label{display:block;margin:10px 0 4px} input{width:100%;padding:4px}
+input[type=checkbox]{width:auto} button{margin-top:14px;padding:6px 14px} #msg{color:#b00}</style>
+</head><body>
+<h1>Example Robotics Careers</h1>
+<section id="signin"><h2>Sign In</h2>
+  <form id="fSignin" onsubmit="return false">
+    <label for="si_email">Email Address</label><input id="si_email" type="email" autocomplete="username">
+    <label for="si_pw">Password</label><input id="si_pw" type="password" autocomplete="current-password">
+    <button type="submit" id="si_btn">Sign In</button>
+  </form>
+  <p><a href="#reset" id="forgot">Forgot your password?</a></p>
+  <button type="button" id="toCreate">Create Account</button>
+</section>
+<section id="signup" hidden><h2>Create Account</h2>
+  <form id="fSignup" onsubmit="return false">
+    <label for="su_email">Email Address</label><input id="su_email" type="email">
+    <label for="su_pw">Password</label><input id="su_pw" type="password" autocomplete="new-password">
+    <label for="su_pw2">Verify New Password</label><input id="su_pw2" type="password" autocomplete="new-password">
+    <label><input type="checkbox" id="terms"> I agree to the terms of use and the privacy policy</label>
+    <button type="submit" id="su_btn">Create Account</button>
+  </form>
+  <button type="button" id="toSignin">Sign In</button>
+</section>
+<section id="code" hidden><h2>Check your email</h2>
+  <p>Enter the verification code we sent to your email.</p>
+  <label for="otp">Code</label><input id="otp" autocomplete="one-time-code"><button type="button" id="verify">Verify</button>
+</section>
+<section id="checkmail" hidden><h2>Almost there</h2><p>Check your email: we sent you a link to verify your account.</p></section>
+<section id="home" hidden><h2>Welcome</h2><p>You are signed in to Example Robotics Careers.</p></section>
+<p id="msg" role="alert"></p>
+<script src="account.js"></script>
+</body></html>

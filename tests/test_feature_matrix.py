@@ -39,7 +39,9 @@ outcomes-platform-restore outcomes-platform-palette
 fit-privacy fit-stale-refresh fit-auto-track fit-pipeline fit-outcomes fit-ui
 sources-throttle alljobs-store alljobs-view sources-keys listing-activity
 intel-sources intel-local intel-ai boosters-rules boosters-ai boosters-ui
-apply-agent-policy apply-agent-modes apply-agent-plan apply-agent-runs apply-agent-safety apply-agent-surfaces""".split())  # built out of order (pass 17, 19); ui-sweep-68 is still planned
+apply-agent-policy apply-agent-modes apply-agent-plan apply-agent-runs apply-agent-safety apply-agent-surfaces
+apply-agent-accounts-vault apply-agent-accounts-flows apply-agent-accounts-verify
+apply-agent-accounts-general apply-agent-find-posting search-profile""".split())  # built out of order (pass 17, 19); ui-sweep-68 is still planned
 PLANNED = set("""tracker-sourcing-39
 profile-resume-ai-42
 mail-people-interviews-47 ui-sweep-68 ui-sweep-71 ui-sweep-72

@@ -795,6 +795,37 @@ def cmd_apply_agent(a):
                   f"{r['confirmation'] or ''} {r['evidence'] or ''}".rstrip())
 
 
+def cmd_accounts(a):
+    """`lodestar accounts list|add|password|remove`: your site accounts (docs/APPLY_AGENT.md > Site accounts). Re-login and
+    Create run in the agent's window from Setup > Site accounts."""
+    from . import accounts
+
+    if a.op in (None, "list"):
+        rows = accounts.listing(getattr(a, "q", "") or "")
+        for r in rows:
+            jobs = ", ".join(f"#{j['id']}" for j in r["jobs"])
+            print(f"#{r['id']} {r['site']} {r['username']} [{r['label']}] created {str(r['created_at'])[:10]} last sign-in "
+                  f"{str(r['last_login'] or 'never')[:16]}" + (f" jobs {jobs}" if jobs else "")
+                  + (f" ({r['last_error']})" if r["last_error"] else ""))
+        if not rows:
+            print("no site accounts yet")
+    elif a.op == "add":
+        import getpass
+
+        pw = a.password if a.password is not None else getpass.getpass("password (empty: Lodestar makes one): ")
+        r = accounts.add(a.url, a.username, pw)
+        print(f"saved #{r['id']} {r['site']} ({r['username']}); the password is in the OS keyring")
+    elif a.op == "password":
+        import getpass
+
+        r = accounts.set_password(a.id, "" if a.generate else (a.password or getpass.getpass("new password: ")), a.generate)
+        print(f"#{a.id}: new password {r['password']} (type it into the site's change-password form)" if a.generate
+              else f"#{a.id}: password changed")
+    elif a.op == "remove":
+        r = accounts.remove(a.id)
+        print(f"removed {r['site']} (its password is gone from the OS keyring)")
+
+
 def cmd_intel(a):
     """`lodestar intel ID [--gather|--refresh] [--summary]`: the job's public facts with their sources and dates."""
     from . import intel
@@ -2059,6 +2090,17 @@ def build() -> argparse.ArgumentParser:
     v.add_parser("forget", help="delete the agent's browser profile (every site sign-in it holds)")
     x = v.add_parser("runs", help="a job's runs: outcome, who submitted, confirmation, evidence folder"); x.add_argument("id", type=int)
     s.set_defaults(f=cmd_apply_agent)
+
+    s = sub.add_parser("accounts", help="site accounts the apply agent signs in with (one per site; passwords only in the "
+                                        "OS keyring): list, add, password, remove")
+    v = s.add_subparsers(dest="op")
+    x = v.add_parser("list", help="every site account with its status, dates and jobs"); x.add_argument("--q", default="")
+    x = v.add_parser("add", help="save a login you already have (no --password: asked, empty = Lodestar makes one)")
+    x.add_argument("url"); x.add_argument("username"); x.add_argument("--password")
+    x = v.add_parser("password", help="change the stored password (--generate prints a new one for the site's form)")
+    x.add_argument("id", type=int); x.add_argument("--password"); x.add_argument("--generate", action="store_true")
+    x = v.add_parser("remove", help="forget the account (its password leaves the OS keyring)"); x.add_argument("id", type=int)
+    s.set_defaults(f=cmd_accounts)
 
     s = sub.add_parser("intel", help="job intelligence: company facts and news, hiring signals, role and pay context, "
                                      "each with its source and date")

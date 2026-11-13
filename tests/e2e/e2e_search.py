@@ -178,6 +178,31 @@ class Search(E2ETestCase):
         self.go("monitor")
         self.assertIn("search:analytics engineer", self.page.text_content("#wList"))
 
+    def test_search_profile_fills_blank_searches_and_the_place_filter(self):
+        from harness import PROFILE_MD
+
+        from lodestar import profile
+        self.addCleanup(profile.write_master, PROFILE_MD)
+        self.go("search")
+        self.page.click("#sProfile summary")
+        self.assertIn("from your resume", self.page.text_content("#sProfFrom"))  # no Target roles yet
+        self.assertEqual(self.page.input_value("#sLoc"), "")  # a resume city only suggests
+        self.assertIn("Portland, OR", self.page.get_attribute("#sLoc", "placeholder"))
+        self.page.fill("#spRoles", "Data Engineer, Analytics Engineer")
+        self.page.fill("#spLoc", "Portland, OR or remote")
+        self.run_click("#sProfile >> text=Save to my Preferences")
+        self.expect_toast("saved to Preferences", "ok")
+        self.assertEqual(profile.pref_field("Target roles"), "Data Engineer, Analytics Engineer")
+        self.assertIn(f"Salary floor: {__import__('harness').FLOOR}", profile.preferences_text())  # untouched
+        self.assertEqual(self.page.input_value("#sLoc"), "Portland, OR or remote")  # Preferences fill the filter
+        self.assertEqual(self.page.locator("#spChips button").all_text_contents(), ["Data Engineer", "Analytics Engineer"])
+        self.page.fill("#sQ", "")
+        self.run_click(self.page.get_by_role("button", name="Search boards now"))
+        self.assertIn("searched your roles: Data Engineer, Analytics Engineer", self.page.text_content("#sRes"))
+        self.assertGreaterEqual(self.listing("Old Harbor").count(), 1)  # remote: kept by "or remote"
+        self.page.locator("#spChips button", has_text="Analytics Engineer").click()
+        self.assertEqual(self.page.input_value("#sQ"), "Analytics Engineer")
+
     def test_search_from_the_keyboard_and_at_420px(self):
         self.go("search")
         self.page.fill("#sQ", "data engineer")

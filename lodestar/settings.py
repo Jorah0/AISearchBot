@@ -104,6 +104,7 @@ PREFS = {
     "apply_agent_min_fit": 80,
     "apply_agent_auto_ats": "",  # comma list of ATS names auto may submit on; ships with none
     "apply_agent_eeo": False,
+    "accounts_auto_create": False,  # the agent ticks a sign-up's terms box and presses Create (accounts._finish)
 }
 PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "name": ("Your name", "signs drafted emails when no signature is set"),
@@ -158,6 +159,9 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "apply_agent_auto_ats": ("Apply agent: sites for auto", "comma list of application systems auto may submit on "
                              "(greenhouse, lever, ashby, ...); empty: none"),
     "apply_agent_eeo": ("Apply agent: include EEO answers", "type your saved EEO answers into forms by default"),
+    "accounts_auto_create": ("Site accounts: finish sign-ups for me", "the agent ticks only a sign-up's terms / privacy "
+                             "box (never marketing), presses Create and uses that site's emailed code or link; "
+                             "CAPTCHAs stay yours"),
 }
 CHOICES = {"resume_style": ("classic", "modern", "compact"),  # prefs limited to a fixed set of values
            "provider": ("", *PROVIDERS),  # "" = the first configured one

@@ -425,7 +425,9 @@ class Store(Base):
         with self.assertRaises(SystemExit):
             listings.dismiss(999999)
         db.con().execute("UPDATE postings SET last_seen=datetime('now','-50 days')")
-        db.con().execute("UPDATE postings SET closed_at=date('now','-1 day'), last_seen=datetime('now') WHERE company='dune'")
+        # local date, as prune compares: the UTC date is already tomorrow in a US evening
+        db.con().execute("UPDATE postings SET closed_at=date('now','localtime','-1 day'), last_seen=datetime('now') "
+                         "WHERE company='dune'")
         db.con().commit()
         self.assertEqual(listings.prune(), 3)  # unseen 45 days, or past its closing date; never the tracked one
         self.assertEqual([r["company"] for r in db.con().execute("SELECT company FROM postings")], ["acme"])

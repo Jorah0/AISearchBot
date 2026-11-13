@@ -386,7 +386,10 @@ def _do(action: str, p: dict):
             from .contacts import with_warm
 
             errs: list[str] = []  # boards that could not be read: 'nothing found' must not hide 'nothing checked'
-            found = with_warm(web_monitor.search(p["query"], p.get("keywords") or "", errors=errs, ran=(ran := []),
+            query = str(p.get("query") or "").strip() or web_monitor.defaults()["query"]  # blank: your roles
+            if not query:
+                raise ValueError("type the roles to search for, or add Target roles (Jobs > Search profile)")
+            found = with_warm(web_monitor.search(query, p.get("keywords") or "", errors=errs, ran=(ran := []),
                                                  **_filters(p))[:40])
             _with_fit(found)
             if p.get("rank") and found:
@@ -394,7 +397,8 @@ def _do(action: str, p: dict):
                     found = web_monitor.rank(found, prov)
                 except SystemExit as e:  # no provider / rejected model: the listings still show, unranked, with why
                     errs.append(f"AI rank: {e}")
-            return {"results": found, "errors": errs, "boards": len(ran), "ids": [j["id"] for j in found if j.get("id")]}
+            return {"results": found, "errors": errs, "boards": len(ran), "ids": [j["id"] for j in found if j.get("id")],
+                    "query": query}
         case "chat":
             return {"reply": ai.chat(p["messages"], _coach_system(), prov)}
         case "mock":
@@ -897,7 +901,8 @@ def state() -> dict:
         "watches": [dict(w) | {"filters": db.watch_filters(w)} for w in db.watches()],
         "companies": [dict(c) for c in db.companies()],
         "alerts": ALERTS.read_text(encoding="utf-8").splitlines()[-30:] if ALERTS.is_file() else [],
-        "vault": [{"name": n, "user": u} for n, u in vault.names() if n not in mailconn.MANAGED and n not in oauth.CLIENT_KEYS and n not in linked],
+        "vault": [{"name": n, "user": u} for n, u in vault.names() if n not in mailconn.MANAGED and n not in oauth.CLIENT_KEYS
+                  and n not in linked and not n.startswith("site:")],  # site passwords: Setup > Site accounts
         "obsidian_dir": str(extras.vault_root() / "jobs"),  # Export tracker to Obsidian asks before writing there
         "comp": comp.load(),
         "upcoming": [i | {"when": f"{i['when']:%a %Y-%m-%d %H:%M}"} for i in extras.upcoming_interviews(14)],
@@ -1046,6 +1051,16 @@ class Handler(BaseHTTPRequestHandler):
                 from . import readiness
 
                 self._json(readiness.calibration())
+            elif path == "/api/accounts":  # site accounts (accounts.py): rows, the account window, waits; never a password
+                from urllib.parse import parse_qs
+
+                from . import accounts
+
+                self._json(accounts.overview(parse_qs(urlparse(self.path).query).get("q", [""])[0]))
+            elif path == "/api/search/defaults":  # the Jobs tab's start: roles and place from Preferences / your resume
+                from . import web_monitor
+
+                self._json(web_monitor.defaults())
             elif path == "/api/codes":  # emailed sign-in codes, memory only (codes.py)
                 self._json({"codes": codes.current()})
             elif path.startswith("/api/jobs/"):
@@ -1292,6 +1307,39 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(apply_agent.forget_logins())
                 if re.fullmatch(r"/api/apply/\d+/continue", path):
                     return self._json(apply_agent.continue_run(int(parts[3])))
+                return self._json({"error": "not found"}, 404)
+            if path == "/api/search/profile":  # {roles, location}: into Preferences (private; fit and search read it)
+                from . import profile, web_monitor
+
+                return self._json(profile.set_pref_fields({"Target roles": p.get("roles") or "",
+                                                           "Locations / remote": p.get("location") or ""})
+                                  | {"defaults": web_monitor.defaults()})
+            if path.startswith("/api/accounts/"):  # site accounts (accounts.py): the password comes back only on reveal
+                from . import accounts
+
+                if path == "/api/accounts/add":  # {url, username, password?}: no password = a generated one
+                    return self._json(accounts.add(p.get("url"), p.get("username"), p.get("password") or ""))
+                if path == "/api/accounts/general":  # {username?, password} | {clear: true}: never sent back
+                    return self._json(accounts.set_general(p.get("username") or "", p.get("password") or "",
+                                                           p.get("clear") is True))
+                if path == "/api/accounts/create":  # {url}: the agent's window fills the sign-up form; you press Create
+                    return self._json(accounts.start("create", url=p.get("url")))
+                if path == "/api/accounts/act":  # {target: session | run:<id>, action, id?}
+                    return self._json(accounts.act(str(p.get("target") or ""), str(p.get("action") or ""), str(p.get("id") or "")))
+                if m := re.fullmatch(r"/api/accounts/(\d+)/(reveal|password|auto|relogin|open|reset|remove)", path):
+                    aid, op = int(m[1]), m[2]
+                    if op == "reveal":
+                        return self._json(accounts.reveal(aid))
+                    if op == "password":  # {password} | {generate: true}
+                        return self._json(accounts.set_password(aid, p.get("password") or "", p.get("generate") is True))
+                    if op == "auto":
+                        return self._json(accounts.set_auto(aid, p.get("on") is True))
+                    if op == "relogin":
+                        return self._json(accounts.start("relogin", aid))
+                    if op in ("open", "reset"):  # the plain sign-in window (no automation) on the agent's profile
+                        a = accounts.get(aid)
+                        return self._json(apply_agent.login_window(a["reset_url"] if op == "reset" and a["reset_url"] else a["login_url"]))
+                    return self._json(accounts.remove(aid))
                 return self._json({"error": "not found"}, 404)
             if path == "/api/jobs":
                 from html import unescape
