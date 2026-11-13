@@ -168,34 +168,9 @@ def suggest(tiers=(0, 1, 2, 3, 4, 5), limit: int = 12, per_group: int = 2, bank:
                     add(r, 4, f"Also a route into {o['title']}")
     if not found or (cz is None and not targets):
         return {"suggestions": [], "zone": cz, "meta": meta, "note": NOTE_NO_EVIDENCE}
-    bad, source = _excluded_words(exclude), str(meta.get("source") or "")
-    if not source or source.endswith(" Database"):  # "O*NET 31.0 Database" -> "O*NET 31.0"
-        source = f"O*NET {meta.get('version', '')}".strip()
-    out = []
-    for code, hit in found.items():
-        if hit["tier"] not in tiers:
-            continue
-        o = occ[code]
-        names = [o["title"]] + list(o.get("titles") or [])
-        excluded = any(w in n.casefold() for w in bad for n in names)
-        if excluded and not show_excluded:
-            continue
-        uses = [s for s in ev["skills"] if any(_has(s, x) for x in o.get("tech") or [])]
-        missing = [x for x in o.get("tech") or [] if not any(_has(s, x) for s in ev["skills"])][:5]
-        mine = _words(ev["text"], 5)
-        not_transfer = [t for t in o.get("tasks") or [] if not (_words(t, 5) & mine)][:3]
-        note = regulated(code)
-        unmet = bool(note) and not any(_words(c, 3) & _words(o["title"], 3) for c in ev["certs"])
-        zone = o.get("zone")
-        close = ([occupations.ZONE_PREP[zone]] if zone and cz and zone > cz else []) + ([note] if note else [])
-        cls = classify(hit["tier"], zone, cz, excluded, unmet)
-        tech = o.get("tech") or []
-        out.append({"code": code, "title": o["title"], "tier": hit["tier"], "tier_label": TIERS[hit["tier"]],
-                    "cls": cls, "cls_label": CLASSES[cls], "zone": zone,
-                    "overlap": round(len(uses) / max(1, min(len(tech), 10)), 2),
-                    "why": hit["why"] + ([f"Uses skills you list: {', '.join(uses[:4])}"] if uses else []),
-                    "missing": missing, "not_transfer": not_transfer, "close_gap": close, "regulated": note,
-                    "source": source})
+    bad, source = _excluded_words(exclude), _source(meta)
+    out = [c for code, hit in found.items() if hit["tier"] in tiers
+           and (c := _card(occ[code], hit["tier"], hit["why"], ev, bad, source, show_excluded))]
     out.sort(key=lambda s: (s["tier"], -s["overlap"], s["code"]))
     kept: list[dict] = []
     per: dict[str, int] = {}
@@ -206,6 +181,81 @@ def suggest(tiers=(0, 1, 2, 3, 4, 5), limit: int = 12, per_group: int = 2, bank:
         per[g] = per.get(g, 0) + (s["tier"] > 1)
         kept.append(s)
     return {"suggestions": kept[:limit], "zone": cz, "meta": meta, "note": "" if kept else NOTE_NO_EVIDENCE}
+
+
+def _source(meta: dict) -> str:
+    source = str(meta.get("source") or "")
+    return f"O*NET {meta.get('version', '')}".strip() if not source or source.endswith(" Database") else source
+
+
+def _card(o: dict, tier: int, why: list[str], ev: dict, bad: list[str], source: str, show_excluded: bool) -> dict | None:
+    """One suggestion for occupation o: class, the four explanations, licensing note; None when excluded (unless
+    show_excluded, then Currently ineligible)."""
+    code, cz = o["code"], ev["zone"]
+    names = [o["title"]] + list(o.get("titles") or [])
+    excluded = any(w in n.casefold() for w in bad for n in names)
+    if excluded and not show_excluded:
+        return None
+    tech = o.get("tech") or []
+    uses = [s for s in ev["skills"] if any(_has(s, x) for x in tech)]
+    mine = _words(ev["text"], 5)
+    note = regulated(code)
+    unmet = bool(note) and not any(_words(c, 3) & _words(o["title"], 3) for c in ev["certs"])
+    zone = o.get("zone")
+    cls = classify(tier, zone, cz, excluded, unmet)
+    return {"code": code, "title": o["title"], "tier": tier, "tier_label": TIERS[tier], "cls": cls,
+            "cls_label": CLASSES[cls], "zone": zone, "overlap": round(len(uses) / max(1, min(len(tech), 10)), 2),
+            "why": list(why) + ([f"Uses skills you list: {', '.join(uses[:4])}"] if uses else []),
+            "missing": [x for x in tech if not any(_has(s, x) for s in ev["skills"])][:5],
+            "not_transfer": [t for t in o.get("tasks") or [] if not (_words(t, 5) & mine)][:3],
+            "close_gap": ([occupations.ZONE_PREP[zone]] if zone and cz and zone > cz else []) + ([note] if note else []),
+            "regulated": note, "source": source}
+
+
+UNMAPPED = "AI-suggested unmapped role: review"
+
+
+def explore(interests: str, provider: str | None = None, bank: dict | None = None, limit: int = 8) -> dict:
+    """Tier 6, Explore further (blueprint 3.2 open exploration): one AI call proposes occupations from what interests
+    you and your profile as an employer sees it (never the salary floor or Preferences). Each role is matched to O*NET
+    by title (its card names the taxonomy and version); one O*NET does not know stays, labelled UNMAPPED."""
+    from . import ai, profile
+
+    interests = " ".join(str(interests or "").split())[:500]
+    if not interests:
+        raise SystemExit("say what interests you: work you enjoy, settings, people, values")
+    try:
+        prof = profile.drop_preferences(profile.candidate_text(3000, strict=False, private=False))
+    except (Exception, SystemExit):  # the template or no profile: interests alone
+        prof = ""
+    r = ai.ask_json(
+        "Suggest up to 8 distinct occupations, across different industries, that fit this person's interests and "
+        "transferable experience, including non-obvious ones. Use standard occupation titles. Return JSON "
+        '{"roles": [{"title": "...", "why": "one sentence tied to their interests or experience"}]}. '
+        f"Never claim they are qualified; never mention pay.\n\nINTERESTS: {interests}\n\nPROFILE:\n{prof or '(none)'}",
+        provider=provider)
+    roles = r.get("roles") if isinstance(r, dict) else r if isinstance(r, list) else None
+    if not isinstance(roles, list):
+        raise SystemExit("the AI answer had no list of roles; try again")
+    from .extras import clean_label
+
+    ev, meta, occ = evidence(bank), occupations.meta(), occupations.load()["occ"]
+    bad, source, out, seen = _excluded_words(), _source(meta), [], set()
+    for x in roles[:12]:
+        if not isinstance(x, dict) or not (title := clean_label(x.get("title") or "", 80)):
+            continue
+        why = [f"AI: {clean_label(x.get('why') or '', 200)}"] if x.get("why") else ["AI suggestion"]
+        hit = next((c for c, s in occupations.match_title(title, 1) if s >= 0.8), None)
+        if hit:
+            if hit not in seen and (c := _card(occ[hit], 6, why, ev, bad, source, False)):
+                seen.add(hit)
+                out.append(c)
+        elif title.casefold() not in seen and not any(w in title.casefold() for w in bad):
+            seen.add(title.casefold())
+            out.append({"code": None, "title": title, "tier": 6, "tier_label": TIERS[6], "cls": "insufficient_evidence",
+                        "cls_label": CLASSES["insufficient_evidence"], "zone": None, "overlap": 0.0, "why": why,
+                        "missing": [], "not_transfer": [], "close_gap": [], "regulated": None, "source": UNMAPPED})
+    return {"suggestions": out[:limit], "zone": ev["zone"], "meta": meta, "note": ""}
 
 
 # --- career tracks (blueprint appendix A.1): a field you chose to search -----------------------------------------

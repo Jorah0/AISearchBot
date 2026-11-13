@@ -3167,12 +3167,13 @@ async function loadCareers() {
   $('#careerSug').innerHTML = err + (r.note ? `<p class="muted">${esc(r.note)}</p>` : '') + bands;
   $('#careerCredit').textContent = (r.meta && r.meta.credit) || '';
 }
-function careerCard(x, i) {  // i: the suggestion's index, so no page text ever lands inside an onclick
+let EXPLORED = [];
+function careerCard(x, i, from = 's') {  // i: the index in its list ('s' suggestions, 'e' explored): no page text in an onclick
   const list = (head, items) => items && items.length ? `<div><span class="muted">${head}:</span> ${items.map(esc).join('; ')}</div>` : '';
   return `<div class="career-card"><div class="row"><b>${esc(x.title)}</b>
       <span class="chip">${esc(x.tier_label)}</span><span class="chip">${esc(x.cls_label)}</span>
-      <span class="muted grow">${esc(x.code)} · ${esc(x.source)}</span>
-      <button class="b sm ghost" onclick="careerSearchCode(${Number(i)}, this)">Search live openings</button></div>
+      <span class="muted grow">${x.code ? esc(x.code) + ' · ' : ''}${esc(x.source)}</span>
+      ${x.code ? `<button class="b sm ghost" onclick="careerSearchCode(${Number(i)}, this, '${from === 'e' ? 'e' : 's'}')">Search live openings</button>` : ''}</div>
     ${x.regulated ? `<div class="warnbox">Licensing: ${esc(x.regulated)}. Lodestar cannot confirm eligibility.</div>` : ''}
     ${list('Why it fits', x.why)}${list('What is missing', x.missing)}${list('What does not transfer', x.not_transfer)}${list('To close the gap', x.close_gap)}</div>`;
 }
@@ -3191,8 +3192,14 @@ async function trackRemove(id, btn) {
   if (r.error) { btn.disabled = false; return toast('error: ' + r.error, 'err'); }
   loadCareers();
 }
-async function careerSearchCode(i, btn) {  // a suggestion's own search: a resume-led track for that occupation
-  const o = (CAREERS.suggestions || [])[i]; if (!o) return;
+function careerExplore(btn) {  // tier 6: one AI call, cards matched to O*NET or labelled unmapped
+  run('careers_explore', { interests: $('#exploreQ').value }, r => {
+    EXPLORED = r.suggestions || [];
+    $('#careerExplore').innerHTML = EXPLORED.map((x, i) => careerCard(x, i, 'e')).join('') || '<p class="muted">Nothing usable came back; try other words.</p>';
+  }, btn, e => { $('#careerExplore').innerHTML = `<div class="warnbox">${esc(e)}</div>`; });
+}
+async function careerSearchCode(i, btn, from = 's') {  // a suggestion's own search: a resume-led track for that occupation
+  const o = (from === 'e' ? EXPLORED : (CAREERS.suggestions || []))[i]; if (!o || !o.code) return;
   const r = await api('/api/careers/tracks', { label: o.title, intent: 'resume_led', codes: [o.code], tiers: [1] });
   if (r.error) return toast('error: ' + r.error, 'err');
   await loadCareers(); trackSearch(r.id, btn);

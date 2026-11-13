@@ -382,6 +382,10 @@ def _do(action: str, p: dict):
             from . import fit
 
             return {"fit": fit.ai_judge(job["id"], prov)}
+        case "careers_explore":  # {interests}: tier 6, one AI call (careers.explore)
+            from . import careers
+
+            return careers.explore(str(p.get("interests") or ""), prov)
         case "careers_search":  # {track, location?}: one career track's titles on the job boards, with the coverage
             from . import careers
 
@@ -1824,6 +1828,11 @@ class Handler(BaseHTTPRequestHandler):
                     advisor.helper_check(p.get("helper"), p.get("target"))
                 if parts[3] in ("pipeline_run", "pipeline_bulk"):
                     _check_pipeline(parts[3], p)
+                if parts[3] == "careers_explore":  # no interests or no AI provider: 400 before a task starts
+                    if not str(p.get("interests") or "").strip():
+                        raise SystemExit("say what interests you: work you enjoy, settings, people, values")
+                    if not ai.available():
+                        raise SystemExit(f"Explore further needs an AI provider. {ai.NO_PROVIDER}")
                 if parts[3] == "careers_search":  # an unknown track: 400 before a task starts
                     from . import careers
 

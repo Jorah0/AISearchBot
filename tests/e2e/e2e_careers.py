@@ -17,6 +17,9 @@ INN = {"title": "Hotel Manager", "company_name": "Saltmarsh Inn", "url": "https:
 
 
 class Careers(E2ETestCase):
+    ai_json = {"roles": [{"title": "Hotel Manager", "why": "you like hosting people"},
+                         {"title": "Escape Room Designer", "why": "you enjoy puzzles"}]}
+
     @classmethod
     def seed(cls):
         super().seed()
@@ -61,6 +64,19 @@ class Careers(E2ETestCase):
         res.get_by_role("button", name="Track").click()
         self.idle()
         self.assertTrue(any(j["company"] == "Saltmarsh Inn" for j in self.api("/api/state")["jobs"]))
+
+    def test_explore_further_maps_to_onet_or_says_unmapped(self):  # pass 24: tier 6, one AI call
+        self.go("careers")
+        self.page.fill("#exploreQ", "hosting people, puzzles")
+        self.run_click("#exploreGo")
+        box = self.page.locator("#careerExplore")
+        hotel = box.locator(".career-card", has_text="Lodging Managers")
+        self.assertIn("Explore further", hotel.inner_text())
+        self.assertIn("O*NET test fixture", hotel.inner_text())
+        room = box.locator(".career-card", has_text="Escape Room Designer")
+        self.assertIn("AI-suggested unmapped role: review", room.inner_text())
+        self.assertEqual(room.get_by_role("button", name="Search live openings").count(), 0)  # nothing to search by
+        self.assertIn("hosting people, puzzles", self.ai_calls[-1]["messages"][0]["content"])
 
     def test_bad_track_is_refused_in_place(self):
         self.allow_console()  # the API's 400 for the refused track

@@ -336,6 +336,76 @@ class TrackSearch(TrackCase):
         self.assertTrue(out["coverage"]["checked"])
 
 
+class Explore(FixtureCase):  # pass 24: tier 6, open exploration (one AI call, mapped to O*NET or labelled unmapped)
+    def setUp(self):
+        super().setUp()
+        from lodestar import ai
+
+        self.ai, self.prompts = ai, []
+        self._ai = (ai.ask_json, ai.available)
+        self.reply = {"roles": [{"title": "Hotel Manager", "why": "you run a store team and like hospitality"},
+                                {"title": "Escape Room Designer", "why": "you enjoy puzzles"},
+                                {"title": "Sales Associate", "why": "x"}]}
+
+        def ask_json(prompt, system=None, provider=None, **kw):
+            self.prompts.append(prompt)
+            return self.reply
+        ai.ask_json, ai.available = ask_json, lambda: ["anthropic"]
+
+    def tearDown(self):
+        self.ai.ask_json, self.ai.available = self._ai
+        super().tearDown()
+
+    def test_explore_maps_to_onet_or_labels_unmapped(self):
+        out = careers.explore("hospitality, puzzles, people", bank=BANK)
+        by = {s["title"]: s for s in out["suggestions"]}
+        hotel = by["Lodging Managers"]
+        self.assertEqual((hotel["tier"], hotel["tier_label"], hotel["source"]), (6, "Explore further", "O*NET test fixture"))
+        self.assertIn("you run a store team and like hospitality", hotel["why"][0])
+        room = by["Escape Room Designer"]
+        self.assertEqual((room["code"], room["source"], room["cls"]), (None, "AI-suggested unmapped role: review", "insufficient_evidence"))
+        self.assertEqual(len(self.prompts), 1)
+        self.assertIn("hospitality, puzzles, people", self.prompts[0])
+
+    def test_explore_respects_exclusions_and_needs_interests(self):
+        old = settings.pref("excluded_title_words")
+        try:
+            settings.set_pref("excluded_title_words", "salespersons")
+            titles = [s["title"] for s in careers.explore("anything", bank=BANK)["suggestions"]]
+            self.assertNotIn("Retail Salespersons", titles)
+        finally:
+            settings.set_pref("excluded_title_words", old or "")
+        with self.assertRaises(SystemExit):
+            careers.explore("   ", bank=BANK)
+        self.reply = "not json"
+        with self.assertRaises(SystemExit):
+            careers.explore("anything", bank=BANK)
+
+    def test_explore_prompt_never_holds_the_salary_floor(self):
+        from lodestar.config import PROFILE
+
+        snap = PROFILE.read_bytes() if PROFILE.is_file() else None
+        try:
+            PROFILE.write_text("# Pat\n## Experience\n### Store Manager - Acme (2019 - 2025)\n- Ran a store\n"
+                               "## Preferences\nSalary floor: $123,456\n", encoding="utf-8")
+            careers.explore("people", bank=BANK)
+        finally:
+            PROFILE.write_bytes(snap) if snap is not None else PROFILE.unlink(missing_ok=True)
+        for figure in ("123456", "123,456", "123k"):
+            self.assertNotIn(figure, self.prompts[-1])
+
+    def test_explore_cli(self):
+        old = profile.BANK
+        try:
+            profile.BANK = Path(self.tmp) / "profile.json"
+            profile.BANK.write_text(json.dumps(BANK), encoding="utf-8")
+            out = run(["careers", "explore", "hospitality and puzzles"])
+        finally:
+            profile.BANK = old
+        for text in ("Explore further", "Lodging Managers", "Escape Room Designer", careers.UNMAPPED):
+            self.assertIn(text, out)
+
+
 def run(argv: list[str]) -> str:
     out = io.StringIO()
     with contextlib.redirect_stdout(out):

@@ -415,6 +415,14 @@ def cmd_careers(a):
                 for sg in group:
                     _print_suggestion(sg)
         print("\n" + occupations.meta().get("credit", ""))
+    elif a.op == "explore":
+        out = careers.explore(a.interests, a.provider)
+        print("Explore further (one AI call; each role is matched to O*NET, or labelled when it is not)")
+        for sg in out["suggestions"]:
+            print(f"  [{sg['cls_label']}]")
+            _print_suggestion(sg)
+        if not out["suggestions"]:
+            print("  nothing usable came back")
     elif a.op == "occupation":
         o = occupations.get(a.code)
         if not o:
@@ -2286,6 +2294,8 @@ def build() -> argparse.ArgumentParser:
     x.add_argument("--tiers", default="0,1,2,3,4,5", help="expansion tiers to show (0 your targets, 1 your occupations ... 5 longer-term)")
     x.add_argument("--limit", type=int, default=12); x.add_argument("--show-excluded", dest="show_excluded", action="store_true", help="show excluded ones as Currently ineligible")
     x = v.add_parser("occupation", help="one O*NET occupation: titles, tasks, technology, related, licensing"); x.add_argument("code")
+    x = v.add_parser("explore", help="tier 6, Explore further: one AI call suggests occupations from what interests you, matched to O*NET")
+    x.add_argument("interests", help='e.g. "working with people, puzzles, outdoors"'); x.add_argument("--provider")
     v.add_parser("tracks", help="your career tracks")
     x = v.add_parser("track-add", help="save a career track (a field to search; any field, even one your resume does not show)")
     x.add_argument("label"); x.add_argument("--intent", required=True, choices=["resume_led", "desired_field", "combined", "exploration", "pivot"])

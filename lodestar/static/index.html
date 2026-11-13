@@ -163,6 +163,13 @@
     <div id="trackErr" class="err" role="alert"></div>
     <div id="trackList"></div>
   </div>
+  <div class="panel">
+    <h3>Explore further</h3>
+    <div class="row"><input id="exploreQ" class="grow" placeholder="what interests you: work you enjoy, settings, people, values" aria-label="Interests to explore">
+      <button class="b" id="exploreGo" onclick="careerExplore(this)">Explore (one AI call)</button></div>
+    <p class="muted">The AI suggests occupations from your interests and your profile (never your salary floor). Each is matched to O*NET; one it does not know is marked as an unmapped suggestion to review.</p>
+    <div id="careerExplore"></div>
+  </div>
   <div id="careerRes"></div>
   <div id="careerSug"></div>
   <p class="muted credit" id="careerCredit"></p>

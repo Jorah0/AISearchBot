@@ -2442,6 +2442,18 @@ lodestar careers search 1
 lodestar careers occupation 11-9081.00         # one O*NET occupation
 ```
 
+**Explore further** (one AI call): type what interests you (work you enjoy, settings, people, values). The AI
+suggests occupations from that and your profile as an employer sees it (never your salary floor or Preferences).
+Each is matched to O*NET by title and gets the same card; a role O*NET does not know is kept, marked "AI-suggested
+unmapped role: review". `lodestar careers explore "working with people, puzzles"`.
+
+**On every job (pass 24):** hard requirements are eligibility gates, each met, not met or unknown (unknown never
+counts as met), kept out of the fit score and listed in the job drawer: work authorization / visa sponsorship
+(Preferences > Work authorization), a security clearance (met when your profile mentions one), a license or
+certification the requirements name (met when your profile shows every word of it), and your excluded companies,
+title words and deal-breakers. The job's career class shows beside its fit. auto_track and Autopilot never act on a
+job with an unknown requirement by themselves.
+
 A new O*NET release: download its Text zip from https://www.onetcenter.org/database.html and run
 `python -I scripts/build_onet.py db_XX_X_text.zip --version XX.X`.
 

@@ -1,5 +1,23 @@
 # Changelog (development passes, newest first)
 
+## Pass 24 (2026-11-13): eligibility gates, career class on every job, Explore further
+
+**Hard requirements are no longer hidden inside the fit score**
+- Work authorization / visa sponsorship, a security clearance, a license or certification the requirements name, and
+  your own excluded companies, title words and deal-breakers are now eligibility gates: each is met, not met or
+  unknown, and unknown never counts as met. They are listed in the job drawer under "Hard requirements (kept out of
+  the score)". The fit score is the same with or without them; a job with a gate not met is still marked blocked.
+- Every job and listing shows its career class (Qualified now, Competitive with framing, Bridge required,
+  Longer-term development, Currently ineligible, Insufficient evidence) beside the fit, and the drawer shows the fit's
+  confidence (how much of it could be measured).
+- auto_track never adds a job with an unknown hard requirement by itself (it waits in the Inbox, even on auto), and the
+  pipeline's fit check keeps Autopilot away from it ("needs you: ... unknown"); a click still runs the next step.
+- Every stored fit is re-scored once (fit.json version 2).
+
+**Explore further (Careers tab, `lodestar careers explore`)**
+- One AI call suggests occupations from what interests you and your profile (never your salary floor). Each is
+  matched to O*NET by title; one O*NET does not know stays, marked "AI-suggested unmapped role: review".
+
 ## Pass 23 (2026-11-13): career discovery foundation (blueprint v1.1, first vertical slice)
 
 **Your resume is evidence, not a boundary**
