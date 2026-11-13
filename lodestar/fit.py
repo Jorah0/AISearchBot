@@ -326,30 +326,83 @@ def _item(x) -> dict:
                 "skip": skip or (), "ai_fit": ai_fit if isinstance(ai_fit, dict) else None, "is_job": is_job}
 
 
-def _mods(x, ctx) -> tuple[list[dict], bool]:
-    from .contacts import warm
-    from .web_monitor import GHOST_SHOW, ghost_signals, norm_company, norm_title, sponsor_hint
+_CRED = re.compile(r"(?i)\b(license|licence|certification|certificate|registration)\b")
+_CUE = re.compile(r"(?i)\b(must|required|requires|require|valid|active|current|hold|possess)\b")
+_LEAD = {"a", "an", "the", "valid", "active", "current", "must", "hold", "have", "possess", "required", "requires",
+         "require", "and", "or", "with", "be", "to", "of", "your", "in", "good", "standing"}
 
-    m, rx, out = config()["modifiers"], _rx(), []
-    text = f"{x['title']}\n{x['company']}\n{x['desc']}"
+
+def _credentials(req_text: str) -> list[str]:
+    """Licenses / certifications the requirements (never the nice-to-haves) demand: 'Must hold a valid Class A CDL
+    license' -> 'Class A CDL license'. ponytail: up to four words before the keyword, at most three per posting."""
+    out: dict[str, str] = {}
+    for line in re.split(r"[\n.;]", req_text):
+        m = _CRED.search(line)
+        if not m or not _CUE.search(line):
+            continue
+        words = re.findall(r"[\w+/'-]+", line[:m.start()])[-4:]
+        while words and words[0].casefold() in _LEAD:
+            words.pop(0)
+        if words:
+            name = " ".join(words + [m[1]])
+            out.setdefault(name.casefold(), name)
+    return list(out.values())[:3]
+
+
+def gates(x, ctx, req_text: str | None = None) -> list[dict]:
+    """Hard requirements, each {requirement, state, evidence} with state met / not_met / unknown (blueprint 7.2):
+    work authorization / sponsorship, security clearance, licenses the requirements name, and your own exclusions.
+    Kept out of the fit score; unknown is never met. Evidence strings never hold a salary figure."""
+    from . import ats
+    from .web_monitor import norm_company, norm_title
+
+    rx, out, desc = _rx(), [], x["desc"]
+    req_text = ats.split_nice(desc, config()["nice_headings"])[0] if req_text is None else req_text
+    have = (ctx["resume"] or "").casefold()
+
+    def add(req, state, evidence):
+        out.append({"requirement": req, "state": state, "evidence": evidence})
+
     co, title = norm_company(x["company"]), norm_title(x["title"])
     if co and co in ctx["bad_co"]:
-        out.append({"d": 0, "why": "excluded", "chip": ("-", "excluded company"), "block": True})
-    elif any(w and re.search(rf"(?<!\S){re.escape(w)}(?!\S)", title) for w in ctx["bad_words"]):
-        out.append({"d": 0, "why": "excluded", "chip": ("-", "excluded title word"), "block": True})
-    if ctx["auth"] == "needs_sponsorship":
-        if rx["no_sponsor"].search(x["desc"]):
-            out.append({"d": 0, "why": "no_sponsor", "chip": ("-", "says no visa sponsorship"), "block": True})
-        elif rx["sponsor_yes"].search(x["desc"]):
+        add("Excluded company", "not_met", "excluded company")
+    if any(w and re.search(rf"(?<!\S){re.escape(w)}(?!\S)", title) for w in ctx["bad_words"]):
+        add("Excluded title word", "not_met", "excluded title word")
+    text = f"{x['title']}\n{x['company']}\n{desc}"
+    if w := next((w for w in ctx["dealbreakers"] if re.search(rf"(?i)(?<!\w){re.escape(w)}(?!\w)", text)), None):
+        add("Deal-breaker", "not_met", f'mentions "{w}" (deal-breaker)')
+    no, yes, auth = rx["no_sponsor"].search(desc), rx["sponsor_yes"].search(desc), ctx["auth"]
+    req = "Work authorization / visa sponsorship"
+    if auth == "needs_sponsorship":
+        add(req, *(("not_met", "says no visa sponsorship") if no else ("met", "offers sponsorship") if yes
+                   else ("unknown", "the posting does not say whether it sponsors visas")))
+    elif auth == "authorized" and (no or yes):
+        add(req, "met", "you are authorized to work")
+    elif no:
+        add(req, "unknown", "says no visa sponsorship; set Work authorization in Preferences")
+    if rx["clearance"].search(desc):
+        add("Security clearance", *(("met", "your profile mentions a clearance") if "clearance" in have
+                                    else ("unknown", "requires a security clearance; your profile does not say")))
+    for name in _credentials(req_text):
+        words = [w for w in re.findall(r"[\w+/'-]+", name.casefold()) if len(w) >= 2 and w not in _LEAD
+                 and not _CRED.fullmatch(w)]
+        found = bool(words) and all(re.search(rf"(?<!\w){re.escape(w)}(?!\w)", have) for w in words)
+        add(name, *(("met", "on your profile") if found else ("unknown", "required; your profile does not show it")))
+    return out
+
+
+def _mods(x, ctx) -> list[dict]:
+    """Soft effects on the score (preferences, signals). Hard requirements are gates(), never a score cut."""
+    from .contacts import warm
+    from .web_monitor import GHOST_SHOW, ghost_signals, norm_company, sponsor_hint
+
+    m, rx, out = config()["modifiers"], _rx(), []
+    co = norm_company(x["company"])
+    if ctx["auth"] == "needs_sponsorship" and not rx["no_sponsor"].search(x["desc"]):
+        if rx["sponsor_yes"].search(x["desc"]):
             out.append({"d": m["sponsor_yes"], "why": "sponsor_yes", "chip": ("+", "offers sponsorship")})
         elif x["company"] and sponsor_hint(x["company"]):
             out.append({"d": m["sponsor_hint"], "why": "sponsor_hint", "chip": ("+", "possible H-1B sponsor")})
-    if rx["clearance"].search(x["desc"]) and not re.search(r"(?i)clearance", ctx["resume"] or ""):
-        out.append({"d": m["clearance"], "why": "clearance", "chip": ("-", "requires security clearance")})
-    for w in ctx["dealbreakers"]:
-        if re.search(rf"(?i)(?<!\w){re.escape(w)}(?!\w)", text):
-            out.append({"d": m["dealbreaker"], "why": "dealbreaker", "chip": ("-", f'mentions "{w}" (deal-breaker)')})
-            break
     if co and co in ctx["watched"]:
         out.append({"d": m["watched"], "why": "watched", "chip": ("+", "a company you watch")})
     if x["company"] and (people := warm(x["company"], ctx["warm"])):
@@ -360,7 +413,7 @@ def _mods(x, ctx) -> tuple[list[dict], bool]:
     if g["score"] >= GHOST_SHOW:
         d = max(m["ghost_max"], m["ghost_per_10"] * g["score"] // 10)
         out.append({"d": d, "why": "ghost", "chip": ("-", "possibly stale (" + "; ".join(g["reasons"][:1]) + ")")})
-    return out, any(o.get("block") for o in out)
+    return out
 
 
 def score(x, ctx: dict | None = None) -> dict:
@@ -393,19 +446,19 @@ def score(x, ctx: dict | None = None) -> dict:
     live = [(parts[p]["s"], w[p]) for p in (*PARTS, "ai") if p in parts and parts[p]["s"] is not None and w[p] > 0]
     base = sum(s * wt for s, wt in live) / sum(wt for _, wt in live) if live else c["shrink_to"]
     value = base * k + c["shrink_to"] * (1 - k)
-    mods, blocked = _mods(x, ctx)
+    mods, gs = _mods(x, ctx), gates(x, ctx, req_text)
+    blocked = any(g["state"] == "not_met" for g in gs)
     value += sum(o["d"] for o in mods)
     value = max(0, min(100, round(value)))
-    if blocked:
-        value = min(value, c["blocked_cap"])
-    chips += [{"sign": o["chip"][0], "text": o["chip"][1], "part": "mod", "rank": 10**6 if o.get("block") else abs(o["d"]) * 50}
-              for o in mods]
+    chips += [{"sign": o["chip"][0], "text": o["chip"][1], "part": "mod", "rank": abs(o["d"]) * 50} for o in mods]
+    chips += [{"sign": "-", "text": g["evidence"], "part": "gate", "rank": 10**6} for g in gs if g["state"] == "not_met"]
     chips.sort(key=lambda ch: -ch["rank"])
     n_known = sum(parts[p]["s"] is not None for p in PARTS)
     note = f"measured {n_known} of {len(PARTS)} parts" + (
         "; " + "; ".join(next(ch["text"] for ch in chips if ch["part"] == p and ch.get("info")) for p in unknown[:2])
         if unknown else "")
-    return {"score": value, "known": round(k, 2), "blocked": blocked, "partial": k < c["partial_below"],
+    return {"score": value, "known": round(k, 2), "confidence": round(k, 2), "blocked": blocked,
+            "partial": k < c["partial_below"], "gates": gs, "gates_unknown": any(g["state"] == "unknown" for g in gs),
             "rev": ctx["rev"], "at": date.today().isoformat(), "parts": parts,
             "mods": [{"d": o["d"], "why": o["why"]} for o in mods],
             "chips": [{kk: ch[kk] for kk in ("sign", "text", "part", "info") if kk in ch} for ch in chips], "note": note}

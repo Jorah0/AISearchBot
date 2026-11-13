@@ -194,15 +194,17 @@ class Modifiers(Base):
         self.assertFalse(fit.score(no)["blocked"])  # authorised (or unset): not judged
         settings.set_pref("work_authorization", "needs_sponsorship")
         f = fit.score(no)
-        self.assertTrue(f["blocked"]); self.assertLessEqual(f["score"], 10)
+        # pass 24: a failed hard requirement is a gate (blocked), never a cut in the score (blueprint 7.2)
+        self.assertTrue(f["blocked"]); self.assertEqual(f["score"], fit.score(L(desc=JD + " We cannot sponsor visas for this role."))["score"])
         self.assertEqual(f["chips"][0]["text"], "says no visa sponsorship")  # blocks first
         self.assertIn("offers sponsorship", [c["text"] for c in fit.score(L(desc=JD + " Visa sponsorship is available."))["chips"]])
         settings.set_pref("work_authorization", "authorized")
         base = fit.score(L())["score"]
         settings.set_pref("excluded_companies", "Acme")
-        self.assertLessEqual(fit.score(L())["score"], 10)
+        self.assertTrue(fit.score(L())["blocked"]); self.assertEqual(fit.score(L())["score"], base)
         settings.set_pref("excluded_companies", "")
-        self.assertEqual(fit.score(L(desc=JD + " We build gambling products."))["score"], max(0, base - 25))
+        gamble = fit.score(L(desc=JD + " We build gambling products."))
+        self.assertTrue(gamble["blocked"]); self.assertEqual(gamble["score"], base)
         old = L() | {"date": "2020-01-01"}
         self.assertLess(fit.score(old)["score"], base)
         self.assertIn("possibly stale", " ".join(c["text"] for c in fit.score(old)["chips"]))
