@@ -61,5 +61,53 @@ class Contradictions(Base):
         self.assertFalse({"sponsor_yes", "sponsor_hint"} & set(fit.config()["modifiers"]))
 
 
+class Helpers(unittest.TestCase):  # one home per helper (util); the old private names are aliases of these
+    def test_write_atomic_retries_a_locked_rename_and_can_be_owner_only(self):
+        import os as _os
+
+        from lodestar import util
+
+        p = Path(tempfile.mkdtemp()) / "x.json"
+        calls, real = [], _os.replace
+
+        def flaky(a, b):
+            calls.append(1)
+            if len(calls) < 3:
+                raise PermissionError("in use")
+            return real(a, b)
+        with patched(util.os, replace=flaky):
+            util.write_atomic(p, '{"a": 1}')
+        self.assertEqual((p.read_text(encoding="utf-8"), len(calls)), ('{"a": 1}', 3))
+        with patched(util.os, replace=lambda a, b: (_ for _ in ()).throw(PermissionError("in use"))):
+            with self.assertRaises(PermissionError):
+                util.write_atomic(p, "{}", tries=2)
+        util.write_atomic(p, "{}", private=True)
+        self.assertEqual(p.read_text(encoding="utf-8"), "{}")
+
+    def test_small_helpers(self):
+        import hashlib
+        from datetime import datetime, timezone
+
+        from lodestar import careers, connections, fit, intel, interview, listings, pipeline, util
+
+        self.assertEqual(util.short_hash("x"), hashlib.sha1(b"x").hexdigest()[:12])
+        self.assertIs(fit._h, util.short_hash)
+        self.assertIs(pipeline._h, util.short_hash)
+        self.assertEqual((util.load_json('{"a": 1}', {}), util.load_json("", []), util.load_json("{bad", None)), ({"a": 1}, [], None))
+        self.assertIs(interview._load, util.load_json)
+        self.assertIs(pipeline._load, util.load_json)
+        self.assertTrue(util.word_in("sales", "Sales Manager"))
+        self.assertFalse(util.word_in("sales", "Wholesale buyer"))
+        self.assertTrue(util.word_in("c++", "Senior C++ developer"))
+        self.assertIs(careers._word_in, util.word_in)
+        for m in (connections, intel, listings):
+            self.assertIs(m._now, db._now)
+        aware = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        want = aware.astimezone().replace(tzinfo=None)
+        self.assertEqual(util.utc_to_local("2026-01-02 03:04:05"), want)
+        self.assertEqual(util.utc_to_local("2026-01-02T03:04:05Z"), want)
+        self.assertEqual(util.utc_to_local(aware), want)
+
+
 if __name__ == "__main__":
     unittest.main()

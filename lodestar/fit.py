@@ -10,14 +10,13 @@ Private: fit data is the user's own judgement. It never holds a salary floor fig
 (resume, letters, answers, mail, drafts) and never reaches an AI provider (rank() sees listings and the profile, not
 fit chips). No AI call happens here: the AI part is stored by rank() callers (auto_track, the 'AI fit' button).
 """
-import hashlib
 import json
 import re
 from datetime import date, datetime
 from functools import lru_cache
 from pathlib import Path
 
-from . import db, settings
+from . import db, settings, util
 
 DATA = Path(__file__).parent / "data" / "fit.json"
 PARTS = ("skills", "role", "experience", "location", "pay")
@@ -51,8 +50,7 @@ def weights(prefs: dict | None = None) -> dict:
     return w
 
 
-def _h(s) -> str:
-    return hashlib.sha1(str(s).encode("utf-8")).hexdigest()[:12]
+_h = util.short_hash
 
 
 def rev() -> str:

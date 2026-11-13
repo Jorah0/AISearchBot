@@ -15,13 +15,13 @@ secret that signs every /api/ext/* request. Stdlib only.
 import hashlib
 import hmac
 import json
-import os
 import re
 import secrets
 import threading
 import time
 from datetime import datetime
 
+from . import util
 from .config import HOME
 
 ORIGIN_RE = re.compile(r"chrome-extension://[a-p]{32}")  # ponytail: + moz-extension://<uuid> when Firefox lands
@@ -155,14 +155,4 @@ def _load() -> dict:
 
 
 def _save(d: dict) -> None:
-    tmp = PATH.with_name(PATH.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # owner-only on POSIX (Windows: the profile ACL)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(d, fh, indent=1)
-    for i in range(40):  # Windows refuses the rename while another thread reads the file at this instant
-        try:
-            return os.replace(tmp, PATH)
-        except PermissionError:
-            if i == 39:
-                raise
-            time.sleep(0.025)
+    util.write_atomic(PATH, json.dumps(d, indent=1), private=True)  # owner-only, with the Windows retry

@@ -5,6 +5,7 @@ import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 
+from . import util
 from .config import DB_PATH, full_ai_check
 
 # order matters: callers move a job only forward by index (accepted sits before the two closed states)
@@ -398,8 +399,7 @@ def release(close: bool = True) -> None:
             c.close()
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+_now = util.utc_stamp
 
 
 def add_job(company, title, url=None, jd=None, notes=None, ats_feed=None, **fields) -> int:

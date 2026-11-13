@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 
-from . import ai, db
+from . import ai, db, util
 from .config import ALERTS, APPS_DIR
 from .util import slug
 
@@ -1259,7 +1259,7 @@ def _day(d) -> date:
 
 def _local(ts: str) -> date:
     """A UTC 'YYYY-MM-DD HH:MM:SS' column value (datetime('now')) as your local calendar day."""
-    return datetime.fromisoformat(ts).replace(tzinfo=timezone.utc).astimezone().date()
+    return util.utc_to_local(ts).date()
 
 
 def monday(d: date) -> date:

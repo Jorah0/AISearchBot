@@ -15,8 +15,7 @@ def _provider() -> str:
     return vault.get("OAUTH_PROVIDER") or ""
 
 
-def _local(s: str) -> datetime:
-    return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone().replace(tzinfo=None)
+_local = util.utc_to_local
 
 
 def busy(days: int = 14) -> list[tuple[datetime, datetime]]:

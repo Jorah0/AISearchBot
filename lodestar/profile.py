@@ -126,10 +126,9 @@ def load() -> dict:
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    from .util import write_atomic
+
+    write_atomic(path, text)
 
 
 def save(bank: dict) -> None:

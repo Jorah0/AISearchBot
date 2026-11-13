@@ -19,8 +19,7 @@ LIGHT = ("key", "url", "title", "company", "location", "salary", "posted_at", "u
          "seen_count", "fit_score", "fit", "fit_rev", "ai_fit", "job_id", "dismissed", "closed_at", "reposted_at")
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")  # UTC, like first_seen's datetime('now')
+_now = db._now  # one home (pass 31): UTC, like the database's datetime('now')
 
 
 def _jl(v) -> list:

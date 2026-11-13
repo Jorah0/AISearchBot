@@ -11,7 +11,6 @@ Rules (later passes too): stage functions never send, submit, add a job or chang
 employer text comes from candidate_text(private=False) / the tailored resume and db.employer_answers(); eligibility and
 EEO answers are never AI-drafted; pipeline bookkeeping never goes to `events` (the follow-up clock reads it).
 """
-import hashlib
 import json
 import re
 import threading
@@ -22,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
-from . import ai, db, log, settings
+from . import ai, db, log, settings, util
 
 AUTO = False  # True: kicks run in a daemon thread. Set by the cli ui / app / desktop commands only (never start_server)
 STUCK_MINUTES = 30  # a 'running' row this old: Lodestar closed while it ran (reads as error, can be claimed again)
@@ -83,8 +82,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")  # sub-second: the claim compares it
 
 
-def _h(text) -> str:
-    return hashlib.sha1(str(text).encode("utf-8")).hexdigest()[:12]
+_h = util.short_hash
 
 
 def _dir(job):
@@ -143,11 +141,7 @@ def _questions_fp(job) -> str:
         return "?"
 
 
-def _load(v, default):
-    try:
-        return json.loads(v) if v else default
-    except ValueError:
-        return default
+_load = util.load_json
 
 
 def _rows(job_id: int) -> dict:

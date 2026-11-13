@@ -1,6 +1,7 @@
 """Small helpers: HTTP fetch, HTML to text, JSON extraction, notifications."""
 import http.client
 import json
+import os
 import re
 import smtplib
 import urllib.request
@@ -479,3 +480,61 @@ def send_email(to: str, subject: str, body: str, in_reply_to: str | None = None,
         smtp_login(s, c["smtp_user"] if pw else c["user"], pw)
         s.send_message(m)
     return m["Message-ID"]
+
+
+# --- one home per small helper (pass 31): the modules' old private names are aliases of these -----------------------
+def short_hash(s, n: int = 12) -> str:
+    """sha1 of str(s), first n hex digits: fingerprints and cache keys, never security."""
+    import hashlib
+
+    return hashlib.sha1(str(s).encode("utf-8")).hexdigest()[:n]
+
+
+def load_json(v, default):
+    """A JSON column value, or default when it is empty or not JSON."""
+    try:
+        return json.loads(v) if v else default
+    except ValueError:
+        return default
+
+
+def word_in(word: str, text: str) -> bool:
+    """word (or a phrase) as a whole word in text, any case: 'sales' is in 'Sales Manager', never in 'Wholesale'."""
+    return bool(re.search(rf"(?<!\w){re.escape(word)}(?!\w)", text or "", re.I))
+
+
+def utc_stamp() -> str:
+    """Now in UTC as the database writes it (datetime('now')): 'YYYY-MM-DD HH:MM:SS'."""
+    from datetime import timezone
+
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def utc_to_local(ts) -> datetime:
+    """A UTC time (a datetime('now') column, ISO text with Z or an offset, or an aware datetime) as a naive local
+    datetime. Naive input is UTC."""
+    from datetime import timezone
+
+    d = ts if isinstance(ts, datetime) else datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).astimezone().replace(tzinfo=None)
+
+
+def write_atomic(path, text: str, private: bool = False, tries: int = 40) -> None:
+    """Write-then-rename: a crash never leaves a torn file. private: owner-only on POSIX (Windows: the profile ACL).
+    Windows refuses the rename while another thread reads the file at that instant, so it is retried briefly."""
+    import time
+    from pathlib import Path
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600 if private else 0o666)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    for i in range(tries):
+        try:
+            return os.replace(tmp, path)
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(0.025)

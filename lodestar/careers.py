@@ -126,9 +126,7 @@ def _excluded_words(extra=()) -> list[str]:
     return [w.strip().casefold() for w in list(words) + list(extra) if len(w.strip()) >= 3]
 
 
-def _word_in(word: str, text: str) -> bool:
-    """An excluded word as a whole word or phrase ('sales' excludes Sales Managers, never Wholesale), like fit.gates."""
-    return bool(re.search(rf"(?<!\w){re.escape(word)}(?!\w)", text, re.I))
+from .util import word_in as _word_in  # noqa: E402  one home (pass 31): whole word, like fit.gates
 
 
 def _has(hay: str, needle: str) -> bool:

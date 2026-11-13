@@ -8,10 +8,9 @@ Commands you type yourself are confirmed by typing them; only automatic flows go
 """
 import copy
 import json
-import os
-import time
 import threading
 
+from . import util
 from .ai import PROVIDERS
 from .config import HOME, full_ai_check
 
@@ -235,15 +234,7 @@ def load() -> dict:
 
 def save(data: dict) -> None:
     full_ai_check("changes settings (automation, privacy, providers)")
-    tmp = PATH.with_name(PATH.name + ".tmp")  # write-then-rename: a crash mid-write never leaves a torn file
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    for i in range(40):  # Windows refuses the rename while another thread reads settings.json at this instant
-        try:
-            return os.replace(tmp, PATH)
-        except PermissionError:
-            if i == 39:
-                raise
-            time.sleep(0.025)
+    util.write_atomic(PATH, json.dumps(data, indent=2))  # write-then-rename, retried while Windows holds it open
 
 
 def enabled(tool: str) -> bool:

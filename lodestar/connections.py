@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-from . import ai, settings, vault
+from . import ai, db, settings, util, vault
 from .config import HOME, setting
 
 PATH = HOME / "connections.json"
@@ -63,8 +63,7 @@ def fp(key) -> str:
     return hashlib.sha256(str(key or "").encode()).hexdigest()[:12]
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")  # UTC, like the database (the UI shows local time)
+_now = db._now  # one home (pass 31): UTC, like the database's datetime('now')
 
 
 def local(ts: str) -> str:
@@ -87,9 +86,7 @@ def _load() -> dict:
 
 
 def _save(data: dict) -> None:
-    tmp = PATH.with_name(PATH.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    os.replace(tmp, PATH)
+    util.write_atomic(PATH, json.dumps(data, indent=2))
 
 
 def record(kind: str, name: str | None, result: dict, key_fp: str) -> None:
