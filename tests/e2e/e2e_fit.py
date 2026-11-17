@@ -117,6 +117,7 @@ class Fit(E2ETestCase):
         self.page.locator(f"#prefs .row:has(#pl{i})").get_by_role("button", name="Reset weights").click()
         self.page.wait_for_function("() => S.prefs.fit_weights && Object.keys(S.prefs.fit_weights).length === 0")
         self.assertEqual(settings.load()["prefs"]["fit_weights"], {})
+        self.idle()  # the row re-renders after the reset: typing into the old input would send nothing
         self.allow_console()  # the refused value below is a 400
         bad = self.page.locator(f"#prefs .row:has(#pl{i}) input")
         bad.fill("skills=500")
