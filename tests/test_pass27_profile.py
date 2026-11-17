@@ -42,7 +42,10 @@ class Formats(unittest.TestCase):
         self.assertEqual([ln.strip() for ln in text.splitlines() if ln.strip()], ["Experience", "Store Manager été", "Led 14 staff"])
 
     def test_a_pdf_without_a_text_layer_is_said_not_guessed(self):
-        from pypdf import PdfWriter
+        try:
+            from pypdf import PdfWriter
+        except ImportError:
+            self.skipTest("pypdf is not installed (pip install -e .[pdf])")
 
         w, buf = PdfWriter(), io.BytesIO()
         w.add_blank_page(612, 792)

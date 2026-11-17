@@ -52,6 +52,7 @@ class ImapStartTLS(MailBase):  # code-1: Proton Mail Bridge serves IMAP on 1143 
                         c.sendall(b"* CAPABILITY IMAP4rev1 STARTTLS\r\n" + tag + b" OK done\r\n")
                     elif b"STARTTLS" in line:
                         c.sendall(tag + b" OK begin TLS\r\n")
+                        break  # what follows is the TLS handshake, not a line
             finally:
                 c.close()
                 srv.close()

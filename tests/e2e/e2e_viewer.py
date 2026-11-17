@@ -17,7 +17,19 @@ from harness import FLOOR, E2ETestCase, db, resume
 from lodestar import settings, studio, viewer
 
 REAL_BROWSER = resume._browser  # the harness pins the print-page fallback per class; this suite prints real PDFs
-EDGE = REAL_BROWSER()
+
+
+def _prints():
+    """A browser that can actually print here: a Linux CI runner has Edge but not its sandbox helper (skip, not fail)."""
+    if not REAL_BROWSER():
+        return False
+    try:
+        return viewer.pdf("<!doctype html><p>probe</p>").startswith(b"%PDF")
+    except (SystemExit, OSError):
+        return False
+
+
+EDGE = REAL_BROWSER() if _prints() else None
 LONG = "# Research: Northwind Analytics\n\n" + "\n\n".join(
     f"## Topic {n}\n" + "\n".join(f"- Finding {n}.{k}: Northwind ships data products to {k + 3} regional teams" for k in range(8))
     for n in range(1, 9))

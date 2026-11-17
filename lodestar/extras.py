@@ -724,7 +724,10 @@ def backup(out_dir: Path | None = None, keep: int = 7, prefix: str = "lodestar-b
         raise SystemExit("keep must be at least 1 (the backup just made)")
     out_dir = out_dir or HOME / "backups"
     out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / f"{prefix}-{datetime.now():%Y%m%d-%H%M%S}.zip"  # seconds: two backups in the same minute both stay
+    stamp = f"{prefix}-{datetime.now():%Y%m%d-%H%M%S}"  # seconds: two backups in the same minute both stay
+    target, n = out_dir / f"{stamp}.zip", 2
+    while target.exists():  # and two in the same second too (a safety zip right after a backup)
+        target, n = out_dir / f"{stamp}-{n}.zip", n + 1
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z, tempfile.TemporaryDirectory() as tmp:
         for p in HOME.rglob("*"):
             rel = p.relative_to(HOME)

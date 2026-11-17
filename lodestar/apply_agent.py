@@ -364,7 +364,10 @@ def forget_logins() -> dict:
     if not PROFILE_DIR.exists():
         return {"removed": False, "left": []}
     left = []
-    shutil.rmtree(PROFILE_DIR, onexc=lambda fn, path, exc: left.append(str(Path(path).relative_to(PROFILE_DIR))))
+    def kept(fn, path, exc):  # a file another program holds open stays, and is named
+        left.append(str(Path(path).relative_to(PROFILE_DIR)))
+    # Python 3.11 has only onerror (onexc arrived in 3.12, which deprecates onerror)
+    shutil.rmtree(PROFILE_DIR, **({"onexc": kept} if sys.version_info >= (3, 12) else {"onerror": kept}))
     if left:
         raise SystemExit(f"a browser process still uses the agent profile ({len(left)} files left, e.g. {left[0]}): close "
                          "Edge windows on it and try again")
