@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 import unittest
 import urllib.request
 import zipfile
@@ -334,7 +335,7 @@ class Locks(FileDb):
                 with self.assertRaises(SystemExit) as e:
                     fail()
                 self.assertIn("already", str(e.exception))
-                other.execute("INSERT INTO seen(key) VALUES(?)", (f"probe-{time.monotonic()}",))  # locked before the fix
+                other.execute("INSERT INTO seen(key) VALUES(?)", (f"probe-{uuid.uuid4().hex}",))  # locked before the fix (uuid: Windows repeats monotonic())
                 other.commit()
         finally:
             other.close()
