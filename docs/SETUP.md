@@ -1663,6 +1663,28 @@ lodestar digest --send     # try it: prints where it went
 If sending fails, the alert still lands in `~/.lodestar/alerts.log` and the terminal shows `(email notify failed: ...)`.
 Pop-up notifications on this computer are a separate switch (Setup > Desktop notifications).
 
+### Job sites you browse yourself (LinkedIn, Indeed, Glassdoor, ZipRecruiter, SimplyHired)
+
+Lodestar never signs into, browses or applies on these five sites itself: their terms forbid bots, and an account
+that a site flags is yours. Instead it works alongside you:
+
+- **Search links.** Under the Jobs tab's search box, one link per site opens that site's own search in your browser
+  with your role, place and level filled in (LinkedIn and Indeed use their experience-level filters; the others put
+  the level word in the search). Lodestar fetches nothing.
+- **AI search ideas.** *AI: search ideas for these sites* (next to the links) asks your AI provider once for up to six
+  searches you qualify for (your titles, real synonyms, adjacent titles) and one boolean string for LinkedIn's and
+  Indeed's keyword box, from your profile and saved searches (never your salary floor). Each idea comes with links to
+  all five sites' own search; **Use** puts it in the search box. The AI never sees these sites.
+- **Save as you browse.** On a posting you have open, the extension's **Save** sends it to Lodestar: it is scored for
+  fit, sorted (seniority, career class) and appears on the Board, in All jobs, on Today and in Insights like any other
+  job. Job-alert emails from these sites keep arriving in All jobs too.
+- **Fill on your click.** On an application form you have open, the extension's **Fill** fills what Lodestar knows;
+  you review and press Submit yourself.
+- **Caps.** Accounts > *Job sites you browse yourself* sets a daily and a weekly cap per site (defaults: LinkedIn 10 /
+  40, Indeed 15 / 60, the others 10 / 40). Lodestar counts the jobs you mark applied whose link (or application link)
+  is on that site. At a cap the site shows *At cap: paused*, Today and the job's drawer say so, and the extension's
+  Fill waits there until the day (or the 7 days) has passed. Mark jobs applied after you apply, so the count is right.
+
 ### The Accounts tab: every connection, and when one stops working
 
 **Accounts** (Settings in the sidebar) is where every link Lodestar uses lives:
@@ -2988,8 +3010,11 @@ your answer bank for the questions the page shows. It never clicks, submits, pre
 uploads a file: radio buttons, dropdown widgets, file uploads and date pickers are listed as "needs you" with your
 stored answer.
 
-**Not on LinkedIn.** LinkedIn's User Agreement bans browser plugins and add-ons that scrape or copy its site, so the
-extension does nothing there (the server refuses LinkedIn pages too). Open the job on the company's own careers page.
+**On LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired** the extension works only when you click: Save sends
+the posting you have open, Fill fills the application form you have open, and nothing is ever submitted. LinkedIn's
+User Agreement discourages add-ons on its site, so use it sparingly there. Each of these five sites has an application
+cap (Accounts > Job sites you browse yourself); once a site reaches today's or this week's cap, Fill waits there
+until the window passes (Save still works).
 
 **Install (load unpacked, no store):**
 

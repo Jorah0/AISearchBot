@@ -343,3 +343,9 @@ a.chip.attr-adzuna { display: inline-block; min-width: 116px; min-height: 23px; 
 .connrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--line); }
 .connrow .muted { overflow-wrap: anywhere; }
 #homeLost:empty, #connLost:empty { display: none; }
+
+/* pass 36: the five job sites you browse yourself */
+#siteSearch a.full { border-color: var(--bad); }
+#homePace:empty, #siteIdeas:empty { display: none; }
+#siteIdeas code { overflow-wrap: anywhere; }
+#siteList input { padding: 2px 6px; }

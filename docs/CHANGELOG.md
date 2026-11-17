@@ -1,5 +1,28 @@
 # Changelog (development passes, newest first)
 
+## Pass 37 (2026-11-17): AI search ideas for the job sites you browse yourself
+
+- *AI: search ideas for these sites* on the Jobs tab: one AI call turns your profile (never the salary floor) and
+  saved searches into up to six searches you qualify for, plus a boolean string for LinkedIn's and Indeed's keyword
+  box. Each comes with links to LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired's own search; Use puts it
+  in the search box. The AI never sees those sites and Lodestar never opens them.
+
+## Pass 36 (2026-11-17): the job sites you browse yourself
+
+- LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired: Lodestar still never signs in, browses or applies there
+  itself (their terms forbid bots, and a flagged account is yours). It now works alongside you instead:
+  - the Jobs tab links to each site's own search with your role, place and level filled in;
+  - the extension's Save and Fill work on all five, LinkedIn included, only when you click (it never submits);
+  - Accounts > *Job sites you browse yourself* sets a daily and weekly application cap per site; at a cap, Today,
+    the job drawer and the Accounts tab say so and the extension's Fill waits until the window passes.
+
+## Pass 35 (2026-11-17): loose ends
+
+- The light or dark theme you picked applies before the page paints (no flash of the other theme on load).
+- A click outside the keyboard-shortcut sheet (?) closes it.
+- The job drawer's Apply group says why the apply agent cannot run here (no Playwright, no Edge / Chrome) instead
+  of showing a button that fails.
+
 ## Pass 34 (2026-11-13): the Accounts tab, connection history, search seniority
 
 - A new **Accounts** tab (under Settings) lists everything Lodestar connects to, grouped: your mailbox, AI keys, each

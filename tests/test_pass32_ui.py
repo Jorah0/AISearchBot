@@ -42,5 +42,23 @@ class VisualSystem(unittest.TestCase):
         self.assertIn("try", fn)  # a private window without storage still switches
 
 
+class DeferredMinors(unittest.TestCase):  # the pass 32 review's deferred minors, closed in pass 35
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+
+    def test_the_saved_theme_applies_before_the_stylesheet_paints(self):
+        head = self.html.split("</head>", 1)[0]
+        self.assertIn("ls_theme", head)
+        self.assertLess(head.index("ls_theme"), head.index("app.css"))  # no flash of the other theme
+
+    def test_a_click_outside_closes_the_shortcut_sheet(self):
+        self.assertRegex(self.js, r"addEventListener\('click', e => \{[^}]*keysHelp")
+
+    def test_the_apply_group_says_when_the_agent_cannot_run(self):
+        fn = self.js.split("function applyGroup(j)", 1)[1].split("\n}", 1)[0]
+        self.assertIn("S.apply", fn)
+        self.assertIn("disabled", fn)
+
+
 if __name__ == "__main__":
     unittest.main()

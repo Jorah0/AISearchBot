@@ -121,20 +121,6 @@ def revoke(eid) -> bool:
     return True
 
 
-LINKEDIN = ("Lodestar does not capture or fill on LinkedIn: its User Agreement bans browser add-ons that scrape or "
-            "copy it. Open the job on the company's own careers page instead.")
-
-
-def linkedin(url) -> bool:
-    """A linkedin.com page (any subdomain): the extension never captures or fills there."""
-    from urllib.parse import urlparse
-
-    try:
-        host = (urlparse(str(url or "")).hostname or "").lower().rstrip(".")
-    except ValueError:
-        return False
-    return host == "linkedin.com" or host.endswith(".linkedin.com")
-
 
 def bookmarklets_on() -> bool:
     """The ?t= capture token (the bookmarklets) works: pref 'bookmarklets' on, or auto while no browser is paired."""

@@ -98,7 +98,6 @@
   // opts.agent: the apply agent (lodestar/apply_ats.py, its own window, never the extension): checkboxes and every file
   // input too, each element tagged data-lodestar-i so Lodestar finds it again, plus required / value / help
   globalThis.LodestarScan = (opts) => {
-    if (M.linkedin(location.hostname)) return { error: M.LINKEDIN, fields: [], questions: [], atsFrames: [] };
     const agent = Boolean(opts && opts.agent);
     if (agent) for (const el of walk(document)) el.removeAttribute("data-lodestar-i");  // a new step: fresh numbers only
     const heads = [...document.querySelectorAll('h1, h2, h3, h4, h5, h6, legend, [role="heading"]')];
@@ -166,7 +165,6 @@
   }
 
   globalThis.LodestarReadPosting = () => {
-    if (M.linkedin(location.hostname)) return { error: M.LINKEDIN };
     const sel = String(getSelection() || "");
     const main = document.querySelector("main") || document.querySelector("article") || document.body;
     return {

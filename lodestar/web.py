@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import __version__, advisor, ai, apply, apply_agent, approvals, careers, codes, comp, connections, db, extension, extras, log, loop, mailconn, oauth, paydata, pipeline, settings, vault
+from . import __version__, advisor, ai, apply, apply_agent, approvals, careers, codes, comp, connections, db, extension, extras, log, loop, mailconn, oauth, pacing, paydata, pipeline, settings, vault
 from .config import ALERTS, PROFILE
 
 STATIC = Path(__file__).parent / "static"
@@ -383,6 +383,8 @@ def _do(action: str, p: dict):
             from . import fit
 
             return {"fit": fit.ai_judge(job["id"], prov)}
+        case "site_queries":  # {level, location}: AI search ideas to run yourself on the five sites (pacing, pass 37)
+            return pacing.site_queries(str(p.get("level") or "")[:20], str(p.get("location") or "")[:80], prov)
         case "careers_explore":  # {interests}: tier 6, one AI call (careers.explore)
             from . import careers
 
@@ -879,6 +881,7 @@ def state() -> dict:
         "connections": conn,
         "codes_count": len(codes.current()),  # the count only: a code never travels in the state
         "apply": _apply_state(),  # the apply agent: available, live runs, queue (apply_agent.status)
+        "pacing": pacing.usage(),  # pass 36: the five job sites you browse yourself, applications vs your caps
         "loop": dict(loop.STATUS),
         "jobs": [_job_view(j, idx, revs, pidx, frev) for j in db.list_jobs()],
         "fit_rev": frev,  # a job whose fit was scored at another rev is stale (dimmed); the page asks for a refresh
@@ -1090,6 +1093,7 @@ class Handler(BaseHTTPRequestHandler):
                             "people": job_people(job["id"]), "warm": warm(job["company"]),
                             "rounds": interview.rounds(job["id"]), "bank": interview.question_bank(job, False)[:30],
                             "stress": interview.story_prompt(job), "mail": [dict(r) for r in db.list_mail(job["id"])],
+                            "pacing": pacing.for_job(job),
                             "pipeline": pipeline.status(job["id"]), "questions": pipeline.questions(job=job["id"]),
                             "runs": pipeline.log_runs(job["id"], 10), "pay": _pay_view(job),
                             "occupations": paydata.data()["occupations"], "activity": listings.activity(job["id"]),
@@ -1303,8 +1307,8 @@ class Handler(BaseHTTPRequestHandler):
         eid = extension.verify(self.headers.get("X-Lodestar-Ext"), origin, "POST", port, path, raw)
         if not eid:
             return self._json({"error": "not paired"}, 401)
-        if path != "/api/ext/ping" and extension.linkedin(p.get("url")):
-            return self._json({"error": extension.LINKEDIN}, 400)
+        if path == "/api/ext/autofill" and (wait := pacing.check(p.get("url"))):  # pass 36: paced job sites
+            return self._json({"error": wait}, 429)
         try:
             if path == "/api/ext/ping":
                 import time
@@ -1499,6 +1503,9 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     raise ValueError(f"unknown job operation {op}")
                 self._json(out)
+            elif path == "/api/pacing":  # {site, day, week}: your caps for a job site you browse yourself
+                pacing.set_cap(str(p.get("site") or ""), p.get("day"), p.get("week"))
+                self._json({"pacing": pacing.usage()})
             elif path == "/api/watches":  # a saved search keeps its filters; a page watch has none
                 url = str(p.get("url") or "").strip()
                 if not url:

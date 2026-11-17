@@ -76,6 +76,12 @@ class UI(E2ETestCase):
         self.assertIn("g then b", sheet.text_content())
         self.page.keyboard.press("Escape")
         self.assertFalse(sheet.is_visible())
+        self.page.keyboard.press("?")
+        self.assertTrue(sheet.is_visible())
+        sheet.click()  # a click inside keeps it
+        self.assertTrue(sheet.is_visible())
+        self.page.locator("body").click(position={"x": 5, "y": 300})  # a click outside closes it
+        self.assertFalse(sheet.is_visible())
 
 
     def test_keys_wait_while_the_drawer_is_open_and_esc_closes_only_the_sheet(self):  # review fixes
@@ -99,6 +105,7 @@ class UI(E2ETestCase):
             route.fulfill(json={"runs": [], "refused": [{"job_id": sent[-1]["ids"][0], "error": "no application link: add one"}]})
         self.page.route("**/api/apply/start", start)
         self.page.route("**/api/apply/stop", lambda r: r.fulfill(json={"stopped": True}))
+        self.page.evaluate("S.apply.available = null")  # the harness stubs the browser lookup: say the agent can run
         d = self.open_job(self.ids["saved"])
         grp = d.locator("#jApply")
         grp.locator("#jApplyMode").select_option("review")
@@ -107,6 +114,14 @@ class UI(E2ETestCase):
         self.assertEqual(sent[-1], {"ids": [self.ids["saved"]], "mode": "review"})
         with self.page.expect_request("**/api/apply/stop"):
             grp.get_by_role("button", name="Stop the agent").click()
+
+
+    def test_apply_group_says_why_the_agent_cannot_run(self):  # pass 35: no browser / Playwright -> the reason, no dead button
+        self.page.evaluate("S.apply.available = 'no Edge or Chrome found (set LODESTAR_BROWSER to a Chromium browser)'")
+        grp = self.open_job(self.ids["saved"]).locator("#jApply")
+        self.assertTrue(grp.get_by_role("button", name="Fill application").is_disabled())
+        self.assertIn("no Edge or Chrome found", grp.text_content())
+        self.assertEqual(grp.locator("#jApplyMode").count(), 0)
 
 
 if __name__ == "__main__":

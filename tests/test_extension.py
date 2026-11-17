@@ -327,14 +327,24 @@ class Capture(Base):
         made.append(bm["id"])
         self.assertEqual((bm["company"], bm["title"]), ("Mark Co", "BI Dev"))
 
-    def test_linkedin_is_never_captured_or_filled(self):
-        cred = self.pair()
-        for path in ("/api/ext/capture", "/api/ext/autofill"):
-            for u in ("https://www.linkedin.com/jobs/view/1", "https://linkedin.com/x", "https://de.LinkedIn.com./y"):
-                st, out, _ = self.ext(cred, path, {"title": "Role - Co", "url": u})
-                self.assertEqual((st, out["error"]), (400, extension.LINKEDIN), (path, u))
-        self.assertFalse(extension.linkedin("https://notlinkedin.com/x"))
-        self.assertFalse(extension.linkedin("https://linkedin.com.evil.example/x"))
+    def test_linkedin_saves_and_fills_on_your_click_and_a_full_site_waits(self):  # pass 36: you browse, the cap paces
+        from lodestar import pacing
+
+        cred, made = self.pair(), []
+        self.addCleanup(lambda: [db.delete_job(j) for j in made])
+        self.addCleanup(lambda: (db.con().execute("DELETE FROM meta WHERE key=?", (pacing.KEY,)), db.con().commit()))
+        url = "https://www.linkedin.com/jobs/view/4242"
+        st, out, _ = self.ext(cred, "/api/ext/capture", {"title": "Data Engineer | Pace Co | LinkedIn", "url": url})
+        self.assertEqual(st, 200, out)
+        made.append(out["id"])
+        st, out, _ = self.ext(cred, "/api/ext/autofill", {"url": url, "questions": []})
+        self.assertNotEqual(st, 429, out)  # LinkedIn is no longer refused (any answer here is about the profile)
+        pacing.set_cap("LinkedIn", 0, 5)  # at today's cap: the fill waits, the save still works
+        st, out, _ = self.ext(cred, "/api/ext/autofill", {"url": url, "questions": []})
+        self.assertEqual(st, 429)
+        self.assertIn("LinkedIn: 0 of 0 today", out["error"])
+        self.assertNotEqual(self.ext(cred, "/api/ext/autofill", {"url": "https://boards.example.org/apply", "questions": []})[0], 429)
+        self.assertEqual(self.ext(cred, "/api/ext/capture", {"title": "x", "url": url})[0], 200)
 
 
 class Autofill(Base):

@@ -190,10 +190,6 @@ async function show() {
   tab = await target();
   const host = tab ? hostOf(tab.url) : "";
   $("host").textContent = host ? `This tab: ${host}` : "No web page in this tab.";
-  if (LodestarMatcher.linkedin(host)) {
-    $("host").textContent = LodestarMatcher.LINKEDIN;
-    $("host").className = "err";
-  }
   await connect();
 }
 

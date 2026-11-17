@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <title>Lodestar</title>
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
+<script>try { const t = localStorage.getItem('ls_theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) { /* no storage: the system theme */ }</script>
 <link rel="stylesheet" href="/static/app.css">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
@@ -69,6 +70,7 @@
   <h2>Today</h2>
   <p class="sub">What needs you now: due actions, interviews, the Inbox, suggested emails and new fits. Each block hides when there is nothing in it.</p>
   <div id="homeLost" role="alert"></div>
+  <div id="homePace" role="status"></div>
   <div class="panel" id="onboard" style="display:none"></div>
   <div class="aihead" data-adv-slot="today"></div>
   <div class="panel today" id="today" style="display:none"></div>
@@ -145,6 +147,9 @@
     <div id="connList" class="list" role="status" aria-live="polite"></div>
     <details id="connHistD"><summary><b>What changed</b> <span class="muted" id="connHistN"></span></summary><div id="connHist" class="list"></div></details>
     <p class="muted">LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired cannot be linked: their terms forbid automated access, and signing in for you could get your account closed. Their jobs reach Lodestar through their job-alert emails (Job alerts below); apply to those on the site yourself.</p></div>
+  <div class="panel" id="siteCard"><h3>Job sites you browse yourself</h3>
+    <p class="muted">LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired: you sign in and browse there in your own browser (Lodestar never opens them itself). Save a posting with the Lodestar extension and it is scored, sorted and shown on every tab; the extension fills an application form when you click Fill, and never submits. To keep your accounts in good standing, each site has a daily and weekly cap: Lodestar counts the jobs you mark applied from that site and pauses the extension's Fill there once a cap is reached.</p>
+    <div id="siteList" class="list" role="status" aria-live="polite"></div></div>
   <div class="panel" id="srcCard"><h3>Job sources</h3>
     <p class="muted">Where Jobs searches and saved searches look. Keyless boards always run; Adzuna and USAJOBS run once you add their free keys here (stored in the OS keyring, checked with one small search). Saved searches ask each board at most once per window (Remotive every 6 hours for all your searches together), so Lodestar stays inside each board's published limits. Listings from Adzuna, Himalayas and We Work Remotely always show the source's name as a link: their terms ask for that credit. LinkedIn, Indeed, Glassdoor and ZipRecruiter are never fetched (their terms forbid it).</p>
     <div id="srcList" class="list" role="status" aria-live="polite"></div></div>
@@ -199,16 +204,18 @@
       <button class="b sm" onclick="spSave(this)">Save to my Preferences</button></div>
     <div class="chips" id="spChips" aria-label="Search one role"></div>
     <p class="muted">Blank Jobs searches use these roles. They start from Preferences (Target roles, Locations / remote), else your resume's latest titles and location. Saved here, they also feed the fit score. Commas search each role on its own; "or remote" keeps remote jobs too.</p></details>
-  <div class="row"><input id="sQ" placeholder='roles, e.g. "store manager, hotel manager" (blank: your search profile)' style="width:300px"><input id="sK" placeholder="must-have keywords (comma)" style="width:220px">
+  <div class="row"><input id="sQ" oninput="renderSiteSearch()" placeholder='roles, e.g. "store manager, hotel manager" (blank: your search profile)' style="width:300px"><input id="sK" placeholder="must-have keywords (comma)" style="width:220px">
     <label class="muted"><input type="checkbox" id="sRank"> AI rank vs my profile</label><button class="b" onclick="doSearch(this)">Search boards now</button>
     <button class="b ghost" title="AI-judge the results; strong fits go to the Inbox (tool: auto_track). Listings that look stale are skipped." onclick="run('auto_track',searchParams(),r=>toast(r.results.length+' strong fit(s) proposed (Inbox, or tracked if auto_track is auto)'+((r.errors||[]).length?'\ncould not read: '+r.errors.join('; '):''),(r.errors||[]).length?'err':'ok'),this)">Auto-track strong fits</button>
     <button class="b ghost" title="alert on new listings for this query and these filters (Monitor > Watches)" onclick="saveSearch()">Save as watch</button></div>
   <div class="row filters" aria-label="Search filters">
-    <input id="sLoc" placeholder='location, e.g. "Austin, TX or remote"' aria-label="Location filter" style="width:200px">
+    <input id="sLoc" oninput="renderSiteSearch()" placeholder='location, e.g. "Austin, TX or remote"' aria-label="Location filter" style="width:200px">
     <input id="sSal" type="number" min="0" step="1000" placeholder="min salary" aria-label="Minimum salary" style="width:110px">
     <input id="sDays" type="number" min="1" max="3650" placeholder="posted within (days)" aria-label="Posted within days" style="width:150px">
-    <select id="sLevel" aria-label="Seniority"><option value="">any seniority</option><option>intern</option><option>junior</option><option>mid</option><option>senior</option><option>staff</option><option>lead</option><option>manager</option></select><span id="sLevelHint"></span>
+    <select id="sLevel" aria-label="Seniority" onchange="renderSiteSearch()"><option value="">any seniority</option><option>intern</option><option>junior</option><option>mid</option><option>senior</option><option>staff</option><option>lead</option><option>manager</option></select><span id="sLevelHint"></span>
     <span class="muted">Listings that do not state a salary, location or date are kept and marked "unknown". Your private dealbreakers (Tools &gt; Preferences: excluded_companies, excluded_title_words) are dropped first.</span></div>
+  <div class="row" id="siteSearch" aria-label="Search these job sites yourself"></div>
+  <div id="siteIdeas" aria-live="polite"></div>
   <div class="muted" id="sBoards">Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, Himalayas and We Work Remotely need no key; Adzuna and USAJOBS run once you add their free keys (Accounts &gt; Job sources). The same posting found on several boards is shown once with every link. LinkedIn, Indeed, Glassdoor and ZipRecruiter are never fetched: use the browser extension or capture bookmarklet there. Monitor &gt; Companies follows a company's own job board.</div>
   <div class="panel" id="sRes"><div class="empty">No results yet.</div></div>
   <div class="panel" id="allJobs"><h3>All jobs <span class="muted" id="ajCount"></span></h3>

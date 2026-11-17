@@ -82,7 +82,7 @@ async function load() {
   badge.textContent = S.pending.length + nq; badge.classList.toggle('zero', !(S.pending.length + nq));
   renderOnboard(); renderLoop(); renderUpdate(); renderAutopilot(); $('#ver').textContent = 'Lodestar ' + S.version;
   if (!$('#fStatus').options.length) initFilters();
-  renderConnections();
+  renderConnections(); renderPacing();
   renderBoard(); renderQuestions(); renderInbox(); renderSearchless(); renderMonitor(); renderAnswers(); renderStories(); renderIdeas(); renderTools(); renderSetup(); fillCoachJobs(); renderTrend();
   fitRefresh();
   if (ADV_AI !== hasAI()) aiSlots();  // the tab headers' AI toolbars: painted once, again when a provider comes or goes
@@ -160,6 +160,9 @@ function fitBadge(j) {
 }
 const GATE_STATE = { met: 'met', not_met: 'not met', unknown: 'unknown (never counted as met)' };
 function applyGroup(j) {  // pass 32: the apply agent from the page (blueprint 2.2 human control); stop mode = you press Submit
+  const off = (S.apply || {}).available;  // a string says what is missing (Playwright, a browser): the button says so
+  if (off) return `<div class="group" id="jApply"><h4>Apply</h4><div class="row"><button class="b sm" disabled>Fill application</button>
+    <span class="muted">${esc(off)}</span></div></div>`;
   return `<div class="group" id="jApply"><h4>Apply</h4>
     <div class="row"><label class="muted">mode <select id="jApplyMode" aria-label="Apply agent mode"><option value="stop">fill, I press Submit</option><option value="review">fill, submit after my Inbox approval</option></select></label>
       <button class="b sm" onclick="applyStart(${Number(j.id)}, this)">Fill application</button>
@@ -414,7 +417,7 @@ ${roundsGroup(d)}
       <div class="muted">JD coverage is the share of the posting's keywords your current resume (tailored, else your profile) mentions: a guide for tailoring, not an ATS pass/fail. No AI involved.</div>
       <div id="jMatch"></div><div id="jCheck"></div></div>
 
-    ${applyGroup(j)}
+    ${paceGroup(d)}${applyGroup(j)}
     <div class="group" id="jDocs"><h4>Documents</h4>${profileBadge(j.id)}${aiBar('docs', j.id)}<div class="row">
       <button class="b" onclick="jobRun('gap',{},this)">Gap check (coverage + AI verdict)</button>
       <button class="b" onclick="jobRun('tailor',{docx:true,base:baseOpt()},this)">Tailor resume (+docx)</button>
@@ -1475,6 +1478,7 @@ function spPaint() {
   $('#sQ').placeholder = SP.query ? `blank: ${SP.query}` : 'roles, e.g. "store manager, hotel manager"';
   // your target level: from Preferences it fills the filter; one worked out from your years is offered, never set
   if (!$('#sLevel').value && SP.seniority && SP.seniority_from === 'Preferences') $('#sLevel').value = SP.seniority;
+  renderSiteSearch();
   const lv = $('#sLevelHint');
   if (lv) lv.innerHTML = SP.seniority && SP.seniority_from !== 'Preferences' && !$('#sLevel').value
     ? `<button class="b ghost sm" onclick="$('#sLevel').value=SP.seniority;this.parentNode.textContent=''" title="set Target level in Setup > Preferences to start from it every time">Use ${esc(SP.seniority)} (from ${esc(SP.seniority_from)})</button>` : '';
@@ -1888,6 +1892,73 @@ function renderConnections() {
   const hist = c.history || [];
   $('#connHistN').textContent = hist.length ? `(${hist.length} recent)` : '(nothing yet)';
   $('#connHist').innerHTML = hist.map(x => `<div><span class="muted">${esc(localTs(x.at, 16))}</span> ${esc(x.label)}: ${esc(CONN_WORD[x.from] || x.from || 'new')} → <b>${esc(CONN_WORD[x.to] || x.to)}</b>${x.detail ? ` <span class="muted">${esc(x.detail)}</span>` : ''}</div>`).join('') || '<div class="muted">Changes of state show here: a key verified, a board that stopped answering, a sign-in refused.</div>';
+}
+/* ---- pass 36: the five job sites you browse yourself. Search links open the site's own search in your browser
+   (nothing is fetched); caps pace the applications you make there (pacing.py) ---- */
+const PACE_SITES = ['LinkedIn', 'Indeed', 'Glassdoor', 'ZipRecruiter', 'SimplyHired'];
+const LEVEL_WORD = { intern: 'intern', junior: 'junior', senior: 'senior', staff: 'staff', lead: 'lead', manager: 'manager' };
+function siteSearchUrl(site, q, loc, lv) {
+  const remote = /\bremote\b/i.test(loc), word = LEVEL_WORD[lv] ? LEVEL_WORD[lv] + ' ' : '';
+  const qs = o => new URLSearchParams(Object.entries(o).filter(([, v]) => v)).toString();
+  if (site === 'LinkedIn') return 'https://www.linkedin.com/jobs/search/?' + qs({ keywords: q, location: loc,
+    f_E: { intern: '1', junior: '2', mid: '3,4', senior: '4', staff: '4', lead: '4', manager: '5' }[lv] || '', f_WT: remote ? '2' : '' });
+  if (site === 'Indeed') return 'https://www.indeed.com/jobs?' + qs({ q, l: loc,
+    explvl: { intern: 'ENTRY_LEVEL', junior: 'ENTRY_LEVEL', mid: 'MID_LEVEL' }[lv] || (lv ? 'SENIOR_LEVEL' : '') });
+  if (site === 'Glassdoor') return 'https://www.glassdoor.com/Job/jobs.htm?' + qs({ 'sc.keyword': word + q, locKeyword: loc });
+  if (site === 'ZipRecruiter') return 'https://www.ziprecruiter.com/jobs-search?' + qs({ search: word + q, location: loc });
+  return 'https://www.simplyhired.com/search?' + qs({ q: word + q, l: loc });
+}
+function siteQuery() { return { q: ($('#sQ')?.value || (typeof SP !== 'undefined' && SP.query) || '').trim(), loc: ($('#sLoc')?.value || '').trim(), lv: $('#sLevel')?.value || '' }; }
+function paceText(u) { return `${u.day} of ${u.cap_day} today · ${u.week} of ${u.cap_week} this week`; }
+function renderSiteSearch() {
+  const el = $('#siteSearch'); if (!el) return;
+  const { q, loc, lv } = siteQuery(), pace = S.pacing || {};
+  el.innerHTML = q ? '<span class="muted">Search these yourself:</span> ' + PACE_SITES.map(s => `<a class="b ghost sm${(pace[s] || {}).full ? ' full' : ''}" data-site="${esc(s)}" href="${esc(siteSearchUrl(s, q, loc, lv))}" target="_blank" rel="noopener" title="opens ${esc(s)}'s own search in your browser${pace[s] ? ': ' + esc(paceText(pace[s])) : ''}">${esc(s)} ↗</a>`).join(' ')
+    : '<span class="muted">Type a role to search LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired yourself.</span>';
+  if (hasAI()) el.innerHTML += ' <button class="b ghost sm" id="siteIdeasBtn" onclick="siteIdeas(this)" title="one AI call over your profile (never your salary floor) and saved searches; the AI never sees these sites and Lodestar never opens them">AI: search ideas for these sites</button>';
+}
+/* pass 37: AI search ideas for the five sites, each turned into links to their own search (you run them) */
+let SITE_IDEAS = null;
+function siteIdeas(btn) { const { loc, lv } = siteQuery(); run('site_queries', { level: lv, location: loc }, r => { SITE_IDEAS = r; renderSiteIdeas(); }, btn); }
+function siteLinks(q, loc, lv, only) {
+  return (only || PACE_SITES).map(s => `<a class="b ghost sm" data-site="${esc(s)}" href="${esc(siteSearchUrl(s, q, loc, lv))}" target="_blank" rel="noopener">${esc(s)} ↗</a>`).join(' ');
+}
+function renderSiteIdeas() {
+  const el = $('#siteIdeas'), r = SITE_IDEAS; if (!el) return;
+  if (!r) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="panel"><h4>Search ideas for these sites <span class="muted">from your profile by AI; you run them</span></h4>`
+    + (r.queries.map((x, i) => `<div class="connrow idea"><b>${esc(x.query)}</b> <span class="muted">${esc(x.why)}</span> ${siteLinks(x.query, r.location, r.level)}
+        <button class="b ghost sm" onclick="useIdea(${i})">Use</button></div>`).join('') || '<div class="muted">No new ideas: your saved searches already cover it.</div>')
+    + (r.boolean ? `<div class="connrow idea-bool"><b>Boolean</b> <code>${esc(r.boolean)}</code> ${siteLinks(r.boolean, r.location, r.level, ['LinkedIn', 'Indeed'])}
+        <span class="muted">for LinkedIn's and Indeed's keyword box</span></div>` : '')
+    + '<div class="row"><button class="b ghost sm" onclick="SITE_IDEAS=null;renderSiteIdeas()">close</button></div></div>';
+}
+function useIdea(i) { const x = SITE_IDEAS && SITE_IDEAS.queries[i]; if (!x) return; $('#sQ').value = x.query; renderSiteSearch(); $('#sQ').focus(); }
+function renderPacing() {
+  const pace = S.pacing || {}, full = PACE_SITES.filter(s => (pace[s] || {}).full);
+  if ($('#homePace')) $('#homePace').innerHTML = full.length ? `<div class="warnbox">At your application cap: ${full.map(s => `<b>${esc(s)}</b> (${esc(paceText(pace[s]))})`).join(', ')}. Lodestar pauses the extension's Fill there until the window passes; change caps under <button class="b ghost sm" onclick="go('accounts')">Accounts</button>.</div>` : '';
+  renderSiteSearch();
+  const el = $('#siteList'); if (!el) return;
+  const { q, loc, lv } = siteQuery();
+  el.innerHTML = PACE_SITES.map((s, i) => { const u = pace[s] || { day: 0, week: 0, cap_day: 0, cap_week: 0 };
+    return `<div class="connrow" data-site="${esc(s)}"><b>${esc(s)}</b> <span class="pill ${u.full ? 'bad' : 'ok'}">${u.full ? 'At cap: paused' : 'Open'}</span>
+      <span class="muted">${esc(paceText(u))}</span>
+      <label class="muted">per day <input id="capD${i}" type="number" min="0" max="200" value="${Number(u.cap_day)}" style="width:64px" aria-label="${esc(s)} daily cap"></label>
+      <label class="muted">per week <input id="capW${i}" type="number" min="0" max="1000" value="${Number(u.cap_week)}" style="width:70px" aria-label="${esc(s)} weekly cap"></label>
+      <button class="b ghost sm" onclick="capSave(${i},this)">Save caps</button>
+      ${q ? `<a class="b ghost sm" href="${esc(siteSearchUrl(s, q, loc, lv))}" target="_blank" rel="noopener">Search ${esc(s)} ↗</a>` : ''}</div>`; }).join('');
+}
+async function capSave(i, btn) {
+  btn.disabled = true;
+  const r = await api('/api/pacing', { site: PACE_SITES[i], day: Number($('#capD' + i).value), week: Number($('#capW' + i).value) });
+  btn.disabled = false;
+  if (r.error) return toast('error: ' + r.error, 'err');
+  toast(`${PACE_SITES[i]} caps saved`, 'ok'); load();
+}
+function paceGroup(d) {  // the drawer: this job lives on one of the five sites
+  const p = d.pacing; if (!p) return '';
+  return `<div class="group" id="jPace"><h4>${esc(p.site)} pacing</h4>${p.full ? `<div class="warnbox">${esc(p.site)} is at your cap (${esc(paceText(p))}): wait before applying here, or change the cap under Accounts.</div>` : ''}
+    <div class="muted">${esc(paceText(p))}. Apply on ${esc(p.site)} yourself (the extension's Fill helps); then mark it applied here so the count stays right.</div></div>`;
 }
 function connCheck(btn) { run('keys_check', {}, () => { load(); toast('checked every key and your mailbox', 'ok'); }, btn); }
 const KSTAT = { verified: ['Verified', 'ok'], failed: ['Failed', 'bad'], unreachable: ["Couldn't reach, will retry", 'warn'], unchecked: ['Not checked', ''] };
@@ -3418,8 +3489,7 @@ function renderCareerRes(r) {
 }
 
 /* ---- theme (pass 32): follows the system until you pick one; the choice is kept per browser ---- */
-try { const t = localStorage.getItem('ls_theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) { /* no storage: the system theme */ }
-function toggleTheme() {
+function toggleTheme() {  // the saved theme is applied in index.html's <head>, before the stylesheet paints
   const root = document.documentElement;
   const now = root.dataset.theme || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
   root.dataset.theme = now === 'light' ? 'dark' : 'light';
@@ -3447,6 +3517,7 @@ function keysHelp(show) {
   }
   el.style.display = show ? '' : 'none';
 }
+document.addEventListener('click', e => { const k = $('#keysHelp'); if (k && k.style.display !== 'none' && !k.contains(e.target)) keysHelp(false); });
 document.addEventListener('keydown', e => {
   const t = e.target, typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
   const modal = $('#drawer').classList.contains('open') || ($('#viewer') && !$('#viewer').hidden);  // never switch pages behind them

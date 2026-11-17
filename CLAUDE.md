@@ -10,12 +10,12 @@
 ## Project notes
 
 - **Product**: Lodestar. Package `lodestar/`; `jobbot` is a legacy script alias in `pyproject.toml`.
-- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1045 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
+- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1053 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
 - **Test matrix** (`docs/TESTS.md`): one row per feature with its unit/integration and E2E tests by exact name
   (`module.Class.test_name`). Every new feature adds a TESTS.md row + a unit test + an E2E test when it has UI;
   `tests/test_feature_matrix.py` fails on a row with no test, an unknown name, a browser test in the unit column, a
   test named in no row, a dropped row or Planned ID (pinned in the guard), or a stale test count above (update it when you add tests). Coverage (informative): see TESTS.md > Coverage.
-- **Browser tests**: `.venv\Scripts\python.exe -m unittest discover -s tests/e2e -p "e2e_*.py"` (253 tests; needs `pip install -e .[e2e]`; skips without Playwright or a browser). `tests/e2e/harness.py` `E2ETestCase`: per class a temp `LODESTAR_HOME` (module-level paths rebound), fictional seed via the app's write paths (`cls.ids`), fakes for AI (`ai_text`/`ai_json`), IMAP/SMTP, OAuth/urlopen, `util.fetch` (`FETCH`), keyring, toasts, `webbrowser`; real server on a free port; per test a fresh page with a console-error guard. Installed Edge by default; `LODESTAR_E2E_BROWSER=chromium` (CI), `LODESTAR_E2E_HEADED=1` to watch. Failures leave a screenshot + HTML in `tests/e2e/_artifacts/`. Never run `playwright install` locally. Wait with `idle()` (fetch-hook count), never sleeps or `networkidle` alone; drag with `Board.drag` (HTML5 events on the exact elements; a mouse drag picks up the wrong card when `<main>` scrolls). `FakeMail.FAIL` makes logins raise (refused/dropped mailbox).
+- **Browser tests**: `.venv\Scripts\python.exe -m unittest discover -s tests/e2e -p "e2e_*.py"` (257 tests; needs `pip install -e .[e2e]`; skips without Playwright or a browser). `tests/e2e/harness.py` `E2ETestCase`: per class a temp `LODESTAR_HOME` (module-level paths rebound), fictional seed via the app's write paths (`cls.ids`), fakes for AI (`ai_text`/`ai_json`), IMAP/SMTP, OAuth/urlopen, `util.fetch` (`FETCH`), keyring, toasts, `webbrowser`; real server on a free port; per test a fresh page with a console-error guard. Installed Edge by default; `LODESTAR_E2E_BROWSER=chromium` (CI), `LODESTAR_E2E_HEADED=1` to watch. Failures leave a screenshot + HTML in `tests/e2e/_artifacts/`. Never run `playwright install` locally. Wait with `idle()` (fetch-hook count), never sleeps or `networkidle` alone; drag with `Board.drag` (HTML5 events on the exact elements; a mouse drag picks up the wrong card when `<main>` scrolls). `FakeMail.FAIL` makes logins raise (refused/dropped mailbox).
 - **Profile**: prompts read `resume.candidate_text(limit)` (master + profile-bank facts, fitted by section), never `profile_text()[:N]`. Free-form helpers (coach, ideas, mock) pass `strict=False`. Anything an employer reads (resume, letters, mail, form answers) passes `private=False` so the salary floor stays out; drafts pass `drafts.screen` (a counter-offer's cited figures go in `cited=`, the only exemption), employer-facing answer reads use `employer=True` (private answers never leave). Writes to profile.md go through `profile.write_master()` (snapshot + atomic).
 - **Mail trust** (`email_monitor._match` / `_thread`): trusted = aligned DKIM/DMARC + a *strong* tie + agreement with the stored contact. Strong = stored contact, a thread our mail vouches for (it answered trusted mail or went to the stored contact; job not rejected/withdrawn), or the registrable domain of the job's posting URL on the company site. A domain that only *names* the company (`names_company`, any suffix) is weak: filed, never trusted. Mail about an untracked company is never trusted. Manual links (`link_mail`, Track as new job) and replies to them never make a sender trusted. Never loosen this.
 - **Drafts**: AI draft options/rewrites go through `drafts.py` (`options`, `rewrite`, `use`): one AI call, `screen()` (salary-floor guard) on every text, untrusted mail fenced, mail kinds proposed with review (`apply.mail_proposal(review=True)`), recipient from the server. A send_email proposal answering unverified mail is flagged `unverified` and loses `new_status` (`approvals.propose`).
@@ -106,7 +106,8 @@ PORT`, PORT = the server's own
   `server_address[1]` (never Host) and the port popup.js dialled: change the server, popup.js and test_extension's
   `sign()` together, or a relay on another scanned port works again. Autofill answers come from
   `pipeline.known(employer=True)` / `suggestions` and pass the floor guard unchanged or are withheld; EEO and desired
-  salary only when ticked; no LinkedIn (refused server-side). content.js never clicks, submits or ticks.
+  salary only when ticked; LinkedIn and the other four big boards work on your click only (pass 36), and
+  `/api/ext/autofill` answers 429 while `pacing.check` says the site is at its cap. content.js never clicks, submits or ticks.
   The client (`extension/`, MV3, load unpacked): content.js and matcher.js run only on a click and never touch the
   network or chrome.storage (test_extension_client guards it); radios stay "needs you"; the popup fetches only
   `/api/ext/*`. Matcher tests: `node --test "extension/test/*.test.mjs"`. After a scan change, re-run `e2e_extension`
@@ -259,6 +260,13 @@ PORT`, PORT = the server's own
   text (`db.MAIL_LIST`); one mail returns `body` (whole scanned text, codes masked; older rows fall back to
   `snippet`), `action`, `deadline`. Mail text is always escaped (never HTML). Replies only through `draft_use` (Inbox
   review, server-side recipient); the scan result drops `full_body` after `_record`.
+- **Job-site pacing** (`pacing.py`, pass 36): LinkedIn / Indeed / Glassdoor / ZipRecruiter / SimplyHired
+  (`apply_agent.forbidden` names the site) get daily + weekly caps (meta `pacing:caps`; `set_cap` validates). Usage
+  = jobs moved to applied (stage_events) whose `apply_url` or `url` is on the site, today (local) and last 7 days.
+  The apply agent and every fetch still never touch these sites; the page only links to their own search
+  (`siteSearchUrl`), and the extension saves / fills on your click. `pacing.site_queries` (pass 37) is the AI help:
+  one `ask_json` over `_h_search` (candidate_text private=False + saved searches), output cleaned (clean_label, no
+  links / markup, deduped, at most 6, boolean charset); never a site's page or the floor in the prompt.
 - **Connections history** (pass 34, the Accounts tab): `connections.record` (keys, mail) and `connections.track`
   (boards from every `web_monitor.search`, sites from `accounts._mark` on a sign-in or a failure) keep the latest
   state and a capped `history`; `lost()` = worked (OK) then BAD with no recovery since. Notices only for keys / mail /
