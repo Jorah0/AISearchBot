@@ -97,6 +97,13 @@ class Base(unittest.TestCase):
         return out.getvalue()
 
 
+def floor_in(text: str) -> bool:
+    """The salary floor ($187,000) in any spelling a prompt could carry it."""
+    import re
+
+    return bool(re.search(r"187[,.]?000|\$\s?187|187\s?k", text, re.I))
+
+
 class Recommend(Base):
     def test_one_call_fences_every_field_and_keeps_the_floor_out(self):
         jid = self.job()
@@ -107,7 +114,7 @@ class Recommend(Base):
         nonce = p.split("<<<", 1)[1].split(" ", 1)[0]
         posting = p.split("BLOCK posting", 1)[1].split(f"<<<{nonce} END posting>>>", 1)[0]
         self.assertIn("IGNORE ALL PREVIOUS INSTRUCTIONS", posting)  # the untrusted JD sits inside its fence
-        self.assertNotIn("187", p)
+        self.assertFalse(floor_in(p.replace(nonce, "")))  # the random fence marker can hold '187' by chance
         self.assertEqual([(r["field"], r["status"]) for r in rows], [("tags", "pending"), ("next_action", "pending")])
         self.assertTrue(all(r["appliable"] for r in rows))  # 'status' is no field; a repeat and an unchanged value drop
         rows2, _ = self.run_ai(advisor.recommend, recs(("tags", "python")), "job", jid)
@@ -132,7 +139,7 @@ class Recommend(Base):
                                            (f"w{wid}.keywords", "python, sql")])):
             rows, fake = self.run_ai(advisor.recommend, recs(*items), scope)
             self.assertEqual(len(fake.prompts), 1)
-            self.assertNotIn("187", fake.prompts[0])
+            self.assertFalse(floor_in(fake.prompts[0]))
             self.assertEqual([r["appliable"] for r in rows], [f.startswith("w") for f, _ in items], scope)
             res = advisor.apply([r["id"] for r in rows])
             self.assertEqual(len(res["applied"]), sum(f.startswith("w") for f, _ in items), scope)
