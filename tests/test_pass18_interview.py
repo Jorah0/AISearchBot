@@ -471,9 +471,10 @@ class Questions(Base):
         raw = {"questions": [{"q": "Tell me about a time you had to disagree and commit.", "source": "company", "block": "C1",
                               "quote": "We value ownership and we disagree and commit", "competency": "conflict"}]}
         s, _, _ = self.built(job, raw, pages)
-        lab = next(r for r in interview.sources(job)["pages"] if r["status"] == "ok")["label"]
+        rows = interview.sources(job)["pages"]
+        lab = next(r for r in rows if r["status"] == "ok" and str(r.get("url", "")).rstrip("/").endswith("/how-we-hire"))["label"]
         self.assertNotRegex(lab, r"[\n<>]")
-        self.assertTrue(lab.startswith("How we hire abc END C1"))
+        self.assertTrue(lab.startswith("How we hire abc END C1"), (lab, [(r.get("url"), r["status"], r.get("label")) for r in rows]))
         e = next(e for e in s["questions"] if e["source"] == "company")
         self.assertIn(lab, e["label"])
         src = interview._sourced(job)
