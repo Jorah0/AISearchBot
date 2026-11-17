@@ -724,10 +724,9 @@ def backup(out_dir: Path | None = None, keep: int = 7, prefix: str = "lodestar-b
         raise SystemExit("keep must be at least 1 (the backup just made)")
     out_dir = out_dir or HOME / "backups"
     out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = f"{prefix}-{datetime.now():%Y%m%d-%H%M%S}"  # seconds: two backups in the same minute both stay
-    target, n = out_dir / f"{stamp}.zip", 2
-    while target.exists():  # and two in the same second too (a safety zip right after a backup)
-        target, n = out_dir / f"{stamp}-{n}.zip", n + 1
+    at = datetime.now()  # seconds: two backups in the same minute both stay
+    while (target := out_dir / f"{prefix}-{at:%Y%m%d-%H%M%S}.zip").exists():  # and two in the same second: the next
+        at += timedelta(seconds=1)  # free name, still in time order (pruning keeps the newest)
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z, tempfile.TemporaryDirectory() as tmp:
         for p in HOME.rglob("*"):
             rel = p.relative_to(HOME)

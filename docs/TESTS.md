@@ -596,6 +596,7 @@ context with a temp profile and blocks 8765-8774, so a test never reaches a Lode
 |---|---|---|---|
 | hidden-console | No console window behind the desktop app: the Lodestar shortcut, start.ps1 and the scheduled task use the windowless lodestarw launcher (output to logs/console.log); git, the update gate, headless Edge, taskkill, schtasks and a restart start without a console | `test_hidden_console.Hidden.test_desktop_shortcut_and_scheduled_task_use_the_windowless_launcher`<br>`test_hidden_console.Hidden.test_windowless_output_goes_to_a_log_file`<br>`test_hidden_console.Hidden.test_helper_programs_start_without_a_console` |  |
 | ci-portability | CI portability (Linux, Python 3.11-3.14): two backups in the same second both stay (a -2 suffix); forgetting the agent's sign-ins works on Python 3.11 (rmtree onerror); tests needing pypdf or a browser that can print skip instead of failing; updater test repos make unique commits; the STARTTLS fake stops at the TLS hello | `test_ci_portability.Portability.test_two_backups_in_the_same_second_both_stay`<br>`test_ci_portability.Portability.test_forget_logins_uses_onerror_on_python_311` |  |
+| ci-portability-2 | CI portability, Windows: two profile snapshots within one clock tick (Windows ~15 ms) both stay, in time order; backups in the same second take the next free second so pruning keeps the newest | `test_ci_portability.Portability.test_two_profile_snapshots_in_one_clock_tick_both_stay_in_order` |  |
 
 ## Connections
 

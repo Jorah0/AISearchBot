@@ -180,7 +180,9 @@ def snapshot_master(keep: int = 30) -> Path | None:
     snaps = sorted(HISTORY.glob("profile-*.md"))
     if snaps and snaps[-1].read_text(encoding="utf-8") == text:
         return snaps[-1]
-    out = HISTORY / f"profile-{datetime.now():%Y%m%d-%H%M%S-%f}.md"
+    at = datetime.now()
+    while (out := HISTORY / f"profile-{at:%Y%m%d-%H%M%S-%f}.md").exists():  # a coarse clock (Windows ~15 ms) repeats
+        at += timedelta(microseconds=1)  # the next free name, still in time order
     out.write_text(text, encoding="utf-8")
     for old in sorted(HISTORY.glob("profile-*.md"))[:-keep]:
         old.unlink()

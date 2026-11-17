@@ -32,7 +32,26 @@ class Portability(unittest.TestCase):
             a = extras.backup(out, keep=5, prefix="t")
             b = extras.backup(out, keep=5, prefix="t")
         self.assertNotEqual(a, b)
-        self.assertEqual(sorted(p.name for p in out.glob("*.zip")), ["t-20261117-120000-2.zip", "t-20261117-120000.zip"])
+        self.assertEqual(sorted(p.name for p in out.glob("*.zip")), ["t-20261117-120000.zip", "t-20261117-120001.zip"])
+
+    def test_two_profile_snapshots_in_one_clock_tick_both_stay_in_order(self):  # Windows' clock ticks every ~15 ms
+        from datetime import datetime as real_dt
+
+        from lodestar import profile
+
+        class Frozen(real_dt):
+            @classmethod
+            def now(cls, tz=None):
+                return real_dt(2026, 11, 17, 12, 0, 0, 500)
+        hist = Path(tempfile.mkdtemp())
+        had = profile.PROFILE.read_text(encoding="utf-8") if profile.PROFILE.is_file() else None
+        self.addCleanup(lambda: profile.PROFILE.write_text(had, encoding="utf-8") if had is not None else profile.PROFILE.unlink(missing_ok=True))
+        with patched(profile, datetime=Frozen, HISTORY=hist):
+            for text in ("# One\n", "# Two\n"):
+                profile.PROFILE.write_text(text, encoding="utf-8")
+                profile.snapshot_master()
+        snaps = sorted(hist.glob("profile-*.md"))
+        self.assertEqual([p.read_text(encoding="utf-8") for p in snaps], ["# One\n", "# Two\n"])  # newest sorts last
 
     def test_forget_logins_uses_onerror_on_python_311(self):
         got = {}
