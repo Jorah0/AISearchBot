@@ -65,7 +65,7 @@ def usage() -> dict:
     midnight, week_ago = now.replace(hour=0, minute=0, second=0, microsecond=0), now - timedelta(days=7)
     out = {s: {"day": 0, "week": 0} for s in SITES}
     for url, apply_url, at, _jid in _moves():
-        site = site_of(apply_url) or site_of(url)
+        site = site_of(apply_url) if apply_url else site_of(url)  # a company link: never the board you found it on
         when = utc_to_local(at) if at else None
         if site and when and when >= week_ago:
             out[site]["week"] += 1
@@ -92,7 +92,8 @@ def check(url) -> str | None:
 
 def for_job(job) -> dict | None:
     """The job drawer's line: {site, day, cap_day, week, cap_week, full} when the job lives on one of the five sites."""
-    site = site_of(job["apply_url"] if "apply_url" in job.keys() and job["apply_url"] else None) or site_of(job["url"])
+    apply_url = job["apply_url"] if "apply_url" in job.keys() else None
+    site = site_of(apply_url) if apply_url else site_of(job["url"])
     return {"site": site, **usage()[site]} if site else None
 
 

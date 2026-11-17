@@ -1107,16 +1107,22 @@ def dedupe(listings: list[dict]) -> list[dict]:
 SENIORITY = ("intern", "junior", "mid", "senior", "staff", "lead", "manager")
 _LEVEL_RX = [("intern", r"\bintern(ship)?s?\b|\bco-?op\b|\btrainee\b|\bapprentice|\bworking student\b|\bwerkstudent"
                         r"|\bpraktik"),
-             ("junior", r"^associate\b(?! (director|vice president|vp)\b)"),  # 'Associate Product Manager' starts a career
              ("manager", r"\b(head of|director|vp|vice president|chief|ceo|coo|cto|cfo|cmo|cio|ciso|cpo)\b|(?<!product )"
                          r"(?<!program )(?<!project )(?<!account )(?<!marketing )(?<!community )\bmanager\b"),
              ("staff", r"\b(staff|principal|distinguished)\b"),
              ("lead", r"\b(lead|supervisor)\b"),
              ("senior", r"\b(senior|sr)\b"),
              ("junior", r"\b(junior|jr|entry[ -]level|graduate|new grad|early[ -]career)\b"),
+             # 'Associate Software Engineer' starts a career; 'Associate General Counsel' / '... Director' do not
+             ("junior", r"^associate (software|data|product|project|program|qa|test|web|frontend|backend|full[ -]?stack|"
+                        r"machine learning|ml|ai|cloud|devops|it|systems?|analyst|engineer|developer|designer|scientist|"
+                        r"consultant|accountant|marketing|research)"),
              ("mid", r"\b(mid[ -]?level|intermediate)\b")]
 # 'Engineer II', 'Analyst 3': a level number after the role (never a support 'Tier III', never 'I'm', never '2+ days')
-_LEVEL_NUM = re.compile(r"(?<!tier )(?<![$\d.,/])\b(iv|iii|ii|i|[1-4])(?=\s*(?:$|[()/|:–—-]|,(?!\d)))")  # not '$1,000'
+# a Roman level may come before '(', '-', '/' ('Engineer III (Backend)', 'I/II'); a digit only at the end or before a comma
+# ('Cashier 2 - Night' is a shift name, '(1-2 yrs)' a range); never after 'Tier' / 'Shift', '$', '(' or another number
+_LEVEL_NUM = re.compile(r"(?<!tier )(?<!shift )(?<![$\d.,/(])\b(?:(iv|iii|ii|i)(?=\s*(?:$|[()/|:–—-]|,(?!\d)))"
+                        r"|([1-4])(?=\s*(?:$|,(?!\d))))")
 _NUM_LEVEL = {"i": "junior", "1": "junior", "ii": "mid", "2": "mid", "iii": "senior", "3": "senior", "iv": "staff", "4": "staff"}
 
 
@@ -1127,7 +1133,7 @@ def seniority_of(title) -> str:
     if found := next((lvl for lvl, rx in _LEVEL_RX if re.search(rx, t)), None):
         return found
     m = _LEVEL_NUM.search(t)
-    return _NUM_LEVEL[m[1]] if m else "mid"
+    return _NUM_LEVEL[m[1] or m[2]] if m else "mid"
 
 
 def clean_filters(location="", min_salary=None, posted_within=None, seniority="") -> dict:

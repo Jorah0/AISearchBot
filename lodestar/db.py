@@ -734,14 +734,16 @@ def watch_key(url: str) -> str:
     u = str(url or "").strip()
     if u[:7].lower() == "search:":
         return "search:" + ",".join(p for p in (" ".join(x.split()) for x in u[7:].casefold().split(",")) if p)
-    s = urlsplit(u if "://" in u else "https://" + u)
-    host = (s.hostname or "").removeprefix("www.")
     try:
+        s = urlsplit(u if "://" in u else "https://" + u)
+        host = (s.hostname or "").removeprefix("www.")
         port = s.port
-    except ValueError:
-        port = None
+    except ValueError:  # a malformed host or port: compared as typed, never an error for every later add
+        return u.casefold()
     port = "" if port in (None, 80, 443) else f":{port}"
-    return f"{host}{port}{s.path.rstrip('/')}" + (f"?{s.query}" if s.query else "")
+    query = "&".join(sorted(s.query.split("&"))) if s.query else ""
+    route = s.fragment if s.fragment[:1] in ("/", "!") else ""  # '#/jobs/1' is a page; '#open' is a spot on one
+    return f"{host}{port}{s.path.rstrip('/')}" + (f"?{query}" if query else "") + (f"#{route}" if route else "")
 
 
 def watch_filters(w) -> dict:

@@ -244,7 +244,15 @@ def _recheck() -> None:
         return
     if _due("conn:check", RECHECK_EVERY):
         _ran("conn:check")
-        connections.check_all()
+
+        def _run():  # a slow provider or a 60 s IMAP timeout never delays the watches, email and fit steps
+            try:
+                connections.check_all()
+            except (Exception, SystemExit):
+                pass
+            finally:
+                db.release()
+        threading.Thread(target=_run, daemon=True, name="lodestar-recheck").start()
 
 
 def cycle(a) -> None:

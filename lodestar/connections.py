@@ -148,14 +148,38 @@ def track(kind: str, name: str, status: str, detail: str = "") -> None:
         with _LOCK:
             data = _load()
             group = data[kind] = data.get(kind) if isinstance(data.get(kind), dict) else {}
-            old = (group.get(name) or {}).get("status", "")
-            group[name] = {"status": status, "checked_at": _now(), "detail": str(detail or "")[:200]}
+            prev = group.get(name) or {}
+            old, detail = prev.get("status", ""), str(detail or "")[:200]
+            if old == status and prev.get("detail", "") == detail:
+                return  # nothing changed: no write on every search (ponytail: checked_at keeps the last change)
+            group[name] = {"status": status, "checked_at": _now(), "detail": detail}
             lost = _change(data, kind, name, old, status, detail)
             _save(data)
         if lost:
             notify(lost)
     except Exception:  # ponytail: a locked or unwritable connections.json skips one line of history
         pass
+
+
+def forget(kind: str, name: str) -> None:
+    """A link that no longer exists (a removed site account): its state goes; its history lines stay as history."""
+    try:
+        with _LOCK:
+            data = _load()
+            if (data.get(kind) or {}).pop(name, None) is not None:
+                _save(data)
+    except Exception:  # ponytail: an unwritable file keeps the old state until the next change
+        pass
+
+
+def _mail_current(rec: dict) -> bool:
+    """The recorded mailbox is still the connected one (status() shows nothing for another or a disconnected one)."""
+    from . import mailconn
+
+    try:
+        return rec.get("fp") == mailconn._fingerprint(util.mail_settings()) and bool(util.mail_login()[1])
+    except Exception:
+        return False
 
 
 def history(n: int = 60) -> list[dict]:
@@ -166,7 +190,8 @@ def history(n: int = 60) -> list[dict]:
 def lost() -> list[dict]:
     """Links whose latest state is not working although they worked before: [{kind, name, label, since, detail}]."""
     data, out = _load(), []
-    current = [("keys", n, r) for n, r in data["keys"].items()] + ([("mail", "mail", data["mail"])] if data.get("mail") else [])
+    mail = data.get("mail") if isinstance(data.get("mail"), dict) else None
+    current = [("keys", n, r) for n, r in data["keys"].items()] + ([("mail", "mail", mail)] if mail and _mail_current(mail) else [])
     current += [(k, n, r) for k in ("boards", "sites") for n, r in (data.get(k) or {}).items()]
     hist = data.get("history") or []
     for kind, name, rec in current:

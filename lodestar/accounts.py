@@ -222,8 +222,10 @@ def remove(aid) -> dict:
     vault.delete(_name(a["site"]))
     db.con().execute("DELETE FROM site_accounts WHERE id=?", (a["id"],))
     db.con().commit()
-    return {"removed": a["id"], "site": a["site"]}
+    from . import connections
 
+    connections.forget("sites", a["site"])  # the Accounts tab: no 'lost' line for an account you removed
+    return {"removed": a["id"], "site": a["site"]}
 
 def link_job(site: str, job_id: int) -> None:
     a = for_site(site)

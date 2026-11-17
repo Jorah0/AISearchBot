@@ -1171,7 +1171,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"mail": [dict(r) for r in db.all_mail(q.get("category", [""])[0] or None)]})
                 else:
                     self._json({"mail": [dict(r) for r in db.list_mail(int(job) if job else None, bool(q.get("unmatched")))]})
-            elif path.startswith("/api/mail/") and path.count("/") == 3 and path[10:].isdigit():  # one mail, its full text
+            elif path.startswith("/api/mail/") and path.count("/") == 3 and path[10:].isascii() and path[10:].isdecimal():  # one mail, its full text
                 row = db.con().execute("SELECT * FROM mail WHERE id=?", (int(path[10:]),)).fetchone()
                 if not row:
                     self._json({"error": "no such mail"}, 404)

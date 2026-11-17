@@ -1,5 +1,17 @@
 # Changelog (development passes, newest first)
 
+## Pass 38 (2026-11-17): review fixes for passes 33-37
+
+- Application caps count the site you applied on: a job found on LinkedIn whose application link is the company's
+  own site never counts against LinkedIn.
+- Accounts: a mailbox you disconnected or replaced, and a site account you removed, no longer show as "stopped
+  working"; a job board whose state did not change is not written again on every search; the 6-hourly re-check runs
+  beside the monitor loop instead of holding it up.
+- Watches: a malformed careers link never blocks adding other watches; hash-routed career pages (#/jobs/1) are told
+  apart and the same page with its query in another order is one watch.
+- Seniority: 'Associate Principal Scientist' reads staff, 'Associate General Counsel' and shift or range numbers
+  ('(Shift 1)', 'Cashier 2 - Night', '(1-2 yrs)') no longer read as levels.
+
 ## Pass 37 (2026-11-17): AI search ideas for the job sites you browse yourself
 
 - *AI: search ideas for these sites* on the Jobs tab: one AI call turns your profile (never the salary floor) and
