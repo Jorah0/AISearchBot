@@ -98,10 +98,11 @@ class Base(unittest.TestCase):
 
 
 def floor_in(text: str) -> bool:
-    """The salary floor ($187,000) in any spelling a prompt could carry it."""
+    """The salary floor ($187,000) in any spelling a prompt could carry it; fence markers (random hex) are ignored."""
     import re
 
-    return bool(re.search(r"187[,.]?000|\$\s?187|187\s?k", text, re.I))
+    text = re.sub(r"<<<[0-9a-f]{12}", "<<<", text)
+    return bool(re.search(r"187[,.]?000|\$\s?187\b|\b187\s?k\b", text, re.I))
 
 
 class Recommend(Base):
