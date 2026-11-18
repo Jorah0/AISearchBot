@@ -31,7 +31,7 @@ from lodestar import cli, doctor, email_monitor, mailconn, oauth, util, vault  #
 from lodestar.config import HOME  # noqa: E402
 
 GID = "123456789012-abcdefghijklmnop.apps.googleusercontent.com"
-GSECRET = "GOCSPX-testsecret0123456789"
+GSECRET = "GOCSPX-testsecret0123456789"  # secret-scan: fake
 MSID = "1b2c3d4e-0000-4000-8000-123456789abc"
 ACCESS = "ya29.ACCESS-TOKEN-SECRET-0123456789"
 ACCESS2 = "ya29.SECOND-ACCESS-TOKEN-0123456789"

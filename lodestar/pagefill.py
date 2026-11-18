@@ -29,8 +29,24 @@ def clean(fields) -> list[dict]:
             continue
         kind = str(f.get("kind") or "text")[:20]
         opts = [str(o)[:120] for o in f.get("options") or []][:MAX_OPTIONS] if kind == "select" else []
-        out.append({"id": fid, "label": label, "kind": kind, "value": str(f.get("value") or "")[:MAX_VALUE], "options": opts})
+        value = str(f.get("value") or "")
+        if _safe(value) != value:  # names the floor or holds Preferences: left alone, never offered for filling
+            continue
+        out.append({"id": fid, "label": label, "kind": kind, "value": value[:MAX_VALUE], "options": opts})
     return out
+
+
+def _safe(value: str) -> str:
+    """A field's text without Preferences or the floor ('' when its figure appears elsewhere). clean() compares it
+    with the original: any difference keeps the field out of the prompt and out of the fill (Profile tab's editor)."""
+    from .drafts import leaks
+    from .profile import drop_preferences, redact_floor
+
+    v = redact_floor(drop_preferences(value))
+    try:
+        return "" if leaks(v) else v
+    except (Exception, SystemExit):  # no readable profile: nothing to compare against beyond the redactions above
+        return v
 
 
 def propose(tab: str, fields, note: str = "", only: str | None = None, provider: str | None = None) -> list[dict]:

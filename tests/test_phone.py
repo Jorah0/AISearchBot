@@ -57,8 +57,62 @@ class Pairing(unittest.TestCase):
                    "/api/run/update_apply", "/api/phone", "/api/ext/capture", "/api/browser", "/api/open_folder"):
             self.assertFalse(phone.allowed(no), no)
 
+    def test_machine_level_routes_stay_on_the_computer(self):  # review: a phone could set update_origin -> code run
+        for no in ("/api/prefs", "/api/tools", "/api/master/open", "/api/view/open", "/api/apply/start",
+                   "/api/apply/login", "/api/apply/forget", "/api/apply/12/continue", "/api/run/jobmodel",
+                   "/api/run/export_pdf", "/api/run/council_set", "/api/run/ai_primary", "/api/run/council_on",
+                   "/api/studio/v3/open", "/api/run/activity"):  # 2nd review: os.startfile / webbrowser on the PC
+            self.assertFalse(phone.allowed(no), no)
+        for ok in ("/api/apply/status", "/api/apply/12/shot/a.png", "/api/run/email_check", "/api/run/digest"):
+            self.assertTrue(phone.allowed(ok), ok)
+
+    def test_every_route_that_acts_on_this_pc_is_refused(self):  # lesson 0009: a hand list missed two routes
+        import re
+        from pathlib import Path
+
+        src = (Path(__file__).resolve().parent.parent / "lodestar" / "web.py").read_text(encoding="utf-8")
+        lines = src[:src.index("class PhoneHandler")].splitlines()
+        effect = re.compile(r"_open_path\(|startfile\(|webbrowser\.open\(|subprocess\.(Popen|run)\(")
+        route = re.compile(r'path == "(/api/[^"]+)"|re\.fullmatch\(r"(/api/[^"]+)", path\)|^\s*case "(\w+)"'
+                           r'|path\.startswith\("(/api/[^"]+/)"\)')
+        op_re = re.compile(r'\bop == "(\w+)"')
+        found = []
+        for i, line in enumerate(lines):
+            if not effect.search(line) or line.lstrip().startswith(("#", "def ")):
+                continue
+            op = None
+            for back in reversed(lines[:i + 1]):
+                op = op or (op_re.search(back) or [None, None])[1]
+                m = route.search(back)
+                if m:  # a prefix route (/api/studio/<id>/<op>) is checked with the op its branch handles
+                    path = (m[1] or (m[2] and re.sub(r"\\d\+|\[\^/\]\+", "1", m[2]))
+                            or (m[4] and f"{m[4]}1/{op}") or f"/api/run/{m[3]}")
+                    found.append(path)
+                    break
+        self.assertGreaterEqual(len(found), 4, found)  # the sweep sees the known ones
+        for path in found:
+            self.assertFalse(phone.allowed(path), f"{path} acts on this PC but a phone may call it: add it to phone.DENY")
+
+    def test_concurrent_pairs_keep_every_session(self):  # review: read-modify-write outside the lock dropped one
+        import threading
+
+        phone.revoke_all()
+        toks = []
+
+        def one():
+            with phone._LOCK:
+                pass
+            toks.append(phone._add_session("t"))
+
+        ts = [threading.Thread(target=one) for _ in range(8)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        self.assertEqual(len(phone._load()["sessions"]), 8)
+        self.assertTrue(all(phone.valid(f"{phone.COOKIE}={t}") for t in toks))
+        phone.revoke_all()
+
     def test_start_needs_a_private_lan_address(self):
-        with patched(phone, lan_ip=lambda: None):
+        with patched(phone, lan_ips=lambda: []):
             with self.assertRaisesRegex(SystemExit, "home-network"):
                 phone.start()
 

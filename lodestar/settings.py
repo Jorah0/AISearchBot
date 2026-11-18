@@ -64,6 +64,7 @@ PREFS = {
     "council_judge": False,
     "jobmodel": True,  # build the local job model in Ollama (jobmodel.py) and use it as Ollama's model once built
     "jobmodel_base": "",  # the general Ollama model it is built on; empty: the best one Ollama offers
+    "ai_novelty": True,  # pass 55: one light AI call tells a new listing from a copy or repost of an older one (capped daily)
     "ai_crosscheck": False,  # other linked AIs fact-check each AI form answer, the writer revises until all agree
     "ai_crosscheck_rounds": 2,  # revisions at most before a disagreement is handed to you
     "ai_light": True,  # short structured AI judgements use the provider's light model (ai.LIGHT): fewer, cheaper tokens
@@ -136,6 +137,7 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
                  "uses it as Ollama's model; off: your chosen Ollama model"),
     "jobmodel_base": ("Local job model: base", "the Ollama model it is built on (e.g. llama3.2, qwen3); empty: the best "
                       "general model Ollama offers (code and embedding models last)"),
+    "ai_novelty": ("AI: new listing or copy?", "a light AI call tells a new job listing from another copy or a repost of one you already have (at most 40 a day); off: rules only"),
     "ai_crosscheck": ("AI cross-check", "your other linked AIs fact-check each AI form answer against the same "
                       "source; the writer revises on any objection until all agree, else the answer is flagged for you "
                       "(costs more calls: up to rounds+1 reviews per AI plus the revisions)"),

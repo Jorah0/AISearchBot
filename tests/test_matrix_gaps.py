@@ -264,7 +264,7 @@ class PrefErrors(unittest.TestCase):  # outcomes-platform-prefs-validation
             self.assertEqual(st, 400)
             self.assertIn("followup_days", out["error"])  # the name, not ***
             self.assertNotIn("***", out["error"])
-            secret = "sk-ant-matrix-0123456789abcdef"  # pasted into the name box by mistake: the error quotes the name
+            secret = "sk-ant-matrix-0123456789abcdef"  # pasted into the name box by mistake: the error quotes the name  (secret-scan: fake)
             st, out = call("POST", "/api/keys/link", {"name": secret, "key": secret}, {"X-Lodestar-Token": web.TOKEN})
             self.assertEqual(st, 400)
             self.assertNotIn(secret, json.dumps(out))  # on /api/keys/ the key is a secret, never echoed

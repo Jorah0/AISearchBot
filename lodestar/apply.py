@@ -460,10 +460,26 @@ def auto_track(listings: list[dict], provider: str | None = None) -> list[dict]:
 
     if not listings or not settings.enabled("auto_track"):
         return []
+    from . import novelty
+
+    try:  # pass 55: is each one a new job? (copies of a tracked job join it; reposts are dated)
+        novelty.judge([j.get("key") for j in listings], limit=10, provider=provider)
+    except (Exception, SystemExit):
+        pass
+    seen = {r["key"]: r for r in db.con().execute(
+        f"SELECT key, novelty, novelty_of, novelty_why, job_id FROM postings WHERE key IN ({','.join('?' * len(listings))})",
+        [str(j.get("key") or "") for j in listings])}
     fresh = []
     for j in listings:
         g = j.get("ghost") or ghost_signals(j)
-        if j.get("tracked"):  # on the Board already (web_monitor.annotate): no 'track X' item for a job you have
+        nv = seen.get(str(j.get("key") or ""))
+        twin_job = nv and (nv["job_id"] or (nv["novelty_of"] and (db.con().execute(
+            "SELECT job_id FROM postings WHERE key=?", (nv["novelty_of"],)).fetchone() or [None])[0]))
+        if nv and nv["novelty"] in ("same", "repost") and twin_job:  # the copy's own job, else the original's
+            j |= {"score": 0, "why": f"skipped: {'another copy' if nv['novelty'] == 'same' else 'a repost'} of job #{twin_job} ({nv['novelty_why']})"}
+        elif nv and nv["novelty"] == "same":  # a copy of a listing you have not tracked (or dismissed): offered once
+            j |= {"score": 0, "why": f"skipped: another copy of {nv['novelty_of']} ({nv['novelty_why']})"}
+        elif j.get("tracked"):  # on the Board already (web_monitor.annotate): no 'track X' item for a job you have
             j |= {"score": 0, "why": f"skipped: already tracked as #{j['tracked']}"}
         elif g["score"] >= GHOST_SKIP:  # a score marks it judged, so a watch does not offer it again
             j |= {"score": 0, "why": "skipped: possibly stale (" + "; ".join(g["reasons"]) + ")"}

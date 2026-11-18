@@ -162,6 +162,8 @@ POSTING_MIGRATIONS = {"title": "TEXT", "company": "TEXT", "location": "TEXT", "s
                       "last_seen": "TEXT", "seen_count": "INTEGER", "fit_score": "INTEGER", "fit": "TEXT", "fit_rev": "TEXT",
                       "ai_fit": "TEXT", "job_id": "INTEGER", "dismissed": "INTEGER", "closed_at": "TEXT",
                       "reposted_at": "TEXT",
+                      # pass 55 (novelty.py): new | same | repost, the older posting's key, why, rules | ai | unchecked
+                      "novelty": "TEXT", "novelty_of": "TEXT", "novelty_why": "TEXT", "novelty_by": "TEXT",
                       "track_id": "INTEGER"}  # the career track whose search found it (careers.search_track)
 POSTING_INDEXES = ("CREATE INDEX IF NOT EXISTS postings_last_seen ON postings(last_seen)",
                    "CREATE INDEX IF NOT EXISTS postings_job ON postings(job_id)",
@@ -683,7 +685,7 @@ BOOKKEEPING = ("apply_link", "proposed", "rejected_proposal", "send_failed", "se
                "reply_draft", "referral_draft", "outreach_draft", "checkin_draft", "referral", "attachments",
                "run_to",  # run_to: an approved pipeline batch (approvals writes the executor's kind as the event)
                # the listing monitor and job-alert mail watch the posting, not the employer talking to you
-               "posting_removed", "posting_changed", "posting_reopened", "posting_reposted", "listing_seen",
+               "posting_removed", "posting_changed", "posting_reopened", "posting_reposted", "listing_seen", "posting_seen_again",
                # documents built for the job (a drawer click or a pipeline step): your prep, not contact with the employer
                "gap", "research", "bullets", "resume", "coverage", "cover_letter", "interview_prep",
                # the apply agent's Inbox decision and evidence note (the 'applied' status change is the activity)

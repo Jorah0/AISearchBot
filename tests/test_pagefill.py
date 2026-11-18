@@ -31,6 +31,16 @@ class PageFill(unittest.TestCase):
         self.assertEqual(pagefill.clean("nope"), [])
         self.assertEqual(len(pagefill.clean([{"id": f"f{i}", "label": "x"} for i in range(99)])), pagefill.MAX_FIELDS)
 
+    def test_a_field_holding_the_profile_never_carries_the_floor(self):  # review: Profile tab's #pText leaked it
+        md = "# Me\n\n## Preferences\n- Salary floor: 151234\n- Remote only\n\n## Experience\n- Built things\n"
+        out = pagefill.clean([{"id": "pText", "label": "Master profile (markdown)", "value": md, "kind": "textarea"},
+                              {"id": "note", "label": "Note", "value": "Salary floor: 151234", "kind": "text"}])
+        # 2nd review: a redacted value offered for filling would overwrite the real text (Preferences lost on Save):
+        # a field that names the floor or holds Preferences is not offered at all
+        self.assertEqual(out, [])
+        kept = pagefill.clean([{"id": "pSummary", "label": "Summary", "value": "Built things", "kind": "text"}])
+        self.assertEqual(kept[0]["value"], "Built things")
+
     def test_one_fenced_call_answers_only_sent_fields_and_select_options(self):
         seen = []
         reply = {"fills": [{"id": "wKw", "value": "python, sql", "reason": "from your profile"},

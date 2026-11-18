@@ -10,6 +10,7 @@ traffic can read the session, so this is for a home network, not a cafe. Add TLS
 import hashlib
 import ipaddress
 import json
+import re
 import secrets
 import socket
 import threading
@@ -23,11 +24,16 @@ COOKIE = "ls_phone"
 CODE_TTL, CODE_TRIES, PORT = 300, 5, 8780
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L
 DENY = ("/api/keys", "/api/vault", "/api/accounts", "/api/codes", "/api/email", "/api/backups", "/api/update",
-        "/api/upload", "/api/open_folder", "/api/extension", "/api/ext/", "/api/browser", "/api/phone")
+        "/api/upload", "/api/open_folder", "/api/extension", "/api/ext/", "/api/browser", "/api/phone",
+        # settings (update_origin + update_mode = code run by the updater), tool auto flags, files opened on this PC,
+        # and the apply agent's browser (start / login window / forget logins / widen hosts)
+        "/api/prefs", "/api/tools", "/api/master/open", "/api/view/open", "/api/apply/")
+APPLY_OK = ("/api/apply/status",)  # read-only views of the apply agent stay (its screenshots too)
 DENY_RUN = {"restore", "backup", "update_apply", "update_check", "export", "email_signin", "obsidian", "profile_import",
-            "contacts_import", "doctor", "keys_check", "providers_test", "providers_local", "notify_test"}
+            "contacts_import", "doctor", "keys_check", "providers_test", "providers_local", "notify_test",
+            "jobmodel", "export_pdf", "council_set", "ai_primary", "council_on", "activity"}
 _CODE: dict = {}
-_SRV = None
+_SRVS: list = []  # one listener per private address
 _LOCK = threading.Lock()
 
 
@@ -44,9 +50,19 @@ def _load() -> dict:
 
 
 def _save(d: dict) -> None:
-    tmp = PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(d, indent=1), encoding="utf-8")
-    tmp.replace(PATH)
+    from .util import write_atomic  # retries the rename while a request is reading the file (Windows)
+
+    write_atomic(PATH, json.dumps(d, indent=1), private=True)
+
+
+def _add_session(label: str) -> str:
+    tok = secrets.token_urlsafe(32)
+    with _LOCK:  # read-modify-write: two phones pairing at once both keep their session
+        d = _load()
+        d["sessions"].append({"hash": _h(tok), "label": " ".join(str(label or "phone").split())[:60],
+                              "created": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())})
+        _save(d)
+    return tok
 
 
 def lan_ip() -> str | None:
@@ -83,12 +99,7 @@ def pair(code: str, label: str = "phone") -> str | None:
                 _CODE.clear()
             return None
         _CODE.clear()
-    tok = secrets.token_urlsafe(32)
-    d = _load()
-    d["sessions"].append({"hash": _h(tok), "label": " ".join(str(label or "phone").split())[:60],
-                          "created": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())})
-    _save(d)
-    return tok
+    return _add_session(label)
 
 
 def valid(cookie_header: str | None) -> bool:
@@ -101,53 +112,82 @@ def valid(cookie_header: str | None) -> bool:
 
 
 def revoke_all() -> int:
-    n = len(_load()["sessions"])
-    _save({"sessions": []})
+    with _LOCK:
+        n = len(_load()["sessions"])
+        _save({"sessions": []})
     return n
 
 
 def allowed(path: str, action: str | None = None) -> bool:
     """What a phone may reach: everything but the secret-bearing and machine-level routes."""
-    if path.startswith(DENY):
+    if path.startswith(APPLY_OK) or re.fullmatch(r"/api/apply/\d+/shot/[^/]+", path):
+        return True
+    if path.startswith(DENY) or re.fullmatch(r"/api/studio/[^/]+/open", path):  # os.startfile on this PC
         return False
     return not (path.startswith("/api/run/") and path[len("/api/run/"):].split("/")[0] in DENY_RUN)
 
 
+def _private(ip: str) -> bool:
+    try:
+        a = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return a.version == 4 and a.is_private and not a.is_loopback and not a.is_link_local
+
+
+def lan_ips() -> list[str]:
+    """Every private IPv4 address this computer has (pass 55): the home Wi-Fi one first (lan_ip), then any other, such
+    as the one a phone gives it while tethered (USB or hotspot) or a second network card."""
+    out = [ip] if (ip := lan_ip()) else []
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            a = info[4][0]
+            if _private(a) and a not in out:
+                out.append(a)
+    except OSError:
+        pass
+    return out
+
+
 def status() -> dict:
-    ip = lan_ip()
-    srv = _SRV
-    return {"on": srv is not None, "url": f"http://{srv.server_address[0]}:{srv.server_address[1]}/phone" if srv else None,
-            "lan_ip": ip, "phones": [{"label": s["label"], "created": s["created"]} for s in _load()["sessions"]],
+    srvs = list(_SRVS)
+    urls = [f"http://{s.server_address[0]}:{s.server_address[1]}/phone" for s in srvs]
+    return {"on": bool(srvs), "url": urls[0] if urls else None, "urls": urls, "lan_ip": lan_ip(),
+            "phones": [{"label": s["label"], "created": s["created"]} for s in _load()["sessions"]],
             "code_live": bool(_CODE) and time.time() < _CODE.get("until", 0)}
 
 
 def start(port: int = PORT) -> dict:
-    """Bind the phone listener to the LAN address (idempotent). Refused without a private LAN address."""
-    global _SRV
+    """Bind the phone listener on each private address (idempotent; a new address, say a tether that came up, is
+    added on the next start). Refused without any private address."""
     from . import web
 
     with _LOCK:
-        if _SRV is None:
-            ip = lan_ip()
-            if not ip:
-                raise SystemExit("no private home-network address found: connect this computer to your Wi-Fi first")
+        ips = lan_ips()
+        if not ips and not _SRVS:
+            raise SystemExit("no private home-network address found: connect this computer to your Wi-Fi first, or tether your phone")
+        have = {s.server_address[0] for s in _SRVS}
+        for ip in [i for i in ips if i not in have]:
             for p in range(port, port + 20):
                 try:
-                    _SRV = ThreadingHTTPServer((ip, p), web.PhoneHandler)
+                    srv = ThreadingHTTPServer((ip, p), web.PhoneHandler)
                     break
                 except OSError:
                     continue
             else:
-                raise SystemExit(f"no free port between {port} and {port + 19}")
-            threading.Thread(target=_SRV.serve_forever, daemon=True, name="lodestar-phone").start()
+                continue  # this address has no free port: the others still serve
+            _SRVS.append(srv)
+            threading.Thread(target=srv.serve_forever, daemon=True, name=f"lodestar-phone-{ip}").start()
+        if not _SRVS:
+            raise SystemExit(f"no free port between {port} and {port + 19}")
     return status()
 
 
 def stop() -> dict:
-    global _SRV
     with _LOCK:
-        srv, _SRV = _SRV, None
-    if srv is not None:
+        srvs = list(_SRVS)
+        _SRVS.clear()
+    for srv in srvs:
         srv.shutdown()
         srv.server_close()
     return status()

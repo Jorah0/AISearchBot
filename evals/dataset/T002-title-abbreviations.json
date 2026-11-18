@@ -1,0 +1,41 @@
+{
+ "id": "T002-title-abbreviations",
+ "title": "Sr. titles are not matched to Senior ones",
+ "category": "bug-fix",
+ "split": "heldout",
+ "prompt": "The new-listing check no longer treats 'Sr. Data Analyst' and 'Senior Data Analyst' as the same title. Find and fix the cause without changing tests, then run the tests for that module.",
+ "setup": [
+  {
+   "file": "lodestar/novelty.py",
+   "old": "WORD = {\"sr\": \"senior\", ",
+   "new": "WORD = {"
+  }
+ ],
+ "reference": [
+  {
+   "file": "lodestar/novelty.py",
+   "old": "WORD = {\"jr\"",
+   "new": "WORD = {\"sr\": \"senior\", \"jr\""
+  }
+ ],
+ "checks": [
+  [
+   "{python}",
+   "-W",
+   "ignore",
+   "-m",
+   "unittest",
+   "tests.test_novelty"
+  ]
+ ],
+ "forbidden": {
+  "unchanged": [
+   "tests/"
+  ],
+  "only_change": [
+   "lodestar/novelty.py"
+  ]
+ },
+ "max_turns": 25,
+ "timeout": 900
+}

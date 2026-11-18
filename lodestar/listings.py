@@ -16,7 +16,8 @@ PAGE = 100
 SHOWS = ("open", "tracked", "dismissed", "all")
 SORTS = ("fit", "new", "salary", "company")
 LIGHT = ("key", "url", "title", "company", "location", "salary", "posted_at", "urls", "sources", "first_seen", "last_seen",
-         "seen_count", "fit_score", "fit", "fit_rev", "ai_fit", "job_id", "dismissed", "closed_at", "reposted_at")
+         "seen_count", "fit_score", "fit", "fit_rev", "ai_fit", "job_id", "dismissed", "closed_at", "reposted_at",
+         "novelty", "novelty_why", "novelty_by")  # pass 55: the AI new-listing verdict
 
 
 _now = db._now  # one home (pass 31): UTC, like the database's datetime('now')
@@ -199,7 +200,8 @@ def _view(r, visit_at: int, cur_rev: str | None, pay: dict | None) -> dict:
             "salary": r["salary"] or "", "posted_at": r["posted_at"] or "", "first_seen": r["first_seen"],
             "last_seen": r["last_seen"] or r["first_seen"], "url": r["url"] or (urls[0] if urls else ""), "urls": urls,
             "sources": srcs, "job_id": r["job_id"], "dismissed": bool(r["dismissed"]), "closed_at": r["closed_at"] or "",
-            "reposted_at": r["reposted_at"] or "", "new": _first_ts(r["first_seen"]) > visit_at,
+            "reposted_at": r["reposted_at"] or "", "new": _first_ts(r["first_seen"]) > visit_at and r["novelty"] != "same",
+            "novelty": r["novelty"] or "", "novelty_why": r["novelty_why"] or "", "novelty_by": r["novelty_by"] or "",
             "pay_max": (pay or {}).get("salary_max"), **fit.light(f, cur_rev)}
 
 

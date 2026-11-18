@@ -39,3 +39,13 @@ tests/e2e/_artifacts/
 .coverage
 .coverage.*
 htmlcov/
+
+# Android build (pass 55)
+android/.gradle/
+android/local.properties
+android/app/build/
+android/lodestar.apk
+
+# golden-task eval run results (pass 56)
+evals/reports/
+.verify/

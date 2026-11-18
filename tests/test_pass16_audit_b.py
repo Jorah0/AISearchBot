@@ -442,7 +442,9 @@ class Hygiene(unittest.TestCase):
             platform.system = real
 
     def test_ci_lint_step_passes(self):  # packaging-ci-pyflakes-red: the exact command .github/workflows/ci.yml runs
-        self.assertIn("python -m pyflakes lodestar tests", (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+        # pass 56: CI runs scripts/verify.py, whose first step is this lint
+        self.assertIn("run: python scripts/verify.py", (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+        self.assertIn('"-m", "pyflakes", "lodestar", "tests"', (ROOT / "scripts" / "verify.py").read_text(encoding="utf-8"))
         py = next((p for p in (sys.executable, shutil.which("python"), shutil.which("python3")) if p and subprocess.run(
             [p, "-c", "import pyflakes"], capture_output=True).returncode == 0), None)
         if not py:

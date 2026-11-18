@@ -31,7 +31,7 @@ CHROME = ("name,url,username,password,note\n"
           "nouser,https://jobs.lever.co/acme,,Lv-Secret-666,\n")
 BITWARDEN = ("folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp\n"
              ",,login,Ashby,,,0,https://jobs.ashbyhq.com/acme,pat@example.com,Ab-Secret-777,\n")
-ONEPASSWORD = "Title,Url,Username,Password,OTPAuth,Favorite,Archived,Tags,Notes\nLever,https://jobs.lever.co/acme,pat,Lv-Secret-888,,,,,\n"
+ONEPASSWORD = "Title,Url,Username,Password,OTPAuth,Favorite,Archived,Tags,Notes\nLever,https://jobs.lever.co/acme,pat,Lv-Secret-888,,,,,\n"  # secret-scan: fake
 SECRETS = ("Gh-Secret-111", "Wd-Secret-222", "Li-Secret-333", "Bank-Secret-444", "Co-Secret-555", "Lv-Secret-666",
            "Ab-Secret-777", "Lv-Secret-888")
 

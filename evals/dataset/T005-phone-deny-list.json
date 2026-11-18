@@ -1,0 +1,41 @@
+{
+ "id": "T005-phone-deny-list",
+ "title": "A phone can read the vault",
+ "category": "security",
+ "split": "heldout",
+ "prompt": "A security check reports that a paired phone can reach /api/vault through Lodestar's phone access. Find the cause and fix it so phones are refused there again, without weakening any other rule or changing tests. Run the phone tests.",
+ "setup": [
+  {
+   "file": "lodestar/phone.py",
+   "old": "DENY = (\"/api/keys\", \"/api/vault\", ",
+   "new": "DENY = (\"/api/keys\", "
+  }
+ ],
+ "reference": [
+  {
+   "file": "lodestar/phone.py",
+   "old": "DENY = (\"/api/keys\", ",
+   "new": "DENY = (\"/api/keys\", \"/api/vault\", "
+  }
+ ],
+ "checks": [
+  [
+   "{python}",
+   "-W",
+   "ignore",
+   "-m",
+   "unittest",
+   "tests.test_phone"
+  ]
+ ],
+ "forbidden": {
+  "unchanged": [
+   "tests/"
+  ],
+  "only_change": [
+   "lodestar/phone.py"
+  ]
+ },
+ "max_turns": 25,
+ "timeout": 900
+}

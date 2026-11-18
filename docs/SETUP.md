@@ -1685,6 +1685,19 @@ that a site flags is yours. Instead it works alongside you:
   is on that site. At a cap the site shows *At cap: paused*, Today and the job's drawer say so, and the extension's
   Fill waits there until the day (or the 7 days) has passed. Mark jobs applied after you apply, so the count is right.
 
+### Phone access (your home Wi-Fi)
+
+Off by default (pref `phone_access`). **Setup > Phone access > Turn on** starts a second listener on this computer's
+private Wi-Fi address only (never every address, never a public one) and shows its link and a QR code. On the phone,
+open the link and type the one-time pairing code Setup shows (8 characters, 5 minutes, 5 tries); the phone keeps a
+session cookie, stored hashed in `phone.json` (never in backups). **Sign out all phones** ends every session.
+
+A phone can use the board, jobs, documents, the Inbox and the AI helpers. It cannot reach keys, the vault, accounts,
+sign-in codes, mail sign-in, backups / restore / updates, settings and tool switches, the apply agent's browser, files
+opened on this computer, the extension or the in-app browser: those answer "use Lodestar on your computer". The
+traffic is plain HTTP on your own network: use it at home, not on public Wi-Fi. The Android companion (`android/`,
+README there) opens the same address and loads only private hosts.
+
 ### The Accounts tab: every connection, and when one stops working
 
 **Accounts** (Settings in the sidebar) is where every link Lodestar uses lives:

@@ -1442,6 +1442,16 @@ def cmd_app(a):
     serve(a.port, open_browser=not a.no_open)
 
 
+def cmd_selfcheck(a):
+    """pass 55: selfcheck.run, then the report."""
+    from . import selfcheck
+
+    provs = [x.strip() for x in a.providers.split(",") if x.strip()] or None
+    path = selfcheck.run(not a.no_page, a.ai, a.live, provs)
+    print(path.read_text(encoding="utf-8"))
+    print(f"report: {path}")
+
+
 def cmd_doctor(a):
     from .doctor import report
 
@@ -2548,6 +2558,15 @@ def build() -> argparse.ArgumentParser:
     s = sub.add_parser("doctor", help="check the install: Python, modules, WebView2, keyring, data folder, profile, providers, mail")
     s.add_argument("--live", action="store_true", help="also make one real call per configured provider")
     s.set_defaults(f=cmd_doctor)
+
+    s = sub.add_parser("selfcheck", help="check and test the app: every tab in a headless browser (throwaway data), "
+                                         "optional AI review of each page, optional live test of each AI tool")
+    s.add_argument("--ai", action="store_true", help="also ask the AI to review each page (fictional demo data only)")
+    s.add_argument("--live", action="store_true", help="also run each AI tool once for real (page fill, to-dos, look, "
+                                                         "revise, council on/off, cross-check)")
+    s.add_argument("--no-page", action="store_true", help="skip the headless page check")
+    s.add_argument("--providers", default="", help="comma-separated, e.g. ollama,anthropic (default: your primary AI)")
+    s.set_defaults(f=cmd_selfcheck)
 
     s = sub.add_parser("update", help="updates of this install: check, apply (backup, fast-forward, tests, rollback), status, log")
     v = s.add_subparsers(dest="op")

@@ -54,7 +54,15 @@ class Clean(unittest.TestCase):
         self.assertEqual(mailhtml.clean(""), "")
 
     def test_scan_copy_masks_codes_and_the_list_never_carries_it(self):
-        self.assertIn("******", email_monitor._formatted(message("<p>Your verification code is 482913</p>")))
+        # review: masking markup missed split cells and entity digits, so a code mail keeps no formatted copy at all
+        for body in ("<p>Your verification code is 482913</p>",
+                     "<p>Your verification code is</p><table><tr><td>4</td><td>8</td><td>2</td><td>9</td><td>1</td><td>3</td></tr></table>",
+                     "<p>Your verification code is &#52;82913</p>"):
+            self.assertEqual(email_monitor._formatted(message(body)), "", body)
+        self.assertIn("<p>", email_monitor._formatted(message("<p>Thanks for applying</p>")))
+        # 2nd review: a verification-cued link (masked in the text) is not a code: the formatted copy stays
+        self.assertIn("<p>", email_monitor._formatted(message(
+            '<p>Please confirm your interview slot:</p><p><a href="https://cal.example.org/x">https://cal.example.org/x</a></p>')))
         self.assertNotIn("html", db.MAIL_LIST.split(", "))
         db.add_mail(message_id="<html-1@example>", direction="in", from_addr="a@b.example", subject="s", body="t",
                     html="<p>formatted</p>")

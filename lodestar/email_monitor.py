@@ -170,7 +170,13 @@ def _formatted(msg) -> str:
     try:
         from . import mailhtml
 
-        return codes.mask(_hdr(msg, "Subject"), mailhtml.of(msg))[1]
+        subj, h = _hdr(msg, "Subject"), mailhtml.of(msg)
+        # markup hides codes from the mask (one digit per cell, &#52; entities): a mail whose text carries a code
+        # keeps no formatted copy at all; the masked text is what shows
+        text = re.sub(r"(?<=\d)\s+(?=\d)", "", strip_html(h))
+        if any(codes.mask(subj, t)[1] != t for t in (text, _body(msg))):
+            return ""
+        return h
     except Exception:
         return ""
 

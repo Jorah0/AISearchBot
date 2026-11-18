@@ -362,7 +362,13 @@ def ask_json(prompt: str, system: str | None = None, provider: str | None = None
     from .util import extract_json
 
     sys_ = (system or "") + "\nReply with valid JSON only. No prose, no markdown fences."
-    return extract_json(ask(prompt, system=sys_, provider=provider, **kw))
+    text = ask(prompt, system=sys_, provider=provider, **kw)
+    try:
+        return extract_json(text)
+    except ValueError:  # pass 55: a local model's broken JSON (a trailing comma, a quote): one retry with the error named
+        again = ask(prompt + "\n\nYour last reply was not valid JSON. Reply again with only the JSON object, double-quoted "
+                    "keys and strings, no comments, no trailing commas.", system=sys_, provider=provider, **kw)
+        return extract_json(again)
 
 
 def list_models(name: str) -> list[str]:

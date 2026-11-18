@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lodestar's phone listener is plain HTTP on your own network; MainActivity.isPrivate() keeps the app to private
+     addresses, so cleartext never reaches the internet from here. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

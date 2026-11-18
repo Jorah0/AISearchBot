@@ -32,7 +32,8 @@ def agenda(now: datetime | None = None) -> dict:
     actions = [item(j, when=j["next_action_at"], what=j["next_action"] or "next action", overdue=j["next_action_at"] < today)
                for j in live if j["next_action_at"] and j["next_action_at"] <= today]
     actions += [{"id": t["job_id"], "company": t["company"], "title": t["title"], "when": t["due"], "what": t["text"],
-                 "overdue": t["due"] < today, "task": t["id"]} for t in db.tasks(due_by=today)]  # pass 53: your to-dos
+                 "overdue": t["due"] < today, "task": t["id"]} for t in db.tasks(due_by=today)
+                if t["job_id"] in {j["id"] for j in live}]  # pass 53: your to-dos (closed jobs: not today)
     deadlines = [item(j, when=j["deadline"], days=(date.fromisoformat(j["deadline"]) - now.date()).days)
                  for j in live if j["deadline"] and today <= j["deadline"] <= soon]
     return {
@@ -289,6 +290,9 @@ def cycle(a) -> None:
 
     from . import jobmodel
 
+    from . import novelty
+
+    _step("new listings", novelty.tick)  # pass 55: new opening, another copy, or a repost (light AI, capped)
     _step("job model", jobmodel.tick)  # rebuilds the local Ollama job model when what it learns changed (at most daily)
     _step("pipeline", lambda: pipeline.advance(a.provider))  # step states always; Autopilot runs only when switched on
     _step("desktop notifications", _desktop)

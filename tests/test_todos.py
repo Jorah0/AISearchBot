@@ -49,6 +49,12 @@ class Todos(unittest.TestCase):
         db.delete_job(self.jid)
         self.assertEqual(db.con().execute("SELECT COUNT(*) FROM tasks WHERE job_id=?", (self.jid,)).fetchone()[0], 0)
 
+    def test_a_closed_jobs_todos_leave_today(self):  # review: they stayed 'overdue' after a rejection
+        db.add_task(self.other, "Chase the recruiter", "2026-01-02")
+        db.set_status(self.other, "rejected")
+        acts = [a for a in loop.agenda(datetime(2026, 1, 3))["actions"] if a.get("task")]
+        self.assertNotIn(self.other, [a["id"] for a in acts])
+
     def test_ai_ideas_cleaned_deduplicated_and_capped(self):
         db.add_task(self.jid, "Ask Sam for a referral")
         seen = []

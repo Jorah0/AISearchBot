@@ -34,7 +34,7 @@ Locations / remote: Austin, TX or remote
 # every control must have a name a screen reader can say; this finds the ones that do not
 UNNAMED = """() => [...document.querySelectorAll('section.on button, section.on input, section.on select, section.on textarea')]
   .filter(e => e.offsetParent !== null && e.type !== 'hidden')
-  .filter(e => !(e.getAttribute('aria-label') || e.title || (e.labels && e.labels.length) || e.placeholder
+  .filter(e => !(e.getAttribute('aria-label') || (e.getAttribute('aria-labelledby') && document.getElementById(e.getAttribute('aria-labelledby'))?.textContent.trim()) || e.title || (e.labels && e.labels.length) || e.placeholder
                  || (e.tagName === 'BUTTON' && e.textContent.trim()) || e.closest('label')))
   .map(e => e.id || e.tagName.toLowerCase() + (e.className ? '.' + String(e.className).split(' ')[0] : '')).slice(0, 10)"""
 OUTLINE = """() => { const s = document.querySelector('section.on'); if (!s) return null;
@@ -42,7 +42,7 @@ OUTLINE = """() => { const s = document.querySelector('section.on'); if (!s) ret
   return { title: (s.querySelector('h2') || {}).textContent || s.id,
     headings: [...s.querySelectorAll('h3, h4')].filter(vis).map(h => h.textContent.trim()).slice(0, 40),
     buttons: [...s.querySelectorAll('button')].filter(vis).map(b => b.textContent.trim() || b.getAttribute('aria-label') || '').filter(Boolean).slice(0, 80),
-    fields: [...s.querySelectorAll('input, select, textarea')].filter(vis).map(e => e.getAttribute('aria-label') || e.placeholder || e.id).slice(0, 60),
+    fields: [...s.querySelectorAll('input, select, textarea')].filter(vis).map(e => (e.getAttribute('aria-label') || (e.labels && e.labels[0] && e.labels[0].textContent) || (e.closest('label') && e.closest('label').textContent) || e.placeholder || '(unlabelled field)').replace(/\\s+/g, ' ').trim().slice(0, 80)).slice(0, 60),
     text: s.innerText.replace(/\\s+/g, ' ').slice(0, 2500) }; }"""
 
 

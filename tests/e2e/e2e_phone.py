@@ -12,9 +12,9 @@ from lodestar import phone, settings  # noqa: E402  (after harness: it sets the 
 
 class Phone(E2ETestCase):
     def test_turn_on_pair_list_sign_out_and_off(self):
-        old = phone.lan_ip
-        phone.lan_ip = lambda: "127.0.0.1"
-        self.addCleanup(setattr, phone, "lan_ip", old)
+        old = phone.lan_ips
+        phone.lan_ips = lambda: ["127.0.0.1"]
+        self.addCleanup(setattr, phone, "lan_ips", old)
         self.addCleanup(phone.stop)
         self.addCleanup(phone.revoke_all)
         self.addCleanup(settings.set_pref, "phone_access", False)
