@@ -52,6 +52,23 @@ class SecretScan(unittest.TestCase):
         self.assertEqual(s.scan_text("tests/test_x.py", line), [])
         self.assertTrue(s.scan_text("lodestar/x.py", line))  # an agent cannot silence the scan in product code
 
+    def test_the_staged_scan_names_files_and_honours_test_fakes(self):  # it labelled every line "(staged)": a commit
+        import subprocess                                                # of marked test fakes was refused
+
+        s = load("secret_scan")
+        d = Path(tempfile.mkdtemp())
+        s.ROOT = d
+        run = lambda *a: subprocess.run(["git", *a], cwd=d, capture_output=True, check=True)
+        run("init", "-q")
+        (d / "tests").mkdir()
+        fake = "sk-ant-" + "q7" * 20
+        (d / "tests" / "test_x.py").write_text(f'KEY = "{fake}"  # secret-scan: fake\n', encoding="utf-8")
+        run("add", ".")
+        self.assertEqual(s.main(["--staged"]), 0)
+        (d / "app.py").write_text(f'KEY = "{fake}"  # secret-scan: fake\n', encoding="utf-8")  # product code: no pass
+        run("add", ".")
+        self.assertEqual(s.main(["--staged"]), 1)
+
     def test_commits_run_the_staged_scan(self):  # git config core.hooksPath .githooks (README / CONTRIBUTING step)
         hook = (ROOT / ".githooks" / "pre-commit").read_text(encoding="utf-8")
         self.assertIn("scripts/secret_scan.py --staged", hook)

@@ -56,14 +56,22 @@ def tracked() -> list[Path]:
 
 
 def staged_text() -> str:
-    return subprocess.run(["git", "diff", "--cached", "-U0"], cwd=ROOT, capture_output=True, text=True).stdout
+    return subprocess.run(["git", "diff", "--cached", "-U0"], cwd=ROOT, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace").stdout
 
 
 def main(argv: list[str]) -> int:
     hits = []
-    if "--staged" in argv:
-        added = "\n".join(l[1:] for l in staged_text().splitlines() if l.startswith("+") and not l.startswith("+++"))
-        hits += scan_text("(staged)", added)
+    if "--staged" in argv:  # the added lines per file, under their own names (the tests/ fake marker needs the name)
+        added: dict[str, list[str]] = {}
+        name = None
+        for line in staged_text().splitlines():
+            if line.startswith("+++ "):
+                name = line[6:] if line.startswith("+++ b/") else None
+            elif line.startswith("+") and name and Path(name).suffix.lower() not in SKIP_SUFFIX:
+                added.setdefault(name, []).append(line[1:])
+        for name, lines in added.items():
+            hits += [f"{h} (added line)" for h in scan_text(name, "\n".join(lines))]
     else:
         files = [Path(a) for a in argv if not a.startswith("--")] or tracked()
         for f in files:
