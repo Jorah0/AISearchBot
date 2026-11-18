@@ -10,7 +10,7 @@
 ## Project notes
 
 - **Product**: Lodestar. Package `lodestar/`; `jobbot` is a legacy script alias in `pyproject.toml`.
-- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1065 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
+- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1073 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
 - **Test matrix** (`docs/TESTS.md`): one row per feature with its unit/integration and E2E tests by exact name
   (`module.Class.test_name`). Every new feature adds a TESTS.md row + a unit test + an E2E test when it has UI;
   `tests/test_feature_matrix.py` fails on a row with no test, an unknown name, a browser test in the unit column, a
@@ -180,6 +180,12 @@ PORT`, PORT = the server's own
   retried. No stealth, no CAPTCHA solving (`test_apply_engine.Surfaces`). Tests drive `_loop(new_driver)` with a fake
   browser; E2E (`e2e_apply_agent`) uses a temp profile, fixtures in tests/fixtures/apply and `MAP * 127.0.0.1`, never
   `HOME/browser-profile`; the worker's idle hook is the only thread that may touch the page.
+- **Daily applying** (pass 40, `apply_agent.site_key` / `same_role` / `autopilot_apply`): every run started counts against
+  its site for the day (application system, else the company host; `apply_agent_site_daily_cap`). `same_role` runs inside
+  `already_submitted` (queue time and before the Submit click): a job sharing a link (tracking params dropped, job ids
+  kept) or company + title + `listings.same_place` with a job past saved or in a live / submitted run is refused.
+  Autopilot starts the agent only with `autopilot_apply` (off by default), never for a link-less job. Tests: every job
+  needs its own company or link, or the second is a duplicate.
 - **Site accounts** (`accounts.py`, pass 22 addendum A; docs/APPLY_AGENT.md > Site accounts): one account per exact host
   (`site_accounts` row: link, username, status, dates, jobs); the password only in the keyring (`vault` name `site:<host>`,
   filtered out of the Setup vault list), back only from Reveal, `_secret` or `_general_pw` (static test: three

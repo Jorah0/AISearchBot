@@ -1436,6 +1436,13 @@ def advance(provider: str | None = None, now=None) -> dict:
     if not settings.pref("autopilot"):
         LAST["note"] = "Autopilot is off"
         return res
+    try:  # Apply (pref autopilot_apply): jobs prepared in an earlier cycle; no AI spent
+        from . import apply_agent
+
+        res["applying"] = apply_agent.autopilot_apply(states)
+    except (Exception, SystemExit) as x:
+        db.release(close=False)
+        log.get("pipeline").warning("autopilot apply failed: %s", x)
     per_cycle, per_day = int(settings.pref("autopilot_ai_per_cycle")), int(settings.pref("autopilot_ai_per_day"))
     day, cycle = spent_today(), 0
     cands = [j for j in live if j["id"] in states and not fit_skip(states[j["id"]]) and _next_action(states[j["id"]])]

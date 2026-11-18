@@ -21,6 +21,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -178,6 +179,42 @@ def already_submitted(job_id: int, but: int | None = None) -> str | None:
     if m:  # untrusted mail counts too: refusing is the safe direction (a forged mail can only delay an application)
         return (f"a confirmation email arrived on {str(m['at'])[:10]} from {m['from_addr']}"
                 + ("" if m["trusted"] else " (unverified sender)"))
+    return same_role(job)
+
+
+_TRACKING = re.compile(r"^(?:utm_\w*|ref|referrer|source|src|trk\w*|gh_src|lever-source|fbclid|gclid)$", re.I)
+
+
+def _link(u) -> str:
+    """A link compared across copies of one posting: host without www, path without a trailing slash, tracking
+    parameters dropped (a job id in the query, such as gh_jid, stays: it names the opening)."""
+    p = urllib.parse.urlsplit(str(u or "").strip())
+    q = [(k, v) for k, v in urllib.parse.parse_qsl(p.query, keep_blank_values=True) if not _TRACKING.match(k)]
+    return f"{(p.hostname or '').removeprefix('www.')}{p.path.rstrip('/')}?{urllib.parse.urlencode(sorted(q))}"
+
+
+def same_role(job) -> str | None:
+    """Why this job is a copy of a role already applied for or in an agent run (cross-posted on several boards,
+    tracked twice), else None: another job with one of its links, or the same company and title at the same place
+    (listings.same_place: a missing location matches, refusing is the safe direction)."""
+    from .listings import same_place
+    from .web_monitor import norm_company, norm_title
+
+    links = {_link(u) for u in (job["url"], job["apply_url"]) if u}
+    co, title = norm_company(job["company"]), norm_title(job["title"])
+    for o in db.con().execute("SELECT id, company, title, url, apply_url, location, status FROM jobs WHERE id<>?",
+                              (job["id"],)).fetchall():
+        if not (links & {_link(u) for u in (o["url"], o["apply_url"]) if u} or (
+                co and title and norm_company(o["company"]) == co and norm_title(o["title"]) == title
+                and same_place(o["location"] or "", job["location"] or ""))):
+            continue
+        name = f"same role as #{o['id']} ({o['company']} - {o['title']})"
+        if o["status"] != "saved":
+            return f"{name}, which is {o['status']}: Lodestar applies for a role once"
+        r = db.con().execute(f"SELECT id, state FROM apply_runs WHERE job_id=? AND (state IN {LIVE} OR state IN "
+                             "('confirmed','by_user','unknown')) ORDER BY id DESC", (o["id"],)).fetchone()
+        if r:
+            return f"{name}: its apply run #{r['id']} is {r['state']}, so this copy is not applied for again"
     return None
 
 
@@ -188,6 +225,48 @@ def _cutoff(seconds: int) -> str:
 def alive(run) -> bool:
     """The process that owns this run is alive (its heartbeat is fresh)."""
     return run["id"] in _OWNED or bool(run["heartbeat"] and run["heartbeat"] >= _cutoff(DEAD_S))
+
+
+def site_key(url) -> str:
+    """The site an application goes to, for the per-site daily limit: its application system (greenhouse, lever...),
+    else the host without www (a company's own careers site)."""
+    h = apply_ats.host(url)
+    return apply_ats.ats_of(h) or h.removeprefix("www.")
+
+
+def _runs_today():
+    return db.con().execute("SELECT url FROM apply_runs WHERE date(created_at, 'localtime') = date('now', 'localtime')"
+                            ).fetchall()
+
+
+def _site_today(site: str) -> int:
+    """Runs started on this site today, whatever became of them (a failed try still visited the site)."""
+    return sum(1 for r in _runs_today() if r["url"] and site_key(r["url"]) == site)
+
+
+def autopilot_apply(states: dict) -> list[dict]:
+    """Autopilot's Apply (pref autopilot_apply, off by default): queue the agent for jobs whose Apply step is ready
+    (resume, letter and answers done) and that the fit gate did not skip, best fit first, while today's runs are under
+    autopilot_apply_daily. enqueue still refuses a site at its daily limit, a role already applied for and a job
+    already submitted; the agent's mode decides who presses Submit. states: {job_id: pipeline entries}.
+    ponytail: a job without an application link is left for your click (finding one reads pages and may use AI)."""
+    if not settings.pref("autopilot_apply") or available() is not None:
+        return []
+    left = int(settings.pref("autopilot_apply_daily")) - len(_runs_today())
+    ready = [jid for jid, es in states.items() if not pipeline.fit_skip(es)
+             and any(e["name"] == "apply" and e["state"] == "ready" for e in es)]
+    out = []
+    for job in sorted((db.get_job(j) for j in ready), key=lambda j: -(j["fit_score"] or 0)):
+        if left <= 0:
+            break
+        try:
+            resolve_url(job)
+        except SystemExit:
+            continue
+        r = enqueue([job["id"]])[0]
+        out.append(r)
+        left -= "run_id" in r
+    return out
 
 
 # ----------------------------------------------------------------------------- queue and control
@@ -219,6 +298,10 @@ def enqueue(job_ids, mode: str | None = None, eeo: bool | None = None, start: bo
                                      f"{', '.join(hit['tried'][:6]) or 'nothing to read'})") from None
                 db.set_fields(jid, apply_url=hit["url"])
                 url, how, found = hit["url"], f"found via {hit['how']}: check it is this job", True
+            site, cap = site_key(url), int(settings.pref("apply_agent_site_daily_cap"))
+            if (n := _site_today(site)) >= cap:
+                raise SystemExit(f"{site}: {n} of {cap} applications started today, so this one waits for tomorrow "
+                                 "(Setup > Apply agent: applications per site a day)")
             ats = apply_ats.ats_of(apply_ats.host(url))
             m, reasons = effective_mode(job, ats, mode)
             if found and m == "auto":  # a link Lodestar found itself is never submitted unseen

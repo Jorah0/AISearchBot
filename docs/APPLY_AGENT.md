@@ -19,6 +19,14 @@ one write path).
 | review | Screenshots and every field go to the Inbox (`submit_application`). After you approve, the agent re-reads the form (a change you made in the window is proposed again), ticks the consent boxes your approval covered, clicks Submit once, and on the confirmation page the job moves to applied with the evidence |
 | auto | Off by default. Needs the `apply_agent` tool on auto, the ATS on your list (`apply_agent_auto_ats`, empty by default), fit >= `apply_agent_min_fit`, under `apply_agent_daily_cap` today, and 2 applications you approved that went through on that ATS. Any flag, consent box, AI-written value, host you added or form error at the last page sends it to review |
 
+**Limited daily applying.** Every run the agent starts counts against its site for the day: the application system
+(Greenhouse, Lever, Workday...) or the company's own site (`apply_agent_site_daily_cap`, default 3). A role is applied
+for once: before queueing and again right before Submit, the agent refuses a job that is a copy of one already applied
+for or in a run (the same link, tracking parameters ignored, or the same company and title at the same place).
+With `autopilot_apply` on (off by default) Autopilot starts the agent for jobs whose resume, letter and answers are
+ready, best fit first, skipping fit-gated jobs and jobs without an application link, at most `autopilot_apply_daily`
+runs a day. The mode above still decides who presses Submit.
+
 A link that is not on a known application system (Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Workday, iCIMS,
 Taleo) runs in stop mode only. Bulk and the pipeline's Apply step use your default mode.
 

@@ -100,6 +100,9 @@ PREFS = {
     # apply agent: stop = you press Submit; review = the Inbox first; auto = every gate in apply_agent.auto_blockers
     "apply_agent_mode": "stop",
     "apply_agent_daily_cap": 5,
+    "apply_agent_site_daily_cap": 3,  # applications started per site a day (an ATS such as greenhouse, or a company host)
+    "autopilot_apply": False,  # Autopilot starts the apply agent for jobs whose preparation is done (its mode still decides Submit)
+    "autopilot_apply_daily": 5,  # Autopilot starts at most this many applications a day (yours count too)
     "apply_agent_min_fit": 80,
     "apply_agent_auto_ats": "",  # comma list of ATS names auto may submit on; ships with none
     "apply_agent_eeo": False,
@@ -159,6 +162,11 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "apply_agent_mode": ("Apply agent mode", "stop: it fills and you press Submit; review: each submission waits in the "
                          "Inbox; auto: it submits on its own (tool apply_agent on auto, every gate passed)"),
     "apply_agent_daily_cap": ("Apply agent: automatic submissions a day", "at most this many (0-25)"),
+    "apply_agent_site_daily_cap": ("Apply agent: applications per site a day", "at most this many started on one site "
+                                   "(an application system such as Greenhouse, or a company's own site) a day (0-25)"),
+    "autopilot_apply": ("Autopilot applies", "Autopilot starts the apply agent for jobs whose resume, letter and answers "
+                        "are ready, best fit first; the agent's mode still decides who presses Submit"),
+    "autopilot_apply_daily": ("Autopilot applications a day", "Autopilot starts at most this many a day, yours included (0-25)"),
     "apply_agent_min_fit": ("Apply agent: minimum fit for auto", "auto submits only jobs whose fit score is at least this (0-100)"),
     "apply_agent_auto_ats": ("Apply agent: sites for auto", "comma list of application systems auto may submit on "
                              "(greenhouse, lever, ashby, ...); empty: none"),
@@ -179,7 +187,7 @@ RANGES = {"followup_days": (1, 90), "auto_track_min_score": (0, 100), "weekly_ta
           "activity_weekly_min": (0, 100), "update_every_hours": (1, 720),
           "autopilot_ai_per_cycle": (0, 500), "autopilot_ai_per_day": (0, 500), "autopilot_jobs_per_cycle": (0, 50),
           "years_experience": (0, 60), "auto_track_daily_max": (0, 100),
-          "apply_agent_daily_cap": (0, 25), "apply_agent_min_fit": (0, 100)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
+          "apply_agent_daily_cap": (0, 25), "apply_agent_site_daily_cap": (0, 25), "autopilot_apply_daily": (0, 25), "apply_agent_min_fit": (0, 100)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
 GOALS = ("contacts", "tailored_applications", "mock_sessions", "applications")  # quality first, raw volume last
 
 

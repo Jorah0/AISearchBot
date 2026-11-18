@@ -56,6 +56,7 @@ class ApplyAgent(E2ETestCase):
         self.tabs, self.held = [], []
         st = settings.load()
         self.addCleanup(settings.save, st)
+        settings.set_pref("apply_agent_site_daily_cap", 25)  # every fixture form is on one host
         apply_agent.STOP.unlink(missing_ok=True)
         apply_agent._EVENT.clear()
 
@@ -64,10 +65,14 @@ class ApplyAgent(E2ETestCase):
             self.held.pop()()
         db.release(close=False)
 
+    N = [0]
+
     def job(self, query: str = "", host: str = "apply.example-ats.test", page: str = "form.html") -> int:
-        jid = db.add_job("Example Robotics", "Data Engineer", f"https://jobs.example.com/robotics/{self.id()}/{page}?{query}",
+        self.N[0] += 1  # one company per job: the same company + title is one role, applied for once (same_role)
+        jid = db.add_job(f"Example Robotics {self.N[0]}", "Data Engineer", f"https://jobs.example.com/robotics/{self.id()}/{page}?{query}",
                          "Python SQL")
-        db.set_fields(jid, apply_url=f"http://{host}:{self.port}/{page}{'?' + query if query else ''}")
+        q = "&".join(x for x in (query, f"job={self.N[0]}") if x)  # its own link too: one link is one role
+        db.set_fields(jid, apply_url=f"http://{host}:{self.port}/{page}?{q}")
         (resume.app_dir(db.get_job(jid)) / "resume.pdf").write_bytes(b"%PDF-1.4 fictional resume")
         return jid
 
