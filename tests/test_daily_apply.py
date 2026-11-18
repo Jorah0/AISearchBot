@@ -16,7 +16,7 @@ if "lodestar.config" not in sys.modules:  # same temp home as test_lodestar.py w
 sys.path.insert(0, str(Path(__file__).parent))
 from test_apply_engine import Base, patched  # noqa: E402
 
-from lodestar import apply_agent, db, pipeline, settings  # noqa: E402
+from lodestar import ai, apply_agent, db, pipeline, settings, web  # noqa: E402
 
 
 class SiteLimit(Base):
@@ -60,6 +60,116 @@ class SameRole(Base):
         self.made += [c, d]
         db.set_status(c, "applied")
         self.assertIsNone(apply_agent.already_submitted(d))
+
+
+class Shown(Base):
+    def stage(self, jid, name):
+        return next(e for e in pipeline.status(jid, save=False) if e["name"] == name)
+
+    def test_a_copy_of_an_applied_role_is_blocked_on_the_board_with_its_reason(self):
+        done = self.job("Acme Robotics", location="Austin, TX")
+        db.set_status(done, "applied")
+        twin = self.job("Acme Robotics Inc", location="Austin")
+        e = self.stage(twin, "score")  # the first step: Autopilot spends nothing on it
+        self.assertEqual(e["state"], "blocked")
+        self.assertIn(f"same role as #{done}", e["why"])
+
+    def test_two_saved_copies_the_newer_waits_for_the_older(self):
+        old, new = self.job("Acme Robotics"), self.job("ACME Robotics")
+        self.assertNotEqual(self.stage(old, "score")["state"], "blocked")
+        e = self.stage(new, "score")
+        self.assertEqual(e["state"], "blocked")
+        self.assertIn(f"tracked earlier as #{old}", e["why"])
+        self.assertIn("run_id", apply_agent.enqueue([new], "stop", start=False)[0])  # your click may still use this copy
+
+
+class AiCheck(Base):
+    """The AI judges a company + title copy (same / similar / different); a shared link is never sent to it."""
+
+    def pair(self):
+        done = self.job("Acme Robotics", location="Austin, TX")
+        db.set_status(done, "applied")
+        return done, self.job("Acme Robotics", location="Austin, TX")
+
+    def ask(self, verdict, why="the descriptions name different teams"):
+        calls = []
+
+        def fake(prompt, provider=None, **kw):
+            calls.append(prompt)
+            return {"verdict": verdict, "why": why}
+        return calls, patched(ai, ask_json=fake, available=lambda: True)
+
+    def test_different_lifts_the_block_and_the_prompt_is_fenced(self):
+        done, copy = self.pair()
+        self.assertIn("not checked by AI yet", apply_agent.same_role(db.get_job(copy)))
+        calls, p = self.ask("different")
+        with p:
+            out = apply_agent.check_dups(copy)
+        self.assertEqual([(r["other"], r["verdict"]) for r in out], [(done, "different")])
+        self.assertIn("untrusted", calls[0])
+        self.assertIn("BLOCK A", calls[0])
+        self.assertIsNone(apply_agent.same_role(db.get_job(copy)))
+        self.assertIn("run_id", apply_agent.enqueue([copy], "stop", start=False)[0])
+        log = db.con().execute("SELECT ai, detail FROM pipeline_runs WHERE job_id=? ORDER BY id DESC", (copy,)).fetchone()
+        self.assertEqual(log["ai"], 1)
+        self.assertIn(f"#{done}: different", log["detail"])
+
+    def test_same_and_similar_keep_the_block_with_the_reason(self):
+        done, copy = self.pair()
+        for verdict, word in (("same", "the same opening"), ("similar", "similar")):
+            calls, p = self.ask(verdict, "same team and duties")
+            with p:
+                apply_agent.check_dups(copy, recheck=True)
+            why = apply_agent.same_role(db.get_job(copy))
+            self.assertIn(f"AI: {word}", why)
+            self.assertIn("same team and duties", why)
+
+    def test_a_shared_link_is_never_asked_and_a_changed_posting_is_asked_again(self):
+        url = "https://jobs.example-ats.test/acme/one"
+        a = self.job("Acme Robotics", url=url)
+        db.set_status(a, "applied")
+        b = db.add_job("Other Name", "Other Title", "https://x.example/1", "x", None, apply_url=url)
+        self.made.append(b)
+        calls, p = self.ask("different")
+        with p:
+            self.assertEqual(apply_agent.check_dups(b), [])
+        self.assertEqual(calls, [])
+        done, copy = self.pair()
+        _, p = self.ask("different")
+        with p:
+            apply_agent.check_dups(copy)
+        self.assertIsNone(apply_agent.same_role(db.get_job(copy)))
+        db.update_job(copy, jd="A different description now")
+        self.assertIn("not checked by AI yet", apply_agent.same_role(db.get_job(copy)))
+
+    def test_an_unusable_answer_keeps_the_block(self):
+        done, copy = self.pair()
+        calls, p = self.ask("maybe")
+        with p, self.assertRaises(SystemExit):
+            apply_agent.check_dups(copy)
+        self.assertIn("not checked by AI yet", apply_agent.same_role(db.get_job(copy)))
+
+    def test_autopilot_checks_copies_within_its_ai_budget(self):
+        done, copy = self.pair()
+        settings.set_pref("autopilot", True)
+        settings.set_pref("autopilot_jobs_per_cycle", 0)
+        before = pipeline.spent_today()
+        calls, p = self.ask("different")
+        with p:
+            res = pipeline.advance()
+        self.assertEqual([(r["job_id"], r["verdict"]) for r in res["dup_checks"]], [(copy, "different")])
+        self.assertEqual(pipeline.spent_today(), before + 1)
+        settings.set_pref("autopilot_ai_per_day", 0)
+        _, p2 = self.ask("same")
+        with p2:
+            self.assertEqual(pipeline.advance().get("dup_checks"), [])  # no budget left: nothing asked
+
+    def test_the_check_with_ai_action(self):
+        done, copy = self.pair()
+        calls, p = self.ask("different")
+        with p:
+            out = web._do("dup_check", {"id": copy})
+        self.assertEqual(out["checks"][0]["verdict"], "different")
 
 
 class Autopilot(Base):

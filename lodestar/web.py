@@ -545,6 +545,12 @@ def _do(action: str, p: dict):
         case "research":
             out = extras.research(job, prov)
             return {"path": str(out), "text": out.read_text(encoding="utf-8"), "docs": _docs(job)}
+        case "dup_check":  # {id, recheck?}: the AI judges this job's company + title copies (same / similar / different)
+            from . import apply_agent
+
+            if not (checks := apply_agent.check_dups(job["id"], prov, recheck=bool(p.get("recheck")))):
+                raise SystemExit(f"#{job['id']}: no copy of this role to check (a shared link is one posting: no AI needed)")
+            return {"checks": checks}
         case "pipeline_run":  # {id, stage? | to?, rerun?}: one step, the ready steps up to `to`, else the next step
             if not (runs := _pipe_run(job["id"], p, prov)) and not p.get("to"):
                 raise SystemExit(f"#{job['id']}: nothing is ready to run")

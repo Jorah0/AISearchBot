@@ -2565,6 +2565,8 @@ function stageLine() {
   const st = stg(e.name), j = cur.job, o = e.output || {}, btns = [];
   if (st.run && ['ready', 'error', 'done', 'stale'].includes(e.state)) btns.push(`<button class="b sm" onclick="pipeRun({stage:PIPE[${i}].name,rerun:${['done', 'stale'].includes(e.state)}},this)">${e.state === 'error' ? 'Retry' : e.state === 'ready' ? 'Run' : 'Re-run'}</button>`);
   if (!['done', 'skipped', 'running', 'later'].includes(e.state) && e.name !== 'close') btns.push(`<button class="b ghost sm" onclick="skipStage(${i},true)">Skip</button>`);
+  const dupAi = /\(AI: /.test(e.why || '');  // a company + title copy: the AI judges same / similar / different
+  if (e.state === 'blocked' && /same role as #/.test(e.why || '') && (dupAi || /not checked by AI yet/.test(e.why))) btns.push(`<button class="b sm" onclick="dupCheck(this,${dupAi})">${dupAi ? 'Check again with AI' : 'Check with AI'}</button>`);
   if (e.state === 'skipped' && e.why === 'skipped by you') btns.push(`<button class="b ghost sm" onclick="skipStage(${i},false)">Unskip</button>`);
   if (e.name === 'apply' && j.status === 'saved') {
     if (safeUrl(j.url)) btns.push(`<a class="b ghost sm" href="${esc(j.url)}" target="_blank" rel="noopener">Open posting ↗</a>`);
@@ -2586,6 +2588,10 @@ const runsText = runs => runs.length ? runs.map(x => `${stLabel(x.stage)}: ${x.o
 function pipeRun(body, btn) {
   const id = cur.job.id;
   run('pipeline_run', { id, ...body }, r => { toast(runsText(r.runs), r.runs.some(x => x.outcome === 'error') || !r.runs.length ? 'err' : 'ok'); if (cur && cur.job.id === id) openJob(id); }, btn);
+}
+function dupCheck(btn, recheck) {
+  const id = cur.job.id;
+  run('dup_check', { id, recheck }, r => { toast('AI duplicate check: ' + r.checks.map(c => `#${c.other} ${c.verdict} (${c.why})`).join('; '), 'ok'); if (cur && cur.job.id === id) openJob(id); }, btn);
 }
 function continueAnyway(btn) { if (confirm('The fit check said skip. Run the next step for this job anyway? Autopilot still leaves it alone; this click is the override.')) pipeRun({}, btn); }
 async function skipStage(i, on) {

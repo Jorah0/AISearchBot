@@ -61,6 +61,7 @@ PREFS = {
     "provider": "",
     "council_providers": "",
     "council_judge": False,
+    "ai_light": True,  # short structured AI judgements use the provider's light model (ai.LIGHT): fewer, cheaper tokens
     "models": {},
     "signature": "",
     "desktop_notifications": False,  # OS toasts from the monitor loop: daily agenda, interview in 2 h, deadline tomorrow
@@ -121,6 +122,8 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "weekly_target": ("Weekly application target", "applications a week; idea crafting plans around it (0-200)"),
     "provider": ("Default AI provider", "empty: the first configured one"),
     "council_providers": ("Council providers", "comma list of the only providers the council and ideas may use; empty: all configured"),
+    "ai_light": ("Light model for quick checks", "sorting mail, the duplicate check and picking a link or occupation use "
+                 "the provider's smaller model (Claude Haiku, gpt-5-mini); writing stays on your main model. Off: one model"),
     "council_judge": ("Council judge", "a second provider checks and improves the council's combined answer"),
     "models": ("Pinned models", "provider=model to pin a model id (Setup > List models)"),
     "signature": ("Email signature", "how drafted emails sign off; empty: your name"),

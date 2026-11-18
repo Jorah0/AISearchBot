@@ -1,8 +1,10 @@
 """Multi-provider LLM layer. Anthropic native + anything OpenAI-compatible (OpenAI, Gemini, Groq,
 OpenRouter, Mistral, Ollama). `council()` asks several providers and synthesizes the answers.
 """
+import contextlib
 import json
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -32,6 +34,33 @@ PREFERRED = {  # first match (substring, case-insensitive) in the provider's mod
     "openrouter": ["anthropic/claude-sonnet", "anthropic/claude", "openai/gpt-4", "google/gemini"],
     "ollama": ["llama", "qwen", "mistral", "gemma"],
 }
+
+
+# the light model per provider: short structured judgements (sorting mail, the duplicate check, picking one link or
+# occupation) run on it inside light(); writing (resumes, letters, replies) stays on model_for. Not listed: one model.
+LIGHT = {"anthropic": "claude-haiku-5-5", "openai": "gpt-5-mini", "openrouter": "anthropic/claude-haiku-4.5"}
+_TL = threading.local()
+
+
+@contextlib.contextmanager
+def light():
+    """Inside: chat() asks the provider's light model (pref ai_light, on by default). A thread-local switch, so the
+    callers' (and the tests') ask / ask_json signatures stay as they are."""
+    old = getattr(_TL, "on", False)
+    _TL.on = True
+    try:
+        yield
+    finally:
+        _TL.on = old
+
+
+def light_model(name: str) -> str | None:
+    """The light model for this provider (env <NAME>_LIGHT_MODEL first), or None: pref off, or none listed."""
+    from . import settings
+
+    if not settings.pref("ai_light"):
+        return None
+    return setting(f"{name.upper()}_LIGHT_MODEL") or LIGHT.get(name)
 
 
 def model_for(name: str) -> str:
@@ -204,7 +233,8 @@ def chat(messages: list[dict], system: str | None = None, provider: str | None =
     key = api_key(name)
     if not key:
         raise SystemExit(f"{name}: missing {p['key']} (lodestar vault set {p['key']})")
-    model = model_for(name)
+    lite = light_model(name) if getattr(_TL, "on", False) else None
+    model = lite or model_for(name)
     for attempt in (1, 2):
         try:
             if p["kind"] == "anthropic":
@@ -221,13 +251,17 @@ def chat(messages: list[dict], system: str | None = None, provider: str | None =
             if cut:  # a half resume saved as if complete is worse than a clear failure
                 raise RuntimeError(f"{name}: the reply hit the length limit and was cut off; nothing was saved. "
                                    "Retry, shorten the input, or pick another provider.")
-            if model != model_for(name):
+            if model not in (model_for(name), lite):
                 from . import settings
 
                 settings.set_model(name, model)  # remembered only once the replacement actually answered
                 print(f"  {name}: switched to model '{model}' (saved in prefs.models)")
             return text
         except SystemExit as e:  # "model rejected": pick one the provider actually offers and retry once
+            if attempt == 1 and lite and model == lite and "was rejected" in str(e):
+                print(f"  {name}: light model '{lite}' not offered; using '{model_for(name)}' for this call")
+                model = model_for(name)  # the main model, never saved as the light one
+                continue
             if attempt == 2 or "was rejected" not in str(e) or setting(f"{name.upper()}_MODEL"):
                 raise
             new = pick_model(name)
@@ -240,6 +274,14 @@ def chat(messages: list[dict], system: str | None = None, provider: str | None =
 
 def ask(prompt: str, system: str | None = None, provider: str | None = None, **kw) -> str:
     return chat([{"role": "user", "content": prompt}], system=system, provider=provider, **kw)
+
+
+def ask_json_light(prompt: str, system: str | None = None, provider: str | None = None, **kw):
+    """ask_json on the provider's light model (light()): for short structured judgements, never for writing."""
+    if system is not None:
+        kw["system"] = system
+    with light():
+        return ask_json(prompt, provider=provider, **kw)
 
 
 def ask_json(prompt: str, system: str | None = None, provider: str | None = None, **kw):

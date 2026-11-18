@@ -1445,6 +1445,10 @@ def advance(provider: str | None = None, now=None) -> dict:
         log.get("pipeline").warning("autopilot apply failed: %s", x)
     per_cycle, per_day = int(settings.pref("autopilot_ai_per_cycle")), int(settings.pref("autopilot_ai_per_day"))
     day, cycle = spent_today(), 0
+    from . import apply_agent  # the AI judges copies of a role first (blocked until it says 'different'), in budget
+
+    res["dup_checks"] = apply_agent.autopilot_dups(states, min(per_cycle, per_day - day), provider)
+    day, cycle = day + len(res["dup_checks"]), len(res["dup_checks"])
     cands = [j for j in live if j["id"] in states and not fit_skip(states[j["id"]]) and _next_action(states[j["id"]])]
     cands.sort(key=lambda j: (j["deadline"] is None, j["deadline"] or "", -(j["excitement"] or 0), j["updated_at"]))
     for j in cands[:int(settings.pref("autopilot_jobs_per_cycle"))]:

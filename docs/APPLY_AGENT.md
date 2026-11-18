@@ -22,7 +22,10 @@ one write path).
 **Limited daily applying.** Every run the agent starts counts against its site for the day: the application system
 (Greenhouse, Lever, Workday...) or the company's own site (`apply_agent_site_daily_cap`, default 3). A role is applied
 for once: before queueing and again right before Submit, the agent refuses a job that is a copy of one already applied
-for or in a run (the same link, tracking parameters ignored, or the same company and title at the same place).
+for or in a run (the same link, tracking parameters ignored, or the same company and title at the same place). A copy matched by
+company and title goes to the AI (Autopilot within its AI budget, or Check with AI on the blocked step): a different
+role lifts the block; the same opening or a similar one keeps it, with the AI's reason. A shared link is one posting
+and never needs the AI.
 With `autopilot_apply` on (off by default) Autopilot starts the agent for jobs whose resume, letter and answers are
 ready, best fit first, skipping fit-gated jobs and jobs without an application link, at most `autopilot_apply_daily`
 runs a day. The mode above still decides who presses Submit.

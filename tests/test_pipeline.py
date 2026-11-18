@@ -700,7 +700,7 @@ class Engine(Base):
         self.autopilot()
         pipeline.advance()
         self.assertEqual([tuple(e) for e in db.events(jid)], before)
-        s = self.job()
+        s = self.job(name="Other")  # another role: the same company + title would be a copy of the applied one (blocked)
         n = len(db.events(s))
         pipeline.run(s, "score")
         self.assertEqual({e["kind"] for e in db.events(s)[n:]}, set())  # the fit check (pass 21) writes none

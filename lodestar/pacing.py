@@ -111,7 +111,7 @@ def site_queries(level: str = "", location: str = "", provider: str | None = Non
     if not ai.available():
         raise SystemExit("search ideas need an AI provider: link a key under Setup > Link an AI key")
     ctx = "\n\n".join(f"{label.upper()}:\n{text}" for _key, label, text in _h_search(None))
-    r = ai.ask_json(
+    r = ai.ask_json_light(
         f"""Suggest up to 6 searches this candidate can run themselves on LinkedIn, Indeed, Glassdoor, ZipRecruiter and
 SimplyHired. Each query is a job title (2-6 words) the candidate qualifies for: their own titles, real synonyms and
 adjacent titles, or a title plus one core skill. No company names, no links, no salary. Skip what the saved searches
