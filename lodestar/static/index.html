@@ -17,7 +17,11 @@
     <h3 style="margin-top:0">Primary AI</h3>
     <div class="row"><label class="muted">Provider <select id="aiProv" onchange="aiModels()"></select></label></div>
     <div class="row"><label class="muted">Model <select id="aiModel"></select></label><input id="aiModelOwn" placeholder="or type a model id" aria-label="model id" style="width:170px"></div>
-    <div class="row"><button class="b" onclick="aiUse(this)">Use</button><button class="b ghost" onclick="aiSwitchToggle(false)">Close</button><span class="muted" id="aiSwitchNote"></span></div></div>
+    <div class="row"><button class="b" onclick="aiUse(this)">Use</button><button class="b ghost" onclick="aiSwitchToggle(false)">Close</button><span class="muted" id="aiSwitchNote"></span></div>
+    <h4>Council</h4>
+    <p class="muted">The models the council asks (when you tick "council") and the AI cross-check uses as reviewers. Two or more; several models of one provider are fine.</p>
+    <div id="aiCouncil" class="chips" aria-label="Council models"></div>
+    <div class="row"><button class="b ghost sm" onclick="aiCouncilAdd(this)">Add the model above to the council</button><button class="b ghost sm" onclick="aiCouncilSet([],this)">Reset: every provider</button></div></div>
   <button class="b ghost sm" id="apPill" title="Autopilot runs pipeline steps in the monitor loop within its AI budgets" onclick="go('setup');$('#apCard').scrollIntoView()">Autopilot: off</button>
   <button class="b ghost sm" id="updPill" style="display:none" onclick="go('setup');$('#updCard').scrollIntoView()">Update available</button>
   <button class="b ghost sm" id="topEmail" onclick="run('email_check',{days:3},r=>toast((r.found||[]).length+' relevant email(s)'+(r.alerts?' · '+r.alerts+' new listing(s) from job alerts (Jobs tab)':'')+(r.note?'\n'+r.note:''),r.note?'err':'ok'),this)">Check email</button>

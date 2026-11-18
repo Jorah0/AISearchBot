@@ -60,6 +60,7 @@ PREFS = {
     "weekly_target": 10,
     "provider": "",
     "council_providers": "",
+    "council_members": "",  # the council's models: 'provider=model, ...' (the AI switcher); empty: every allowed provider
     "council_judge": False,
     "jobmodel": True,  # build the local job model in Ollama (jobmodel.py) and use it as Ollama's model once built
     "jobmodel_base": "",  # the general Ollama model it is built on; empty: the best one Ollama offers
@@ -125,6 +126,8 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "reply_to_confirmations": ("Reply to confirmations", "also draft replies to 'we received your application' mail"),
     "weekly_target": ("Weekly application target", "applications a week; idea crafting plans around it (0-200)"),
     "provider": ("Default AI provider", "empty: the first configured one"),
+    "council_members": ("Council models", "the exact models the council asks, as provider=model, comma separated "
+                        "(choose them in the top bar's AI switcher); empty: every allowed provider with its current model"),
     "council_providers": ("Council providers", "comma list of the only providers the council and ideas may use; empty: all configured"),
     "jobmodel": ("Local job model", "Lodestar builds 'lodestar-jobs' in your Ollama from a general model, your profile "
                  "(never the salary floor) and what you pursued or passed on, rebuilds it daily when that changes, and "

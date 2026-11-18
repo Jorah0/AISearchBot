@@ -35,6 +35,26 @@ class Primary(E2ETestCase):
         self.expect_toast("model id", "err")
         self.assertEqual(settings.pref("models")["anthropic"], "claude-opus-5-5")
 
+    def test_choose_the_council_models(self):  # pass 50
+        snap = settings.load()
+        self.addCleanup(settings.save, snap)
+        self.page.locator("#aiPill").click()
+        box = self.page.locator("#aiSwitch")
+        self.assertIn("every linked provider", box.locator("#aiCouncil").text_content())
+        self.page.select_option("#aiProv", "anthropic")
+        for model in ("claude-haiku-5-5", "claude-opus-5-5"):
+            self.page.fill("#aiModelOwn", model)
+            self.run_click(box.get_by_role("button", name="Add the model above to the council"))
+            self.expect_toast("council:", "ok")
+        self.assertEqual(settings.pref("council_members"), "anthropic=claude-haiku-5-5, anthropic=claude-opus-5-5")
+        self.assertIn("anthropic · claude-opus-5-5", box.locator("#aiCouncil").text_content())
+        self.run_click(box.get_by_role("button", name="remove anthropic=claude-haiku-5-5 from the council"))
+        self.page.wait_for_function("() => S.council.length === 1")
+        self.assertEqual(settings.pref("council_members"), "anthropic=claude-opus-5-5")
+        self.run_click(box.get_by_role("button", name="Reset: every provider"))
+        self.expect_toast("council: every linked provider", "ok")
+        self.assertEqual(settings.pref("council_members"), "")
+
 
 if __name__ == "__main__":
     unittest.main()

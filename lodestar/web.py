@@ -626,6 +626,8 @@ def _do(action: str, p: dict):
             return connections.check_all()
         case "providers_local":
             return {"text": ai.local_preset()}
+        case "council_set":  # {members: ["provider=model", ...]}: the council's models (pass 50)
+            return {"members": ai.set_council(p.get("members") if isinstance(p.get("members"), list) else [])}
         case "ai_primary":  # {provider, model?}: swap the primary AI (the top bar's switcher; pass 49)
             return ai.set_primary(str(p.get("provider") or ""), p.get("model"))
         case "models":  # the ids each configured provider offers, to pin one under Tools > Preferences > models
@@ -955,6 +957,7 @@ def state() -> dict:
         "idea_statuses": db.IDEA_STATUSES,
         "providers": {n: (n in ai.available()) for n in ai.PROVIDERS},
         "primary": ai.primary(),  # pass 49: the top bar's AI switcher
+        "council": ai.council_view(),  # pass 50: the switcher's council models
         "watches": [dict(w) | {"filters": db.watch_filters(w)} for w in db.watches()],
         "companies": [dict(c) for c in db.companies()],
         "alerts": ALERTS.read_text(encoding="utf-8").splitlines()[-30:] if ALERTS.is_file() else [],

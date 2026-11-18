@@ -417,16 +417,25 @@ def crosscheck(prompt: str, answer: str, writer: str | None = None, rounds: int 
     from . import settings
 
     writer = writer or default_provider()
-    names = [n for n in (council_providers() if reviewers is None else reviewers) if n != writer]
+    if reviewers is None:  # the council's members (pass 50), never the writer's own model
+        own = model_for(writer)
+        try:
+            names = [(p, m) for p, m in council_members() if not (p == writer and m in (None, own))]
+        except SystemExit:  # no allowed member: nothing to cross-check against
+            names = []
+    else:
+        names = [(n, None) for n in reviewers if n != writer]
     rounds = int(settings.pref("ai_crosscheck_rounds")) if rounds is None else max(0, int(rounds))
     out = {"answer": answer, "status": "unchecked", "rounds": 0, "issues": [], "reviews": []}
     if not names:
         return out | {"issues": ["only one AI is linked: nothing to cross-check against"]}
     for r in range(rounds + 1):
         reviews = []
-        for n in names:
+        for prov, mod in names:
+            n = f"{prov}/{mod}" if mod else prov
             try:
-                v = ask_json(REVIEW.format(task=prompt, answer=answer), provider=n)
+                with using(mod) if mod else contextlib.nullcontext():
+                    v = ask_json(REVIEW.format(task=prompt, answer=answer), provider=prov)
                 v = v if isinstance(v, dict) else {}
                 issues = [" ".join(str(i).split())[:200] for i in v.get("issues") or [] if str(i).strip()][:5]
                 reviews.append({"provider": n, "agree": v.get("agree") is True and not issues, "issues": issues})
@@ -445,37 +454,108 @@ def crosscheck(prompt: str, answer: str, writer: str | None = None, rounds: int 
     return out
 
 
-def council(prompt: str, system: str | None = None, providers: list[str] | None = None) -> dict:
-    """Pool ideas: ask every configured provider, then have the default provider merge the best parts."""
-    names = providers or council_providers()
-    if len(names) < 2:
-        answer = ask(prompt, system, provider=names[0] if names else None)
-        return {"answers": {names[0] if names else "default": answer}, "synthesis": answer}
-    answers, ok = {}, []
-    for n in names:
-        try:
-            answers[n] = ask(prompt, system, provider=n)
-            ok.append(n)
-        except (Exception, SystemExit) as e:  # one dead provider (or rejected model: SystemExit) should not sink the council
-            answers[n] = f"(error: {e})"
-    merged = "\n\n".join(f"### Answer from {n}\n{a}" for n, a in answers.items())
-    synthesis = ask(
-        f"Original task:\n{prompt}\n\nSeveral assistants answered independently:\n{merged}\n\n"
-        "Produce one final answer that combines the strongest elements, drops weak or contradictory points, "
-        "and is better than any single answer. Output only the final answer.",
-        system,
-        provider=(ok or names)[0],  # inside the allowlist (synthesis sees every answer), and a provider that answered
-    )
+COUNCIL_MAX = 6
+
+
+def _members(raw) -> list[tuple[str, str | None]]:
+    """'provider=model, provider' -> [(provider, model or None)], shape-checked, each once."""
+    out: list[tuple[str, str | None]] = []
+    for part in str(raw or "").split(","):
+        prov, sep, mod = (x.strip() for x in part.partition("="))
+        prov = prov.lower()
+        if not prov:
+            continue
+        if prov not in PROVIDERS:
+            raise SystemExit(f"unknown AI provider '{prov}'. Providers: {', '.join(PROVIDERS)}")
+        if sep and not MODEL_ID.fullmatch(mod):
+            raise SystemExit("model id: letters, digits and . : / @ + - _ only (as the provider lists it), at most 200")
+        if (m := (prov, mod or None)) not in out:
+            out.append(m)
+    return out
+
+
+def council_members() -> list[tuple[str, str | None]]:
+    """Who the council asks: pref council_members ('provider=model', several models of one provider are fine), else
+    every allowed provider with its current model. council_providers stays the boundary: a member outside it, or not
+    linked, is never asked; members that are all outside it are refused, never widened to everyone."""
     from . import settings
 
-    judge = next((n for n in ok if n != (ok or names)[0]), None)  # another provider that answered, never the writer
-    if settings.pref("council_judge") and judge:  # a second provider checks the first one's synthesis
+    allowed = council_providers()
+    chosen = _members(settings.pref("council_members"))
+    if not chosen:
+        return [(n, None) for n in allowed]
+    kept = [m for m in chosen if m[0] in allowed]
+    if not kept:
+        raise SystemExit("none of your council members is linked and inside council_providers: choose them again "
+                         "(the AI switcher > Council)")
+    return kept
+
+
+def set_council(members: list[str]) -> list[str]:
+    """Choose the council's models (the AI switcher, `lodestar council-set`): 'provider=model' each, at most
+    COUNCIL_MAX, every provider linked and inside council_providers. [] goes back to every allowed provider."""
+    from . import settings
+    from .config import full_ai_check
+
+    full_ai_check("changes the council")
+    chosen = _members(",".join(str(m) for m in members or []))
+    if len(chosen) > COUNCIL_MAX:
+        raise SystemExit(f"a council has at most {COUNCIL_MAX} members")
+    allowed, linked = _allowlist(), available()
+    for prov, _ in chosen:
+        if prov not in linked:
+            raise SystemExit(f"{prov} is not linked: Setup > Link an AI key first")
+        if allowed and prov not in allowed:
+            raise SystemExit(f"{prov} is not in council_providers={','.join(allowed)}: add it there first")
+    value = [f"{p}={m}" if m else p for p, m in chosen]
+    settings.set_pref("council_members", ", ".join(value))
+    return value
+
+
+def council_view() -> list[str]:
+    """The chosen members as the page shows them (no network, never raises)."""
+    from . import settings
+
+    try:
+        return [f"{p}={m}" if m else p for p, m in _members(settings.pref("council_members"))]
+    except SystemExit:
+        return []
+
+
+def _ask_as(member: tuple[str, str | None], prompt: str, system: str | None) -> str:
+    prov, mod = member
+    with using(mod) if mod else contextlib.nullcontext():
+        return ask(prompt, system, provider=prov)
+
+
+def council(prompt: str, system: str | None = None, providers: list[str] | None = None) -> dict:
+    """Pool ideas: ask every council member (council_members: the models you chose, else every allowed provider), then
+    the first member that answered merges the best parts; with council_judge another member checks it."""
+    members = [(n, None) for n in providers] if providers else council_members()
+    label = {m: f"{m[0]}/{m[1]}" if m[1] else m[0] for m in members}
+    if len(members) < 2:
+        answer = _ask_as(members[0], prompt, system) if members else ask(prompt, system)
+        return {"answers": {label[members[0]] if members else "default": answer}, "synthesis": answer}
+    answers, ok = {}, []
+    for m in members:
         try:
-            synthesis = ask(
-                f"Original task:\n{prompt}\n\nProposed final answer:\n{synthesis}\n\nAct as an independent judge: find factual "
-                "errors, omissions, or generic filler, then output the improved final answer only (no commentary).",
-                system, provider=judge,
-            )
+            answers[label[m]] = _ask_as(m, prompt, system)
+            ok.append(m)
+        except (Exception, SystemExit) as e:  # one dead member (or rejected model: SystemExit) should not sink the council
+            answers[label[m]] = f"(error: {e})"
+    merged = "\n\n".join(f"### Answer from {n}\n{a}" for n, a in answers.items())
+    lead = (ok or members)[0]  # inside the allowlist (synthesis sees every answer), and a member that answered
+    synthesis = _ask_as(lead, f"Original task:\n{prompt}\n\nSeveral assistants answered independently:\n{merged}\n\n"
+                        "Produce one final answer that combines the strongest elements, drops weak or contradictory points, "
+                        "and is better than any single answer. Output only the final answer.", system)
+    from . import settings
+
+    judge = next((m for m in ok if m != lead), None)  # another member that answered, never the writer
+    if settings.pref("council_judge") and judge:  # a second member checks the first one's synthesis
+        try:
+            synthesis = _ask_as(judge, f"Original task:\n{prompt}\n\nProposed final answer:\n{synthesis}\n\nAct as an "
+                                "independent judge: find factual errors, omissions, or generic filler, then output the "
+                                "improved final answer only (no commentary).", system)
         except (Exception, SystemExit):  # a failed judge keeps the synthesis already made
             pass
     return {"answers": answers, "synthesis": synthesis}

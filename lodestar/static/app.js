@@ -2732,7 +2732,7 @@ function aiSwitchToggle(open) {
   const linked = Object.entries(S.providers).filter(([, on]) => on).map(([n]) => n);
   if (!linked.length) { box.hidden = true; return toast('no AI provider is linked: Setup > Link an AI key', 'err'); }
   $('#aiProv').innerHTML = linked.map(n => `<option ${S.primary && S.primary.provider === n ? 'selected' : ''}>${esc(n)}</option>`).join('');
-  AI_MODELS = null; aiModels();
+  AI_MODELS = null; aiModels(); aiCouncilPaint();
 }
 function aiModels() {
   const sel = $('#aiModel'); $('#aiSwitchNote').textContent = '';
@@ -2748,6 +2748,19 @@ function aiModelsPaint() {
   const cur = S.primary && S.primary.provider === prov ? S.primary.model : '';
   if (cur && !list.includes(cur)) list = [cur, ...list];
   sel.innerHTML = list.map(m => `<option ${m === cur ? 'selected' : ''}>${esc(m)}</option>`).join('') || '<option value="">(none listed: type one)</option>';
+}
+function aiCouncilPaint() {
+  const list = S.council || [];
+  $('#aiCouncil').innerHTML = list.length ? list.map((m, i) => `<span class="chip">${esc(m.replace('=', ' · '))} <button class="b ghost sm" aria-label="remove ${esc(m)} from the council" onclick="aiCouncilSet(S.council.filter((x, k) => k !== ${i}),this)">✕</button></span>`).join('')
+    : '<span class="muted">every linked provider with its current model</span>';
+}
+function aiCouncilAdd(btn) {
+  const prov = $('#aiProv').value, model = $('#aiModelOwn').value.trim() || $('#aiModel').value;
+  if (!prov) return toast('pick a provider first', 'err');
+  aiCouncilSet([...(S.council || []), model ? `${prov}=${model}` : prov], btn);
+}
+function aiCouncilSet(members, btn) {
+  run('council_set', { members }, r => { S.council = r.members; aiCouncilPaint(); toast(r.members.length ? `council: ${r.members.length} model(s)` : 'council: every linked provider', 'ok'); }, btn);
 }
 function aiUse(btn) {
   const provider = $('#aiProv').value, model = $('#aiModelOwn').value.trim() || $('#aiModel').value;
