@@ -203,6 +203,23 @@ class ApplyAgent(E2ETestCase):
         self.assertEqual((run["state"], run["submit_clicks"]), ("confirmed", 1))
         self.assertTrue(any(k == "notify" and "solve the check" in m for k, m in self.opened))
 
+    def test_arkose_challenge_is_handed_to_you_before_the_form_is_filled(self):
+        did = []
+
+        def you(tab, run):
+            if run["state"] == "needs_you" and not did:
+                self.assertEqual(run["needs"][0]["reason"], "captcha")
+                self.assertEqual(self.dom(tab, "() => first_name.value"), "")
+                did.append("captcha")
+                tab.page.evaluate("() => document.getElementById('captcha').remove()")
+                apply_agent.continue_run(run["id"])
+            elif run["state"] == "ready":
+                tab.page.check("#consent")
+                tab.page.click("#submit")
+
+        run = self.work(self.job("arkose=1"), "stop", you)
+        self.assertEqual((did, run["state"], run["submit_clicks"]), (["captcha"], "by_user", 0))
+
     # --- strict CSP: the scan still runs (CDP evaluation); service workers never run; 'already applied' is refused
     def test_strict_csp_page_is_filled_and_an_already_applied_page_is_refused(self):
         def you(tab, run):

@@ -51,7 +51,7 @@ class Pacing(unittest.TestCase):
         pacing.set_cap("Indeed", 3, 12)
         self.assertEqual(pacing.caps()["Indeed"], {"day": 3, "week": 12})
         with self.assertRaises(SystemExit):
-            pacing.set_cap("Monster", 1, 2)  # not one of the five
+            pacing.set_cap("Google Jobs", 1, 2)  # links onward only: nothing is applied there
         with self.assertRaises(SystemExit):
             pacing.set_cap("Indeed", 5, 2)  # a week below a day
 
@@ -72,6 +72,26 @@ class Pacing(unittest.TestCase):
         self.assertIsNone(pacing.check("https://www.indeed.com/viewjob?jk=2"))
         self.assertEqual(pacing.for_job(db.get_job(self.made[0]))["site"], "LinkedIn")
         self.assertIsNone(pacing.for_job(db.get_job(self.made[3])))
+
+    def test_the_more_sites_are_capped_too(self):  # the Jobs tab's "More" sites you apply on yourself
+        for url, site in (("https://www.dice.com/job-detail/1", "Dice"), ("https://www.monster.com/job-openings/x", "Monster"),
+                          ("https://www.careerbuilder.com/job/J3", "Monster"), ("https://builtin.com/job/data/1", "Built In"),
+                          ("https://www.idealist.org/en/nonprofit-job/1", "Idealist"),
+                          ("https://www.usajobs.gov/job/123", "USAJOBS"), ("https://notdice.com.example/1", None)):
+            self.assertEqual(pacing.site_of(url), site, url)
+        self.assertEqual(pacing.caps()["Dice"], {"day": 10, "week": 40})
+        pacing.set_cap("Dice", 1, 3)
+        self.applied("https://www.dice.com/job-detail/1")
+        self.assertIn("Dice", pacing.check("https://www.dice.com/job-detail/2"))
+        from lodestar import apply_agent
+
+        self.assertIsNone(apply_agent.forbidden("https://www.dice.com/job-detail/1"))  # paced, not a bot ban
+        from lodestar import web_monitor  # and never visited in the background: the daily posting check skips them
+
+        for url in ("https://www.dice.com/job-detail/1", "https://www.monster.com/job-openings/x", "https://builtin.com/job/1",
+                    "https://www.idealist.org/en/nonprofit-job/1", "https://www.usajobs.gov/job/123"):
+            self.assertTrue(web_monitor.no_fetch(url), url)
+        self.assertFalse(web_monitor.no_fetch("https://careers.pacingco.example/jobs/1"))  # a company's own site is checked
 
     def test_the_weekly_cap_counts_the_last_seven_days(self):
         pacing.set_cap("Glassdoor", 2, 2)

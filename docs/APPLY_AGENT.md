@@ -55,10 +55,11 @@ dates of birth, bank details and passwords are never filled. The resume is uploa
 
 ## Handoffs
 
-A visible CAPTCHA or a code request stops the agent and brings the window to the front: do it there, then press
-Continue (`lodestar apply-agent continue RUN`). A sign-in page goes to your site account (below), else to you. The form
-filler never types into a password field and never touches a CAPTCHA. Nothing hides that the window is automated, so
-some sites may ask for an emailed code or file the application as spam.
+A visible CAPTCHA (including reCAPTCHA, hCaptcha, Turnstile and Arkose) or a code request stops the agent and brings
+the window to the front: do it there, then press Continue (`lodestar apply-agent continue RUN`). A sign-in page goes to
+your site account (below), else to you. The form filler never types into a password field, never touches a CAPTCHA and
+never masks automation. A job source that returns a CAPTCHA instead of its public API response is reported as unavailable;
+open it in your own browser and try again later. Some sites may ask for an emailed code or file the application as spam.
 
 ## Site accounts
 

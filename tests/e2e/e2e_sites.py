@@ -24,7 +24,7 @@ class Sites(E2ETestCase):
         self.page.fill("#sQ", "data engineer")
         self.page.fill("#sLoc", "Austin, TX")
         self.page.select_option("#sLevel", "senior")
-        links = self.page.locator("#siteSearch a")
+        links = self.page.locator("#siteSearch > a")  # the paced five (the other sites sit in .more)
         self.assertEqual(links.evaluate_all("as => as.map(a => a.dataset.site)"),
                          ["LinkedIn", "Indeed", "Glassdoor", "ZipRecruiter", "SimplyHired"])
         href = {s: links.nth(i).get_attribute("href") for i, s in enumerate(["LinkedIn", "Indeed", "Glassdoor", "ZipRecruiter", "SimplyHired"])}
@@ -38,6 +38,36 @@ class Sites(E2ETestCase):
             self.assertEqual((links.nth(i).get_attribute("target"), links.nth(i).get_attribute("rel")), ("_blank", "noopener"))
         self.page.fill("#sLoc", "remote")
         self.assertEqual(parse_qs(urlsplit(self.page.locator("#siteSearch a[data-site=LinkedIn]").get_attribute("href")).query)["f_WT"], ["2"])
+
+    def test_more_sites_lodestar_cannot_search_itself(self):  # each URL format checked live on 2026-11-18
+        self.go("search")
+        self.page.fill("#sQ", "data analyst")
+        self.page.fill("#sLoc", "Austin, TX")
+        self.page.select_option("#sLevel", "senior")
+        more = self.page.locator("#siteSearch .more a")
+        self.assertEqual(more.evaluate_all("as => as.map(a => a.dataset.site)"),
+                         ["Google Jobs", "Monster", "Dice", "Built In", "Idealist", "USAJOBS"])
+        href = {a: more.nth(i).get_attribute("href") for i, a in enumerate(["Google Jobs", "Monster", "Dice", "Built In", "Idealist", "USAJOBS"])}
+        q = lambda s: parse_qs(urlsplit(href[s]).query)  # noqa: E731
+        self.assertEqual((urlsplit(href["Google Jobs"]).netloc, q("Google Jobs")["q"], q("Google Jobs")["ibp"]),
+                         ("www.google.com", ["senior data analyst jobs near Austin, TX"], ["htl;jobs"]))
+        self.assertEqual((q("Monster")["q"], q("Monster")["where"]), (["senior data analyst"], ["Austin, TX"]))
+        self.assertEqual((q("Dice")["q"], q("Dice")["location"]), (["senior data analyst"], ["Austin, TX"]))
+        self.assertEqual(q("Built In")["search"], ["senior data analyst"])
+        self.assertEqual(q("Idealist")["q"], ["senior data analyst"])
+        self.assertEqual((q("USAJOBS")["k"], q("USAJOBS")["l"]), (["senior data analyst"], ["Austin, TX"]))
+        for i in range(more.count()):
+            self.assertEqual((more.nth(i).get_attribute("target"), more.nth(i).get_attribute("rel")), ("_blank", "noopener"))
+        self.assertEqual(self.page.locator("#siteSearch > a").count(), 5)  # the paced five stay first, caps unchanged
+        self.go("accounts")  # the More sites you apply on are capped too (Google Jobs only links onward)
+        rows = self.page.locator("#siteList .connrow")
+        self.assertEqual(rows.evaluate_all("rs => rs.map(r => r.dataset.site)")[5:], ["Dice", "Monster", "Built In", "Idealist", "USAJOBS"])
+        dice = self.page.locator("#siteList .connrow[data-site=Dice]")
+        dice.locator("input[aria-label='Dice daily cap']").fill("2")
+        dice.locator("input[aria-label='Dice weekly cap']").fill("6")
+        self.run_click(dice.get_by_role("button", name="Save caps"))
+        self.expect_toast("Dice caps saved", "ok")
+        self.assertIn("of 2 today", self.page.locator("#siteList .connrow[data-site=Dice]").text_content())
 
     def test_caps_flag_a_full_site_on_accounts_today_and_the_drawer(self):
         self.go("accounts")

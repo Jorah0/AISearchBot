@@ -1,5 +1,5 @@
 """Application pacing for the job sites you browse yourself (pass 36): LinkedIn, Indeed, Glassdoor, ZipRecruiter and
-SimplyHired. Lodestar never opens these sites itself (apply_agent.forbidden); you browse, save postings with the
+SimplyHired, and the Jobs tab's More sites (Dice, Monster / CareerBuilder, Built In, Idealist, USAJOBS). Lodestar never opens these sites itself (apply_agent.forbidden); you browse, save postings with the
 extension and apply there. Each site gets a daily and a weekly cap (yours to change): Lodestar counts the jobs you
 marked applied whose link (or application link) is on that site, warns on Today and in the job drawer at the cap, and
 refuses an extension fill on that site until the window passes. A company's own careers site is never capped."""
@@ -11,15 +11,28 @@ from . import db
 
 KEY = "pacing:caps"  # meta row: {"LinkedIn": {"day": n, "week": n}, ...} (only the sites you changed)
 DEFAULT = {"LinkedIn": (10, 40), "Indeed": (15, 60), "Glassdoor": (10, 40), "ZipRecruiter": (10, 40),
-           "SimplyHired": (10, 40)}
+           "SimplyHired": (10, 40),
+           # the Jobs tab's "More" sites you apply on yourself (Google Jobs only links onward: nothing to pace there)
+           "Dice": (10, 40), "Monster": (10, 40), "Built In": (10, 40), "Idealist": (10, 40), "USAJOBS": (10, 40)}
 SITES = tuple(DEFAULT)
+# host -> site for the More sites (the five come from apply_agent.forbidden); CareerBuilder shares Monster's jobs
+MORE = {"dice.com": "Dice", "monster.com": "Monster", "careerbuilder.com": "Monster", "builtin.com": "Built In",
+        "idealist.org": "Idealist", "usajobs.gov": "USAJOBS"}
 
 
 def site_of(url) -> str | None:
     """'LinkedIn' for a linkedin.com (any country) link, and so on; None for anything else."""
     from .apply_agent import forbidden
+    from .util import registrable
 
-    return forbidden(url) if url else None
+    if not url:
+        return None
+    if site := forbidden(url):
+        return site
+    from urllib.parse import urlsplit
+
+    host = urlsplit(str(url) if "://" in str(url) else "https://" + str(url)).hostname or ""
+    return MORE.get(registrable(host) or host)
 
 
 def caps() -> dict:

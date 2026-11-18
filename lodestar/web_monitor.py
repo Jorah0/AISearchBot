@@ -383,7 +383,11 @@ def no_fetch(url) -> bool:
     from .alerts import SITES
     from .email_monitor import org_label
 
+    from .pacing import MORE
+
     host = (urllib.parse.urlparse(str(url or "")).hostname or "").lower()
+    if any(host == d or host.endswith("." + d) for d in MORE):  # the paced More sites: you visit, Lodestar never does
+        return True
     return org_label(host) in NO_FETCH or db.seen(f"alerthost:{host}") or \
         any(host == d or host.endswith("." + d) for s in SITES.values() for d in s["domains"])
 

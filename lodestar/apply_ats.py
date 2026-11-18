@@ -30,8 +30,13 @@ APPLIED_RE = re.compile(r"you(?:'ve| have) already applied|already submitted an 
 CODE_RE = re.compile(r"verify (?:that )?you(?:'re| are) (?:a )?human|security code|verification code|enter the code "
                      r"(?:we|that was) sent|one-time (?:pass)?code", re.I)
 REF_RE = re.compile(r"(?:confirmation|reference|application)\s*(?:number|no\.?|#|id)\s*[:#]?\s*([A-Z0-9][A-Z0-9-]{3,})", re.I)
-CHALLENGE = ('iframe[src*="recaptcha/api2/bframe"], iframe[src*="recaptcha/enterprise/bframe"], iframe[src*="hcaptcha.com"], '
-             'iframe[src*="challenges.cloudflare.com"]')
+# Visible challenge frames only. The agent never interacts with these widgets: blocker() hands their window to the user.
+# Include the checkbox/anchor frames as well as the expanded prompts, so a form is not filled around an unchecked check.
+CHALLENGE = ('iframe[src*="recaptcha/api2/anchor"], iframe[src*="recaptcha/api2/bframe"], '
+             'iframe[src*="recaptcha/enterprise/anchor"], iframe[src*="recaptcha/enterprise/bframe"], '
+             'iframe[src*="recaptcha.net/recaptcha/"], iframe[src*="hcaptcha.com"], '
+             'iframe[src*="challenges.cloudflare.com"], iframe[src*="arkoselabs.com"], '
+             'iframe[src*="funcaptcha.com"], iframe[src*="geetest.com"], iframe[src*="friendlycaptcha.com"]')
 BUTTONS = 'button, input[type="submit"], input[type="button"], [role="button"], a[role="button"]'
 CAPS = {"label": 300, "option": 100, "options": 200, "value": 4000}  # untrusted page strings, capped
 

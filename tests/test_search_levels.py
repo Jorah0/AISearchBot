@@ -16,7 +16,7 @@ if "lodestar.config" not in sys.modules:  # same temp home as test_lodestar.py w
 sys.path.insert(0, str(Path(__file__).parent))
 from test_pass21_fit import patched  # noqa: E402
 
-from lodestar import settings  # noqa: E402
+from lodestar import settings, util  # noqa: E402
 from lodestar import web_monitor as wm  # noqa: E402
 
 LEVELS = {
@@ -81,6 +81,20 @@ class Coverage(unittest.TestCase):
             c = careers.coverage(["remotive", "jobicy"], ["jobicy: HTTP 500"])
         self.assertEqual(c["skipped"], ["wwr"])  # asked too recently by another search: said, never silent
         self.assertEqual(c["asked"], ["remotive", "jobicy"])
+
+
+class CaptchaHandling(unittest.TestCase):
+    def test_search_reports_a_captcha_without_retrying_or_solving_it(self):
+        challenge = """<!doctype html><html><head><title>Just a moment...</title></head><body>
+        <script>window._cf_chl_opt = {};</script><p>Checking your browser before accessing this site.</p></body></html>"""
+        self.assertTrue(util.is_captcha_challenge(challenge))
+        with patched(util, fetch=lambda url, **kw: challenge):
+            with self.assertRaisesRegex(util.CaptchaRequired, "cannot complete a CAPTCHA"):
+                util.fetch_json("https://public.example/jobs")
+            with patched(wm, SOURCES={"remotive": lambda q: util.fetch_json("https://public.example/jobs")}):
+                errors = []
+                self.assertEqual(wm.search("data engineer", sources=["remotive"], errors=errors), [])
+        self.assertEqual(errors, ["remotive: source requires a CAPTCHA; Lodestar cannot complete a CAPTCHA automatically. Open the source in your browser and try again later."])
 
 
 if __name__ == "__main__":

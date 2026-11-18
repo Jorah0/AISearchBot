@@ -1684,6 +1684,11 @@ that a site flags is yours. Instead it works alongside you:
   40, Indeed 15 / 60, the others 10 / 40). Lodestar counts the jobs you mark applied whose link (or application link)
   is on that site. At a cap the site shows *At cap: paused*, Today and the job's drawer say so, and the extension's
   Fill waits there until the day (or the 7 days) has passed. Mark jobs applied after you apply, so the count is right.
+- **More sites.** Next to the five, *More* links open Google Jobs, Monster, Dice, Built In, Idealist and USAJOBS's own
+  search the same way. Dice, Monster (CareerBuilder too), Built In, Idealist and USAJOBS get the same caps (10 / 40 by
+  default; Google Jobs only links onward), and Lodestar never visits their pages in the background: the daily posting
+  check skips a job whose link is on them. CAPTCHAs on any of these sites are yours to answer: Lodestar never solves
+  or works around one.
 
 ### Phone access (your home Wi-Fi)
 

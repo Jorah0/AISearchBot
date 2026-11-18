@@ -1971,13 +1971,30 @@ function siteSearchUrl(site, q, loc, lv) {
   if (site === 'ZipRecruiter') return 'https://www.ziprecruiter.com/jobs-search?' + qs({ search: word + q, location: loc });
   return 'https://www.simplyhired.com/search?' + qs({ q: word + q, l: loc });
 }
+/* Job sites Lodestar does not search itself (no API it may use): links to each site's own search, nothing fetched,
+   no caps (pacing is for the five above). Each URL format was checked live on 2026-11-18; Wellfound ignores a query
+   parameter and CareerBuilder's search URL redirects home, so neither is listed (Monster shares CareerBuilder's jobs). */
+const MORE_SITES = [
+  ['Google Jobs', 'every board Google indexes', (q, loc) => 'https://www.google.com/search?' + new URLSearchParams({ q: `${q} jobs${loc ? ' near ' + loc : ''}`, ibp: 'htl;jobs' })],
+  ['Monster', 'general', (q, loc) => 'https://www.monster.com/jobs/search?' + new URLSearchParams(Object.entries({ q, where: loc }).filter(([, v]) => v))],
+  ['Dice', 'tech', (q, loc) => 'https://www.dice.com/jobs?' + new URLSearchParams(Object.entries({ q, location: loc }).filter(([, v]) => v))],
+  ['Built In', 'tech and startups', q => 'https://builtin.com/jobs?' + new URLSearchParams({ search: q })],
+  ['Idealist', 'nonprofit and social impact', q => 'https://www.idealist.org/en/jobs?' + new URLSearchParams({ q })],
+  ['USAJOBS', 'US federal', (q, loc) => 'https://www.usajobs.gov/Search/Results?' + new URLSearchParams(Object.entries({ k: q, l: loc }).filter(([, v]) => v))],
+];
+function moreSiteLinks(q, loc, lv) {
+  const word = LEVEL_WORD[lv] ? LEVEL_WORD[lv] + ' ' : '';
+  const pace = S.pacing || {};
+  return MORE_SITES.map(([s, what, url]) => `<a class="b ghost sm${(pace[s] || {}).full ? ' full' : ''}" data-site="${esc(s)}" href="${esc(url(word + q, loc))}" target="_blank" rel="noopener" title="${esc(what)}: opens ${esc(s)}'s own search (Lodestar fetches nothing)${pace[s] ? ': ' + esc(paceText(pace[s])) : ''}">${esc(s)} ↗</a>`).join(' ');
+}
 function siteQuery() { return { q: ($('#sQ')?.value || (typeof SP !== 'undefined' && SP.query) || '').trim(), loc: ($('#sLoc')?.value || '').trim(), lv: $('#sLevel')?.value || '' }; }
 function paceText(u) { return `${u.day} of ${u.cap_day} today · ${u.week} of ${u.cap_week} this week`; }
 function renderSiteSearch() {
   const el = $('#siteSearch'); if (!el) return;
   const { q, loc, lv } = siteQuery(), pace = S.pacing || {};
   el.innerHTML = q ? '<span class="muted">Search these yourself:</span> ' + PACE_SITES.map(s => `<a class="b ghost sm${(pace[s] || {}).full ? ' full' : ''}" data-site="${esc(s)}" href="${esc(siteSearchUrl(s, q, loc, lv))}" target="_blank" rel="noopener" title="opens ${esc(s)}'s own search${S.browser ? " in Lodestar's browser window" : " in your browser"}${pace[s] ? ': ' + esc(paceText(pace[s])) : ''}">${esc(s)} ↗</a>`).join(' ')
-    : '<span class="muted">Type a role to search LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired yourself.</span>';
+      + ` <span class="more" role="group" aria-label="More job sites to search yourself"><span class="muted">More:</span> ${moreSiteLinks(q, loc, lv)}</span>`
+    : '<span class="muted">Type a role to search LinkedIn, Indeed, Glassdoor, ZipRecruiter, SimplyHired, Google Jobs, Monster, Dice, Built In, Idealist and USAJOBS yourself.</span>';
   if (hasAI()) el.innerHTML += ' <button class="b ghost sm" id="siteIdeasBtn" onclick="siteIdeas(this)" title="one AI call over your profile (never your salary floor) and saved searches; the AI never sees these sites and Lodestar never opens them">AI: search ideas for these sites</button>';
 }
 /* pass 37: AI search ideas for the five sites, each turned into links to their own search (you run them) */
@@ -1997,26 +2014,32 @@ function renderSiteIdeas() {
     + '<div class="row"><button class="b ghost sm" onclick="SITE_IDEAS=null;renderSiteIdeas()">close</button></div></div>';
 }
 function useIdea(i) { const x = SITE_IDEAS && SITE_IDEAS.queries[i]; if (!x) return; $('#sQ').value = x.query; renderSiteSearch(); $('#sQ').focus(); }
+function pacedSites() { const k = Object.keys(S.pacing || {}); return k.length ? k : PACE_SITES; }
+function anySiteUrl(s, q, loc, lv) {
+  const m = MORE_SITES.find(x => x[0] === s), word = LEVEL_WORD[lv] ? LEVEL_WORD[lv] + ' ' : '';
+  return m ? m[2](word + q, loc) : siteSearchUrl(s, q, loc, lv);
+}
 function renderPacing() {
-  const pace = S.pacing || {}, full = PACE_SITES.filter(s => (pace[s] || {}).full);
+  const pace = S.pacing || {}, full = pacedSites().filter(s => (pace[s] || {}).full);
   if ($('#homePace')) $('#homePace').innerHTML = full.length ? `<div class="warnbox">At your application cap: ${full.map(s => `<b>${esc(s)}</b> (${esc(paceText(pace[s]))})`).join(', ')}. Lodestar pauses the extension's Fill there until the window passes; change caps under <button class="b ghost sm" onclick="go('accounts')">Accounts</button>.</div>` : '';
   renderSiteSearch();
   const el = $('#siteList'); if (!el) return;
   const { q, loc, lv } = siteQuery();
-  el.innerHTML = PACE_SITES.map((s, i) => { const u = pace[s] || { day: 0, week: 0, cap_day: 0, cap_week: 0 };
+  el.innerHTML = pacedSites().map((s, i) => { const u = pace[s] || { day: 0, week: 0, cap_day: 0, cap_week: 0 };
     return `<div class="connrow" data-site="${esc(s)}"><b>${esc(s)}</b> <span class="pill ${u.full ? 'bad' : 'ok'}">${u.full ? 'At cap: paused' : 'Open'}</span>
       <span class="muted">${esc(paceText(u))}</span>
       <label class="muted">per day <input id="capD${i}" type="number" min="0" max="200" value="${Number(u.cap_day)}" style="width:64px" aria-label="${esc(s)} daily cap"></label>
       <label class="muted">per week <input id="capW${i}" type="number" min="0" max="1000" value="${Number(u.cap_week)}" style="width:70px" aria-label="${esc(s)} weekly cap"></label>
       <button class="b ghost sm" onclick="capSave(${i},this)">Save caps</button>
-      ${q ? `<a class="b ghost sm" href="${esc(siteSearchUrl(s, q, loc, lv))}" target="_blank" rel="noopener">Search ${esc(s)} ↗</a>` : ''}</div>`; }).join('');
+      ${q ? `<a class="b ghost sm" href="${esc(anySiteUrl(s, q, loc, lv))}" target="_blank" rel="noopener">Search ${esc(s)} ↗</a>` : ''}</div>`; }).join('');
 }
 async function capSave(i, btn) {
   btn.disabled = true;
-  const r = await api('/api/pacing', { site: PACE_SITES[i], day: Number($('#capD' + i).value), week: Number($('#capW' + i).value) });
+  const site = pacedSites()[i];
+  const r = await api('/api/pacing', { site, day: Number($('#capD' + i).value), week: Number($('#capW' + i).value) });
   btn.disabled = false;
   if (r.error) return toast('error: ' + r.error, 'err');
-  toast(`${PACE_SITES[i]} caps saved`, 'ok'); load();
+  toast(`${site} caps saved`, 'ok'); load();
 }
 function paceGroup(d) {  // the drawer: this job lives on one of the five sites
   const p = d.pacing; if (!p) return '';

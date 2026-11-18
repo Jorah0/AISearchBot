@@ -18,6 +18,34 @@ MAIL_TIMEOUT = 60  # seconds per IMAP/SMTP socket operation: a server that accep
 
 
 _DTD_RE = re.compile(rb"<!(DOCTYPE|ENTITY)", re.I)
+_CAPTCHA_MARKER_RE = re.compile(r"""(?ix)
+    _cf_chl_
+    | (?:g-recaptcha|h-captcha|cf-turnstile)
+    | (?:recaptcha|hcaptcha|turnstile|arkoselabs|funcaptcha|geetest|friendlycaptcha)\.(?:com|net)
+""")
+_CAPTCHA_COPY_RE = re.compile(r"""(?ix)
+    \b(?:captcha|human[ -]verification|verify\s+(?:that\s+)?you(?:'re|\s+are)\s+human
+    |checking\s+(?:your\s+)?browser|unusual\s+traffic|security\s+check)\b
+""")
+CAPTCHA_REQUIRED = ("source requires a CAPTCHA; Lodestar cannot complete a CAPTCHA automatically. "
+                    "Open the source in your browser and try again later.")
+
+
+class CaptchaRequired(RuntimeError):
+    """A fetched public page is an anti-bot challenge, not the requested source response."""
+
+    def __init__(self):
+        super().__init__(CAPTCHA_REQUIRED)
+
+
+def is_captcha_challenge(text: str) -> bool:
+    """Whether a fetched HTML response is a human challenge instead of the requested public content.
+
+    Both a known provider marker and human-verification copy are required so an ordinary article merely mentioning a
+    provider is still readable. This is detection only: callers surface a clear stop and never retry or solve it.
+    """
+    raw = str(text or "")
+    return bool(_CAPTCHA_MARKER_RE.search(raw) and _CAPTCHA_COPY_RE.search(strip_html(raw)))
 
 
 def parse_xml(text):
@@ -165,7 +193,10 @@ def fetch(url: str, timeout: int = 25, headers: dict | None = None, max_bytes: i
                     raise ValueError(f"response from {shown[:80]} is larger than {cap / 1_000_000:g} MB")
                 if time.monotonic() > deadline:
                     raise ValueError(f"response from {shown[:80]} took longer than {timeout * 4} s")
-            return buf.decode(r.headers.get_content_charset() or "utf-8", errors="replace")
+            text = buf.decode(r.headers.get_content_charset() or "utf-8", errors="replace")
+            if is_captcha_challenge(text):
+                raise CaptchaRequired()
+            return text
     except Exception as e:  # urllib / http.client errors can quote the URL: scrub query values, keep the exception type
         if shown != url:
             e.args = tuple(a.replace(url, shown) if isinstance(a, str) else a for a in e.args)
@@ -180,7 +211,10 @@ def fetch(url: str, timeout: int = 25, headers: dict | None = None, max_bytes: i
 
 
 def fetch_json(url: str, **kw):
-    return json.loads(fetch(url, **kw))
+    text = fetch(url, **kw)
+    if is_captcha_challenge(text):  # also covers callers that substitute fetch() in a controlled test or integration
+        raise CaptchaRequired()
+    return json.loads(text)
 
 
 def origin(url: str) -> str:
