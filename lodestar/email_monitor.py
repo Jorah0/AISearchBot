@@ -164,6 +164,17 @@ def _body(msg) -> str:
     return strip_html(html)
 
 
+def _formatted(msg) -> str:
+    """The formatted copy for the Mail page and Inbox (pass 54): mailhtml's allowlist, sign-in codes masked like the
+    text. Never fatal: a mail that will not clean is shown as text."""
+    try:
+        from . import mailhtml
+
+        return codes.mask(_hdr(msg, "Subject"), mailhtml.of(msg))[1]
+    except Exception:
+        return ""
+
+
 def _part(msg, ctype: str) -> str:
     """The first non-attachment part of this type, decoded ('' when there is none)."""
     for p in (msg.walk() if msg.is_multipart() else [msg]):
@@ -405,6 +416,7 @@ def _scan(host: str, user: str, pw: str | None, days: int, limit: int, dry: bool
                              "message_id": _hdr(msg, "Message-ID"), "sender_email": addr, "sender_name": name,
                              "in_reply_to": _hdr(msg, "In-Reply-To"), "refs": _hdr(msg, "References"),
                              "body": body[:3500], "full_body": body, "links": _links(msg, body),
+                             "full_html": _formatted(msg),
                              "dkim_pass": mail_authenticated(msg.get_all("Authentication-Results") or [], addr)}
                     if info.get("category") != "other":
                         _files(info, msg, len(raw[0][1]))
@@ -412,6 +424,7 @@ def _scan(host: str, user: str, pw: str | None, days: int, limit: int, dry: bool
                         info.pop("_files", None)  # file bytes stay out of the scan result (task results, JSON)
                         info.pop("links", None)
                         info.pop("full_body", None)  # stored on the mail row; the scan result stays small
+                        info.pop("full_html", None)
                         found.append(info)
             except Exception as e:
                 ok = False
@@ -579,7 +592,7 @@ def _record(info: dict, job) -> None:
                     from_addr=info.get("sender_email") or info.get("from"), to_addr=info.get("to"),
                     subject=info.get("subject"), sent_at=sent, category=info.get("category"),
                     summary=str(info.get("summary") or "")[:500], snippet=info.get("body"), trusted=info.get("trusted"),
-                    body=info.get("full_body") or info.get("body"), deadline=str(info.get("deadline") or "") or None,
+                    body=info.get("full_body") or info.get("body"), html=info.get("full_html") or None, deadline=str(info.get("deadline") or "") or None,
                     action=None if str(info.get("action") or "").strip().lower() in ("", "none") else str(info["action"]),
                     linked_by=(info.get("linked_by") or "auto") if job else None,
                     company=str(info.get("company") or "")[:200], title=str(info.get("title") or "")[:200],

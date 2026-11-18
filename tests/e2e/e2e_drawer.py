@@ -126,7 +126,7 @@ class Drawer(E2ETestCase):
         self.expect_toast("no resume.docx for this job yet", "err")
         self.button("Export PDF").click()
         self.expect_toast("no tailored resume yet", "err")
-        self.act("Tailor resume (+docx)")
+        self.act("Tailor resume")
         d = self.folder(jid)
         self.assertTrue((d / "resume.md").is_file() and (d / "resume.docx").is_file())
         self.assertEqual(self.page.locator("#docTabs button", has_text="resume.md").count(), 1)
@@ -176,7 +176,7 @@ class Drawer(E2ETestCase):
     def test_document_editor_edit_adjust_review(self):
         jid = self.ids["offer"]
         self.open_job(jid)
-        self.act("Tailor resume (+docx)")
+        self.act("Tailor resume")
         md = self.folder(jid) / "resume.md"
         self.button("Edit document").click()  # the timeline tab is open
         self.expect_toast("pick a document tab first", "err")
@@ -207,7 +207,7 @@ class Drawer(E2ETestCase):
     def test_gap_cover_prep_research_checklist_and_council(self):
         jid = self.ids["accepted"]
         self.open_job(jid)
-        self.act("Gap check (coverage + AI verdict)")
+        self.act("AI gap verdict")
         self.assertIn("Verdict: good fit - skills match", self.page.text_content("#jOut"))
         self.assertIn("lead with Airflow", self.page.text_content("#jOut"))
         self.assertIn("gap.json", self.docs(jid))
@@ -220,7 +220,7 @@ class Drawer(E2ETestCase):
         self.assertIn("250", str(self.ai_calls[-1]["messages"]))
         self.act("Interview prep")
         self.assertTrue((d / "interview_prep.md").is_file())
-        self.act("Company research")
+        self.act("Research")
         self.assertTrue((d / "research.md").is_file())
         self.assertEqual(self.page.text_content("#jOut"), (d / "research.md").read_text(encoding="utf-8"))
         for name in ("cover_letter.md", "interview_prep.md", "research.md", "gap.json"):
@@ -256,10 +256,10 @@ class Drawer(E2ETestCase):
         opts = self.page.eval_on_selector_all("#jBase option", "o => o.map(x => x.textContent)")
         self.assertEqual(opts[0], "master profile")
         self.assertTrue(any(o.startswith("saved: alt-resume.md") for o in opts), opts)
-        self.act("Tailor resume (+docx)")  # from the master profile
+        self.act("Tailor resume")  # from the master profile
         self.assertNotIn("Flink fraud-scoring", str(self.ai_calls[-1]["messages"]))
         self.page.select_option("#jBase", index=1)
-        self.act("Tailor resume (+docx)")
+        self.act("Tailor resume")
         self.assertIn("Flink fraud-scoring", str(self.ai_calls[-1]["messages"]))
 
     def test_story_prompt_for_what_the_posting_stresses(self):

@@ -725,7 +725,7 @@ SKIP_DIRS = {"backups", "snapshots", "cache", "__pycache__", "procs",
 # .env may hold keys or IMAP_PASS in clear text; extension.json holds the paired browsers' secrets (a restore must never
 # bring back a revoked one); capture.token is the running server's bookmarklet token; update-state.json would make the
 # next start "finish" an update that is not happening: none goes in a zip, and a restore never touches them
-SKIP_NAMES = {".env", "extension.json", "capture.token", "update-state.json", "apply-agent.stop"}
+SKIP_NAMES = {".env", "extension.json", "capture.token", "update-state.json", "apply-agent.stop", "phone.json"}
 
 
 def in_backup(rel: Path) -> bool:

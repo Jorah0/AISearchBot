@@ -10,12 +10,12 @@
 ## Project notes
 
 - **Product**: Lodestar. Package `lodestar/`; `jobbot` is a legacy script alias in `pyproject.toml`.
-- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1135 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
+- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1170 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
 - **Test matrix** (`docs/TESTS.md`): one row per feature with its unit/integration and E2E tests by exact name
   (`module.Class.test_name`). Every new feature adds a TESTS.md row + a unit test + an E2E test when it has UI;
   `tests/test_feature_matrix.py` fails on a row with no test, an unknown name, a browser test in the unit column, a
   test named in no row, a dropped row or Planned ID (pinned in the guard), or a stale test count above (update it when you add tests). Coverage (informative): see TESTS.md > Coverage.
-- **Browser tests**: `.venv\Scripts\python.exe -m unittest discover -s tests/e2e -p "e2e_*.py"` (264 tests; needs `pip install -e .[e2e]`; skips without Playwright or a browser). `tests/e2e/harness.py` `E2ETestCase`: per class a temp `LODESTAR_HOME` (module-level paths rebound), fictional seed via the app's write paths (`cls.ids`), fakes for AI (`ai_text`/`ai_json`), IMAP/SMTP, OAuth/urlopen, `util.fetch` (`FETCH`), keyring, toasts, `webbrowser`; real server on a free port; per test a fresh page with a console-error guard. Installed Edge by default; `LODESTAR_E2E_BROWSER=chromium` (CI), `LODESTAR_E2E_HEADED=1` to watch. Failures leave a screenshot + HTML in `tests/e2e/_artifacts/`. Never run `playwright install` locally. Wait with `idle()` (fetch-hook count), never sleeps or `networkidle` alone; drag with `Board.drag` (HTML5 events on the exact elements; a mouse drag picks up the wrong card when `<main>` scrolls). `FakeMail.FAIL` makes logins raise (refused/dropped mailbox).
+- **Browser tests**: `.venv\Scripts\python.exe -m unittest discover -s tests/e2e -p "e2e_*.py"` (275 tests; needs `pip install -e .[e2e]`; skips without Playwright or a browser). `tests/e2e/harness.py` `E2ETestCase`: per class a temp `LODESTAR_HOME` (module-level paths rebound), fictional seed via the app's write paths (`cls.ids`), fakes for AI (`ai_text`/`ai_json`), IMAP/SMTP, OAuth/urlopen, `util.fetch` (`FETCH`), keyring, toasts, `webbrowser`; real server on a free port; per test a fresh page with a console-error guard. Installed Edge by default; `LODESTAR_E2E_BROWSER=chromium` (CI), `LODESTAR_E2E_HEADED=1` to watch. Failures leave a screenshot + HTML in `tests/e2e/_artifacts/`. Never run `playwright install` locally. Wait with `idle()` (fetch-hook count), never sleeps or `networkidle` alone; drag with `Board.drag` (HTML5 events on the exact elements; a mouse drag picks up the wrong card when `<main>` scrolls). `FakeMail.FAIL` makes logins raise (refused/dropped mailbox).
 - **Profile**: prompts read `resume.candidate_text(limit)` (master + profile-bank facts, fitted by section), never `profile_text()[:N]`. Free-form helpers (coach, ideas, mock) pass `strict=False`. Anything an employer reads (resume, letters, mail, form answers) passes `private=False` so the salary floor stays out; drafts pass `drafts.screen` (a counter-offer's cited figures go in `cited=`, the only exemption), employer-facing answer reads use `employer=True` (private answers never leave). Writes to profile.md go through `profile.write_master()` (snapshot + atomic).
 - **Mail trust** (`email_monitor._match` / `_thread`): trusted = aligned DKIM/DMARC + a *strong* tie + agreement with the stored contact. Strong = stored contact, a thread our mail vouches for (it answered trusted mail or went to the stored contact; job not rejected/withdrawn), or the registrable domain of the job's posting URL on the company site. A domain that only *names* the company (`names_company`, any suffix) is weak: filed, never trusted. Mail about an untracked company is never trusted. Manual links (`link_mail`, Track as new job) and replies to them never make a sender trusted. Never loosen this.
 - **Drafts**: AI draft options/rewrites go through `drafts.py` (`options`, `rewrite`, `use`): one AI call, `screen()` (salary-floor guard) on every text, untrusted mail fenced, mail kinds proposed with review (`apply.mail_proposal(review=True)`), recipient from the server. A send_email proposal answering unverified mail is flagged `unverified` and loses `new_status` (`approvals.propose`).
@@ -277,11 +277,33 @@ PORT`, PORT = the server's own
   sourced; only strong + moderate reach the model as advice, myths as claims to correct, weak never. The plan for what
   it learns next is docs/LEARNING_TREE.md (retrieval memory, bandit, time-split eval before anything heavier).
 - **Primary AI** (pass 49): `ai.set_primary(provider, model)` is the one way to swap it (top-bar AI pill, action
-  `ai_primary`, `lodestar primary`): linked provider only, inside `council_providers`, model id shape-checked, Full AI refused;
+  `ai_primary`, `lodestar primary`): linked provider only (it need not be in the council: `council_providers` bounds the council, its reviewers and ideas;
+  the primary only defaults from it when none is chosen), model id shape-checked, Full AI refused;
   for Ollama the pick sets pref `jobmodel` (the job model on, any other model off). `state()['primary']` feeds the pill.
   The council's models (pass 50): pref `council_members` ('provider=model', set via `ai.set_council` / action
   `council_set`); `ai.council_members()` filters to `council_providers` (the boundary) and refuses when none is left;
   `council()` and `crosscheck` ask each member under `using(model)`; the cross-check never reviews with the writer's model.
+- **In-app browser** (`browser.py`, pass 52): desktop only (`browser.ON`, set by `desktop.open_window`, never
+  `web.start_server`). app.js sends external `target=_blank` links to `/api/browser` (Ctrl/Shift-click or `data-system`
+  keeps the system browser; OAuth sign-in stays in the system browser). Lodestar touches that window only on a bar
+  click: navigation via `history.*`, Save via content.js `LodestarReadPosting` -> `web.capture`. Never script it otherwise.
+- **Pass 53 (parity with Simplify / Teal / Huntr / Jobscan; plan docs/superpowers/plans/2026-11-18-competitive-parity.md)**:
+  match report = `resume.coverage` + `target` + `ats.ats_info` (never call it an ATS verdict); "I applied" = `web.mark_applied`
+  (your click only); page keywords = `web.page_keywords` + content.js `LodestarMark` (visual only); to-dos = `db.tasks`
+  (never events; `delete_job` drops them); looks = `render.LOOKS` (each passes `clean_style`); map = `geo.py` (offline
+  Census places, `scripts/build_places.py`). AI helpers there (`task_ideas`, `look_pick`) send title / company / stage
+  only, through `ai.ask_json_light`, and never write: you click to apply. Long help paragraphs in index.html sit in
+  `<details class="help">`; a tab's AI toolbar and AI help menu share one row.
+- **Phone access** (`phone.py`, pass 53): off by default; `phone.start` binds the private LAN address only, never 0.0.0.0;
+  `web.PhoneHandler` checks Host, the hashed session cookie and still the page token; `phone.DENY` / `DENY_RUN` keep
+  secrets and machine-level actions off phones (a new secret-bearing route goes there). `phone.json` is never backed up.
+  E2E tests: the harness fakes `urlopen`, so talk to the listener with `http.client`.
+- **Pass 54 (AI you steer)**: council switch = pref `council_on` (`ai.council` -> the primary alone, `crosscheck`
+  paused when off). Advisor cards start unticked; `advisor.revise(id, note | text)` updates a card in place and re-runs
+  `problems()` (a revision never skips the guards). AI: fill this page = `pagefill.py` + app.js `pf*`: the page sends
+  its own visible fields (never password / key / token / code / vault / floor fields: `pagefill.SECRET` and the page's
+  `PF_SECRET`, keep them alike), filling only types into fields and never saves; a new secret-bearing input needs a
+  name those patterns catch. Inbox items carry `mail_id` (`web._with_mail`) for Read the full email.
 - **Gotcha, SystemExit**: `ai.*` and `profile_text()` report user-facing problems (no key, model rejected, template profile) as `SystemExit`, which `except Exception` does not catch. Background paths catch `(Exception, SystemExit)`.
 - **Run**: `lodestar doctor` (add `--live` for one real AI call per provider), `lodestar desktop` (WebView2 window; falls back to the browser).
 - **Answer bank sources**: every `db.save_answer` from a path where you typed the answer passes `source` (Answers tab "typed under Answers", CLI, `pipeline.answer`); an AI `save_answer` proposal carries `source: "AI draft for job #N"`. Eligibility / EEO answers (`pipeline.never_ai`, which also knows the CANON legal keys) are reused only when `pipeline.yours(source)`, and AI prompts read bank rows only via `db.employer_answers()` (`pipeline.for_prompts`: never such a row, tagged or not). A new event kind a document builder writes goes in `db.BOOKKEEPING` (the follow-up clock).
@@ -300,8 +322,10 @@ PORT`, PORT = the server's own
   IMAP connection opens through `util.imap_open` (IMAP_MODE ssl or starttls, never plain). Never weaken the sign-in
   listener's state, Host or loopback checks, and the sign-in page always opens in the system browser.
 - **Mail page** (pass 33, `db.all_mail`, `GET /api/mail?all=1` / `/api/mail/<id>`): list rows never carry the
-  text (`db.MAIL_LIST`); one mail returns `body` (whole scanned text, codes masked; older rows fall back to
-  `snippet`), `action`, `deadline`. Mail text is always escaped (never HTML). Replies only through `draft_use` (Inbox
+  text (`db.MAIL_LIST`, never `html` either); one mail returns `body` (whole scanned text, codes masked; older rows fall back to
+  `snippet`), `action`, `deadline`, `html`. Mail text is always escaped; the only markup shown is `mail.html`
+  (pass 54: `mailhtml.clean` allowlist, codes masked) inside the sandboxed `iframe.mailhtml` (`sandbox="allow-popups
+  allow-popups-to-escape-sandbox"`, never allow-scripts / allow-same-origin; CSP `img-src data:` until Show images). Replies only through `draft_use` (Inbox
   review, server-side recipient); the scan result drops `full_body` after `_record`.
 - **Job-site pacing** (`pacing.py`, pass 36): LinkedIn / Indeed / Glassdoor / ZipRecruiter / SimplyHired
   (`apply_agent.forbidden` names the site) get daily + weekly caps (meta `pacing:caps`; `set_cap` validates). Usage

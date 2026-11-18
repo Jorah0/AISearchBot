@@ -41,7 +41,7 @@ function go(tab) {
   if (tab !== 'board' || CT) closeDrawer();
   if (tab === 'contacts') loadContacts();
   if (tab === 'insights') loadInsights();
-  if (tab === 'setup') { loadEmail(); loadAiHistory(); restoreLoad(); acctLoad(); loadAudit(); }
+  if (tab === 'setup') { loadEmail(); loadAiHistory(); restoreLoad(); acctLoad(); loadAudit(); phoneLoad(); }
   if (tab === 'studio') loadStudio();
   if (tab === 'search') { loadAllJobs(); spLoad(); }
   if (tab === 'careers') loadCareers();
@@ -75,7 +75,7 @@ async function run(action, params, done, btn, fail) {  // fail(error): the calle
 async function load() {
   S = await api('/api/state');
   const st = S.stats, pct = x => Math.round(x * 100) + '%';
-  $('#stats').innerHTML = `<span>tracked <b>${S.jobs.length}</b></span><span>applied <b>${st.applied_total}</b></span><span>response <b>${pct(st.response_rate)}</b></span><span>interview <b>${pct(st.interview_rate)}</b></span><span>providers <b>${Object.values(S.providers).filter(Boolean).length}</b></span><span>tokens today <b>${(S.usage_today.input + S.usage_today.output).toLocaleString()}</b></span>`;
+  $('#stats').innerHTML = `<span>tracked <b>${S.jobs.length}</b></span><span>response <b>${pct(st.response_rate)}</b></span><span>interview <b>${pct(st.interview_rate)}</b></span><span>providers <b>${Object.values(S.providers).filter(Boolean).length}</b></span><span>tokens today <b>${(S.usage_today.input + S.usage_today.output).toLocaleString()}</b></span>`;
   const pill = $('#codesPill'); pill.style.display = S.codes_count ? '' : 'none'; pill.textContent = `Codes (${Number(S.codes_count)})`;
   if (S.codes_count !== CODES.length && (S.codes_count || $('#codesPanel').open)) codesLoad();
   const nq = (S.questions || []).filter(q => q.blocking).length, badge = $('#inboxN');  // approvals + questions for you
@@ -153,10 +153,11 @@ function card(j) {
 const fitBand = n => n >= 80 ? 'hi' : n >= 60 ? 'mid' : n >= 40 ? 'lo' : 'bad';
 function fitBadge(j) {
   if (j.fit_score == null) return '';
-  const tip = [...(j.fit_chips || []), j.fit_partial ? `partial: measured ${Math.round((j.fit_known || 0) * 100)}% of the fit (open the job for what is missing)` : '',
+  const weak = j.fit_class_label === 'Insufficient evidence';  // pass 54: on every new card; said in the tooltip, shown in the drawer
+  const tip = [...(weak ? ['career class: Insufficient evidence (open the job for what is missing)'] : []), ...(j.fit_chips || []), j.fit_partial ? `partial: measured ${Math.round((j.fit_known || 0) * 100)}% of the fit (open the job for what is missing)` : '',
     j.fit_stale ? 'out of date: your profile, preferences or weights changed; re-scoring' : ''].filter(Boolean).join('\n');
   return `<span class="chip fit fit-${fitBand(j.fit_score)}${j.fit_stale ? ' stale-fit' : ''}" title="${esc(tip)}">fit ${esc(j.fit_score)}${j.fit_partial ? ' · partial' : ''}${j.fit_blocked ? ' · blocked' : ''}</span>`
-    + (j.fit_class_label ? ` <span class="chip fit-class" title="career class: a reading of the fit and its hard requirements, never a hiring probability">${esc(j.fit_class_label)}</span>` : '');
+    + (j.fit_class_label && !weak ? ` <span class="chip fit-class" title="career class: a reading of the fit and its hard requirements, never a hiring probability">${esc(j.fit_class_label)}</span>` : '');
 }
 const GATE_STATE = { met: 'met', not_met: 'not met', unknown: 'unknown (never counted as met)' };
 function applyGroup(j) {  // pass 32: the apply agent from the page (blueprint 2.2 human control); stop mode = you press Submit
@@ -183,7 +184,7 @@ async function applyStop(btn) {
   $('#jApplyOut').textContent = r.error ? 'error: ' + r.error : 'Stop sent: any run stops at its next step.';
 }
 // pass 32: the drawer's section index (links, so no button name changes): jumps to groups the job has
-const JOB_INDEX = [['jFit', 'Fit'], ['jDocs', 'Documents'], ['jComm', 'Messages'], ['jReady', 'Interview'], ['jActivity', 'Timeline']];
+const JOB_INDEX = [['jFit', 'Fit'], ['jDocs', 'Documents'], ['jComm', 'Communicate'], ['jReady', 'Interview'], ['jActivity', 'Activity']];
 function jumpTo(id) { const g = document.getElementById(id); if (g) { g.scrollIntoView({ block: 'start' }); g.tabIndex = -1; g.focus({ preventScroll: true }); } }
 const ACTOR = { user: 'you', agent: 'Lodestar', integration: 'a connected service', system: 'Lodestar' };
 function stageGroup(d) {  // pass 26: the fine-grained stage, its append-only history, when the posting last answered
@@ -193,10 +194,11 @@ function stageGroup(d) {  // pass 26: the fine-grained stage, its append-only hi
       + `${e.actor_id ? ' (' + esc(e.actor_id) + ')' : ''}${e.approval_id ? ' · Inbox #' + Number(e.approval_id) : ''}`
       + `${ev ? ' · evidence: ' + esc(Object.entries(ev).map(([k, v]) => k + ' ' + v).join(', ')) : ''}</li>`;
   }).join('');
-  return `<div class="row muted" id="jStage">stage <select id="jStageSel" aria-label="Stage">${opt(S.stages || [], j.stage || j.status)}</select>
-      <button class="b ghost sm" onclick="setStage(${Number(j.id)}, this)">set stage</button>
-      ${j.posting_checked_at ? `<span>posting last answered ${esc(j.posting_checked_at)}</span>` : ''}</div>
-    ${hist ? `<details><summary class="muted">Stage history</summary><ul id="jStageHist">${hist}</ul></details>` : ''}`;
+  // pass 54: one collapsed row (the header's status select is the board column; this is the finer step + history)
+  return `<details id="jStageD" class="muted"><summary>Stage: <b>${esc(String(j.stage || j.status).replace(/_/g, ' '))}</b>${hist ? ' · history' : ''}${j.posting_checked_at ? ` · posting last answered ${esc(j.posting_checked_at)}` : ''}</summary>
+      <div class="row" id="jStage">finer stage <select id="jStageSel" aria-label="Stage">${opt(S.stages || [], j.stage || j.status)}</select>
+      <button class="b ghost sm" onclick="setStage(${Number(j.id)}, this)">set stage</button></div>
+      ${hist ? `<ul id="jStageHist">${hist}</ul>` : ''}</details>`;
 }
 async function setStage(id, btn) {
   btn.disabled = true; const r = await api(`/api/jobs/${Number(id)}/stage`, { stage: $('#jStageSel').value, note: '(set by you)' });
@@ -276,7 +278,7 @@ function renderToday() {
   el.style.display = parts.length || em.length || fits.length || bo.length || t.pending || nq ? '' : 'none';
   const empty = $('#todayEmpty');  // pass 32: one sentence and the next step when Today has nothing in it
   if (empty) empty.style.display = el.style.display === 'none' && $('#onboard').style.display === 'none' && !$('#upcoming').textContent.trim() ? '' : 'none';
-  el.innerHTML = `<h3>Today</h3><div class="row">${parts.join('')}${t.pending ? `<button class="b sm" onclick="go('inbox')">${t.pending} waiting in the Inbox</button>` : ''}${nq ? `<button class="b sm" onclick="go('inbox')">${nq} question${nq === 1 ? '' : 's'} for you</button>` : ''}</div>`
+  el.innerHTML = `<h3>Due now</h3><div class="row">${parts.join('')}${t.pending ? `<button class="b sm" onclick="go('inbox')">${t.pending} waiting in the Inbox</button>` : ''}${nq ? `<button class="b sm" onclick="go('inbox')">${nq} question${nq === 1 ? '' : 's'} for you</button>` : ''}</div>`
     + (em.length ? `<h4>Suggested emails</h4>${em.join('')}` : '') + (fits.length ? `<h4>Top new fits</h4>${fits.join('')}` : '')
     + (bo.length ? `<h4>Chance boosters</h4>${bo.map((b, i) => boostRow(b, 't', i)).join('')}` : '');
 }
@@ -337,7 +339,7 @@ function renderBoard() {
   $('#filterEmpty').style.display = S.jobs.length && !jobs.length ? '' : 'none';
   const f = S.funnel.stages;
   $('#funnel').innerHTML = f.applied.reached ? 'funnel: ' + Object.entries(f).map(([s, d]) => `<span class="pill">${s} ${d.reached}${d.conversion != null ? ' → ' + Math.round(d.conversion * 100) + '%' : ''}${d.median_days_to_next != null ? ' · ' + d.median_days_to_next + 'd' : ''}</span>`).join('') : '';
-  $('#upcoming').innerHTML = S.upcoming.length ? 'upcoming interviews: ' + S.upcoming.map(i => `<button class="b ghost sm" onclick="openJob(${i.job_id})">${esc(i.when)} · #${i.job_id} ${esc(i.company)} - ${esc(i.title)}</button>`).join(' ') : '';
+  $('#upcoming').innerHTML = S.upcoming.length ? '<h3 style="width:100%;margin:0 0 4px">Upcoming interviews</h3>' + S.upcoming.map(i => `<button class="b ghost sm" onclick="openJob(${i.job_id})">${esc(i.when)} · #${i.job_id} ${esc(i.company)} - ${esc(i.title)}</button>`).join(' ') : '';
   $('#variants').innerHTML = S.variants.length ? 'resume variants: ' + S.variants.map(v => `<span class="pill">${v.variant}: ${v.applied} sent, ${Math.round(v.interview_rate * 100)}% interview</span>`).join(' ') : '';
   $('#boardEmpty').style.display = S.jobs.length ? 'none' : '';
 }
@@ -361,9 +363,9 @@ function renderOnboard() {
 }
 function renderLoop() {
   const l = S.loop, el = $('#loopStat');
-  if (!l.running) { el.textContent = 'monitor loop: not running in this process'; el.title = 'start with the Lodestar shortcut, lodestar desktop, or lodestar run'; return; }
+  if (!l.running) { el.textContent = 'monitor loop: off'; el.title = 'not running in this process: start with the Lodestar shortcut, lodestar desktop, or lodestar run'; return; }
   el.textContent = `monitor loop: every ${l.every} min · last cycle ${l.last_cycle || 'starting'} · ${l.cycles} run${l.cycles === 1 ? '' : 's'}${l.last_error ? ' · last problem: ' + l.last_error : ''}`;
-  el.title = l.last_error || '';
+  el.title = el.textContent;  // the bar shows the start of it
 }
 
 /* ---- job drawer ---- */
@@ -398,7 +400,7 @@ async function openJob(id) {
       ${safeUrl(j.url) ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">posting ↗</a>` : ''}
       <select id="jStatus" aria-label="Status">${opt(S.statuses, j.status)}</select><button class="b ghost sm" onclick="moveJob(${j.id},$('#jStatus').value)">move</button>
       <button class="b ghost sm close" onclick="closeDrawer()" aria-label="Close job details">✕</button></div>
-    <div class="muted">contact: ${esc(j.contact_name || '')} ${esc(j.contact_email || '(none; replies and follow-ups need one)')}</div>
+    ${j.contact_email ? '' : `<div class="muted">no contact yet: <a href="#" onclick="$('#jCn')?.scrollIntoView({block:'center'});$('#jCn')?.focus();return false">set one under Admin</a> (replies and follow-ups need one)</div>`}
     <nav class="jIndex" aria-label="Job sections">${JOB_INDEX.map(([to, label]) => `<a href="#" data-to="${to}" onclick="jumpTo('${to}');return false">${label}</a>`).join('')}</nav>
     ${stageGroup(d)}
     ${aiMenu('job', j.id)}
@@ -412,24 +414,30 @@ ${peopleGroup(d)}
 ${readinessGroup(d)}
 ${roundsGroup(d)}
 
-    <div class="group" id="jMatchG"><h4>Match</h4>
+    <div class="group" id="jTodoG"><h4>To-dos</h4><div id="jTodos" aria-live="polite"></div>
+      <div class="row"><input id="jTodoText" class="grow" placeholder="add a to-do, e.g. ask Sam for a referral" aria-label="New to-do" onkeydown="if(event.key==='Enter')todoAdd()">
+        <input id="jTodoDue" type="date" aria-label="Due date"><button class="b ghost sm" onclick="todoAdd()">Add</button>
+        ${hasAI() ? '<button class="b ghost sm" id="jTodoAI" onclick="todoIdeas(this)" title="one short AI call over the job title, stage and open checklist items (never your profile or salary floor); you pick which to add">AI: suggest to-dos</button>' : ''}</div>
+      <div id="jTodoIdeas"></div></div>
+
+    <div class="group" id="jMatchG"><h4>Match report</h4>
       <div class="row"><button class="b" onclick="jobMatch(this)">${savedCoverage(d) ? 'Recompute' : 'Compute'} JD coverage</button><button class="b ghost" onclick="jobLint(this)">Check resume</button><button class="b ghost" onclick="run('audit',{id:${j.id}},r=>{$('#jCheck').innerHTML=auditHtml(r)},this)">Audit resume.docx</button></div>
-      <div class="muted">JD coverage is the share of the posting's keywords your current resume (tailored, else your profile) mentions: a guide for tailoring, not an ATS pass/fail. No AI involved.</div>
+      <div class="muted">Match rate: the share of the posting's keywords your current resume (tailored, else your profile) mentions, aim for 75%+. A guide for tailoring, not the employer's ATS verdict. No AI involved; the AI button below rewrites bullets through the usual fact checks.</div>
       <div id="jMatch"></div><div id="jCheck"></div></div>
 
     ${paceGroup(d)}${applyGroup(j)}
     <div class="group" id="jDocs"><h4>Documents</h4>${profileBadge(j.id)}${aiBar('docs', j.id)}<div class="row">
-      <button class="b" onclick="jobRun('gap',{},this)">Gap check (coverage + AI verdict)</button>
-      <button class="b" onclick="jobRun('tailor',{docx:true,base:baseOpt()},this)">Tailor resume (+docx)</button>
+      <button class="b" onclick="jobRun('gap',{},this)">AI gap verdict</button>
+      <button class="b" onclick="jobRun('tailor',{docx:true,base:baseOpt()},this)" title="writes resume.md and a .docx">Tailor resume</button>
       <button class="b" onclick="tailorBullets(this)">Tailor by bullet</button>
       <button class="b ghost" onclick="studioFor(${j.id})" title="the resume studio: a request + formatting, PDF and DOCX, checked against your facts">Build in Studio</button>
       <button class="b" onclick="jobRun('cover',{docx:true,tone:$('#jTone').value,words:$('#jWords').value},this)">Cover letter (+docx)</button>
       <button class="b ghost" onclick="draftOptions('cover',{id:${j.id},tone:$('#jTone').value,words:$('#jWords').value},'jOpts',this)" title="up to 3 letters from one AI call; Use this opens one in the editor">Cover options</button>
       <input id="jTone" placeholder="tone: confident, warm, specific" style="width:190px"><input id="jWords" type="number" min="100" max="800" placeholder="words (300)" style="width:100px">
       <button class="b ghost" onclick="jobRun('prep',{},this)">Interview prep</button>${'interview_prep.md' in d.docs ? `<button class="b ghost sm" onclick="viewJobDoc('interview_prep.md')" aria-label="View the interview prep">View</button>` : ''}
-      <button class="b ghost" onclick="jobRun('research',{},this)">Company research</button>${'research.md' in d.docs ? `<button class="b ghost sm" onclick="viewJobDoc('research.md')" aria-label="View the research pack">View</button>` : ''}
+      <button class="b ghost" onclick="jobRun('research',{},this)">Research</button>${'research.md' in d.docs ? `<button class="b ghost sm" onclick="viewJobDoc('research.md')" aria-label="View the research pack">View</button>` : ''}
       <button class="b ghost" onclick="run('checklist',{id:${j.id}},r=>show('jOut',r.checklist.map(c=>(c.done?'[x] ':c.na?'[-] ':'[ ] ')+c.item+(c.na?' (n/a yet)':c.done?'':'   -> '+c.next)).join('\\n')),this)">Checklist</button>
-      <label class="muted"><input type="checkbox" id="jCouncil"> council (all providers)</label></div>
+      <label class="muted council-opt"><input type="checkbox" id="jCouncil"> council</label></div>
       <div class="row">${S.bases.length ? `<label class="muted">tailor from <select id="jBase"><option value="">master profile</option>${S.bases.map(b => `<option value="${esc(b.id)}">saved: ${esc(b.name)} (${esc(b.added.slice(0, 10))})</option>`).join('')}</select></label>` : ''}
         <label class="muted">style <select id="jStyle" onchange="setPref('resume_style',this.value)">${opt(S.pref_choices.resume_style, S.prefs.resume_style)}</select></label>
         <button class="b ghost" onclick="exportPdf(this)">Export PDF</button></div>
@@ -449,13 +457,14 @@ ${mailGroup(d)}
 
     <div class="group"><h4>Schedule and decide</h4>
       <div class="row"><input id="jWhen" placeholder="interview: YYYY-MM-DD HH:MM" style="width:200px"><input id="jMin" type="number" min="5" placeholder="minutes (60)" style="width:110px"><button class="b ghost" onclick="jobRun('ics',{when:$('#jWhen').value,minutes:$('#jMin').value||60},this)">Calendar .ics</button></div>
-      <div class="row"><input id="oSal" placeholder="base" style="width:90px"><input id="oBon" placeholder="bonus" style="width:90px"><input id="oEq" placeholder="equity" style="width:90px"><input id="oBen" placeholder="benefits" style="width:120px"><input id="oDl" placeholder="deadline" style="width:100px"><input id="oNotes" class="grow" placeholder="notes"><button class="b ghost" onclick="jobRun('offer',{salary:$('#oSal').value,bonus:$('#oBon').value,equity:$('#oEq').value,benefits:$('#oBen').value,deadline:$('#oDl').value,notes:$('#oNotes').value},this)">Evaluate offer</button></div></div>
+      <div class="row"><input id="oSal" placeholder="base salary" aria-label="Base salary" style="width:120px"><input id="oBon" placeholder="bonus %" aria-label="Bonus" style="width:90px"><input id="oEq" placeholder="equity" aria-label="Equity" style="width:110px"><input id="oDl" placeholder="decide by (date)" aria-label="Deadline" style="width:140px"></div>
+      <div class="row"><input id="oBen" placeholder="benefits" aria-label="Benefits" style="width:200px"><input id="oNotes" class="grow" placeholder="notes" aria-label="Offer notes"><button class="b ghost" onclick="jobRun('offer',{salary:$('#oSal').value,bonus:$('#oBon').value,equity:$('#oEq').value,benefits:$('#oBen').value,deadline:$('#oDl').value,notes:$('#oNotes').value},this)">Evaluate offer</button></div></div>
 
     <div class="group"><h4>Admin</h4>
       <div class="row"><input id="jNote" class="grow" placeholder="add a note"><button class="b ghost sm" onclick="jobAdmin('note',{text:$('#jNote').value})">note</button></div>
       <div class="row"><input id="jCn" placeholder="contact name" style="width:160px" value="${esc(j.contact_name || '')}"><input id="jCe" class="grow" placeholder="contact email (replies, follow-ups and thank-yous go here)" value="${esc(j.contact_email || '')}"><button class="b ghost sm" onclick="api('/api/jobs/${j.id}/contact',{name:$('#jCn').value,email:$('#jCe').value}).then(r=>{if(r.error)return toast('error: '+r.error,'err');toast('contact saved (also filed under Contacts as recruiter)','ok');openJob(${j.id})})">set contact</button></div>
       <div class="row"><input id="jJd" class="grow" placeholder="set job description: URL or pasted text"><button class="b ghost sm" onclick="jobAdmin('jd',{source:$('#jJd').value})">set JD</button></div>
-      <div class="row"><button class="b ghost sm" onclick="jobRun('packet',{},this)">export packet (zip)</button><button class="b ghost sm" onclick="viewPacket()">View documents</button><button class="b danger sm" onclick="if(confirm('Delete job #${j.id}?'))api('/api/jobs/${j.id}/delete',{}).then(()=>{closeDrawer();load()})">delete job</button></div></div>
+      <div class="row"><button class="b ghost sm" onclick="jobRun('packet',{},this)">export packet (zip)</button><button class="b ghost sm" onclick="viewPacket()">View packet</button><button class="b danger sm" onclick="if(confirm('Delete job #${j.id}?'))api('/api/jobs/${j.id}/delete',{}).then(()=>{closeDrawer();load()})">delete job</button></div></div>
 
     <div class="tabs" id="docTabs">${['timeline', 'description', ...docs].map((n, i) => `<button class="${i === 0 ? 'on' : ''}" onclick="showDoc('${n}',this)">${n}</button>`).join('')}</div>
     <pre id="docView"></pre>
@@ -464,7 +473,7 @@ ${mailGroup(d)}
     <div class="out"><h4 class="muted">AI output</h4><pre id="jOut">(run an action above)</pre></div>`;
   $$('#drawer .jIndex a').forEach(a => { if (!document.getElementById(a.dataset.to)) a.remove(); });  // only sections this job has
   openDrawer('Job details');
-  renderCoverage(savedCoverage(d));
+  renderCoverage(savedCoverage(d)); renderTodos(d.tasks);
   renderBullets(savedBullets(d), false);
   stageLine();
   if (d.pay && d.pay.next && !PAY_TRIED.has(j.id)) { PAY_TRIED.add(j.id); payRun(j.id, false); }  // one automatic BLS try per job per page load
@@ -505,7 +514,7 @@ async function jobAdmin(op, body) {  // the drawer's note / set JD: a blank note
 }
 function jobRun(action, extra, btn) {
   const id = cur.job.id;
-  run(action, { id, council: $('#jCouncil')?.checked, ...extra }, r => { const t = mailText(r); openJob(id).then(() => { $('#jOut').textContent = t; }); }, btn);
+  run(action, { id, council: $('#jCouncil')?.checked, ...extra }, r => { const t = mailText(r); openJob(id).then(() => { $('#jOut').textContent = t; if (t) $('#jOut').scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }); }, btn);
 }
 
 /* ---- JD coverage, resume check, file audit (lodestar/ats.py, lodestar/lint.py); all deterministic, no AI ---- */
@@ -517,7 +526,10 @@ function renderCoverage(cov) {
   if (!cov) { el.innerHTML = ''; return; }
   const c = cov.categories, t = cov.title_match, edu = cov.education_required;
   const names = { hard: 'hard skills', soft: 'soft skills', title: 'job title', education: 'education', other: 'other posting terms' };
-  el.innerHTML = `<div class="row"><b class="cov-score">${esc(cov.score)}%</b><span class="muted">JD coverage</span></div>`
+  const tgt = cov.target || 75, miss = cov.keywords.filter(k => !k.matched && !k.skipped && k.kind !== 'other').length;
+  el.innerHTML = `<div class="row"><b class="cov-score ${cov.score >= tgt ? 'good' : 'low'}">${esc(cov.score)}%</b><span class="muted">match rate · target ${esc(tgt)}%+${cov.score >= tgt ? ' · on target' : ''}</span>`
+    + (miss && hasAI() ? `<button class="b ghost sm" id="jMatchAI" onclick="tailorBullets(this)" title="one AI call: bullet rewrites that work in missing keywords you can back up, each checked against your facts; you accept them one by one">AI: work in ${miss} missing keyword${miss === 1 ? '' : 's'}</button>` : '') + '</div>'
+    + (cov.ats ? `<div class="atsbox"><b>Applies on ${esc(cov.ats.name)}</b>${cov.ats.tips.length ? '<ul>' + cov.ats.tips.map(t => `<li>${esc(t)}</li>`).join('') + '</ul>' : ''}</div>` : '')
     + Object.entries(names).filter(([k]) => c[k].total).map(([k, l]) => covBar(l, c[k])).join('')
     + (t ? `<div class="muted">title "${esc(t.title)}": ${t.found ? 'found in your resume' : 'not found in your resume'}</div>` : '')
     + (edu.length ? `<div class="muted">posting names ${esc(edu.join(', '))}: ${c.education.matched ? 'covered by your resume' : 'not found in your resume'}</div>` : '')
@@ -917,9 +929,9 @@ function renderInbox() {
   const focused = fe && { id: fe.id, s: fe.selectionStart, e: fe.selectionEnd, top: fe.scrollTop };  // keep the caret where it was
   $('#inboxList').innerHTML = S.pending.map(r => {
     const p = r.payload, mail = r.kind === 'send_email';
-    return `<div class="item"><div class="hd"><b>#${r.id}</b><span class="pill">${r.tool}</span><span class="pill">${r.kind}</span>${p.unverified ? '<span class="pill warn" title="the mail this answers was not authenticated or not tied to the job: check the address before you send; sending it moves no job">unverified sender</span>' : ''}${esc(r.summary)}<span class="muted">${esc(localTs(r.ts, 16))}</span></div>
+    return `<div class="item"><div class="hd"><b>#${r.id}</b><span class="pill" title="${esc(r.tool)}">${esc(toolName(r.tool))}</span><span class="pill" title="${esc(r.kind)}">${esc(KIND_NAME[r.kind] || toolName(r.kind))}</span>${r.summary ? `<span class="grow">${esc(r.summary)}</span>` : ''}${p.unverified ? '<span class="pill warn" title="the mail this answers was not authenticated or not tied to the job: check the address before you send; sending it moves no job">unverified sender</span>' : ''}${esc(r.summary)}<span class="muted">${esc(localTs(r.ts, 16))}</span></div>${inboxMailFold(r)}
       ${mail ? `<div class="row"><input id="to${r.id}" value="${esc(p.to)}" style="width:260px"><input id="sub${r.id}" class="grow" value="${esc(p.subject)}"></div><textarea id="body${r.id}">${esc(p.body)}</textarea>${'chosen_time' in p ? `<div class="row"><input id="ct${r.id}" value="${esc(p.chosen_time || '')}" placeholder="YYYY-MM-DD HH:MM" style="width:170px"><span class="muted">interview slot this reply accepts; an .ics is written on send. Empty = no .ics.</span></div>` : ''}`
-        : `<textarea id="js${r.id}" spellcheck="false" style="font-family:monospace">${esc(JSON.stringify(p, null, 2))}</textarea>`}
+        : `${payloadRows(p)}<details class="help"><summary>Edit details (JSON)</summary><textarea id="js${r.id}" spellcheck="false" style="font-family:monospace">${esc(JSON.stringify(p, null, 2))}</textarea></details>`}
       ${r.kind === 'run_to' && (p.reuse || []).length ? `<div class="reuse"><b>Saved answers this fills in on the form</b> <span class="muted">(yours; reject and change them under Answers if one is wrong)</span><ul>${p.reuse.map(x => `<li>${esc(x.label)} → <b>${esc(x.answer)}</b> <span class="muted">${esc(x.source)}</span></li>`).join('')}</ul></div>` : ''}
       ${mail && r.job_id ? `<div class="row" id="att${r.id}">${attHtml(r)}</div>` : ''}
       ${mail && hasAI() ? `<div class="row"><button class="b ghost sm" onclick="draftOptions('pending',{pending_id:${r.id}},'p${r.id}',this)" title="up to 3 alternatives (one AI call); Use this changes only the subject and body">Options</button>${HOWS.map(([k, l]) => `<button class="b ghost sm" onclick="rewritePending(${r.id},'${k}',this)">${l}</button>`).join('')}<button class="b ghost sm" onclick="rewritePending(${r.id},'',this)">custom…</button></div>${optsHtml('p' + r.id)}` : ''}
@@ -1182,7 +1194,7 @@ const BOOSTS = { d: [], t: [], i: [] };  // drawer, Today, Insights
 function boostRow(b, src, i) {
   const j = b.job ? ` <span class="muted">· #${Number(b.job.id)} ${esc(b.job.company)} - ${esc(b.job.title)}</span>` : '';
   const btn = BOOST_BTN[(b.action || {}).do] ? `<button class="b ghost sm" onclick="boostAct('${src}',${Number(i)},this)">${BOOST_BTN[b.action.do]}</button>` : '';
-  return `<div class="row boost" data-basis="${esc(b.basis)}"><span class="pill ${b.effect === 'high' ? 'ok' : ''}" title="expected effect, not a probability">${esc(b.effect)} effect</span>
+  return `<div class="row boost" data-basis="${esc(b.basis)}"><span class="pill eff ${b.effect === 'high' ? 'ok' : ''}" title="expected effect, not a probability">${esc(b.effect)} effect</span>
     <span class="grow"><b>${esc(b.text)}</b>${j}${b.basis === 'ai' ? ' <span class="pill">AI</span>' : ''}<br><span class="muted">${esc(b.why)}${b.from ? ' · basis: ' + esc(b.from) : ''}</span></span>${btn}</div>`;
 }
 async function boostAct(src, i, btn) {  // into the feature that does it; nothing here costs AI or sends anything
@@ -1328,7 +1340,7 @@ async function openMail(id) {
         ${m.job ? `<button class="b ghost sm" onclick="go('board');openJob(${Number(m.job.id)})">#${Number(m.job.id)} ${esc(m.job.company)} - ${esc(m.job.title)}</button>` : ''}</div>
       <div class="muted">${out ? 'To' : 'From'}: ${esc(out ? m.to_addr || '' : m.from_addr || '')}${!out && m.to_addr ? ' · To: ' + esc(m.to_addr) : ''} · ${esc(localTs(m.sent_at || m.created_at, 16))}</div></div>
     ${m.summary || m.action || m.deadline ? `<div class="mvfacts">${m.summary ? `<div><b>Summary</b> ${esc(m.summary)}</div>` : ''}${m.action ? `<div><b>Next step</b> ${esc(m.action)}</div>` : ''}${m.deadline ? `<div><b>Date named</b> ${esc(m.deadline)}</div>` : ''}${m.link_reason ? `<div class="muted">${esc(m.link_reason)}</div>` : ''}</div>` : ''}
-    <pre class="mvbody">${esc(m.body || '(no text on file)')}</pre>
+    <div data-mailv="${Number(m.id)}">${mailBody(m)}</div>
     ${mailFiles(m)}${reply}`;
 }
 async function mvLink() {
@@ -1502,13 +1514,13 @@ function spPaint() {
   // a place you saved in Preferences fills the filter; one only read off your resume is a suggestion (no hidden filter)
   if (!$('#sLoc').value && SP.location && SP.location_from === 'Preferences') $('#sLoc').value = SP.location;
   $('#sLoc').placeholder = SP.location ? `e.g. "${SP.location}"` : 'location, e.g. "Austin, TX or remote"';
-  $('#sQ').placeholder = SP.query ? `blank: ${SP.query}` : 'roles, e.g. "store manager, hotel manager"';
+  $('#sQ').placeholder = SP.query ? `roles (default: ${SP.query})` : 'roles, e.g. "store manager, hotel manager"';
   // your target level: from Preferences it fills the filter; one worked out from your years is offered, never set
   if (!$('#sLevel').value && SP.seniority && SP.seniority_from === 'Preferences') $('#sLevel').value = SP.seniority;
   renderSiteSearch();
   const lv = $('#sLevelHint');
   if (lv) lv.innerHTML = SP.seniority && SP.seniority_from !== 'Preferences' && !$('#sLevel').value
-    ? `<button class="b ghost sm" onclick="$('#sLevel').value=SP.seniority;this.parentNode.textContent=''" title="set Target level in Setup > Preferences to start from it every time">Use ${esc(SP.seniority)} (from ${esc(SP.seniority_from)})</button>` : '';
+    ? `<button class="b ghost sm" onclick="$('#sLevel').value=SP.seniority;this.parentNode.textContent=''" title="from ${esc(SP.seniority_from)}; set Target level in Setup > Preferences to start from it every time">Use ${esc(SP.seniority)} · ${esc(String(SP.seniority_from).replace(/^your experience \((.*)\)$/, '$1 of experience'))}</button>` : '';
 }
 async function spLoad() { const r = await api('/api/search/defaults'); if (!r.error) { SP = r; spPaint(); } }
 function spUse(i) { $('#sQ').value = (SP.roles || [])[i] || ''; $('#sQ').focus(); }
@@ -1572,7 +1584,7 @@ async function loadAllJobs(more = false) {
   if (r.error) { $('#ajList').innerHTML = `<div class="warnbox" role="alert">${esc(r.error)}</div>`; return; }
   AJ = more ? AJ.concat(r.rows) : r.rows; AJ_TOTAL = r.total;
   if (!more) AJ_OPEN = {};
-  $('#ajCount').textContent = `${r.total} listing(s)` + (r.stale ? ` · ${r.stale} being re-scored` : '');
+  $('#ajCount').textContent = `${r.total} listing${r.total === 1 ? '' : 's'}` + (r.stale ? ` · ${r.stale} being re-scored` : '');
   const names = Object.keys(r.sources).sort();
   $('#ajSources').innerHTML = names.map((s, i) => `<button class="chip board${AJ_SRC.has(s) ? ' on' : ''}" aria-pressed="${AJ_SRC.has(s)}" onclick="ajSrc(${i})" data-src="${esc(s)}">${esc(srcLabel(s))} ${esc(r.sources[s])}</button>`).join('');
   $('#ajSources').dataset.names = JSON.stringify(names);
@@ -1701,10 +1713,15 @@ async function srcRemove(i) {
 
 /* ---- monitor ---- */
 function renderMonitor() {
-  const filt = f => Object.entries(f || {}).map(([k, v]) => k + '=' + v).join(', ');
-  $('#wList').innerHTML = `<div class="list">` + (S.watches.map(w => `<div>${esc(w.url)} <span class="muted">kw=${esc(w.keywords || '-')}${filt(w.filters) ? ' · ' + esc(filt(w.filters)) : ''} · last ${esc(w.last_seen ? localTs(w.last_seen, 16) : 'never')}</span>${w.last_error ? ` <span class="chip stale" title="${esc(w.last_error)}">${w.last_error.startsWith('partial:') ? 'some boards unreachable' : 'last run failed'}</span> <span class="muted">${esc(w.last_error.replace(/^partial: some boards unreachable: /, '').slice(0, 160))}</span>` : ''} <button class="b ghost sm" onclick="api('/api/watches/${w.id}',{}).then(load)">remove</button></div>`).join('') || '<div class="empty">No watches yet. Add a careers page URL or a saved search.</div>') + '</div>';
-  $('#coList').innerHTML = `<div class="list">` + (S.companies.map(c => `<div><b>${esc(c.name)}</b> <span class="pill">${esc(c.vendor)}:${esc(c.slug)}</span><span class="muted">kw=${esc(c.keywords || '-')} · last ${esc(c.last_seen ? localTs(c.last_seen, 16) : 'never')}</span>${c.last_error ? ` <span class="chip stale" title="${esc(c.last_error)}">last read failed</span>` : ''} <button class="b ghost sm" onclick="api('/api/companies/${c.id}',{}).then(load)">remove</button></div>`).join('') || '<div class="empty">No companies yet.</div>') + '</div>';
-  $('#alerts').textContent = S.alerts.join('\n') || '(no alerts yet)';
+  const money = v => Number(v) >= 1000 ? '$' + Math.round(Number(v) / 1000) + 'k+' : '$' + v + '+';  // pass 54: filters read as words
+  const FW = { location: v => v, min_salary: money, posted_within: v => `last ${v} days`, seniority: v => v, radius: v => `within ${v} mi`, remote: v => v ? 'remote' : '' };
+  const filt = f => Object.entries(f || {}).map(([k, v]) => (FW[k] || (x => toolName(k) + ' ' + x))(v)).filter(Boolean).join(' · ');
+  const kw = k => k ? esc(k.split(/[ ,]+/).filter(Boolean).join(', ')) : 'any keywords';
+  const when = t => t ? 'last run ' + esc(localTs(t, 16)) : 'not run yet';
+  $('#wList').innerHTML = `<div class="list">` + (S.watches.map(w => `<div>${esc(w.url)} <span class="muted">${kw(w.keywords)}${filt(w.filters) ? ' · ' + esc(filt(w.filters)) : ''} · ${when(w.last_seen)}</span>${w.last_error ? ` <span class="chip stale" title="${esc(w.last_error)}">${w.last_error.startsWith('partial:') ? 'some boards unreachable' : 'last run failed'}</span> <span class="muted">${esc(w.last_error.replace(/^partial: some boards unreachable: /, '').slice(0, 160))}</span>` : ''} <button class="b ghost sm" onclick="api('/api/watches/${w.id}',{}).then(load)">remove</button></div>`).join('') || '<div class="empty">No watches yet. Add a careers page URL or a saved search.</div>') + '</div>';
+  $('#coList').innerHTML = `<div class="list">` + (S.companies.map(c => `<div><b>${esc(c.name)}</b> <span class="pill">${esc(c.vendor)}:${esc(c.slug)}</span><span class="muted">${kw(c.keywords)} · ${when(c.last_seen)}</span>${c.last_error ? ` <span class="chip stale" title="${esc(c.last_error)}">last read failed</span>` : ''} <button class="b ghost sm" onclick="api('/api/companies/${c.id}',{}).then(load)">remove</button></div>`).join('') || '<div class="empty">No companies yet.</div>') + '</div>';
+  $('#alerts').textContent = S.alerts.join('\n');
+  $('#alertsEmpty').hidden = S.alerts.length > 0; $('#alerts').hidden = !S.alerts.length;
 }
 function exportObsidian(btn) {  // writes outside Lodestar's folder: name the target and ask first
   if (!confirm(`Write one note per tracked job into\n${S.obsidian_dir}\n\nNotes Lodestar wrote there before are updated. To use another vault, store OBSIDIAN_VAULT (the vault folder) in Setup > Vault first.`)) return;
@@ -1749,10 +1766,10 @@ function renderIdeas() {
   const keep = $('#iJob').value;
   $('#iJob').innerHTML = '<option value="">(no job focus)</option>' + S.jobs.map(j => `<option value="${j.id}">#${j.id} ${esc(j.company)} - ${esc(j.title)}</option>`).join('');
   if (S.jobs.some(j => String(j.id) === keep)) $('#iJob').value = keep;
-  $('#ideaList').innerHTML = S.ideas.map(i => { const id = Number(i.id); return `<div class="panel"><div class="row" style="margin-top:0"><b>${esc(i.title)}</b><span class="pill">${esc(i.topic)}</span><span class="pill">score ${esc(i.score)}</span><span class="muted">impact ${esc(i.impact ?? '?')} · effort ${esc(i.effort ?? '?')} · fit ${esc(i.fit ?? '?')} · ${esc(i.time || '')}</span>
+  $('#ideaList').innerHTML = S.ideas.map(i => { const id = Number(i.id); return `<div class="panel"><div class="row" style="margin-top:0"><b>${esc(i.title)}</b><span class="pill">${esc(i.topic)}</span><span class="pill">score ${esc(i.score)}</span><span class="muted">${['impact ' + (i.impact ?? '?'), 'effort ' + (i.effort ?? '?'), 'fit ' + (i.fit ?? '?'), i.time].filter(Boolean).map(esc).join(' · ')}</span>
       <select aria-label="status of this idea" onchange="api('/api/ideas/${id}/status',{status:this.value}).then(load)">${opt(S.idea_statuses, i.status)}</select><button class="b ghost sm" onclick="api('/api/ideas/${id}/delete',{}).then(load)">remove</button></div>
-      <div>${esc(i.idea || '')}</div><div class="muted">why: ${esc(i.why_it_works || '')}</div>
-      <ol class="muted">${(Array.isArray(i.plan) ? i.plan : []).map(s => `<li>${esc(s)}</li>`).join('')}</ol><div class="muted">metric: ${esc(i.metric || '')}</div>
+      <div>${esc(i.idea || '')}</div>${i.why_it_works ? `<div class="muted">why: ${esc(i.why_it_works)}</div>` : ''}
+      <ol class="muted">${(Array.isArray(i.plan) ? i.plan : []).map(s => `<li>${esc(s)}</li>`).join('')}</ol>${i.metric ? `<div class="muted">metric: ${esc(i.metric)}</div>` : ''}
       ${i.topic === 'stories' ? `<div class="row"><button class="b ghost sm" title="becomes a STAR story (Answers > Stories) with this title and sketch; you fill in the rest" onclick="storyFromIdea(${id})">Save as story</button></div>` : ''}
       <div class="row"><input id="rf${id}" class="grow" placeholder="feedback: make it cheaper / focus on X / too vague"><button class="b ghost sm" onclick="run('refine',{idea_id:${id},feedback:$('#rf${id}').value},r=>toast('refined: '+r.idea.title,'ok'),this)">Refine</button></div></div>`; }).join('')
     || '<div class="empty">No ideas yet. Pick a topic and craft.</div>';
@@ -1764,9 +1781,9 @@ function craft(btn) {
 /* ---- tools and setup ---- */
 let PK = [];  // pref keys: markup carries an index, never a key from settings.json
 function renderTools() {
-  $('#toolTable').innerHTML = `<table><tr><th>Tool</th><th>enabled</th><th>auto</th></tr>${S.tools.map((t, i) => `<tr><td><b>${esc(t.tool)}</b><div class="muted">${esc(t.description)}</div></td>
+  $('#toolTable').innerHTML = `<table><tr><th>Tool</th><th>enabled</th><th>auto</th></tr>${S.tools.map((t, i) => `<tr><td><b title="${esc(t.tool)}">${esc(toolName(t.tool))}</b><div class="muted">${esc(t.description)}</div></td>
     <td><input type="checkbox" aria-label="${esc(t.tool)} enabled" ${t.enabled ? 'checked' : ''} onchange="api('/api/tools',{tool:S.tools[${i}].tool,enabled:this.checked}).then(load)"></td>
-    <td><input type="checkbox" aria-label="${esc(t.tool)} auto" ${t.auto ? 'checked' : ''} onchange="api('/api/tools',{tool:S.tools[${i}].tool,auto:this.checked}).then(load)"></td></tr>`).join('')}</table>`;
+    <td><input type="checkbox" aria-label="${esc(t.tool)} auto" ${t.auto ? 'checked' : ''} ${t.enabled ? '' : 'disabled title="turn the tool on first"'} onchange="api('/api/tools',{tool:S.tools[${i}].tool,auto:this.checked}).then(load)"></td></tr>`).join('')}</table>`;
   PK = Object.keys(S.prefs);
   // each preference: a plain label (aria-labelledby) and one line of help; the raw key stays visible for the terminal
   $('#prefs').innerHTML = PK.map((k, i) => [k, S.prefs[k], `PK[${i}]`, (S.pref_help || {})[k] || [k, '']]).map(([k, v, ref, [label, help]], i) => `<div class="row"><span style="width:220px" id="pl${i}">${esc(label)}<span class="muted" style="display:block">${esc(help)}${label !== k ? ` (${esc(k)})` : ''}</span></span>${S.pref_choices[k] ? `<select aria-labelledby="pl${i}" onchange="setPref(${ref},this.value)">${S.pref_choices[k].map(c => `<option value="${esc(c)}" ${c === v ? 'selected' : ''}>${esc(c || '(automatic)')}</option>`).join('')}</select>`
@@ -1781,7 +1798,7 @@ function renderSetup() {
   $('#vList').innerHTML = S.vault.map((v, i) => `<span class="pill">${esc(v.name + (v.user ? ' (' + v.user + ')' : ''))} <button class="b ghost sm" aria-label="remove" onclick="delVault(${i})">×</button></span>`).join(' ') || 'empty';
   const u = Object.entries(S.usage).filter(([k]) => k !== 'total');
   $('#usage').innerHTML = u.length ? 'last 30 days: ' + u.map(([k, d]) => `<span class="pill">${esc(k)}: ${d.calls} calls · ${(d.input + d.output).toLocaleString()} tokens</span>`).join(' ') : '';
-  $('#pPath').textContent = S.profile_path;
+  $('#pPath').textContent = String(S.profile_path || '').split(/[\\/]/).pop(); $('#pPath').title = S.profile_path || '';  // pass 54: the name; the full path on hover
   $('#pNotify').checked = !!S.prefs.desktop_notifications;
   const rates = Object.entries(S.comp).flatMap(([t, cities]) => Object.entries(cities).map(([c, [lo, hi]]) => ({ t, c, lo, hi })));
   $('#compList').innerHTML = rates.map((r, i) => `<div><b>${esc(r.t)}</b> <span class="muted">${esc(r.c === '*' ? 'any city' : r.c)}</span> ${esc(r.lo.toLocaleString())} - ${esc(r.hi.toLocaleString())} <button class="b ghost sm" onclick="compOp({op:'delete',title:RATES[${i}].t,city:RATES[${i}].c})">remove</button></div>`).join('') || '<div class="muted">none recorded: gap checks, offer evaluation and interview prep then say "none recorded"</div>';
@@ -1927,9 +1944,14 @@ function renderConnections() {
   if (!$('#connList')) return;
   $('#connLost').innerHTML = banner;
   let g = '';
-  $('#connList').innerHTML = connRows().map(r => (r.group !== g ? `<h4>${esc(g = r.group)}</h4>` : '')
-    + `<div class="connrow" data-kind="${esc(r.kind)}" data-name="${esc(r.name)}"><b>${esc(r.label)}</b> ${r.status === 'needs a key' ? '<span class="pill warn">Needs a key</span>' : connPill(r.status, lostBy[key(r)])}`
-    + ` <span class="muted">${r.at ? 'checked ' + esc(localTs(r.at, 16)) : ''}${r.detail ? (r.at ? ' · ' : '') + esc(r.detail) : ''}</span></div>`).join('');
+  // pass 54: free boards nobody has checked yet share one line instead of one identical row each
+  const all = connRows(), idle = all.filter(r => r.kind === 'boards' && !r.at && (!r.status || r.status === 'unchecked') && !lostBy[key(r)]);
+  const rows = all.filter(r => !idle.includes(r));
+  const idleRow = idle.length ? `<div class="connrow" data-kind="boards" data-name="unchecked"><b>${idle.length} free board${idle.length === 1 ? '' : 's'}</b> <span class="pill">Not checked yet</span> <span class="muted">${esc(idle.map(r => r.label).join(', '))}: no sign-in needed; each is checked on your next search</span></div>` : '';
+  if (idleRow && !rows.some(r => r.group === 'Job boards')) rows.push({ group: 'Job boards', idle: true });
+  const head = r => r.group !== g ? `<h4>${esc(g = r.group)}</h4>` + (r.group === 'Job boards' ? idleRow : '') : '';
+  $('#connList').innerHTML = rows.map(r => head(r) + (r.idle ? '' : `<div class="connrow" data-kind="${esc(r.kind)}" data-name="${esc(r.name)}"><b>${esc(r.label)}</b> ${r.status === 'needs a key' ? '<span class="pill warn">Needs a key</span>' : connPill(r.status, lostBy[key(r)])}`
+    + ` <span class="muted">${r.at ? 'checked ' + esc(localTs(r.at, 16)) : ''}${r.detail ? (r.at ? ' · ' : '') + esc(r.detail) : ''}</span></div>`)).join('');
   const hist = c.history || [];
   $('#connHistN').textContent = hist.length ? `(${hist.length} recent)` : '(nothing yet)';
   $('#connHist').innerHTML = hist.map(x => `<div><span class="muted">${esc(localTs(x.at, 16))}</span> ${esc(x.label)}: ${esc(CONN_WORD[x.from] || x.from || 'new')} → <b>${esc(CONN_WORD[x.to] || x.to)}</b>${x.detail ? ` <span class="muted">${esc(x.detail)}</span>` : ''}</div>`).join('') || '<div class="muted">Changes of state show here: a key verified, a board that stopped answering, a sign-in refused.</div>';
@@ -1954,7 +1976,7 @@ function paceText(u) { return `${u.day} of ${u.cap_day} today · ${u.week} of ${
 function renderSiteSearch() {
   const el = $('#siteSearch'); if (!el) return;
   const { q, loc, lv } = siteQuery(), pace = S.pacing || {};
-  el.innerHTML = q ? '<span class="muted">Search these yourself:</span> ' + PACE_SITES.map(s => `<a class="b ghost sm${(pace[s] || {}).full ? ' full' : ''}" data-site="${esc(s)}" href="${esc(siteSearchUrl(s, q, loc, lv))}" target="_blank" rel="noopener" title="opens ${esc(s)}'s own search in your browser${pace[s] ? ': ' + esc(paceText(pace[s])) : ''}">${esc(s)} ↗</a>`).join(' ')
+  el.innerHTML = q ? '<span class="muted">Search these yourself:</span> ' + PACE_SITES.map(s => `<a class="b ghost sm${(pace[s] || {}).full ? ' full' : ''}" data-site="${esc(s)}" href="${esc(siteSearchUrl(s, q, loc, lv))}" target="_blank" rel="noopener" title="opens ${esc(s)}'s own search${S.browser ? " in Lodestar's browser window" : " in your browser"}${pace[s] ? ': ' + esc(paceText(pace[s])) : ''}">${esc(s)} ↗</a>`).join(' ')
     : '<span class="muted">Type a role to search LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired yourself.</span>';
   if (hasAI()) el.innerHTML += ' <button class="b ghost sm" id="siteIdeasBtn" onclick="siteIdeas(this)" title="one AI call over your profile (never your salary floor) and saved searches; the AI never sees these sites and Lodestar never opens them">AI: search ideas for these sites</button>';
 }
@@ -2302,7 +2324,7 @@ function renderMaster(m) {
     + (m.stale && when ? ' <span class="chip stale">profile changed: updates shortly, or Update now</span>' : '');
   $('#mDiff').innerHTML = (m.diff || []).length ? `<div class="muted">last change: ${esc(m.diff.join(' · '))}</div>` : '';
   $('#mWarn').innerHTML = (m.last_error ? `<div class="warnbox">${esc(m.last_error)}</div>` : '') + (m.warnings || []).map(w => `<div class="warnbox">${esc(w)}</div>`).join('');
-  $('#mPdf').disabled = !f.pdf && !f.html; $('#mPdf').textContent = f.pdf || !f.html ? 'Open PDF' : 'Open print page'; $('#mDocx').disabled = !f.docx;
+  $('#mPdf').disabled = !f.pdf && !f.html; $('#mPdf').textContent = f.pdf || !f.html ? 'Open PDF' : 'Open print page'; $('#mDocx').disabled = !f.docx; $('#mPdf').hidden = $('#mPdf').disabled; $('#mDocx').hidden = $('#mDocx').disabled;  // pass 54: shown once built
   MASTER = m;
 }
 let MASTER = null, MASTER_POLL = null;
@@ -2450,7 +2472,8 @@ async function loadGaps() {  // pass 29: Insights > Skill gaps and career tracks
   $('#gapNote').textContent = r.note;
   $('#gapTracks').innerHTML = r.tracks.map(t => `<div class="row"><b>${esc(t.track)}</b><span class="muted">${Number(t.listings)} listings found, ${Number(t.tracked)} tracked</span>`
     + Object.entries(t.classes).map(([k, n]) => `<span class="chip">${esc((S.career_classes || {})[k] || k)}: ${Number(n)}</span>`).join('') + '</div>').join('')
-    || '<p class="muted">No career tracks yet (Careers tab).</p>';
+    || '';
+  $('#gapTracksH').hidden = !r.tracks.length;  // pass 54: the Careers tab already says when there are none
 }
 async function loadInsights() {
   loadGaps();
@@ -2479,7 +2502,7 @@ function renderInsights() {
   $('#goalForm').innerHTML = a.goal_keys.map(k => `<label class="fld">${esc(k.replace('_', ' '))} a week<input id="g_${esc(k)}" type="number" min="0" max="1000" style="width:110px" value="${goals[k] ? Number(goals[k]) : ''}" placeholder="not set"></label>`).join('')
     + '<button class="b sm" onclick="saveGoals()">Save goals</button>';
   $('#goalBars').innerHTML = a.goals.map(g => `<div class="row"><label>${esc(g.label)} <progress value="${Math.min(Number(g.done), Number(g.target))}" max="${Number(g.target)}"></progress> ${Number(g.done)} of ${Number(g.target)} this week${g.done >= g.target ? ' ✓' : ''}</label></div>`).join('')
-    || '<div class="muted">no goals set</div>';
+    || '';  // pass 54: the empty goal fields above already say "not set"
   $('#insWeeks').innerHTML = SERIES.map(([k, label]) => {
     const total = a.weeks.reduce((s, w) => s + Number(w[k]), 0);
     return `<div><b>${esc(label)}</b> <span class="muted">${total} in ${a.weeks.length} weeks</span>${barSvg(`${label} per week, ${a.weeks.length} weeks, ${total} in total`, a.weeks.map(w => ({ x: w.week, v: Number(w[k]), t: `week of ${w.start}: ${w[k]} ${label}` })))}</div>`;
@@ -2570,9 +2593,9 @@ function activity(btn, fmt) {
 
 /* ---- pipeline (pipeline.py): the drawer's stage strip, Run next step / Run to, the questions queue, Autopilot, run log.
    Stage names and question texts stay in JS (PIPE, QM); markup carries only indexes and numeric ids ---- */
-const ST_ICON = { done: '✓', ready: '▶', waiting: '?', stale: '↻', blocked: '⛔', error: '!', running: '⟳', todo: '○', later: '·', skipped: '–' };
+const ST_ICON = { done: '✓', ready: '▶', waiting: '?', stale: '↻', blocked: '⛔', error: '!', running: '⟳', todo: '○', later: '○', skipped: '–' };
 const stWord = e => e.state === 'waiting' ? (e.on === 'employer' ? 'waiting on the employer' : 'waiting on you') : e.state;
-const stIcon = e => e.state === 'waiting' && e.on === 'employer' ? '…' : ST_ICON[e.state] || '·';
+const stIcon = e => e.state === 'waiting' && e.on === 'employer' ? '…' : ST_ICON[e.state] || '○';
 const stg = n => (S.pipeline_stages || []).find(s => s.name === n) || {};
 const stLabel = n => stg(n).label || n;
 let PIPE = [], PSEL = null, PJOB = null, QM = {};  // the open job's steps; the step whose line is shown (by name) and its job; question id -> question
@@ -2699,7 +2722,7 @@ function renderQuestions() {
 /* board chip, table column, bulk runs */
 function pipeChip(j) {
   const p = (S.pipeline || {})[j.id]; if (!p) return '';
-  if (p.you) return `<span class="chip pq" title="waiting on you">? ${Number(p.you)}</span>`;
+  if (p.you) return `<span class="chip pq" title="answer it in the job's Pipeline or the Inbox">${Number(p.you)} question${Number(p.you) === 1 ? '' : 's'} for you</span>`;
   if (p.errors) return '<span class="chip pe" title="a step failed: open the job to retry">! error</span>';
   if (p.stale) return '<span class="chip" title="an earlier step changed since">↻ stale</span>';
   return p.next ? `<span class="chip" title="the next pipeline step">next: ${esc(stLabel(p.next))}</span>` : '';
@@ -2738,7 +2761,7 @@ function aiModels() {
   const sel = $('#aiModel'); $('#aiSwitchNote').textContent = '';
   if (AI_MODELS) return aiModelsPaint();
   sel.innerHTML = '<option value="">loading models…</option>';
-  run('models', {}, r => { AI_MODELS = r || {}; aiModelsPaint(); }, null, () => { AI_MODELS = {}; aiModelsPaint(); });
+  run('models', {}, r => { AI_MODELS = r || {}; aiModelsPaint(); aiCModels(); }, null, () => { AI_MODELS = {}; aiModelsPaint(); });
 }
 function aiModelsPaint() {
   const prov = $('#aiProv').value, sel = $('#aiModel'), note = $('#aiSwitchNote');
@@ -2749,15 +2772,30 @@ function aiModelsPaint() {
   if (cur && !list.includes(cur)) list = [cur, ...list];
   sel.innerHTML = list.map(m => `<option ${m === cur ? 'selected' : ''}>${esc(m)}</option>`).join('') || '<option value="">(none listed: type one)</option>';
 }
+function aiCModels() {  // pass 54: the council's own picker: the chosen provider's listed models
+  const prov = $('#aiCProv').value, got = (AI_MODELS || {})[prov], list = Array.isArray(got) ? got.filter(m => !String(m).startsWith('lodestar-jobs')) : [];
+  $('#aiCModel').innerHTML = '<option value="">its current model</option>' + list.map(m => `<option>${esc(m)}</option>`).join('');
+}
+function aiCouncilOn(box) {
+  run('council_on', { on: box.checked }, r => { S.council_on = r.on; aiCouncilPaint(); toast(r.on ? 'council on' : 'council off: the primary AI answers alone', 'ok'); }, null, () => { box.checked = !box.checked; });
+}
 function aiCouncilPaint() {
+  const on = S.council_on !== false;
+  $('#aiCouncilOn').checked = on; $('#aiCouncilBox').classList.toggle('dim', !on);
+  document.body.classList.toggle('council-off', !on);
+  const provs = [...$('#aiProv').options].map(o => o.value).filter(Boolean), cp = $('#aiCProv');
+  if (cp.options.length !== provs.length) { cp.innerHTML = provs.map(x => `<option>${esc(x)}</option>`).join(''); aiCModels(); }
   const list = S.council || [];
   $('#aiCouncil').innerHTML = list.length ? list.map((m, i) => `<span class="chip">${esc(m.replace('=', ' · '))} <button class="b ghost sm" aria-label="remove ${esc(m)} from the council" onclick="aiCouncilSet(S.council.filter((x, k) => k !== ${i}),this)">✕</button></span>`).join('')
     : '<span class="muted">every linked provider with its current model</span>';
 }
 function aiCouncilAdd(btn) {
-  const prov = $('#aiProv').value, model = $('#aiModelOwn').value.trim() || $('#aiModel').value;
+  const prov = $('#aiCProv').value, model = $('#aiCModelOwn').value.trim() || $('#aiCModel').value;
   if (!prov) return toast('pick a provider first', 'err');
-  aiCouncilSet([...(S.council || []), model ? `${prov}=${model}` : prov], btn);
+  const m = model ? `${prov}=${model}` : prov;
+  if ((S.council || []).includes(m)) return toast(`${m.replace('=', ' · ')} is already in the council`, 'err');
+  aiCouncilSet([...(S.council || []), m], btn);
+  $('#aiCModelOwn').value = '';
 }
 function aiCouncilSet(members, btn) {
   run('council_set', { members }, r => { S.council = r.members; aiCouncilPaint(); toast(r.members.length ? `council: ${r.members.length} model(s)` : 'council: every linked provider', 'ok'); }, btn);
@@ -2852,6 +2890,7 @@ function renderStudio() {
     : `<span class="muted">${esc(STU.catalogue_error || 'no entries yet')}</span>`;
   $('#sHint').textContent = STU.ai ? (STU.engine ? `PDF by ${STU.engine}` : 'no PDF engine: you get the page to print, plus .docx') : 'no AI provider: Build without AI uses your profile as written (Setup > Link an AI key to describe changes in words)';
   $('#sBuild').disabled = !STU.ai;
+  $('#sFolder').hidden = !STU.versions.length;  // pass 54: nothing to show before a version exists
   $('#sHist').innerHTML = STU.versions.length ? STU.versions.map((v, i) => `<div class="row"><b>${esc(v.created.replace('T', ' ').slice(0, 16))}</b>
     <span class="muted">${v.job_id ? 'job #' + v.job_id : 'general'} · ${v.pages ? v.pages + ' page(s)' : 'pages unknown'} · ${v.used_ai ? 'AI' : 'offline'}${v.parent ? ' · refined' : ''}</span>
     <span class="grow">${esc((v.request || '(no request)').slice(0, 90))}</span>${v.profile_changed ? '<span class="chip stale">profile changed since</span>' : ''}
@@ -3124,7 +3163,9 @@ function vwBuildFmt() {
   const named = Object.entries(c.accent).find(([, hex]) => hex.toUpperCase() === String(L.accent).toUpperCase());
   const accent = `<label class="fld">accent<span class="row"><select id="vw_accent" onchange="vwAccent()">${Object.keys(c.accent).filter(k => k !== 'grey').map(k => `<option ${named && named[0] === k ? 'selected' : ''}>${k}</option>`).join('')}<option value="custom" ${named ? '' : 'selected'}>custom</option></select><input type="color" id="vw_accentC" aria-label="Custom accent colour" value="${esc(String(L.accent).toLowerCase())}" oninput="$('#vw_accent').value='custom';vwAccent()"></span></label>`;
   const lt = VW.opts.letter || {};
-  $('#vwFmt').innerHTML = VW_LOOK.map(([k, label, step]) => k === 'accent' ? accent : step ? num(k, label, step) : sel(k, label)).join('')
+  const looks = c.looks ? `<h4>Looks</h4><div class="looks">${Object.entries(c.looks).map(([n, l]) => `<button class="look" onclick="vwLook('${esc(n)}')" title="apply the ${esc(n)} look to this document" style="${l.font ? `font-family:'${esc(l.font)}'` : ''}"><span class="sw" style="background:${esc(l.accent || '#1F4E79')}"></span>${esc(n)}</button>`).join('')}</div>`
+    + (VW.ref.type === 'job' && hasAI() ? `<div class="row"><button class="b ghost sm" id="vwLookAI" onclick="vwLookAI(this)" title="one short AI call over this job's title and company (never your resume text or salary floor)">AI: pick a look for this job</button><span class="muted" id="vwLookWhy">${esc(VW.lookWhy || '')}</span></div>` : '') : '';
+  $('#vwFmt').innerHTML = looks + VW_LOOK.map(([k, label, step]) => k === 'accent' ? accent : step ? num(k, label, step) : sel(k, label)).join('')
     + (d.sections.length ? '<h4>Sections <span class="muted">(drag, or the arrows; untick to hide)</span></h4><div class="vwrows" id="vwRows"></div>' : '')
     + (VW_LETTER.includes(d.kind) ? `<h4>Letter</h4><label class="muted"><input type="checkbox" id="vwLDate" ${lt.date === false ? '' : 'checked'} onchange="vwLetter()"> date line</label>
       <label class="fld">recipient block (blank: as written)<textarea id="vwLRec" rows="3" oninput="vwLetter()">${esc(lt.recipient || '')}</textarea></label>
@@ -3253,6 +3294,7 @@ function aiBar(scope, target = null) {
 }
 function aiSlots() {  // the tab headers: toolbars and AI help menus
   ADV_AI = hasAI(); $$('[data-adv-slot]').forEach(el => { el.innerHTML = aiBar(el.dataset.advSlot); });
+  pfSlots();  // pass 54: AI: fill this page, on every tab
   $$('[data-ai-menu]').forEach(el => { el.innerHTML = aiMenu(el.dataset.aiMenu); });
 }
 function advDiff(was, now) {  // line diff (LCS) of current -> proposed: removed lines <del>, added <ins>; every line escaped
@@ -3277,16 +3319,55 @@ function advCard(k, r, i) {
     + (open ? '' : ` <span class="pill ${r.status === 'applied' ? 'ok' : 'warn'}">${esc(r.status)}</span>${r.note ? ` <span class="muted">${esc(r.note)}</span>` : ''}`) + '</div>'
     + (r.appliable ? `<div class="muted">current → proposed</div><pre class="advdiff">${advDiff(r.current, r.proposed)}</pre>` : `<div class="advtext">${esc(r.proposed)}</div>`)
     + (r.reason ? `<div class="muted">why: ${esc(r.reason)}</div>` : '')
-    + (r.flags.length ? `<div class="flagtxt">⚠ ${r.flags.map(f => esc(f)).join('<br>⚠ ')}<br>Apply refuses this one.</div>` : '') + '</div>';
+    + (r.flags.length ? `<div class="flagtxt">⚠ ${r.flags.map(f => esc(f)).join('<br>⚠ ')}<br>Apply refuses this one.</div>` : '')
+    + (pick ? `<div class="row"><button class="b ghost sm" onclick="advApplyOne('${k}',${i},this)" aria-label="Apply only this: ${esc(r.label)}">Apply only this</button></div>` : '')
+    + (open ? `<div class="row advrev"><input class="grow" id="advN${Number(r.id)}" placeholder="tell the AI what to change, e.g. shorter, keep the numbers" aria-label="Revise note for ${esc(r.label)}" onkeydown="if(event.key==='Enter')advRevise('${k}',${i},this.nextElementSibling)">`
+      + `<button class="b ghost sm" onclick="advRevise('${k}',${i},this)" aria-label="Revise with AI: ${esc(r.label)}">Revise with AI</button>`
+      + (r.appliable ? `<button class="b ghost sm" onclick="advEdit('${k}',${i})" aria-label="Edit by hand: ${esc(r.label)}">Edit by hand</button>` : '') + '</div>'
+      + (ADV[k].edit === r.id ? `<textarea id="advE${Number(r.id)}" rows="6" aria-label="Your version of ${esc(r.label)}">${esc(r.proposed)}</textarea><div class="row"><button class="b sm" onclick="advSaveEdit('${k}',${i},this)">Use my version</button><button class="b ghost sm" onclick="advEdit('${k}',null)">Cancel</button></div>` : '') : '')
+    + '</div>';
 }
 function advPanel(k) {
   const a = ADV[k]; if (!a) return '';
   return (a.msg ? `<div class="advmsg${a.err ? ' bad' : ''}" role="status">${esc(a.msg)}</div>` : '') + (a.recs || []).map((r, i) => advCard(k, r, i)).join('')
-    + ((a.recs || []).length ? `<div class="row"><button class="b ghost sm" onclick="advClose('${k}')">Close suggestions</button></div>` : '');
+    + ((a.recs || []).length ? `<div class="row">${(a.recs || []).some(r => r.appliable && (r.status === 'pending' || r.status === 'approved')) ? `<button class="b ghost sm" onclick="advTickAll('${k}',true)">Tick all</button><button class="b ghost sm" onclick="advTickAll('${k}',false)">Untick all</button>` : ''}<button class="b ghost sm" onclick="advClose('${k}')">Close suggestions</button></div>` : '');
 }
 function advPaint(k) { $$(`[data-advp="${k}"]`).forEach(el => { el.innerHTML = advPanel(k); }); }
 function advSay(k, msg, err = false) { ADV[k].msg = msg; ADV[k].err = err; advPaint(k); }
 function advPick(k, i, on) { const r = (ADV[k].recs || [])[i]; if (r) { if (on) ADV[k].sel.add(r.id); else ADV[k].sel.delete(r.id); } }
+function advTickAll(k, on) {  // pass 54: Tick all = every open, unflagged suggestion (a flagged one is ticked by hand)
+  const a = ADV[k]; a.sel = on ? new Set([...a.sel, ...(a.recs || []).filter(r => r.appliable && !r.flags.length && (r.status === 'pending' || r.status === 'approved')).map(r => r.id)]) : new Set();
+  advPaint(k);
+}
+async function advApplyOne(k, i, btn) {  // pass 54: one suggestion on its own, whatever else is ticked
+  const a = ADV[k], r = (a.recs || [])[i]; if (!r) return;
+  btn.disabled = true; const out = await api('/api/advise/apply', { ids: [r.id] }); btn.disabled = false;
+  if (out.error) return advSay(k, out.error, true);
+  a.sel.delete(r.id); advDone(k, out, 'Applied');
+}
+/* pass 54: back and forth on one card: your note goes to the AI and the revision comes back into the same card;
+   or edit it by hand. The server re-runs the checks either way (advisor.revise). */
+async function advRevise(k, i, btn) {
+  const a = ADV[k], r = (a.recs || [])[i]; if (!r) return;
+  const note = ($('#advN' + r.id)?.value || '').trim();
+  if (!note) return advSay(k, 'Type what to change first (e.g. shorter, keep the numbers).', true);
+  if (advNeedAI(k)) return;
+  btn.disabled = true; btn.textContent = 'revising…';
+  const out = await api('/api/advise/revise', { id: r.id, note }); btn.disabled = false; btn.textContent = 'Revise with AI';
+  if (out.error) return advSay(k, out.error, true);
+  advReplace(k, i, out, `Revised "${r.label}": check the new version, then tick it or Apply only this.`);
+}
+function advEdit(k, i) { const a = ADV[k]; a.edit = i == null ? null : (a.recs || [])[i]?.id; advPaint(k); }
+async function advSaveEdit(k, i, btn) {
+  const a = ADV[k], r = (a.recs || [])[i]; if (!r) return;
+  btn.disabled = true; const out = await api('/api/advise/revise', { id: r.id, text: $('#advE' + r.id).value }); btn.disabled = false;
+  if (out.error) return advSay(k, out.error, true);
+  a.edit = null; advReplace(k, i, out, `Your version of "${r.label}" is in the card${out.flags.length ? ': it was flagged, see why' : ''}.`);
+}
+function advReplace(k, i, row, msg) {
+  const a = ADV[k]; a.recs[i] = row; if (row.flags.length) a.sel.delete(row.id);
+  advSay(k, msg, !!row.flags.length);
+}
 function advClose(k) { Object.assign(ADV[k], { recs: null, sel: new Set(), msg: '', err: false }); advPaint(k); }
 function advNeedAI(k) { if (hasAI()) return false; advSay(k, NO_AI, true); return true; }
 function advRecommend(k, btn) {
@@ -3294,11 +3375,11 @@ function advRecommend(k, btn) {
   run('advise', { scope: a.scope, target: a.target }, r => advShow(k, r.recommendations), btn, e => advSay(k, e, true));
 }
 function advShow(k, recs) {  // Recommend's cards (also an appliable AI helper's: Fill STAR from my notes)
-  const a = ADV[k]; a.recs = recs; a.sel = new Set(recs.filter(x => x.appliable && !x.flags.length).map(x => x.id));
+  const a = ADV[k]; a.recs = recs; a.sel = new Set();  // pass 54: nothing ticked: you choose each one (Tick all ticks the unflagged)
   const n = recs.length;
   advSay(k, !n ? 'The AI recommends no changes here.' : ADV_ADVICE.includes(a.scope) || !recs.some(x => x.appliable)
     ? `${n} suggestion(s), advice only: nothing here is changed for you.`
-    : `${n} suggestion(s). Tick the ones you want, then Apply suggestions. Nothing has changed yet.`);
+    : `${n} suggestion(s). Tick the ones you want (or Tick all), then Apply suggestions, or Apply only this on one card. Nothing has changed yet.`);
 }
 function advDone(k, r, verb) {  // apply / auto result: each card shows what happened to it
   const a = ADV[k], why = Object.fromEntries((r.skipped || []).map(s => [s.id, s.why]));
@@ -3644,3 +3725,240 @@ document.addEventListener('keydown', e => {
   if (GO_PENDING && Date.now() - GO_PENDING < 1500 && GO_KEYS[e.key]) { e.preventDefault(); go(GO_KEYS[e.key][0]); }
   GO_PENDING = 0;
 });
+
+/* ---- in-app browser (pass 52): in the desktop app, job-site links open in Lodestar's own browser window ---- */
+let BR_URL = '';
+async function brCall(op, url, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api('/api/browser', { op, url });
+    if (r.error) { toast('browser: ' + r.error, 'err'); return null; }
+    if (r.url) { BR_URL = r.url; $('#brUrl').value = r.url; }
+    return r;
+  } finally { if (btn) btn.disabled = false; }
+}
+function brShow() { $('#browserBar').hidden = false; document.body.classList.add('br-on'); }
+async function brOpen(url) {
+  const r = await brCall('open', url);
+  if (r && r.opened) { BR_URL = r.url || url; $('#brUrl').value = BR_URL; brShow(); return true; }
+  return false;
+}
+document.addEventListener('click', e => {  // capture phase: before a link's own target=_blank opens a system window
+  const a = e.target.closest && e.target.closest('a[href]');
+  if (!a || !S || !S.browser || e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+  if (a.dataset.system !== undefined || a.target !== '_blank' || !/^https?:/i.test(a.href) || new URL(a.href).origin === location.origin) return;
+  e.preventDefault();
+  brOpen(a.href).then(ok => { if (!ok) window.open(a.href, '_blank', 'noopener'); });
+}, true);
+$('#brBack').onclick = e => brCall('back', null, e.currentTarget);
+$('#brFwd').onclick = e => brCall('forward', null, e.currentTarget);
+$('#brReload').onclick = e => brCall('reload', null, e.currentTarget);
+$('#brGo').onclick = () => { const u = $('#brUrl').value.trim(); if (u) brOpen(/^https?:/i.test(u) ? u : 'https://' + u); };
+$('#brUrl').addEventListener('keydown', e => { if (e.key === 'Enter') $('#brGo').click(); });
+$('#brSys').onclick = async () => { const r = await brCall('state'); const u = (r && r.url) || BR_URL; if (u) window.open(u, '_blank', 'noopener'); };
+$('#brHide').onclick = () => { $('#browserBar').hidden = true; document.body.classList.remove('br-on'); };
+$('#brSave').onclick = async e => {
+  const r = await brCall('save', null, e.currentTarget);
+  if (!r) return;
+  toast(r.duplicate ? `Already on your Board: ${r.title || 'this job'}` : `Saved to your Board: ${r.title || 'job'}${r.company ? ' at ' + r.company : ''}${r.ats ? ' (applies on ' + r.ats + ')' : ''}`, r.duplicate ? '' : 'ok');
+  load();
+};
+
+const toolName = id => { const n = String(id || '').replace(/_/g, ' '); return n.charAt(0).toUpperCase() + n.slice(1); };  // email_classify -> Email classify
+$('#brApplied').onclick = async e => {
+  const r = await brCall('applied', null, e.currentTarget);
+  if (!r) return;
+  toast(r.moved ? `Marked applied: ${r.title}${r.company ? ' at ' + r.company : ''}` : `${r.title || 'This job'} is already ${r.status}`, r.moved ? 'ok' : '');
+  load();
+};
+$('#brKeys').onclick = async e => {
+  const r = await brCall('keywords', null, e.currentTarget);
+  if (r) toast(`Match ${r.score}% (target ${r.target}%+) · missing: ${r.missing.slice(0, 10).join(', ') || 'none'}`, r.score >= r.target ? 'ok' : '');
+};
+
+/* ---- your to-dos per job (pass 53; db.tasks): due ones show on Today ---- */
+let TODOS = [];
+function renderTodos(list) {
+  TODOS = list || []; const el = $('#jTodos'); if (!el) return;
+  el.innerHTML = TODOS.length ? TODOS.map((t, i) => `<div class="row todo${t.done_at ? ' done' : ''}"><label class="grow"><input type="checkbox" ${t.done_at ? 'checked' : ''} onchange="todoDo(${i}, this.checked ? 'done' : 'undo')"> ${esc(t.text)}</label>${t.due ? `<span class="muted">due ${esc(t.due)}</span>` : ''}<button class="b ghost sm" onclick="todoDo(${i}, 'delete')" aria-label="delete to-do: ${esc(t.text)}">&#215;</button></div>`).join('')
+    : '<div class="muted">No to-dos yet.</div>';
+}
+async function todoCall(body) {
+  if (!cur) return;
+  const r = await api(`/api/jobs/${cur.job.id}/tasks`, body);
+  if (r.error) return toast('error: ' + r.error, 'err');
+  renderTodos(r.tasks); load();
+}
+function todoAdd(text) {
+  const t = text ?? $('#jTodoText').value.trim(); if (!t) return toast('type the to-do first', 'err');
+  todoCall({ do: 'add', text: t, due: text ? '' : $('#jTodoDue').value }).then(() => { if (!text) { $('#jTodoText').value = ''; $('#jTodoDue').value = ''; } });
+}
+function todoDo(i, act) { const t = TODOS[i]; if (t) todoCall({ do: act, task: t.id }); }
+function todoIdeas(btn) {
+  run('task_ideas', { id: cur.job.id }, r => {
+    $('#jTodoIdeas').innerHTML = r.ideas.length ? '<span class="muted">Suggested (click to add):</span> ' + r.ideas.map(t => `<button class="b ghost sm" onclick="todoAdd(this.dataset.t); this.remove()" data-t="${esc(t)}">+ ${esc(t)}</button>`).join(' ') : '<span class="muted">No suggestions.</span>';
+  }, btn);
+}
+
+/* ---- the viewer's look gallery (pass 53; render.LOOKS) ---- */
+function vwLook(name) { const l = (VW.data.choices.looks || {})[name]; if (!l) return; VW.opts.look = { ...l }; vwSoon(true, true); toast(`look: ${name}`, 'ok'); }
+function vwLookAI(btn) {
+  run('look_pick', { id: VW.ref.id }, r => { VW.lookWhy = `${r.look}: ${r.why}`; $('#vwLookWhy').textContent = VW.lookWhy; vwLook(r.look); }, btn);  // kept across the panel's rebuild
+}
+
+/* ---- the Board's map (pass 53; geo.board_map): offline U.S. places, miles from your home place ---- */
+async function mapToggle(btn) {
+  const el = $('#boardMap'), on = el.hidden;
+  el.hidden = !on; btn.setAttribute('aria-pressed', String(on)); btn.textContent = on ? 'Hide map' : 'Map';
+  if (!on) return;
+  const m = await api('/api/map');
+  if (m.error) { el.innerHTML = `<div class="muted">${esc(m.error)}</div>`; return; }
+  const pts = m.jobs.map(j => [j.lat, j.lon]).concat(m.home ? [[m.home.lat, m.home.lon]] : []);
+  if (!pts.length) { el.innerHTML = '<div class="empty">No open job names a U.S. city or ZIP code yet.</div>' + mapLists(m); return; }
+  const la = pts.map(p => p[0]), lo = pts.map(p => p[1]);
+  const pad = 1.5, y0 = Math.max(...la) + pad, y1 = Math.min(...la) - pad, x0 = Math.min(...lo) - pad, x1 = Math.max(...lo) + pad;
+  const W = 640, H = Math.max(180, Math.min(360, W * (y0 - y1) / Math.max(1, x1 - x0) * 1.25));
+  const X = v => ((v - x0) / (x1 - x0)) * W, Y = v => ((y0 - v) / (y0 - y1)) * H;
+  const dots = m.jobs.map(j => `<a href="#" onclick="openJob(${j.id});return false"><circle cx="${X(j.lon).toFixed(1)}" cy="${Y(j.lat).toFixed(1)}" r="6" class="mdot ${esc(j.status)}"><title>${esc(j.company)} - ${esc(j.title)} (${esc(j.place)}${j.miles != null ? ', ' + j.miles + ' mi' : ''})</title></circle></a>`).join('');
+  const home = m.home ? `<g class="mhome"><circle cx="${X(m.home.lon).toFixed(1)}" cy="${Y(m.home.lat).toFixed(1)}" r="7"/><text x="${(X(m.home.lon) + 10).toFixed(1)}" y="${(Y(m.home.lat) + 4).toFixed(1)}">home: ${esc(m.home.label)}</text></g>` : '';
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H.toFixed(0)}" class="bmap" role="img" aria-label="Map of your open jobs">${home}${dots}</svg>`
+    + `<table class="mlist"><tr><th>Job</th><th>Place</th><th>Miles${m.home ? ' from ' + esc(m.home.label) : ''}</th></tr>${m.jobs.map(j => `<tr><td><a href="#" onclick="openJob(${j.id});return false">${esc(j.company)} - ${esc(j.title)}</a></td><td>${esc(j.place)}</td><td>${j.miles ?? '-'}</td></tr>`).join('')}</table>`
+    + mapLists(m) + `<div class="muted">${m.home ? '' : 'Set your place under Jobs > Search profile to see miles. '}Places: ${esc(m.source)}.</div>`;
+}
+const mapLists = m => (m.remote.length ? `<div class="muted">Remote: ${m.remote.map(j => esc(j.company)).join(', ')}</div>` : '')
+  + (m.unplaced.length ? `<div class="muted">Not placed (no U.S. city or ZIP): ${m.unplaced.map(j => esc(j.company)).join(', ')}</div>` : '');
+
+/* ---- phone access (pass 53; phone.py): a LAN listener for paired phones, off by default ---- */
+let PH = null;
+function phonePaint(r) {
+  PH = r; if (!r || r.error) return r && toast('phone access: ' + r.error, 'err');
+  $('#phoneToggle').textContent = r.on ? 'Turn off phone access' : 'Turn on phone access';
+  $('#phoneUrl').textContent = r.on ? `On your phone, open ${r.url}` : (r.lan_ip ? 'off' : 'off (no home-network address found)');
+  $('#phoneCodeBtn').disabled = !r.on;
+  if (r.code) $('#phoneCode').textContent = `${r.code} (5 minutes, once)`;
+  $('#phoneList').textContent = r.phones.length ? 'Paired: ' + r.phones.map(x => `${x.label} (${localTs(x.created, 16)})`).join(', ') : 'No phones paired.';
+}
+async function phoneLoad() { phonePaint(await api('/api/phone', { op: 'status' })); }
+async function phoneSet(btn) { btn.disabled = true; try { phonePaint(await api('/api/phone', { op: PH && PH.on ? 'off' : 'on' })); } finally { btn.disabled = false; } }
+async function phoneCode(btn) { phonePaint(await api('/api/phone', { op: 'code' })); }
+async function phoneRevoke(btn) { const r = await api('/api/phone', { op: 'revoke' }); phonePaint(r); if (!r.error) toast(`signed out ${r.signed_out} phone(s)`, 'ok'); }
+
+/* ---- Inbox item labels (pass 54): readable kinds and payload rows; the JSON stays editable behind a fold ---- */
+const KIND_NAME = { send_email: 'Email to send', set_status: 'Status change', add_job: 'Add job', save_answer: 'Save answer',
+  submit_application: 'Submit application', run_to: 'Run pipeline steps', schedule: 'Interview time', calendar: 'Calendar file' };
+function payloadRows(p) {
+  const rows = Object.entries(p || {}).filter(([k, v]) => !k.startsWith('_') && v !== '' && v != null && typeof v !== 'object');
+  return rows.length ? `<table class="kv">${rows.slice(0, 12).map(([k, v]) => `<tr><th>${esc(toolName(k))}</th><td>${esc(String(v).slice(0, 300))}</td></tr>`).join('')}</table>` : '';
+}
+
+/* ---- AI: fill this page (pass 54; pagefill.py): every tab header. The page's own visible fields go to one AI call;
+   the answers come back as cards you tick, revise (back into the AI with a note, back into the card) or fill one by
+   one. Filling only types into the fields: nothing is saved or sent until you press the page's own button. ---- */
+const PF = {};  // tab -> {cards, sel:Set, msg, err}
+const PF_SECRET = /pass(word)?|secret|token|api.?key|\bkey\b|vault|\bcode\b|floor|pairing/i;
+function pfLabel(el) {
+  const l = el.getAttribute('aria-label') || (el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`)?.textContent) || el.closest('label')?.textContent || el.placeholder || el.title || el.id;
+  return String(l || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+function pfFields(tab) {  // the tab's visible, editable form fields, secrets left out
+  const sec = document.getElementById(tab); if (!sec) return [];
+  return [...sec.querySelectorAll('input, select, textarea')].filter(el => el.id && !el.disabled && !el.readOnly && el.offsetParent !== null
+    && !el.closest('.aibar, .advpanel, .pfpanel, [data-ai-menu]') && !['password', 'file', 'checkbox', 'radio', 'hidden', 'button', 'submit'].includes(el.type)
+    && !PF_SECRET.test(el.id) && !PF_SECRET.test(pfLabel(el)))
+    .slice(0, 40).map(el => ({ id: el.id, label: pfLabel(el), value: el.value, kind: el.tagName === 'SELECT' ? 'select' : el.tagName === 'TEXTAREA' ? 'textarea' : (el.type || 'text'),
+      options: el.tagName === 'SELECT' ? [...el.options].map(o => o.value) : [] }));
+}
+function pfSlots() {
+  $$('main > section[id]').forEach(sec => {
+    const h = sec.querySelector(':scope > h2'); if (!h || sec.querySelector(':scope > .pfbar')) return;
+    h.insertAdjacentHTML('afterend', `<aside class="pfbar aihead" data-pf="${esc(sec.id)}"><button class="b ghost sm" onclick="pfAsk('${esc(sec.id)}',this)" title="one AI call over this page's own fields (never passwords, keys, codes or your salary floor); you choose what to fill, nothing is saved or sent">✦ AI: fill this page</button></aside><aside class="pfpanel" data-pfp="${esc(sec.id)}"></aside>`);
+  });
+}
+function pfPaint(tab) {
+  const a = PF[tab], el = document.querySelector(`[data-pfp="${tab}"]`); if (!el || !a) return;
+  const cards = a.cards || [];
+  el.innerHTML = (a.msg ? `<div class="advmsg${a.err ? ' bad' : ''}" role="status">${esc(a.msg)}</div>` : '')
+    + cards.map((c, i) => `<div class="advcard" data-pfc="${esc(c.id)}"><div class="hd"><label><input type="checkbox" ${a.sel.has(c.id) ? 'checked' : ''} onchange="pfPick('${tab}',${i},this.checked)"> <b>${esc(c.label)}</b></label>${c.filled ? ' <span class="pill ok">filled</span>' : ''}</div>`
+      + `<pre class="advdiff">${advDiff(c.current, c.proposed)}</pre>${c.reason ? `<div class="muted">why: ${esc(c.reason)}</div>` : ''}`
+      + `<div class="row"><button class="b ghost sm" onclick="pfFill('${tab}',[${i}])" aria-label="Fill only this: ${esc(c.label)}">Fill only this</button>`
+      + `<input class="grow" id="pfN_${esc(tab)}_${i}" placeholder="tell the AI what to change" aria-label="Revise note for ${esc(c.label)}"><button class="b ghost sm" onclick="pfRevise('${tab}',${i},this)" aria-label="Revise with AI: ${esc(c.label)}">Revise with AI</button></div></div>`).join('')
+    + (cards.length ? `<div class="row"><button class="b sm" onclick="pfFill('${tab}',null)">Fill ticked</button><button class="b ghost sm" onclick="pfFill('${tab}','all')" title="Full AI for this page: every suggestion goes into its field (still nothing saved or sent)">Fill all</button><button class="b ghost sm" onclick="pfTick('${tab}',true)">Tick all</button><button class="b ghost sm" onclick="pfTick('${tab}',false)">Untick all</button><button class="b ghost sm" onclick="pfClose('${tab}')">Close</button></div>` : '');
+}
+function pfSay(tab, msg, err = false) { PF[tab] = PF[tab] || { cards: [], sel: new Set() }; Object.assign(PF[tab], { msg, err }); pfPaint(tab); }
+function pfPick(tab, i, on) { const c = PF[tab].cards[i]; if (c) on ? PF[tab].sel.add(c.id) : PF[tab].sel.delete(c.id); }
+function pfTick(tab, on) { const a = PF[tab]; a.sel = new Set(on ? a.cards.filter(c => !c.filled).map(c => c.id) : []); pfPaint(tab); }
+function pfClose(tab) { delete PF[tab]; const el = document.querySelector(`[data-pfp="${tab}"]`); if (el) el.innerHTML = ''; }
+function pfAsk(tab, btn) {
+  if (!hasAI()) return pfSay(tab, NO_AI, true);
+  const fields = pfFields(tab);
+  if (!fields.length) return pfSay(tab, 'Nothing on this page for the AI to fill right now (open a form or section first).', true);
+  run('page_fill', { tab, fields }, r => {
+    PF[tab] = { cards: r.fills, sel: new Set() };
+    pfSay(tab, r.fills.length ? `${r.fills.length} suggestion(s) for this page. Tick the ones you want, then Fill ticked (or Fill only this). Nothing is saved until you use the page's own buttons.` : 'The AI suggests no changes to this page.');
+  }, btn, e => pfSay(tab, e, true));
+}
+function pfRevise(tab, i, btn) {
+  const a = PF[tab], c = a.cards[i], note = ($(`#pfN_${tab}_${i}`)?.value || '').trim();
+  if (!note) return pfSay(tab, 'Type what to change first.', true);
+  const f = pfFields(tab).find(x => x.id === c.id) || { id: c.id, label: c.label, value: c.current, kind: 'text', options: [] };
+  f.value = c.proposed;  // the AI revises its last proposal, not the field
+  run('page_fill', { tab, fields: [f], note, only: c.id }, r => {
+    const n = r.fills[0]; if (!n) return pfSay(tab, 'The AI kept its suggestion as it was.');
+    a.cards[i] = { ...n, current: c.current }; pfSay(tab, `Revised "${c.label}": check it, then tick it or Fill only this.`);
+  }, btn, e => pfSay(tab, e, true));
+}
+function pfFill(tab, which) {
+  const a = PF[tab]; if (!a) return;
+  const idx = which === 'all' ? a.cards.map((_, i) => i) : which || a.cards.map((c, i) => a.sel.has(c.id) ? i : -1).filter(i => i >= 0);
+  if (!idx.length) return pfSay(tab, 'Tick at least one suggestion first.', true);
+  let n = 0;
+  for (const i of idx) {
+    const c = a.cards[i], el = document.getElementById(c.id); if (!el || c.filled) continue;
+    if (el.tagName === 'SELECT' && ![...el.options].some(o => o.value === c.proposed)) continue;
+    el.value = c.proposed; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.classList.add('ai-filled'); c.filled = true; a.sel.delete(c.id); n++;
+  }
+  pfSay(tab, `Filled ${n} field(s), outlined. Check them, then use this page's own button to save or run (nothing was saved or sent).`);
+}
+
+/* ---- the full email, formatted (pass 54; mailhtml.py). The server keeps an allowlisted copy; it is shown in a
+   sandboxed frame (no scripts, not same-origin) whose CSP blocks every remote load until you press Show images. ---- */
+const MAILV = {};  // mail id -> {m, remote, plain}
+function mailDoc(html, remote) {
+  const csp = `default-src 'none'; img-src data:${remote ? ' https: http:' : ''}; style-src 'unsafe-inline'; font-src data:`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><base target="_blank">`
+    + `<style>body{font:14px/1.5 system-ui,"Segoe UI",sans-serif;color:#1b1f27;background:#fff;margin:12px;word-wrap:break-word}img{max-width:100%;height:auto}table{max-width:100%}</style></head><body>${html}</body></html>`;
+}
+function mailBody(m) {  // the reader's body: formatted when there is a formatted copy, else the text
+  const v = MAILV[m.id] ||= { m, remote: false, plain: false };
+  v.m = m;
+  if (!m.html || v.plain) {
+    return (m.html ? `<div class="row mvtools"><button class="b ghost sm" onclick="mailMode(${Number(m.id)},'plain',false)">Show formatted</button></div>` : '')
+      + `<pre class="mvbody">${esc(m.body || '(no text on file)')}</pre>`;
+  }
+  const imgs = /<img\b[^>]*src="https?:/i.test(m.html);
+  return `<div class="row mvtools"><button class="b ghost sm" onclick="mailMode(${Number(m.id)},'plain',true)">Plain text</button>`
+    + (imgs ? (v.remote ? '<span class="muted">remote images shown</span>' : `<button class="b ghost sm" onclick="mailMode(${Number(m.id)},'remote',true)" title="loads the pictures this email links to from the sender's servers (they can tell you opened it)">Show images</button><span class="muted">remote images are off: senders use them to see that you opened the email</span>`) : '')
+    + `</div><div class="mailframe"><iframe class="mailhtml" title="The email as written" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer" srcdoc="${esc(mailDoc(m.html, v.remote))}"></iframe></div>`;
+}
+function mailMode(id, k, on) {
+  const v = MAILV[id]; if (!v) return; v[k] = on;
+  $$(`[data-mailv="${Number(id)}"]`).forEach(el => { el.innerHTML = mailBody(v.m); });
+}
+const INBOX_MAIL_OPEN = new Set();  // Inbox items whose email is unfolded (kept across the 60 s refresh)
+function inboxMailFold(r) {
+  if (!r.mail_id) return '';
+  const id = Number(r.mail_id), open = INBOX_MAIL_OPEN.has(r.id), v = MAILV[id];
+  return `<details class="mailfold" ${open ? 'open' : ''} ontoggle="inboxMail(this,${Number(r.id)},${id})"><summary>Read the full email</summary>`
+    + `<div data-mailv="${id}">${open && v ? mailBody(v.m) : '<span class="muted">loading…</span>'}</div></details>`;
+}
+async function inboxMail(det, pid, id) {
+  if (!det.open) { INBOX_MAIL_OPEN.delete(pid); return; }
+  INBOX_MAIL_OPEN.add(pid);
+  if (!MAILV[id]) {
+    const m = await api(`/api/mail/${id}`);
+    if (m.error) { det.querySelector('[data-mailv]').textContent = m.error; return; }
+    MAILV[id] = { m, remote: false, plain: false };
+  }
+  det.querySelector('[data-mailv]').innerHTML = mailBody(MAILV[id].m);
+}

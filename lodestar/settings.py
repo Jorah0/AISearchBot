@@ -77,6 +77,8 @@ PREFS = {
     "excluded_companies": "",
     "excluded_title_words": "",
     "weekly_goals": {},  # goal=number per week (GOALS); none by default, and no default application count
+    "council_on": True,  # pass 54: off = every "council" request and the AI cross-check use the primary AI alone
+    "phone_access": False,  # pass 53: Lodestar on your phone over your home Wi-Fi (phone.py); off = no LAN listener
     "activity_weekly_min": 0,  # activity log: activities a week your unemployment claim asks for (0 = none set)
     # self-update (updater.py): the monitor loop checks every update_every_hours; notify = an alert, auto = apply
     "update_mode": "notify",
@@ -150,6 +152,8 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "excluded_companies": ("Excluded companies (private)", "comma list dropped from search results and watches"),
     "excluded_title_words": ("Excluded title words (private)", "comma list: listings whose title has one are dropped"),
     "weekly_goals": ("Weekly goals", "goal=number, e.g. contacts=5 (also on the Insights tab)"),
+    "council_on": ("Council on", "off: council requests use the primary AI alone and the AI cross-check is paused"),
+    "phone_access": ("Phone access", "serve Lodestar to paired phones on your home Wi-Fi (Setup > Phone access)"),
     "activity_weekly_min": ("Activity log weekly minimum", "activities a week your unemployment claim asks for (0 = none)"),
     "update_mode": ("Updates", "off; notify: tell me when an update is out; auto: apply it (tested, rolled back on failure)"),
     "update_every_hours": ("Check for updates every (hours)", "how often the monitor loop looks for an update (1-720)"),

@@ -50,6 +50,9 @@ def open_window(port: int, title: str = "Lodestar") -> None:
             webview.settings["ALLOW_DOWNLOADS"] = True  # the document viewer's Download buttons (a blob link) save files
         webview.create_window(title, url, width=1320, height=860, min_size=(960, 640), text_select=True,
                               background_color="#0f1115")  # the UI's own dark tile, so no white flash on launch
+        from . import browser
+
+        browser.ON = True  # job-site links now open in Lodestar's own browser window (pass 52)
         webview.start(icon=window_icon(), private_mode=False)  # the emblem: .ico on Windows, PNG on GTK / Qt
     except Exception as e:  # missing WebView2 runtime, headless session, etc.
         print(f"desktop window failed ({e}); opening the browser instead")

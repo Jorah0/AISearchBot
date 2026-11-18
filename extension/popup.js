@@ -72,7 +72,7 @@ async function connect() {
   live = port;
   say(`Lodestar ${version} connected (port ${port}).`, "ok");
   const lockedOut = !tab || !/^https?:/.test(tab.url || "") || hostOf(tab.url) === "";
-  $("capture").disabled = $("fill").disabled = lockedOut || LodestarMatcher.linkedin(hostOf(tab.url));
+  $("capture").disabled = $("fill").disabled = $("applied").disabled = $("keywords").disabled = lockedOut || LodestarMatcher.linkedin(hostOf(tab.url));
 }
 
 function hostOf(url) {
@@ -131,6 +131,47 @@ async function capture() {
     say(`Lodestar did not answer: ${e.message}`, "err");
   } finally {
     $("capture").disabled = false;
+  }
+}
+
+async function keywords() {  // pass 53: missing keywords for this posting, marked on the page (your click)
+  $("keywords").disabled = true;
+  try {
+    let posting;
+    try {
+      await inject(false);
+      [{ result: posting }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => LodestarReadPosting() });
+    } catch (e) {
+      return say(CANNOT, "err");
+    }
+    const { status, data } = await post(live, "/api/ext/keywords", posting);
+    if (status !== 200) return say(data.error || `Lodestar answered ${status}.`, "err");
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: (m, h) => LodestarMark(m, h), args: [data.missing, data.matched] });
+    say(`Match ${data.score}% (target ${data.target}%+). Missing: ${data.missing.slice(0, 12).join(", ") || "none"}.`, data.score >= data.target ? "ok" : "");
+  } catch (e) {
+    say(`Lodestar did not answer: ${e.message}`, "err");
+  } finally {
+    $("keywords").disabled = false;
+  }
+}
+
+async function applied() {  // pass 53: your 'I applied' click; the page is read like Capture
+  $("applied").disabled = true;
+  try {
+    let posting;
+    try {
+      await inject(false);
+      [{ result: posting }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => LodestarReadPosting() });
+    } catch (e) {
+      return say(CANNOT, "err");
+    }
+    const { status, data } = await post(live, "/api/ext/applied", posting);
+    if (status !== 200) return say(data.error || `Lodestar answered ${status}.`, "err");
+    say(data.moved ? `Marked applied: #${data.id} ${data.company} - ${data.title}.` : `#${data.id} is already ${data.status}.`, "ok");
+  } catch (e) {
+    say(`Lodestar did not answer: ${e.message}`, "err");
+  } finally {
+    $("applied").disabled = false;
   }
 }
 
@@ -201,6 +242,8 @@ async function show() {
 $("pair").addEventListener("click", pair);
 $("pairing").addEventListener("keydown", (e) => { if (e.key === "Enter") pair(); });
 $("capture").addEventListener("click", capture);
+$("applied").addEventListener("click", applied);
+$("keywords").addEventListener("click", keywords);
 $("fill").addEventListener("click", fill);
 $("open").addEventListener("click", () => chrome.tabs.create({ url: `http://127.0.0.1:${live || cred.port}/` }));
 $("unpair").addEventListener("click", async () => {  // this browser forgets; Setup > Browser extension > Revoke ends it there

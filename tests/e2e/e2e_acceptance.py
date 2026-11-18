@@ -55,6 +55,7 @@ class Acceptance(E2ETestCase):
         fitg = self.page.locator("#drawer #jFit")  # tracking opens the job
         self.assertEqual(fitg.locator(".chip.fit-class").text_content(), "Insufficient evidence")
         self.assertIn("Registered Nurse license: unknown (never counted as met)", fitg.locator(".gates").text_content())
+        self.page.locator("#jStageD summary").click()  # pass 54: the stage row is collapsed
         self.page.locator("#jStageSel").select_option("recruiter_screen")
         self.page.get_by_role("button", name="set stage").click()
         self.idle()

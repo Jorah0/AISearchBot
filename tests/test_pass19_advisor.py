@@ -506,3 +506,36 @@ class Cli(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Revise(Base):  # pass 54: back and forth on one card
+    def test_ai_revision_comes_back_into_the_same_card_and_is_rechecked(self):
+        summary = field_of("Summary", "profile")
+        cur = dict((f, v) for f, (_, v) in advisor.SCOPES["profile"].gather(None).items())
+        first = cur[summary].replace("Data engineer.", "Data engineer who builds pipelines.")
+        rows, _ = self.run_ai(advisor.recommend, recs((summary, first)), "profile")
+        rid = rows[0]["id"]
+        shorter = cur[summary].replace("Data engineer.", "Data engineer (pipelines).")
+        r, fake = self.run_ai(advisor.revise, {"proposed": shorter, "reason": "shorter"}, rid, "make it shorter")
+        self.assertEqual((r["id"], r["proposed"], r["reason"], r["flags"]), (rid, shorter, "shorter", []))
+        self.assertIn("make it shorter", fake.prompts[0])
+        self.assertIn("who builds pipelines", fake.prompts[0])  # the last proposal goes back with the note
+        bad = cur[summary].replace("Data engineer.", "Data engineer. My salary floor is $187,000.")
+        r, _ = self.run_ai(advisor.revise, {"proposed": bad}, rid, "add my pay")
+        self.assertIn("salary floor", " ".join(r["flags"]))  # a revision never skips the guards
+        self.assertEqual(r["risk"], "high")
+        r = advisor.revise(rid, text=shorter)  # your own edit: no AI call, checked the same way
+        self.assertEqual((r["proposed"], r["reason"], r["flags"]), (shorter, "edited by you", []))
+        self.assertEqual(advisor.apply([rid])["applied"], [rid])
+        self.assertIn("Data engineer (pipelines).", PROFILE.read_text(encoding="utf-8"))
+        with self.assertRaisesRegex(SystemExit, "no longer open"):
+            advisor.revise(rid, text="x")
+
+    def test_needs_a_note_and_an_unchanged_field(self):
+        jid = self.job()
+        rows, _ = self.run_ai(advisor.recommend, recs(("next_action", "Send the application")), "job", jid)
+        with self.assertRaisesRegex(SystemExit, "say what to change"):
+            advisor.revise(rows[0]["id"], "  ")
+        db.set_fields(jid, next_action="Call Ann")
+        with self.assertRaisesRegex(SystemExit, "changed since"):
+            advisor.revise(rows[0]["id"], text="Send it today")

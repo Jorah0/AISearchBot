@@ -13,6 +13,24 @@ DATA = Path(__file__).parent / "data" / "skills.json"  # beside the module, like
 NOTE = ("JD coverage is the share of this posting's keywords your resume mentions. It is a guide for tailoring, not a "
         "pass/fail ATS verdict: real systems parse and rank differently. Only add a keyword you can back up.")
 OTHER_CAP = 15
+TARGET = 75  # pass 53: the match-rate target shown with the score (the figure Jobscan's own guidance uses), a guide only
+# pass 53: general tips per applicant-tracking system, shown when the job's apply link is on one. Plain, conservative
+# guidance (how forms and searches commonly behave), never a claim about a vendor's ranking.
+ATS_TIPS = {
+    "workday": ["Workday forms ask you to type your work history again: keep titles and dates identical to your resume.",
+                "Upload a .docx or a text-based PDF with standard headings so the form's autofill reads it."],
+    "taleo": ["Recruiters search Taleo by keyword: use the posting's exact wording for skills you have (not a synonym).",
+              "Keep to one column with no tables or text boxes: older parsers drop them."],
+    "icims": ["iCIMS forms re-ask your history: keep job titles and dates consistent with your resume.",
+              "Use standard section headings (Experience, Education, Skills)."],
+    "greenhouse": ["A recruiter reads the file you upload: a clean one-column PDF is fine.",
+                   "Answer the custom questions in the form; they are often screened before the resume."],
+    "lever": ["Lever shows recruiters your parsed resume next to the file: check that names, titles and dates parse cleanly.",
+              "Use the posting's own terms for skills you have."],
+    "ashby": ["Ashby forms often ask short questions: answer each one directly; they are read before the resume."],
+    "smartrecruiters": ["Keep headings standard so the parsed profile fills correctly; check it before you submit."],
+    "workable": ["Workable parses your file into a profile: review the parsed fields before you submit."],
+}
 STUFF_MIN, STUFF_RATIO = 6, 3  # a JD keyword repeated 6+ times and over 3x as often as the posting uses it reads as stuffing
 SENIORITY = {"senior", "sr", "junior", "jr", "lead", "principal", "staff", "head", "chief", "intern", "internship", "trainee",
              "entry", "level", "mid", "i", "ii", "iii", "iv", "v", "1", "2", "3", "remote", "hybrid", "onsite", "contract",
@@ -234,3 +252,11 @@ def match(resume_text, jd, job_title=None, skip=(), company=None) -> dict:
             "education_required": sorted(req, key=req.get),
             "stuffing": [k["term"] for k in kws if k["resume_count"] >= STUFF_MIN and k["resume_count"] > STUFF_RATIO * k["jd_count"]],
             "note": NOTE}
+
+
+def ats_info(url) -> dict | None:
+    """The applicant-tracking system a job's apply link is on (by host) and its general tips; None when unknown."""
+    from .apply_ats import ats_of
+
+    name = ats_of(str(url or ""))
+    return {"name": name, "tips": ATS_TIPS.get(name, [])} if name else None

@@ -31,6 +31,8 @@ def agenda(now: datetime | None = None) -> dict:
 
     actions = [item(j, when=j["next_action_at"], what=j["next_action"] or "next action", overdue=j["next_action_at"] < today)
                for j in live if j["next_action_at"] and j["next_action_at"] <= today]
+    actions += [{"id": t["job_id"], "company": t["company"], "title": t["title"], "when": t["due"], "what": t["text"],
+                 "overdue": t["due"] < today, "task": t["id"]} for t in db.tasks(due_by=today)]  # pass 53: your to-dos
     deadlines = [item(j, when=j["deadline"], days=(date.fromisoformat(j["deadline"]) - now.date()).days)
                  for j in live if j["deadline"] and today <= j["deadline"] <= soon]
     return {

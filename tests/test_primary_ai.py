@@ -54,16 +54,27 @@ class Primary(unittest.TestCase):
         for bad in ("", "x" * 201, "model; rm -rf /", "a b"):
             with self.assertRaisesRegex(SystemExit, "model id"):
                 ai.set_primary("anthropic", bad)
-        settings.set_pref("council_providers", "ollama")
-        with self.assertRaisesRegex(SystemExit, "council_providers"):
-            ai.set_primary("anthropic")
-        settings.set_pref("council_providers", "")
         config.FULL_AI.on = True
         try:
             with self.assertRaisesRegex(SystemExit, "Full AI never"):
                 ai.set_primary("anthropic")
         finally:
             config.FULL_AI.on = False
+
+    def test_the_primary_need_not_be_a_council_member_except_as_the_fact_check_writer(self):  # pass 51
+        settings.set_pref("council_providers", "ollama")
+        settings.set_pref("council_members", "ollama=llama3.2:latest, ollama=qwen3.6:latest")
+        self.assertEqual(ai.set_primary("anthropic", "claude-opus-5-5")["provider"], "anthropic")
+        self.assertEqual(ai.primary(), {"provider": "anthropic", "model": "claude-opus-5-5"})
+        self.assertNotIn("anthropic", [p for p, _ in ai.council_members()])  # the council stays the members you chose
+        calls = []
+        with patched(ai, ask_json=lambda prompt, system=None, provider=None, **kw: calls.append(
+                ("review", provider, getattr(ai._TL, "model", None))) or {"agree": False, "issues": ["x"]},
+                ask=lambda prompt, system=None, provider=None, **kw: calls.append(("revise", provider, None)) or "fixed"):
+            r = ai.crosscheck("task", "answer", rounds=1)  # the writer: the primary, as the answer's author
+        self.assertEqual(r["status"], "disagreed")
+        self.assertEqual([c for c in calls if c[0] == "revise"], [("revise", "anthropic", None)])
+        self.assertEqual({c[2] for c in calls if c[0] == "review"}, {"llama3.2:latest", "qwen3.6:latest"})
 
     def test_the_page_action_and_state(self):
         self.assertEqual(web._do("ai_primary", {"provider": "anthropic", "model": "claude-haiku-5-5"})["model"],

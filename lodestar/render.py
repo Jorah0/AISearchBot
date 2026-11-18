@@ -16,6 +16,17 @@ FONTS = {"Calibri": "sans", "Arial": "sans", "Helvetica": "sans", "Verdana": "sa
          "Cambria": "serif", "Garamond": "serif", "Times New Roman": "serif", "Book Antiqua": "serif"}  # ATS-safe, installed
 ACCENTS = {"navy": "#1F3A5F", "blue": "#1F4E79", "teal": "#0F6E6E", "green": "#2E6B3A", "burgundy": "#7A1F2B",
            "gray": "#4A4A4A", "grey": "#4A4A4A", "black": "#000000"}
+# pass 53: the viewer's look gallery; every value passes clean_style (test_looks). ATS-safe: one column, standard fonts.
+LOOKS = {
+    "Classic": {"template": "classic"},
+    "Modern": {"template": "modern"},
+    "Compact": {"template": "compact"},
+    "Executive": {"font": "Georgia", "accent": "#1F3A5F", "density": "airy", "heading_case": "title", "margins": 0.9},
+    "Minimal": {"font": "Calibri", "accent": "#000000", "bullet": "dash", "heading_case": "title", "density": "normal"},
+    "Technical": {"font": "Arial", "accent": "#0F6E6E", "density": "compact", "bullet": "square", "size": 10},
+    "Traditional": {"font": "Times New Roman", "accent": "#000000", "heading_case": "upper", "margins": 1.0},
+    "Warm": {"font": "Cambria", "accent": "#7A1F2B", "bullet": "circle", "density": "normal"},
+}
 DATE_FORMATS = ("Mar 2021", "March 2021", "03/2021", "2021-03", "2021")
 KINDS = ("summary", "experience", "skills", "education", "certifications", "projects", "awards", "publications",
          "volunteering", "patents", "speaking", "languages", "links", "interests", "other")

@@ -91,8 +91,8 @@ def primary() -> dict | None:
 
 
 def set_primary(provider: str, model: str | None = None) -> dict:
-    """Swap the primary AI (pref provider, and prefs.models for that provider). The provider must be linked (and inside
-    council_providers when that allowlist is set); the model id is checked for shape only (a model the provider rejects
+    """Swap the primary AI (pref provider, and prefs.models for that provider). The provider must be linked (it need not be in the
+    council: council_providers bounds the council only); the model id is checked for shape only (a model the provider rejects
     falls back on the first call, as ever). For Ollama, choosing the job model switches pref jobmodel on (it must be
     built) and naming any other model switches it off, so your pick is the one used. Full AI cannot swap it."""
     from . import settings
@@ -104,9 +104,7 @@ def set_primary(provider: str, model: str | None = None) -> dict:
         raise SystemExit(f"unknown AI provider '{name}'. Providers: {', '.join(PROVIDERS)}")
     if name not in available():
         raise SystemExit(f"{name} is not linked: Setup > Link an AI key first")
-    if (allow := _allowlist()) and name not in allow:
-        raise SystemExit(f"{name} is not in council_providers={','.join(allow)}: add it there first")
-    if model is not None:
+    if model is not None:  # the primary need not be a council member (pass 51): council_providers bounds the council
         model = str(model).strip()
         if not MODEL_ID.fullmatch(model):
             raise SystemExit("model id: letters, digits and . : / @ + - _ only (as the provider lists it), at most 200")
@@ -217,13 +215,10 @@ def default_provider() -> str:
     from . import settings
 
     p = str(setting("LODESTAR_PROVIDER") or settings.pref("provider") or "").strip().lower()
-    allow = _allowlist()
-    if p and allow and p not in allow:  # a hard boundary for the default too
-        raise SystemExit(f"provider {p} is not in council_providers={','.join(allow)}: add it there, or set provider to one "
-                         "of those (`lodestar tools set provider NAME`)")
-    if p:
+    if p:  # your explicit primary (pass 51): it need not be in the council; council_providers bounds the council only
         return p
-    if allow:  # with an allowlist, the default must come from it too
+    allow = _allowlist()
+    if allow:  # nothing chosen: the allowlist's first, the safe default
         return council_providers()[0]
     avail = available()
     if not avail:
@@ -427,6 +422,8 @@ def crosscheck(prompt: str, answer: str, writer: str | None = None, rounds: int 
         names = [(n, None) for n in reviewers if n != writer]
     rounds = int(settings.pref("ai_crosscheck_rounds")) if rounds is None else max(0, int(rounds))
     out = {"answer": answer, "status": "unchecked", "rounds": 0, "issues": [], "reviews": []}
+    if reviewers is None and not council_on():  # pass 54: the cross-check reviewers are the council
+        return out | {"issues": ["the council is off (AI switcher): this answer was not cross-checked"]}
     if not names:
         return out | {"issues": ["only one AI is linked: nothing to cross-check against"]}
     for r in range(rounds + 1):
@@ -512,6 +509,22 @@ def set_council(members: list[str]) -> list[str]:
     return value
 
 
+def council_on() -> bool:
+    """Pref council_on (pass 54): off, every council request is one answer from the primary AI and crosscheck pauses."""
+    from . import settings
+
+    return bool(settings.pref("council_on"))
+
+
+def set_council_on(on: bool) -> bool:
+    from . import settings
+    from .config import full_ai_check
+
+    full_ai_check("changes the council")
+    settings.set_pref("council_on", bool(on))
+    return bool(on)
+
+
 def council_view() -> list[str]:
     """The chosen members as the page shows them (no network, never raises)."""
     from . import settings
@@ -531,6 +544,9 @@ def _ask_as(member: tuple[str, str | None], prompt: str, system: str | None) -> 
 def council(prompt: str, system: str | None = None, providers: list[str] | None = None) -> dict:
     """Pool ideas: ask every council member (council_members: the models you chose, else every allowed provider), then
     the first member that answered merges the best parts; with council_judge another member checks it."""
+    if not providers and not council_on():  # pass 54: the council is off: the primary AI alone
+        answer = ask(prompt, system)
+        return {"answers": {"primary": answer}, "synthesis": answer, "council_off": True}
     members = [(n, None) for n in providers] if providers else council_members()
     label = {m: f"{m[0]}/{m[1]}" if m[1] else m[0] for m in members}
     if len(members) < 2:

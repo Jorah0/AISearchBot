@@ -86,7 +86,7 @@ class Insights(E2ETestCase):
     def test_weekly_goals_save_bad_value_and_clear(self):
         self.allow_console()
         self.no_goals()
-        self.assertIn("no goals set", self.page.text_content("#goalBars"))
+        self.assertEqual(self.page.text_content("#goalBars").strip(), "")  # pass 54: the fields say "not set"
         self.assertEqual(self.page.get_attribute("#g_contacts", "placeholder"), "not set")
         self.page.fill("#g_contacts", "3")
         self.page.fill("#g_applications", "2")
@@ -112,7 +112,7 @@ class Insights(E2ETestCase):
         self.page.fill("#g_applications", "0")
         self.run_click(self.page.get_by_role("button", name="Save goals"))
         self.idle()
-        self.assertIn("no goals set", self.page.text_content("#goalBars"))
+        self.assertEqual(self.page.text_content("#goalBars").strip(), "")  # pass 54: the fields say "not set"
 
     # --- offers side by side
     def test_offers_side_by_side_best_market_and_private_floor(self):

@@ -35,8 +35,8 @@ class Monitor(E2ETestCase):
         self.assertFalse(w["filters"])  # a page watch has no search filters
         self.assertEqual(self.page.input_value("#wUrl"), "")
         row = self.page.locator("#wList .list > div", has_text="https://careers.example.org/jobs")
-        self.assertIn("kw=data, python", row.text_content())
-        self.assertIn("last never", row.text_content())
+        self.assertIn("data, python", row.text_content())
+        self.assertIn("not run yet", row.text_content())  # pass 54: was "last never"
         self.page.fill("#wUrl", "platform engineer")
         self.page.check("#wSearch")
         self.run_click("#monitor >> text=Add >> nth=0")
@@ -53,7 +53,7 @@ class Monitor(E2ETestCase):
         self.assertEqual(self.page.locator("#wList .list > div", has_text="https://careers.example.org/jobs").count(), 0)
         # the seeded saved search shows its filters
         seeded = self.page.locator("#wList .list > div", has_text="search:data engineer").text_content()
-        for f in ("kw=python spark", "location=Remote", "min_salary=140000", "posted_within=14", "seniority=senior"):
+        for f in ("python, spark", "Remote", "$140k+", "last 14 days", "senior"):  # pass 54: filters read as words
             self.assertIn(f, seeded)
 
     def test_companies_add_bad_link_and_remove(self):
@@ -87,7 +87,7 @@ class Monitor(E2ETestCase):
         st = self.state()
         self.assertTrue(next(c for c in st["companies"] if c["slug"] == "northwind")["last_seen"])
         self.assertTrue(next(w for w in st["watches"] if w["url"] == "search:data engineer")["last_seen"])
-        self.assertNotIn("last never", self.page.locator("#coList .list > div", has_text="Northwind Analytics").text_content())
+        self.assertNotIn("not run yet", self.page.locator("#coList .list > div", has_text="Northwind Analytics").text_content())
         feed = FETCH["boards-api.greenhouse.io"]
         try:  # a new posting on the followed board
             FETCH["boards-api.greenhouse.io"] = {"jobs": feed["jobs"] + [dict(feed["jobs"][0], id=4102, title="Staff Data Engineer",

@@ -22,12 +22,14 @@ class Lifecycle(E2ETestCase):
 
     def test_stage_moves_the_column_and_keeps_its_history(self):
         d = self.open_job(self.ids["life"])
-        self.assertIn("posting last answered 2026-11-12", d.locator("#jStage").text_content())
+        self.assertIn("posting last answered 2026-11-12", d.locator("#jStageD summary").text_content())
+        d.locator("#jStageD summary").click()  # pass 54: the stage row is collapsed
         d.locator("#jStageSel").select_option("technical_interview")
         d.get_by_role("button", name="set stage").click()
         self.idle()
         self.assertEqual(self.state_job(self.ids["life"])["status"], "interview")
         d = self.open_job(self.ids["life"])
+        d.locator("#jStageD summary").click()
         d.locator("#jStageSel").select_option("on_hold")
         d.get_by_role("button", name="set stage").click()
         self.idle()

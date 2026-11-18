@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS jobs(
   jd TEXT, notes TEXT, applied_at TEXT,
   created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, job_id INTEGER, ts TEXT DEFAULT (datetime('now')), kind TEXT, detail TEXT);
+CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, text TEXT NOT NULL, due TEXT, done_at TEXT, added TEXT DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS watches(id INTEGER PRIMARY KEY, url TEXT UNIQUE, keywords TEXT, last_hash TEXT, last_seen TEXT);
 CREATE TABLE IF NOT EXISTS seen(key TEXT PRIMARY KEY, ts TEXT DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS pending(id INTEGER PRIMARY KEY, ts TEXT DEFAULT (datetime('now')), tool TEXT, kind TEXT,
@@ -168,7 +169,8 @@ POSTING_INDEXES = ("CREATE INDEX IF NOT EXISTS postings_last_seen ON postings(la
 MAIL_MIGRATIONS = {"attachments": "TEXT",  # JSON [{name, size, type, path?} | {name, skipped}] (mailfiles.py)
                    "link_reason": "TEXT",  # why ATS mail was filed under its job (email_monitor._ats_match); never trust
                    # pass 33 (Mail page): the whole text as scanned (codes masked), what the classifier read from it
-                   "body": "TEXT", "action": "TEXT", "deadline": "TEXT"}  # why ATS mail was filed under its job (email_monitor._ats_match); never trust
+                   "body": "TEXT", "action": "TEXT", "deadline": "TEXT",
+                   "html": "TEXT"}  # pass 54: the formatted copy (mailhtml.clean: allowlisted, inline images embedded)  # why ATS mail was filed under its job (email_monitor._ats_match); never trust
 BACKFILL_KEY = "backfill:fields-v1"
 CONTACTS_KEY = "backfill:contacts-v1"
 ATS_FEED_RE = re.compile(r"(greenhouse|lever|ashby|smartrecruiters|recruitee|personio):[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
@@ -579,7 +581,7 @@ def delete_job(job_id: int) -> None:
     con().execute("DELETE FROM mock_sessions WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM offers WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM mail WHERE job_id=?", (job_id,))  # a reply to its sent mail then reads as unmatched
-    for t in ("pipeline", "pipeline_runs", "question_waiters", "qsets", "readiness_log", "apply_runs"):  # company_sources stay
+    for t in ("pipeline", "pipeline_runs", "question_waiters", "qsets", "readiness_log", "apply_runs", "tasks"):  # company_sources stay
         con().execute(f"DELETE FROM {t} WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM recommendations WHERE scope IN ('job', 'docs') AND target=? AND status IN ('pending', "
                   "'approved')", (job_id,))  # the AI change log stays (an undo then reports the job gone)
@@ -1130,8 +1132,8 @@ def delete_idea(iid: int) -> None:
 # --- mail (email_monitor records relevant mail it scans, approvals._send what it sends) -----------------------
 MAIL_COLS = ("message_id", "in_reply_to", "refs", "job_id", "direction", "from_addr", "to_addr", "subject", "sent_at",
              "category", "summary", "snippet", "trusted", "linked_by", "company", "title", "attachments", "link_reason",
-             "body", "action", "deadline")
-MAIL_LIST = ", ".join(c for c in ("id", "created_at", *MAIL_COLS) if c not in ("body", "snippet", "refs"))
+             "body", "action", "deadline", "html")
+MAIL_LIST = ", ".join(c for c in ("id", "created_at", *MAIL_COLS) if c not in ("body", "snippet", "refs", "html"))
 
 
 def add_mail(**fields) -> None:
@@ -1140,6 +1142,7 @@ def add_mail(**fields) -> None:
     f = {k: fields.get(k) for k in MAIL_COLS} | {"trusted": int(bool(fields.get("trusted"))),
                                                  "snippet": (fields.get("snippet") or "")[:1500],
                                                  "body": (fields.get("body") or "")[:100_000] or None,
+                                                 "html": (fields.get("html") or "")[:6_000_000] or None,
                                                  "action": (fields.get("action") or "")[:300] or None,
                                                  "deadline": (fields.get("deadline") or "")[:40] or None,
                                                  "attachments": json.dumps(att) if isinstance(att, list) and att else None}
@@ -1311,3 +1314,39 @@ def funnel() -> dict:
         d["tracked"] += 1
         d["positive"] += j["status"] in POSITIVE
     return {"stages": stages, "rejected_from": rejected_from, "by_source": by_source}
+
+
+# ----------------------------------------------------------------------------- your to-dos per job (pass 53)
+def add_task(job_id: int, text: str, due: str | None = None) -> int:
+    """One of your own to-dos for a job (not an event: it never moves the follow-up clock)."""
+    get_job(job_id)
+    text = " ".join(str(text or "").split())[:300]
+    if not text:
+        raise ValueError("type the to-do first")
+    due = str(due or "").strip() or None
+    if due and not re.fullmatch(r"\d{4}-\d\d-\d\d", due):
+        raise ValueError("due date must be YYYY-MM-DD")
+    cur = con().execute("INSERT INTO tasks(job_id, text, due) VALUES (?,?,?)", (job_id, text, due))
+    con().commit()
+    return cur.lastrowid
+
+
+def set_task(job_id: int, task_id: int, done: bool) -> None:
+    con().execute("UPDATE tasks SET done_at=CASE WHEN ? THEN datetime('now') ELSE NULL END WHERE id=? AND job_id=?",
+                  (bool(done), task_id, job_id))
+    con().commit()
+
+
+def delete_task(job_id: int, task_id: int) -> None:
+    con().execute("DELETE FROM tasks WHERE id=? AND job_id=?", (task_id, job_id))
+    con().commit()
+
+
+def tasks(job_id: int | None = None, due_by: str | None = None) -> list[dict]:
+    """A job's to-dos (open first), or with due_by every open to-do due on or before that date (Today)."""
+    if job_id is not None:
+        q, a = "SELECT * FROM tasks WHERE job_id=? ORDER BY done_at IS NOT NULL, due IS NULL, due, id", (job_id,)
+    else:
+        q, a = ("SELECT t.*, j.company, j.title FROM tasks t JOIN jobs j ON j.id=t.job_id WHERE t.done_at IS NULL AND "
+                "t.due IS NOT NULL AND t.due<=? ORDER BY t.due, t.id"), (due_by,)
+    return [dict(r) for r in con().execute(q, a)]

@@ -172,6 +172,8 @@ def coverage(job, text: str | None = None, save: bool = True) -> dict:
     from . import ats
 
     cov = ats.match(_current_resume(job) if text is None else text, _jd(job), job["title"], db.ats_skip(job), job["company"])
+    jd_ = dict(job)
+    cov |= {"target": ats.TARGET, "ats": ats.ats_info(jd_.get("apply_url") or jd_.get("url"))}  # pass 53: the match report
     if save:
         d = app_dir(job)
         (d / "coverage.json").write_text(json.dumps(cov, indent=2), encoding="utf-8")

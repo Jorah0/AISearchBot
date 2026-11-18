@@ -679,6 +679,51 @@ Return JSON only: {{"recommendations": [{{"field": "<id>", "proposed": "...", "r
                                        "ORDER BY id", rows)]
 
 
+def revise(rid, note: str = "", text: str | None = None, provider: str | None = None) -> dict:
+    """Back and forth on one suggestion card (pass 54): `text` is your own edit of the proposal (no AI); else `note`
+    goes to the AI with the field's current value and the last proposal (ONE ask_json call, fenced) and the card gets
+    the revised proposal. Either way the row is updated in place and the checks (problems) run again, so a revision
+    can never skip the guards. Only an open suggestion whose field has not changed since can be revised."""
+    from .extras import _fence
+
+    r = db.con().execute("SELECT * FROM recommendations WHERE id=?", (int(rid),)).fetchone()
+    if not r or r["status"] not in ("pending", "approved"):
+        raise SystemExit("this suggestion is no longer open: click Recommend again")
+    sc, t = check(r["scope"], r["target"])
+    advice = r["field"] in sc.advice
+    now = (sc.gather(t).get(r["field"]) or (None, None))[1]
+    if not advice and now != r["current"]:
+        _decide(r["id"], "stale", "changed since this was recommended")
+        raise SystemExit("that field changed since this suggestion was made: click Recommend again")
+    if text is None:
+        note = " ".join(str(note or "").split())[:500]
+        if not note:
+            raise SystemExit("say what to change, e.g. shorter, keep the numbers, warmer")
+        if not ai.available():
+            raise SystemExit(f"revising needs an AI provider. {ai.NO_PROVIDER}")
+        fenced, _ = _fence([("current", r["label"], r["current"]), ("last_proposal", "", r["proposed"]),
+                            ("my_note", "", note)] + (sc.context(t) if sc.context else []))
+        raw = ai.ask_json(f"""Scope: {sc.label}. {sc.guide}
+Revise the last proposal for this one field following my_note. "proposed" is the field's whole new value.
+Return JSON only: {{"proposed": "...", "reason": "one line"}}
+
+{fenced}""", SYSTEM, provider)
+        prop = str((raw or {}).get("proposed") or "") if isinstance(raw, dict) else ""
+        reason = " ".join(str((raw or {}).get("reason") or "").split())[:300] if isinstance(raw, dict) else ""
+        reason = reason or f"revised: {note}"[:300]
+    else:
+        prop, reason = str(text), "edited by you"
+    prop = " ".join(prop.split())[:600] if advice else _normalize(r["scope"], r["current"], prop)
+    if not prop.strip():
+        raise SystemExit("the revision came back empty: nothing changed")
+    flags = [] if advice else problems(sc, t, r["field"], r["current"], prop)
+    risk = "high" if flags else (r["risk"] if r["risk"] != "high" else "medium")
+    db.con().execute("UPDATE recommendations SET proposed=?, reason=?, flags=?, risk=?, status='pending' WHERE id=?",
+                     (prop, reason, json.dumps(flags), risk, r["id"]))
+    db.con().commit()
+    return _row(db.con().execute("SELECT * FROM recommendations WHERE id=?", (r["id"],)).fetchone())
+
+
 def pending(scope: str, target=None) -> list[dict]:
     """The scope's open recommendations; one whose field changed since (or is gone) turns 'stale' here."""
     sc, t = check(scope, target)

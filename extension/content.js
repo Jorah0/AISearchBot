@@ -191,6 +191,38 @@
     };
   };
 
+  // ---- keyword marks (pass 53): on your click only; visual, never a click or an input change
+  globalThis.LodestarMark = (missing, matched) => {
+    document.querySelectorAll("mark[data-lodestar]").forEach((m) => m.replaceWith(document.createTextNode(m.textContent)));
+    const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const terms = [...(missing || []).map((t) => [t, true]), ...(matched || []).map((t) => [t, false])].filter(([t]) => t && t.length > 1);
+    if (!terms.length) return 0;
+    const kind = new Map(terms.map(([t, m]) => [t.toLowerCase(), m]));
+    const src = `(?<![\\w+#])(${terms.map(([t]) => esc(t)).sort((a, b) => b.length - a.length).join("|")})(?![\\w+#])`;
+    const rx = new RegExp(src, "gi"), has = new RegExp(src, "i");  // has: no /g state between nodes
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, { acceptNode: (n) =>
+      n.parentElement && !n.parentElement.closest("script, style, textarea, input, select, mark, [contenteditable]") && has.test(n.data)
+        ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT });
+    const nodes = []; let n, count = 0;
+    while ((n = walk.nextNode()) && nodes.length < 400) nodes.push(n);
+    for (const node of nodes) {
+      const frag = document.createDocumentFragment(); let last = 0; rx.lastIndex = 0;
+      for (const m of node.data.matchAll(rx)) {
+        frag.append(node.data.slice(last, m.index));
+        const mk = document.createElement("mark");
+        mk.dataset.lodestar = "1";
+        mk.textContent = m[0];
+        const miss = kind.get(m[0].toLowerCase());
+        mk.style.cssText = miss === false ? "background:#bbf7d0;color:#111" : "background:#fde68a;color:#111";
+        mk.title = miss === false ? "in your resume" : "missing from your resume";
+        frag.append(mk); last = m.index + m[0].length; count++;
+      }
+      frag.append(node.data.slice(last));
+      node.replaceWith(frag);
+    }
+    return count;
+  };
+
   // ---- fill
   const PROTO = { input: HTMLInputElement, textarea: HTMLTextAreaElement, select: HTMLSelectElement };
 

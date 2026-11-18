@@ -1417,6 +1417,7 @@ def cmd_ui(a):
 
     updater.startup()
     connections.start_checks()  # background, once: the server below comes up first
+    _phone_start()  # pass 53: only when its pref is on
     serve(a.port, open_browser=not a.no_open)
 
 
@@ -1437,6 +1438,7 @@ def cmd_app(a):
         threading.Thread(target=cmd_run, args=(a,), daemon=True).start()
         print(f"monitor loop running every {a.every} min")
     connections.start_checks()  # background, once: keys and mailbox re-verified after the server is up
+    _phone_start()  # pass 53: only when its pref is on
     serve(a.port, open_browser=not a.no_open)
 
 
@@ -1491,6 +1493,17 @@ def cmd_update(a):
             print(f"{what:<14} {detail}")
 
 
+def _phone_start() -> None:
+    """Phone access (pass 53) when its pref is on: never blocks or stops startup."""
+    from . import phone
+
+    if settings.pref("phone_access"):
+        try:
+            print(f"phone access: {phone.start()['url']}")
+        except (Exception, SystemExit) as e:
+            print(f"phone access not started: {e}")
+
+
 def cmd_desktop(a):
     """The desktop app: server + monitor loop in this process, the UI in a native window. What the shortcut runs."""
     import threading
@@ -1508,6 +1521,7 @@ def cmd_desktop(a):
     port = a.port or desktop.free_port()
     srv = start_server(port)
     connections.start_checks()  # background, once; never blocks or crashes the window
+    _phone_start()  # pass 53: only when its pref is on
     if not a.no_loop:
         a.once = False
         threading.Thread(target=cmd_run, args=(a,), daemon=True, name="lodestar-loop").start()

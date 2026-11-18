@@ -46,6 +46,10 @@ class Advisor(E2ETestCase):
         return (self.page.locator(f'{within} .aibar[data-adv="{k}"]').first, self.page.locator(f'{within} [data-advp="{k}"]').first)
 
     def press_ai(self, bar, name):
+        if name == "Apply suggestions":  # pass 54: suggestions start unticked; these tests apply every unflagged one
+            tick = self.page.locator(f'[data-advp="{bar.get_attribute("data-adv")}"]').get_by_role("button", name="Tick all", exact=True)
+            if tick.count():
+                tick.first.click()
         self.run_click(bar.get_by_role("button", name=name, exact=True))
 
     def show(self, where, target=None):
@@ -66,7 +70,7 @@ class Advisor(E2ETestCase):
     def test_every_tab_and_card_has_the_toolbar(self):
         j = self.ids
         cases = [("home", "today", None, ["Recommend"]), ("inbox", "inbox", None, FULL), ("inbox", "inbox", j["p_reply"], FULL),
-                 ("contacts", "contacts", None, FULL), ("search", "searches", None, FULL[:2] + FULL[3:]),
+                 ("contacts", "contacts", None, FULL),
                  ("monitor", "searches", None, FULL[:2] + FULL[3:]), ("answers", "answers", None, FULL),
                  ("answers", "stories", None, FULL), ("answers", "stories", j["story"], FULL), ("insights", "insights", None, ["Recommend"]),
                  ("profile", "profile", None, FULL), ("profile", "bank", None, FULL)]
@@ -127,7 +131,7 @@ class Advisor(E2ETestCase):
         self.press_ai(bar, "Recommend")
         cards = panel.locator(".advcard")
         self.assertEqual(cards.count(), 2)
-        self.assertTrue(cards.nth(0).locator("input[type=checkbox]").is_checked())
+        self.assertFalse(cards.nth(0).locator("input[type=checkbox]").is_checked())  # pass 54: you tick each one
         self.assertIn("leads with the work", cards.nth(0).text_content())
         self.assertIn("- Data engineer with 7 years", cards.nth(0).locator("pre.advdiff del").text_content())
         flagged = cards.nth(1)  # an invented skill: flagged, high risk, left unticked; the reason is text, never markup
@@ -336,6 +340,40 @@ class Advisor(E2ETestCase):
         self.page.evaluate("closeDrawer()")
         self.go("setup")
         self.assertEqual(self.overflow(), [])
+
+    # --- pass 54: tick each one, Apply only this, and back and forth with the AI on one card
+    def test_tick_each_revise_back_and_forth_and_apply_only_this(self):
+        summary, v = self.field("profile", "Summary")
+        first = "## Summary\nData engineer who builds pipelines for health teams."
+        self.reply((summary, first, "leads with the work"))
+        self.go("profile")
+        bar, panel = self.bar("profile", None, "#profile")
+        self.press_ai(bar, "Recommend")
+        card = panel.locator(".advcard").first
+        box = card.locator("input[type=checkbox]")
+        self.assertFalse(box.is_checked())  # nothing is ticked for you
+        panel.get_by_role("button", name="Tick all", exact=True).click()
+        self.assertTrue(box.is_checked())
+        panel.get_by_role("button", name="Untick all", exact=True).click()
+        self.assertFalse(box.is_checked())
+        # into the AI with a note, back into the same card
+        old = type(self).ai_json
+        self.addCleanup(setattr, type(self), "ai_json", old)
+        type(self).ai_json = {"proposed": "## Summary\nData engineer (health pipelines).", "reason": "shorter"}
+        card.locator("input.grow").fill("make it shorter")
+        self.run_click(card.get_by_role("button", name="Revise with AI: profile.md: Summary"))
+        self.assertIn("+ Data engineer (health pipelines).", card.locator("pre.advdiff").text_content())
+        self.assertIn("Revised", panel.locator(".advmsg").text_content())
+        # out to your own hands, back into the card
+        card.get_by_role("button", name="Edit by hand", exact=False).click()
+        panel.locator("textarea").fill("## Summary\nData engineer (health and logistics pipelines).")
+        self.run_click(panel.get_by_role("button", name="Use my version"))
+        self.assertIn("edited by you", card.text_content())
+        self.run_click(card.get_by_role("button", name="Apply only this", exact=False))
+        self.assertIn("applied", card.locator(".pill").text_content())
+        self.assertIn("Data engineer (health and logistics pipelines).", profile.master_text())
+        self.press_ai(bar, "Undo AI changes")  # the shared profile goes back for the tests after this one
+        self.assertNotIn("health and logistics pipelines).", profile.master_text())
 
 
 if __name__ == "__main__":
