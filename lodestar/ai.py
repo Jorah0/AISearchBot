@@ -64,10 +64,76 @@ def light_model(name: str) -> str | None:
 
 
 def model_for(name: str) -> str:
-    """Env override, then a model verified earlier (prefs.models), then the built-in default."""
+    """Env override, then (Ollama) the job model Lodestar built for you (jobmodel, pref jobmodel), then a model verified
+    earlier (prefs.models), then the built-in default."""
     from . import settings
 
-    return setting(f"{name.upper()}_MODEL") or settings.pref("models").get(name) or PROVIDERS[name]["model"]
+    if env := setting(f"{name.upper()}_MODEL"):
+        return env
+    if name == "ollama" and settings.pref("jobmodel"):
+        from . import jobmodel
+
+        if jobmodel.built():
+            return jobmodel.NAME
+    return settings.pref("models").get(name) or PROVIDERS[name]["model"]
+
+
+MODEL_ID = re.compile(r"[\w.:/@+-]{1,200}")
+
+
+def primary() -> dict | None:
+    """The primary AI every call uses unless it names its own: {provider, model}; None with no provider linked."""
+    try:
+        name = default_provider()
+    except SystemExit:
+        return None
+    return {"provider": name, "model": model_for(name)}
+
+
+def set_primary(provider: str, model: str | None = None) -> dict:
+    """Swap the primary AI (pref provider, and prefs.models for that provider). The provider must be linked (and inside
+    council_providers when that allowlist is set); the model id is checked for shape only (a model the provider rejects
+    falls back on the first call, as ever). For Ollama, choosing the job model switches pref jobmodel on (it must be
+    built) and naming any other model switches it off, so your pick is the one used. Full AI cannot swap it."""
+    from . import settings
+    from .config import full_ai_check
+
+    full_ai_check("changes the primary AI")
+    name = str(provider or "").strip().lower()
+    if name not in PROVIDERS:
+        raise SystemExit(f"unknown AI provider '{name}'. Providers: {', '.join(PROVIDERS)}")
+    if name not in available():
+        raise SystemExit(f"{name} is not linked: Setup > Link an AI key first")
+    if (allow := _allowlist()) and name not in allow:
+        raise SystemExit(f"{name} is not in council_providers={','.join(allow)}: add it there first")
+    if model is not None:
+        model = str(model).strip()
+        if not MODEL_ID.fullmatch(model):
+            raise SystemExit("model id: letters, digits and . : / @ + - _ only (as the provider lists it), at most 200")
+        if name == "ollama":
+            from . import jobmodel
+
+            if model == jobmodel.NAME:
+                if not jobmodel.built():
+                    raise SystemExit(f"{jobmodel.NAME} is not built yet: Setup > Local job model > Build now")
+                settings.set_pref("jobmodel", True)
+            else:
+                settings.set_pref("jobmodel", False)
+        if not (name == "ollama" and model.startswith("lodestar-jobs")):
+            settings.set_model(name, model)
+    settings.set_pref("provider", name)
+    return {"provider": name, "model": model_for(name)}
+
+
+@contextlib.contextmanager
+def using(model: str):
+    """Inside: chat() asks exactly this model (evaluation compares the job model with its base); never saved."""
+    old = getattr(_TL, "model", None)
+    _TL.model = model
+    try:
+        yield
+    finally:
+        _TL.model = old
 
 
 def pick_model(name: str) -> str | None:
@@ -80,7 +146,10 @@ def pick_model(name: str) -> str | None:
 
 
 def pick_from(name: str, models: list[str]) -> str | None:
-    """The preferred model among the ids a provider listed (first PREFERRED pattern that matches), else the first id."""
+    """The preferred model among the ids a provider listed (first PREFERRED pattern that matches), else the first id.
+    Code and embedding models ('codellama' contains 'llama') come last: they write poor letters and judge fit badly."""
+    special = re.compile(r"code|coder|embed")
+    models = sorted(models, key=lambda m: bool(special.search(m.lower())))  # stable: the provider's order otherwise
     low = [(m.lower(), m) for m in models]
     for pat in PREFERRED.get(name, []):
         hit = next((m for lm, m in low if pat in lm), None)
@@ -234,7 +303,8 @@ def chat(messages: list[dict], system: str | None = None, provider: str | None =
     if not key:
         raise SystemExit(f"{name}: missing {p['key']} (lodestar vault set {p['key']})")
     lite = light_model(name) if getattr(_TL, "on", False) else None
-    model = lite or model_for(name)
+    forced = getattr(_TL, "model", None)
+    model = forced or lite or model_for(name)
     for attempt in (1, 2):
         try:
             if p["kind"] == "anthropic":
@@ -251,13 +321,22 @@ def chat(messages: list[dict], system: str | None = None, provider: str | None =
             if cut:  # a half resume saved as if complete is worse than a clear failure
                 raise RuntimeError(f"{name}: the reply hit the length limit and was cut off; nothing was saved. "
                                    "Retry, shorten the input, or pick another provider.")
-            if model not in (model_for(name), lite):
+            if model not in (model_for(name), lite, forced):
                 from . import settings
 
                 settings.set_model(name, model)  # remembered only once the replacement actually answered
                 print(f"  {name}: switched to model '{model}' (saved in prefs.models)")
             return text
         except SystemExit as e:  # "model rejected": pick one the provider actually offers and retry once
+            if forced:  # an evaluation asked for exactly this model: no substitute
+                raise
+            if attempt == 1 and name == "ollama" and "was rejected" in str(e) and model == model_for(name) and \
+                    model.startswith("lodestar-jobs"):
+                from . import jobmodel
+
+                jobmodel.forget()  # deleted in Ollama: back to the base model until the next build
+                model = model_for(name)
+                continue
             if attempt == 1 and lite and model == lite and "was rejected" in str(e):
                 print(f"  {name}: light model '{lite}' not offered; using '{model_for(name)}' for this call")
                 model = model_for(name)  # the main model, never saved as the light one
@@ -301,6 +380,69 @@ def list_models(name: str) -> list[str]:
     with urllib.request.urlopen(req, timeout=30) as r:
         data = json.loads(r.read()).get("data", [])
     return sorted(m.get("id", "") for m in data if isinstance(m, dict))
+
+
+REVIEW = """You are fact-checking an answer another AI wrote. Check it only against the task and the source material inside
+the task: flag invented facts (anything the source does not support), contradictions, wrong numbers or dates, and
+instructions it missed. Do not flag style or wording you would merely prefer.
+
+TASK (with its source material):
+{task}
+
+ANSWER TO CHECK:
+{answer}
+
+Reply as JSON: {{"agree": true or false, "issues": ["one short sentence per real problem"]}}"""
+
+REVISE = """Original task:
+{task}
+
+Your answer:
+{answer}
+
+Other reviewers raised these points:
+{issues}
+
+Rewrite the answer: fix each point that is right (check it against the source material in the task), keep what is
+correct, and never add a fact the source does not give. Output only the answer."""
+
+
+def crosscheck(prompt: str, answer: str, writer: str | None = None, rounds: int | None = None,
+               reviewers: list[str] | None = None) -> dict:
+    """Other AIs fact-check an answer until they all agree. Each reviewer (council_providers minus the writer: the same
+    allowlist decides who may see your data) checks `answer` against `prompt` and its sources; any objection goes back
+    to the writer, who revises, and every reviewer checks again, up to `rounds` revisions (pref ai_crosscheck_rounds).
+    {answer, status: agreed | disagreed | unchecked, rounds, issues: ["provider: problem"], reviews}. Never more than
+    (rounds + 1) x reviewers + rounds calls. A reviewer that fails is not an agreement: unchecked when no one answered."""
+    from . import settings
+
+    writer = writer or default_provider()
+    names = [n for n in (council_providers() if reviewers is None else reviewers) if n != writer]
+    rounds = int(settings.pref("ai_crosscheck_rounds")) if rounds is None else max(0, int(rounds))
+    out = {"answer": answer, "status": "unchecked", "rounds": 0, "issues": [], "reviews": []}
+    if not names:
+        return out | {"issues": ["only one AI is linked: nothing to cross-check against"]}
+    for r in range(rounds + 1):
+        reviews = []
+        for n in names:
+            try:
+                v = ask_json(REVIEW.format(task=prompt, answer=answer), provider=n)
+                v = v if isinstance(v, dict) else {}
+                issues = [" ".join(str(i).split())[:200] for i in v.get("issues") or [] if str(i).strip()][:5]
+                reviews.append({"provider": n, "agree": v.get("agree") is True and not issues, "issues": issues})
+            except (Exception, SystemExit) as e:  # a dead reviewer neither agrees nor objects
+                reviews.append({"provider": n, "agree": None, "issues": [f"no review ({str(e)[:100]})"]})
+        objections = [f"{v['provider']}: {i}" for v in reviews if v["agree"] is False for i in v["issues"] or ["disagrees"]]
+        out |= {"answer": answer, "rounds": r, "reviews": reviews}
+        if not objections:
+            answered = [v for v in reviews if v["agree"] is not None]
+            return out | {"status": "agreed" if answered and len(answered) == len(reviews) else "unchecked",
+                          "issues": [f"{v['provider']}: {v['issues'][0]}" for v in reviews if v["agree"] is None]}
+        if r == rounds:
+            return out | {"status": "disagreed", "issues": objections}
+        answer = ask(REVISE.format(task=prompt, answer=answer, issues="\n".join(f"- {o}" for o in objections)),
+                     provider=writer).strip() or answer
+    return out
 
 
 def council(prompt: str, system: str | None = None, providers: list[str] | None = None) -> dict:

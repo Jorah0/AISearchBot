@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import __version__, advisor, ai, apply, apply_agent, approvals, careers, codes, comp, connections, db, extension, extras, log, loop, mailconn, oauth, pacing, paydata, pipeline, settings, vault
+from . import __version__, advisor, ai, apply, apply_agent, approvals, careers, codes, comp, connections, db, extension, extras, jobmodel, log, loop, mailconn, oauth, pacing, paydata, pipeline, settings, vault
 from .config import ALERTS, PROFILE
 
 STATIC = Path(__file__).parent / "static"
@@ -545,6 +545,12 @@ def _do(action: str, p: dict):
         case "research":
             out = extras.research(job, prov)
             return {"path": str(out), "text": out.read_text(encoding="utf-8"), "docs": _docs(job)}
+        case "jobmodel":  # {op: build | eval}: the local job model in Ollama (jobmodel.py)
+            from . import jobmodel
+
+            if p.get("op") == "eval":
+                return jobmodel.evaluate() | {"status": jobmodel.status()}
+            return jobmodel.build(force=bool(p.get("force"))) | {"status": jobmodel.status()}
         case "dup_check":  # {id, recheck?}: the AI judges this job's company + title copies (same / similar / different)
             from . import apply_agent
 
@@ -620,6 +626,8 @@ def _do(action: str, p: dict):
             return connections.check_all()
         case "providers_local":
             return {"text": ai.local_preset()}
+        case "ai_primary":  # {provider, model?}: swap the primary AI (the top bar's switcher; pass 49)
+            return ai.set_primary(str(p.get("provider") or ""), p.get("model"))
         case "models":  # the ids each configured provider offers, to pin one under Tools > Preferences > models
             ms: dict[str, list[str] | str] = {}
             for n in _configured():
@@ -654,7 +662,7 @@ def _configured() -> list[str]:
     return names
 
 
-FILTER_KEYS = ("location", "min_salary", "posted_within", "seniority")
+FILTER_KEYS = ("location", "min_salary", "posted_within", "seniority", "radius")
 
 
 def _filters(p: dict) -> dict:
@@ -792,7 +800,32 @@ def capture(p: dict) -> dict:
                        source="capture", job_id=jid)
     except (Exception, SystemExit) as e:  # the card is what the click asked for; the listing copy is a bonus
         log.get("web").warning("capture: listing not stored: %s", e)
-    return {"id": jid, "company": company, "title": title, "duplicate": bool(dup)}
+    link = None if db.get_job(jid)["apply_url"] else page_apply_link(p.get("apply_links"))
+    if link:  # the posting's own 'apply on the company site' link: the apply agent can apply there (pass 43)
+        db.set_fields(jid, apply_url=link)
+        db.add_event(jid, "apply_link", f"from the posting page {str(p.get('url') or '')[:300]}: {link}")
+    return {"id": jid, "company": company, "title": title, "duplicate": bool(dup), "apply_url": link,
+            "ats": apply_ats_name(link)}
+
+
+def page_apply_link(links) -> str | None:
+    """The application link to keep from a posting page's 'apply' links (page-controlled: http(s) only, capped): an
+    application system's first (greenhouse, lever...), else the first off the five boards Lodestar never opens."""
+    from . import apply_ats
+    from .apply_agent import forbidden
+
+    ok = []
+    for u in (links if isinstance(links, list) else [])[:20]:
+        u = http_only(str(u or "")[:2048])
+        if u and (h := apply_ats.host(u)) and not forbidden(h) and "." in h:
+            ok.append(u)
+    return next((u for u in ok if apply_ats.ats_of(apply_ats.host(u))), ok[0] if ok else None)
+
+
+def apply_ats_name(link) -> str | None:
+    from . import apply_ats
+
+    return apply_ats.ats_of(apply_ats.host(link)) if link else None
 
 
 # ----------------------------------------------------------------------------- state
@@ -921,6 +954,7 @@ def state() -> dict:
         "ideas": [ideas_merged(r) for r in db.list_ideas()],
         "idea_statuses": db.IDEA_STATUSES,
         "providers": {n: (n in ai.available()) for n in ai.PROVIDERS},
+        "primary": ai.primary(),  # pass 49: the top bar's AI switcher
         "watches": [dict(w) | {"filters": db.watch_filters(w)} for w in db.watches()],
         "companies": [dict(c) for c in db.companies()],
         "alerts": ALERTS.read_text(encoding="utf-8").splitlines()[-30:] if ALERTS.is_file() else [],
@@ -939,6 +973,7 @@ def state() -> dict:
                              "manual": s.run is None or s.name in pipeline.MANUAL} for s in pipeline.REGISTRY.values()],
         "questions": pipeline.questions(),  # open, blocking first (Inbox > Questions for you)
         "autopilot": {"spent": pipeline.spent_today(), "last": dict(pipeline.LAST)},
+        "jobmodel": jobmodel.status(),  # pass 46: Setup > Local job model
         "extensions": extension.paired(),  # paired browsers for Setup; never a secret
         "bookmarklets_on": extension.bookmarklets_on(),
     }
@@ -1325,7 +1360,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(capture(p))
             qs = p.get("questions") if isinstance(p.get("questions"), list) else []
             qs = list(dict.fromkeys(" ".join(q.split())[:200] for q in qs if isinstance(q, str) and q.strip()))[:100]
-            return self._json(extras.ext_autofill(qs, p.get("eeo") is True, p.get("salary") is True, p.get("url")))
+            return self._json(extras.ext_autofill(qs, p.get("eeo") is True, p.get("salary") is True, p.get("url"),
+                                                p.get("ai") is True))
         except SystemExit as e:  # a user-facing message (template profile, Full AI on)
             return self._json({"error": str(e)}, 400)
         except Exception as e:
@@ -1374,6 +1410,15 @@ class Handler(BaseHTTPRequestHandler):
 
                 if path == "/api/accounts/add":  # {url, username, password?}: no password = a generated one
                     return self._json(accounts.add(p.get("url"), p.get("username"), p.get("password") or ""))
+                if path == "/api/accounts/import":  # {csv} -> a review (no passwords); {id, sites} saves; {id, discard}
+                    from . import pwimport
+
+                    if p.get("discard"):
+                        return self._json(pwimport.discard(str(p.get("id") or "")))
+                    if p.get("id"):
+                        sites = p.get("sites")
+                        return self._json(pwimport.apply(str(p["id"]), [str(s) for s in sites] if isinstance(sites, list) else None))
+                    return self._json(pwimport.stage(str(p.get("csv") or "")))
                 if path == "/api/accounts/general":  # {username?, password} | {clear: true}: never sent back
                     return self._json(accounts.set_general(p.get("username") or "", p.get("password") or "",
                                                            p.get("clear") is True))

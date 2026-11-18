@@ -61,6 +61,10 @@ PREFS = {
     "provider": "",
     "council_providers": "",
     "council_judge": False,
+    "jobmodel": True,  # build the local job model in Ollama (jobmodel.py) and use it as Ollama's model once built
+    "jobmodel_base": "",  # the general Ollama model it is built on; empty: the best one Ollama offers
+    "ai_crosscheck": False,  # other linked AIs fact-check each AI form answer, the writer revises until all agree
+    "ai_crosscheck_rounds": 2,  # revisions at most before a disagreement is handed to you
     "ai_light": True,  # short structured AI judgements use the provider's light model (ai.LIGHT): fewer, cheaper tokens
     "models": {},
     "signature": "",
@@ -122,6 +126,15 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "weekly_target": ("Weekly application target", "applications a week; idea crafting plans around it (0-200)"),
     "provider": ("Default AI provider", "empty: the first configured one"),
     "council_providers": ("Council providers", "comma list of the only providers the council and ideas may use; empty: all configured"),
+    "jobmodel": ("Local job model", "Lodestar builds 'lodestar-jobs' in your Ollama from a general model, your profile "
+                 "(never the salary floor) and what you pursued or passed on, rebuilds it daily when that changes, and "
+                 "uses it as Ollama's model; off: your chosen Ollama model"),
+    "jobmodel_base": ("Local job model: base", "the Ollama model it is built on (e.g. llama3.2, qwen3); empty: the best "
+                      "general model Ollama offers (code and embedding models last)"),
+    "ai_crosscheck": ("AI cross-check", "your other linked AIs fact-check each AI form answer against the same "
+                      "source; the writer revises on any objection until all agree, else the answer is flagged for you "
+                      "(costs more calls: up to rounds+1 reviews per AI plus the revisions)"),
+    "ai_crosscheck_rounds": ("AI cross-check rounds", "revisions at most before a disagreement is handed to you (0-3)"),
     "ai_light": ("Light model for quick checks", "sorting mail, the duplicate check and picking a link or occupation use "
                  "the provider's smaller model (Claude Haiku, gpt-5-mini); writing stays on your main model. Off: one model"),
     "council_judge": ("Council judge", "a second provider checks and improves the council's combined answer"),
@@ -190,7 +203,7 @@ RANGES = {"followup_days": (1, 90), "auto_track_min_score": (0, 100), "weekly_ta
           "activity_weekly_min": (0, 100), "update_every_hours": (1, 720),
           "autopilot_ai_per_cycle": (0, 500), "autopilot_ai_per_day": (0, 500), "autopilot_jobs_per_cycle": (0, 50),
           "years_experience": (0, 60), "auto_track_daily_max": (0, 100),
-          "apply_agent_daily_cap": (0, 25), "apply_agent_site_daily_cap": (0, 25), "autopilot_apply_daily": (0, 25), "apply_agent_min_fit": (0, 100)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
+          "apply_agent_daily_cap": (0, 25), "ai_crosscheck_rounds": (0, 3), "apply_agent_site_daily_cap": (0, 25), "autopilot_apply_daily": (0, 25), "apply_agent_min_fit": (0, 100)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
 GOALS = ("contacts", "tailored_applications", "mock_sessions", "applications")  # quality first, raw volume last
 
 

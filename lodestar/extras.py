@@ -602,13 +602,19 @@ def _unchanged_by_guard(text: str, any_line: bool) -> bool:
         return False
 
 
-def ext_autofill(questions: list[str], eeo: bool = False, salary: bool = False, url=None) -> dict:
+AI_FILL_MAX = 5  # AI drafts per Fill click (each is one drafting call, more with the cross-check on)
+
+
+def ext_autofill(questions: list[str], eeo: bool = False, salary: bool = False, url=None, ai: bool = False) -> dict:
     """What the browser extension may type into the application form on the user's tab (docs/CAPTURE.md). Employer
     facing: contact (autofill_data), work history and education (profile bank, else the master minus Preferences),
     answers for the labels the page showed (pipeline.known: CANON keys, employer=True so private rows and rows naming
     the floor never count, eligibility / EEO only when you wrote them; else the best pipeline.suggestions near match,
     flagged 'suggested'), EEO and desired salary only when ticked on this click. Every text passes the floor guard
-    unchanged or is withheld (counted). Never read: Preferences, prefs, comp, offers, notes, mail, contacts, stories."""
+    unchanged or is withheld (counted). Never read: Preferences, prefs, comp, offers, notes, mail, contacts, stories.
+    ai (ticked on this click, pass 43): open questions on a job you saved get the pipeline's drafter (apply.answer,
+    need_facts: a missing fact comes back in 'missing', never a guess), at most AI_FILL_MAX, never eligibility / EEO /
+    salary / private ones, flagged 'ai' with the cross-check's verdict; nothing is proposed or saved."""
     from . import pipeline
     from .profile import drop_preferences, extract_heuristic, is_template, load, master_text
 
@@ -665,6 +671,30 @@ def ext_autofill(questions: list[str], eeo: bool = False, salary: bool = False, 
                                if allowed(s["question"])), None), "suggested"
         if hit and allowed(hit["question"]) and safe(f"{hit['question']}: {hit['answer']}"):
             answers[label] = hit | {"match": match}
+    from .web import http_only
+
+    u = http_only(url)
+    job = u and db.con().execute("SELECT * FROM jobs WHERE url=? AND status NOT IN ('rejected','withdrawn')", (u,)).fetchone()
+    if ai and not job:
+        out["ai_note"] = "AI drafts need the job: press Save on the posting first, then Fill again"
+    elif ai:
+        from . import apply
+
+        missing = {}
+        open_q = [q for q in questions if q not in answers and allowed(q) and not pipeline.never_ai(q)
+                  and pipeline.classify(q) not in ("salary", "eeo", "private")]
+        for label in open_q[:AI_FILL_MAX]:
+            try:
+                r = apply.answer(job, label, need_facts=True, propose=False)
+            except (Exception, SystemExit) as e:  # no provider, budget...: the rest stays yours
+                out["ai_note"] = f"AI drafts stopped: {str(e)[:200]}"
+                break
+            if r.get("missing"):
+                missing[label] = r["missing"]
+            elif r.get("answer") and safe(f"{label}: {r['answer']}"):
+                answers[label] = {"answer": r["answer"], "question": label, "match": "ai",
+                                  "check": (r.get("crosscheck") or {}).get("status")}
+        out["missing"] = missing
     out["answers"] = answers
     if eeo:
         out["eeo"] = {}
@@ -676,10 +706,6 @@ def ext_autofill(questions: list[str], eeo: bool = False, salary: bool = False, 
         hit = pipeline.known("Desired salary", employer=True)
         if hit and safe(f"Desired salary: {hit['answer']}"):  # the floor's own figure is refused here
             out["salary"] = hit["answer"]
-    from .web import http_only
-
-    u = http_only(url)
-    job = u and db.con().execute("SELECT * FROM jobs WHERE url=? AND status NOT IN ('rejected','withdrawn')", (u,)).fetchone()
     if job:  # the file input stays yours: the panel names the job's tailored resume to upload
         from .config import APPS_DIR
         from .util import slug

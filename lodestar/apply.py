@@ -69,10 +69,16 @@ CANDIDATE (tailored resume when there is one):
         text = str(r.get("answer") or "").strip()
     else:
         text = ai.ask(prompt, provider=provider)
+    check = None
+    from . import settings
+
+    if text and settings.pref("ai_crosscheck"):  # other AIs fact-check it against the same prompt (pass 43)
+        cc = ai.crosscheck(prompt, text, writer=provider or ai.default_provider())
+        text, check = cc["answer"], {k: cc[k] for k in ("status", "rounds", "issues")}
     prop = approvals.propose("answers", "save_answer", {"question": question, "answer": text, "tags": job["company"],
                                                         "source": f"AI draft for job #{job['id']}"},  # never pipeline.yours()
                              f"save answer: {question[:70]}", job["id"]) if propose else None
-    return {"answer": text, "missing": "", "proposal": prop, "reused": reused}
+    return {"answer": text, "missing": "", "proposal": prop, "reused": reused, "crosscheck": check}
 
 
 # ----------------------------------------------------------------------------- checklist

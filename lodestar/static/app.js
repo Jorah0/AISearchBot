@@ -1056,6 +1056,33 @@ async function acctAdd(btn) {
   const r = await acctCall('/api/accounts/add', { url: $('#acctUrl').value, username: $('#acctUser').value, password: $('#acctPw').value }, btn);
   if (!r) return; $('#acctPw').value = ''; $('#acctUser').value = ''; $('#acctUrl').value = ''; toast(`saved ${r.site}`, 'ok'); acctLoad();
 }
+/* pass 48: import logins from a password manager's CSV export. The file's text goes to the local server once and is
+   dropped here; the review lists sites and usernames only; Import saves the ticked ones to the OS keyring */
+let ACCT_IMP = null;
+async function acctImpRead(input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  if (f.size > 2_000_000) { input.value = ''; return toast('this export is too large (over 2 MB): export only your logins', 'err'); }
+  let text = await f.text(); input.value = '';
+  const r = await acctCall('/api/accounts/import', { csv: text }); text = '';
+  if (!r) return;
+  ACCT_IMP = r; acctImpPaint();
+}
+function acctImpPaint() {
+  const r = ACCT_IMP, el = $('#acctImpReview'); if (!r) { el.innerHTML = ''; return; }
+  const skipped = Object.entries(r.skipped || {}).map(([why, n]) => `${Number(n)} ${esc(why)}`).join(', ');
+  el.innerHTML = `<p class="muted">${Number(r.rows)} login(s) in the file; ${r.sites.length} job-application site(s) to import${skipped ? '; skipped: ' + skipped : ''}.</p>`
+    + r.sites.map((s, i) => `<div class="row"><label><input type="checkbox" id="acctImp${i}" checked> ${esc(s.site)}</label><span class="muted">${esc(s.username)}${s.ats ? ' · ' + esc(s.ats) : ''}</span></div>`).join('')
+    + `<div class="row">${r.sites.length ? '<button class="b" onclick="acctImpSave(this)">Import selected</button>' : ''}<button class="b ghost" onclick="acctImpCancel()">Cancel</button></div>`;
+}
+async function acctImpSave(btn) {
+  const sites = ACCT_IMP.sites.filter((s, i) => $('#acctImp' + i).checked).map(s => s.site);
+  const r = await acctCall('/api/accounts/import', { id: ACCT_IMP.id, sites }, btn);
+  ACCT_IMP = null; acctImpPaint(); if (!r) return;
+  const bad = Object.keys(r.failed || {});
+  toast(`imported ${r.saved.length} login(s) into the encrypted store${bad.length ? '; not imported: ' + bad.join(', ') : ''}. Now delete the export file.`, bad.length ? 'err' : 'ok');
+  acctLoad();
+}
+async function acctImpCancel() { if (ACCT_IMP) await api('/api/accounts/import', { id: ACCT_IMP.id, discard: true }); ACCT_IMP = null; acctImpPaint(); }
 async function acctCreate(btn) {
   const url = $('#acctUrl').value.trim(); if (!url) return toast("paste the site's sign-in page link first", 'err');
   if (!confirm(`Open ${url} in the agent's window and fill its sign-up form with your email and a new password? You tick the terms and press Create yourself.`)) return;
@@ -1393,7 +1420,7 @@ async function suggestDismiss(i) {
 /* ---- search ---- */
 function renderSearchless() { /* search results are rendered on demand */ }
 let RESULTS = [];  // listings stay in JS; markup carries only an index (listing text inside an onclick attribute is an XSS hole)
-const searchParams = () => ({ query: $('#sQ').value, keywords: $('#sK').value, location: $('#sLoc').value, min_salary: $('#sSal').value, posted_within: $('#sDays').value, seniority: $('#sLevel').value });
+const searchParams = () => ({ query: $('#sQ').value, keywords: $('#sK').value, location: $('#sLoc').value, radius: $('#sRadius').value, min_salary: $('#sSal').value, posted_within: $('#sDays').value, seniority: $('#sLevel').value });
 const GHOST_SHOW = 30;  // web_monitor.GHOST_SHOW
 const staleChip = g => g && g.score >= GHOST_SHOW ? `<span class="chip stale" title="${esc(g.reasons.join('; '))}">possibly stale</span>` : '';
 /* ---- market pay (paydata.py): public BLS OEWS percentiles from the cache; the drawer fetches the job you open (one try
@@ -1492,6 +1519,20 @@ async function spSave(btn) {
     if (r.error) return toast('error: ' + r.error, 'err');
     SP = r.defaults; $('#sLoc').value = ''; spPaint(); toast('saved to Preferences (private: never sent to employers)', 'ok');
   } finally { btn.disabled = false; }
+}
+/* pass 44: search by place. Remote jobs: remote only (open to your country when your profile's place says so, e.g.
+   'Remote (US)'). Near me: the place in your profile (a city, state or ZIP), 25 miles unless you picked a distance */
+const placeParts = () => String((typeof SP !== 'undefined' && SP.location) || '').split(/\s*[;|]\s*|\s+or\s+/).filter(Boolean);
+function remoteSearch(btn) {
+  const mine = placeParts().find(x => /remote|anywhere/i.test(x));
+  $('#sLoc').value = mine && /\(|-|,|\bin\b/.test(mine) ? mine : 'remote'; $('#sRadius').value = '';
+  doSearch(btn);
+}
+function nearMe() {
+  const place = placeParts().find(x => !/remote|anywhere/i.test(x));
+  if (!place) { toast('Your profile names no city, state or ZIP code: type one in the location box (e.g. "Austin, TX" or "78701"), or add it under Search profile.', 'err'); return $('#sLoc').focus(); }
+  $('#sLoc').value = place; if (!$('#sRadius').value) $('#sRadius').value = '25'; renderSiteSearch();
+  toast(`searching near ${place}: press "Search boards now"`, 'ok');
 }
 function doSearch(btn) {
   $('#sRes').innerHTML = '<div class="muted">searching…</div>';
@@ -2677,8 +2718,65 @@ function bulkPipe(useTo, btn) {
   }, btn);
 }
 
+/* pass 49: the primary AI switcher (top bar). The provider list is the linked ones; the models come from the provider
+   itself (run 'models', fetched once per open); Ollama also offers the local job model once built */
+let AI_MODELS = null;
+function renderAiPill() {
+  const p = S.primary, pill = $('#aiPill'); if (!pill) return;
+  pill.textContent = p ? `AI: ${p.provider} · ${p.model}` : 'AI: none linked';
+}
+function aiSwitchToggle(open) {
+  const box = $('#aiSwitch'), show = open === undefined ? box.hidden : open;
+  box.hidden = !show; $('#aiPill').setAttribute('aria-expanded', String(show));
+  if (!show) return;
+  const linked = Object.entries(S.providers).filter(([, on]) => on).map(([n]) => n);
+  if (!linked.length) { box.hidden = true; return toast('no AI provider is linked: Setup > Link an AI key', 'err'); }
+  $('#aiProv').innerHTML = linked.map(n => `<option ${S.primary && S.primary.provider === n ? 'selected' : ''}>${esc(n)}</option>`).join('');
+  AI_MODELS = null; aiModels();
+}
+function aiModels() {
+  const sel = $('#aiModel'); $('#aiSwitchNote').textContent = '';
+  if (AI_MODELS) return aiModelsPaint();
+  sel.innerHTML = '<option value="">loading models…</option>';
+  run('models', {}, r => { AI_MODELS = r || {}; aiModelsPaint(); }, null, () => { AI_MODELS = {}; aiModelsPaint(); });
+}
+function aiModelsPaint() {
+  const prov = $('#aiProv').value, sel = $('#aiModel'), note = $('#aiSwitchNote');
+  let list = Array.isArray(AI_MODELS[prov]) ? AI_MODELS[prov].filter(m => !String(m).startsWith('lodestar-jobs')) : [];
+  if (typeof AI_MODELS[prov] === 'string') note.textContent = `could not list ${prov}'s models: type one`;
+  if (prov === 'ollama' && S.jobmodel && S.jobmodel.built) list = [S.jobmodel.name, ...list];
+  const cur = S.primary && S.primary.provider === prov ? S.primary.model : '';
+  if (cur && !list.includes(cur)) list = [cur, ...list];
+  sel.innerHTML = list.map(m => `<option ${m === cur ? 'selected' : ''}>${esc(m)}</option>`).join('') || '<option value="">(none listed: type one)</option>';
+}
+function aiUse(btn) {
+  const provider = $('#aiProv').value, model = $('#aiModelOwn').value.trim() || $('#aiModel').value;
+  run('ai_primary', { provider, ...(model ? { model } : {}) }, r => {
+    S.primary = r; $('#aiModelOwn').value = ''; renderAiPill(); aiSwitchToggle(false);
+    toast(`primary AI: ${r.provider} · ${r.model}`, 'ok');
+  }, btn);
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#aiSwitch').hidden) aiSwitchToggle(false); });
+/* pass 46: the local job model (jobmodel.py): status, Build now, Evaluate. Every string goes through esc() */
+function renderJobModel() {
+  renderAiPill();
+  const m = S.jobmodel; if (!m || !$('#jmStatus')) return;
+  $('#jmOn').checked = !!m.on;
+  const b = m.built, d = m.decisions, ev = m.eval;
+  const built = b ? `${esc(m.name)} built ${esc(localTs(b.built_at, 16))} on ${esc(b.base)}, learned from ${Number(b.examples)} decision(s).` : `${esc(m.name)} is not built yet: press Build now (needs Ollama running).`;
+  const evs = ev ? ` Last evaluation (${Number(ev.pairs)} held-out pair(s); 0.5 = chance): ` + Object.entries(ev.models).map(([k, v]) => `${esc(k)} ${v.accuracy == null ? 'no scores' : Number(v.accuracy)}`).join(', ') + '.' : '';
+  $('#jmStatus').innerHTML = `${built} Your decisions: ${Number(d.pursued)} pursued, ${Number(d.passed)} passed on (${Number(d.held)} held out for evaluation).${evs}`;
+}
+function jmRun(op, btn) {
+  run('jobmodel', { op }, r => {
+    S.jobmodel = r.status; renderJobModel();
+    toast(op === 'eval' ? 'evaluated: ' + Object.entries(r.models).map(([k, v]) => `${k} ${v.accuracy}`).join(', ')
+      : r.changed ? `built on ${r.base}` : 'already up to date: nothing new to learn', 'ok');
+  }, btn);
+}
 /* Autopilot: the top-bar pill and the Setup card (master switch, budgets, per-step switches, last cycle, run log) */
 function renderAutopilot() {
+  renderJobModel();
   const p = S.prefs, a = S.autopilot || {}, pill = $('#apPill');
   pill.textContent = p.autopilot ? `Autopilot: on · ${Number(a.spent)} of ${Number(p.autopilot_ai_per_day)} AI calls today` : 'Autopilot: off';
   pill.classList.toggle('on', !!p.autopilot);

@@ -187,7 +187,7 @@ def _skills(x, ctx) -> tuple:
     missing = [k["term"] for k in req if not k["matched"]]
     chips = []
     if req:
-        chips.append((_sign(s), f"{got} of {len(req)} required skills"))
+        chips.append((_sign(round(100 * got / len(req))), f"{got} of {len(req)} required skills"))  # its own count's sign
     if missing:
         chips.append(("-", "missing " + ", ".join(missing[:2])))
     if nice:

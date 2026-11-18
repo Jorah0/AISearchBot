@@ -339,6 +339,12 @@ def alive(run) -> bool:
     return run["id"] in _OWNED or bool(run["heartbeat"] and run["heartbeat"] >= _cutoff(DEAD_S))
 
 
+def link_from_page(job, url) -> bool:
+    """This application link came from a posting page (a capture's 'apply on the company site' link) and is still the
+    one the job holds: page text chose it, so a run on it is never submitted unseen (as with apply_find's links)."""
+    return bool(url) and any(e["kind"] == "apply_link" and e["detail"].endswith(url) for e in db.events(job["id"]))
+
+
 def site_key(url) -> str:
     """The site an application goes to, for the per-site daily limit: its application system (greenhouse, lever...),
     else the host without www (a company's own careers site)."""
@@ -415,9 +421,11 @@ def enqueue(job_ids, mode: str | None = None, eeo: bool | None = None, start: bo
                 raise SystemExit(f"{site}: {n} of {cap} applications started today, so this one waits for tomorrow "
                                  "(Setup > Apply agent: applications per site a day)")
             ats = apply_ats.ats_of(apply_ats.host(url))
+            found = found or link_from_page(job, url)
             m, reasons = effective_mode(job, ats, mode)
             if found and m == "auto":  # a link Lodestar found itself is never submitted unseen
-                m, reasons = "review", [*reasons, "Lodestar found this link itself: review before it submits"]
+                m, reasons = "review", [*reasons, "Lodestar found this link itself (or read it from the posting page): "
+                                                  "review before it submits"]
             rid = db.add_run(jid, m, eeo)
             db.update_run(rid, url=url, ats=ats or "generic", hosts=apply_ats.hosts_for(url), reasons=reasons,
                           step=f"queued ({how})")

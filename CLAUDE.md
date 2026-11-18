@@ -10,12 +10,12 @@
 ## Project notes
 
 - **Product**: Lodestar. Package `lodestar/`; `jobbot` is a legacy script alias in `pyproject.toml`.
-- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1085 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
+- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1131 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
 - **Test matrix** (`docs/TESTS.md`): one row per feature with its unit/integration and E2E tests by exact name
   (`module.Class.test_name`). Every new feature adds a TESTS.md row + a unit test + an E2E test when it has UI;
   `tests/test_feature_matrix.py` fails on a row with no test, an unknown name, a browser test in the unit column, a
   test named in no row, a dropped row or Planned ID (pinned in the guard), or a stale test count above (update it when you add tests). Coverage (informative): see TESTS.md > Coverage.
-- **Browser tests**: `.venv\Scripts\python.exe -m unittest discover -s tests/e2e -p "e2e_*.py"` (258 tests; needs `pip install -e .[e2e]`; skips without Playwright or a browser). `tests/e2e/harness.py` `E2ETestCase`: per class a temp `LODESTAR_HOME` (module-level paths rebound), fictional seed via the app's write paths (`cls.ids`), fakes for AI (`ai_text`/`ai_json`), IMAP/SMTP, OAuth/urlopen, `util.fetch` (`FETCH`), keyring, toasts, `webbrowser`; real server on a free port; per test a fresh page with a console-error guard. Installed Edge by default; `LODESTAR_E2E_BROWSER=chromium` (CI), `LODESTAR_E2E_HEADED=1` to watch. Failures leave a screenshot + HTML in `tests/e2e/_artifacts/`. Never run `playwright install` locally. Wait with `idle()` (fetch-hook count), never sleeps or `networkidle` alone; drag with `Board.drag` (HTML5 events on the exact elements; a mouse drag picks up the wrong card when `<main>` scrolls). `FakeMail.FAIL` makes logins raise (refused/dropped mailbox).
+- **Browser tests**: `.venv\Scripts\python.exe -m unittest discover -s tests/e2e -p "e2e_*.py"` (263 tests; needs `pip install -e .[e2e]`; skips without Playwright or a browser). `tests/e2e/harness.py` `E2ETestCase`: per class a temp `LODESTAR_HOME` (module-level paths rebound), fictional seed via the app's write paths (`cls.ids`), fakes for AI (`ai_text`/`ai_json`), IMAP/SMTP, OAuth/urlopen, `util.fetch` (`FETCH`), keyring, toasts, `webbrowser`; real server on a free port; per test a fresh page with a console-error guard. Installed Edge by default; `LODESTAR_E2E_BROWSER=chromium` (CI), `LODESTAR_E2E_HEADED=1` to watch. Failures leave a screenshot + HTML in `tests/e2e/_artifacts/`. Never run `playwright install` locally. Wait with `idle()` (fetch-hook count), never sleeps or `networkidle` alone; drag with `Board.drag` (HTML5 events on the exact elements; a mouse drag picks up the wrong card when `<main>` scrolls). `FakeMail.FAIL` makes logins raise (refused/dropped mailbox).
 - **Profile**: prompts read `resume.candidate_text(limit)` (master + profile-bank facts, fitted by section), never `profile_text()[:N]`. Free-form helpers (coach, ideas, mock) pass `strict=False`. Anything an employer reads (resume, letters, mail, form answers) passes `private=False` so the salary floor stays out; drafts pass `drafts.screen` (a counter-offer's cited figures go in `cited=`, the only exemption), employer-facing answer reads use `employer=True` (private answers never leave). Writes to profile.md go through `profile.write_master()` (snapshot + atomic).
 - **Mail trust** (`email_monitor._match` / `_thread`): trusted = aligned DKIM/DMARC + a *strong* tie + agreement with the stored contact. Strong = stored contact, a thread our mail vouches for (it answered trusted mail or went to the stored contact; job not rejected/withdrawn), or the registrable domain of the job's posting URL on the company site. A domain that only *names* the company (`names_company`, any suffix) is weak: filed, never trusted. Mail about an untracked company is never trusted. Manual links (`link_mail`, Track as new job) and replies to them never make a sender trusted. Never loosen this.
 - **Drafts**: AI draft options/rewrites go through `drafts.py` (`options`, `rewrite`, `use`): one AI call, `screen()` (salary-floor guard) on every text, untrusted mail fenced, mail kinds proposed with review (`apply.mail_proposal(review=True)`), recipient from the server. A send_email proposal answering unverified mail is flagged `unverified` and loses `new_status` (`approvals.propose`).
@@ -204,6 +204,10 @@ PORT`, PORT = the server's own
   (`accounts.act`, worker-thread `_serve`) or automatically only with the account's `auto_verify`; a link opens only on the
   account's host. The account window (`accounts.start`: Re-login / Create) and the agent's worker and the sign-in window
   exclude each other on the profile. Tests: `test_apply_accounts` (FakePage), `e2e_accounts` (fixtures account.html/.js).
+- **Password import** (`pwimport.py`, pass 48): a password manager's CSV export -> `stage` (job-application sites only:
+  an ATS or a tracked job's host; `accounts.site_of` refuses the big five; a review of sites + usernames, rows in memory
+  only, `TTL`) -> `apply` through `accounts.add` (keyring first, row holds no password). No AI call, no file, no log;
+  Full AI cannot import (full_ai_check). Never return or print a password from it.
 - **Finding the posting** (`apply_find.py`, pass 22 addendum B): `enqueue` calls `apply_find.find` only when
   `resolve_url` refuses (so `resolve_url` itself never touches the network); a found link is saved as `apply_url` and its
   run is never `auto`. A match is an exact normalised title (then city), never a guess; the AI answers an index into the
@@ -211,7 +215,9 @@ PORT`, PORT = the server's own
   `util.robots_ok`, `extras._site_for`.
 - **Search input** (`web_monitor.alternatives` / `_loc_alts` / `place_ok` / `defaults`): a query's commas and 'or' are
   separate searches; a location's alternatives split on ';', '|' and a lowercase ' or ' only ('Portland, OR' is a place);
-  only `LOCAL` boards get the place (`_RUN.where`, in the cache key). The Jobs tab fills the location filter only from
+  only `LOCAL` boards get the place (`_RUN.where`, in the cache key). 'Remote (US)' and similar are `remote:<region>` (`remote_region_ok`), never a city;
+  filter `radius` (miles) reaches LOCAL boards via `_RUN.radius` (in the cache key); a LOCAL board's listing passes the
+  place it searched near (`_place_match`), a postal code matches other boards only by stating it. The Jobs tab fills the location filter only from
   Preferences (a resume-only city is a placeholder), so no hidden filter; `profile.set_pref_fields` writes Preferences.
 - **Career discovery** (`occupations.py`, `careers.py`, pass 23; plan docs/superpowers/plans/2026-11-13-blueprint-v1.1-alignment.md):
   the bundled O*NET 31.0 ontology (`data/onet.json.gz`, CC BY 4.0: show `occupations.meta()['credit']` wherever its
@@ -253,6 +259,26 @@ PORT`, PORT = the server's own
   check, `apply_find`'s link pick, the pay SOC pick, `pacing.site_queries`): the provider's `ai.LIGHT` model via the
   thread-local `ai.light()` (pref `ai_light`, on); a rejected light model falls back to the main one for that call and
   is never saved. Writing, fit ranking and anything employer-facing stay on `model_for`. Mail sorting lists open jobs only.
+- **Board bridge, AI Fill, cross-check** (pass 43): a capture keeps the posting page's 'apply on the company site' link
+  (`web.page_apply_link`: an ATS first, never a `forbidden` board host) as `apply_url` with an `apply_link` event
+  (BOOKKEEPING); `apply_agent.link_from_page` makes runs on it review, never auto. Fill's `ai` flag drafts open questions
+  on a saved job through `apply.answer(need_facts=True, propose=False)`, at most `extras.AI_FILL_MAX`, never
+  never_ai / salary / EEO / private kinds, each through the floor guard. `ai.crosscheck` (pref `ai_crosscheck`, off;
+  reviewers = council_providers minus the writer) runs inside `apply.answer`: bounded rounds, status agreed /
+  disagreed / unchecked. Lodestar still never signs in to, solves CAPTCHAs on, or applies on the five boards itself.
+- **Local job model** (`jobmodel.py`, pass 46; docs/DEVELOPING.md): `lodestar-jobs` in Ollama, built from a general base
+  with the employer-safe profile, Preferences via `redact_floor`, and `decisions()` as its MESSAGE history (Ollama replaces
+  a model's SYSTEM when a request sends one; the history stays). Every fourth decision is held out for `evaluate()`.
+  `ai.model_for('ollama')` returns it while built and pref `jobmodel` is on (env OLLAMA_MODEL still wins); a rejected
+  `lodestar-jobs` is forgotten and the call retries on the base. `ai.using(model)` pins a model (never saved). Ollama
+  calls go through `jobmodel._post` (urllib: util.fetch refuses loopback by design). Dev kit: `devkit.py`,
+  `lodestar dev new board|stage|helper NAME` / `dev check`.
+  Its strategies come from `data/playbook.json` (pass 47): every entry graded (strong / moderate / weak / myth) and
+  sourced; only strong + moderate reach the model as advice, myths as claims to correct, weak never. The plan for what
+  it learns next is docs/LEARNING_TREE.md (retrieval memory, bandit, time-split eval before anything heavier).
+- **Primary AI** (pass 49): `ai.set_primary(provider, model)` is the one way to swap it (top-bar AI pill, action
+  `ai_primary`, `lodestar primary`): linked provider only, inside `council_providers`, model id shape-checked, Full AI refused;
+  for Ollama the pick sets pref `jobmodel` (the job model on, any other model off). `state()['primary']` feeds the pill.
 - **Gotcha, SystemExit**: `ai.*` and `profile_text()` report user-facing problems (no key, model rejected, template profile) as `SystemExit`, which `except Exception` does not catch. Background paths catch `(Exception, SystemExit)`.
 - **Run**: `lodestar doctor` (add `--live` for one real AI call per provider), `lodestar desktop` (WebView2 window; falls back to the browser).
 - **Answer bank sources**: every `db.save_answer` from a path where you typed the answer passes `source` (Answers tab "typed under Answers", CLI, `pipeline.answer`); an AI `save_answer` proposal carries `source: "AI draft for job #N"`. Eligibility / EEO answers (`pipeline.never_ai`, which also knows the CANON legal keys) are reused only when `pipeline.yours(source)`, and AI prompts read bank rows only via `db.employer_answers()` (`pipeline.for_prompts`: never such a row, tagged or not). A new event kind a document builder writes goes in `db.BOOKKEEPING` (the follow-up clock).

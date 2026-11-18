@@ -124,7 +124,9 @@ async function capture() {
     if (posting.error) return say(posting.error, "err");
     const { status, data } = await post(live, "/api/ext/capture", posting);
     if (status !== 200) return say(data.error || `Lodestar answered ${status}.`, "err");
-    say(data.duplicate ? `Already on your Board (#${data.id}).` : `Tracked #${data.id}: ${data.company} - ${data.title}`, "ok");
+    const where = data.apply_url ? ` The apply agent can apply on ${hostOf(data.apply_url)}${data.ats ? ` (${data.ats})` : ""}; you review before it submits.`
+      : " No company application link on this page: Lodestar looks for the posting on the employer's own site when you press Apply.";
+    say((data.duplicate ? `Already on your Board (#${data.id}).` : `Tracked #${data.id}: ${data.company} - ${data.title}.`) + where, "ok");
   } catch (e) {
     say(`Lodestar did not answer: ${e.message}`, "err");
   } finally {
@@ -156,16 +158,17 @@ async function fill() {
     const frames = ok.filter((s) => s.result.fields.length);
     if (!frames.length) return say("No form fields here that Lodestar can fill.", "err");
     const questions = [...new Set(frames.flatMap((s) => s.result.questions))].slice(0, 100);
-    const { status, data } = await post(live, "/api/ext/autofill", { url: tab.url, questions, eeo: $("eeo").checked, salary: $("salary").checked });
+    const { status, data } = await post(live, "/api/ext/autofill", { url: tab.url, questions, eeo: $("eeo").checked, salary: $("salary").checked, ai: $("aidraft").checked });
     if (status !== 200) return say(data.error || `Lodestar answered ${status}.`, "err");
     const res = await chrome.scripting.executeScript({
       target: { tabId: tab.id, frameIds: frames.map((s) => s.frameId) }, func: (d) => LodestarFill(d), args: [data],
     });
-    let filled = 0, suggested = 0;
+    let filled = 0, suggested = 0, drafted = 0;
     for (const { result } of res) {
       if (!result) continue;
       filled += result.filled;
       suggested += result.suggested;
+      drafted += result.drafted || 0;
       for (const n of result.needsYou) {
         const li = document.createElement("li");
         li.textContent = `${n.label}: ${n.hint}`;
@@ -173,7 +176,9 @@ async function fill() {
       }
     }
     const held = data.withheld ? `, ${data.withheld} withheld by the salary-floor guard` : "";
-    say(`Filled ${filled} from your profile, ${suggested} from your answers${held}. ${$("needs").children.length} need you. Nothing was submitted.`, "ok");
+    const ai = drafted ? `, ${drafted} AI drafts (check each)` : "";
+    const note = data.ai_note ? ` ${data.ai_note}.` : "";
+    say(`Filled ${filled} from your profile, ${suggested} from your answers${ai}${held}. ${$("needs").children.length} need you. Nothing was submitted.${note}`, "ok");
   } catch (e) {
     say(`Lodestar did not answer: ${e.message}`, "err");
   } finally {

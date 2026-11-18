@@ -676,7 +676,7 @@ def variant_stats() -> list[dict]:
 # Timeline entries that are Lodestar's own bookkeeping, not contact with the employer: an Inbox proposal, its rejection,
 # a send that failed, a draft nobody sent yet, a reply draft that failed, unverified mail, an approval's result line
 # (the real change logs its own 'status' / 'created' / sent-mail event). None of them restarts the follow-up clock.
-BOOKKEEPING = ("proposed", "rejected_proposal", "send_failed", "set_status", "add_job", "save_answer", "reply",
+BOOKKEEPING = ("apply_link", "proposed", "rejected_proposal", "send_failed", "set_status", "add_job", "save_answer", "reply",
                "interview_date", "email_unverified", "followup_draft", "thanks_draft", "withdraw_draft", "counter_draft",
                "reply_draft", "referral_draft", "outreach_draft", "checkin_draft", "referral", "attachments",
                "run_to",  # run_to: an approved pipeline batch (approvals writes the executor's kind as the event)

@@ -171,18 +171,45 @@ class Extension(E2ETestCase):
             extension.pair(type(self).code.split("-", 1)[1], self.ext, "again")
         self.assertIn("This tab: 127.0.0.1", popup.text_content("#host"))
         said = self.press(popup, "#capture")
-        self.assertRegex(said, r"^Tracked #\d+: Harborview Robotics - Platform Data Engineer$")
+        self.assertRegex(said, r"^Tracked #\d+: Harborview Robotics - Platform Data Engineer\. No company application link")
         jid = int(said.split("#")[1].split(":")[0])
         job = db.con().execute("SELECT * FROM jobs WHERE id=?", (jid,)).fetchone()
         self.assertEqual((job["location"], job["url"]), ("Tacoma, WA, US", self.fix + "greenhouse.html"))
         self.assertIn("USD 150000-185000 YEAR", job["jd"])
         self.assertIn("telemetry lake for our warehouse robots", job["jd"])
         self.assertNotIn("&lt;", job["jd"])
-        self.assertEqual(self.press(popup, "#capture"), f"Already on your Board (#{jid}).")
+        self.assertTrue(self.press(popup, "#capture").startswith(f"Already on your Board (#{jid})."))
         self.assertEqual(tab.evaluate("__acts"), [])  # capture only reads the page
+
+    def test_capture_keeps_the_company_link_and_fill_drafts_open_questions(self):  # pass 43
+        tab, popup = self.form("ashby.html")
+        tab.evaluate("""() => {
+          const a = document.createElement('a');  // a board's 'apply on the company site' redirect
+          a.href = 'https://www.linkedin.com/jobs/view/externalApply/9?url=' + encodeURIComponent('https://boards.greenhouse.io/copperline/jobs/42');
+          a.textContent = 'Apply on company website';
+          document.body.prepend(a);
+          const l = document.createElement('label'), t = document.createElement('textarea');
+          l.htmlFor = t.id = t.name = 'xq';
+          l.textContent = 'Describe a data pipeline you rebuilt.';
+          (document.querySelector('form') || document.body).append(l, t); }""")
+        said = self.press(popup, "#capture")
+        self.assertIn("The apply agent can apply on boards.greenhouse.io (greenhouse); you review before it submits.", said)
+        jid = int(said.split("#")[1].split(":")[0].split(")")[0])
+        self.assertEqual(db.get_job(jid)["apply_url"], "https://boards.greenhouse.io/copperline/jobs/42")
+        self.assertEqual(tab.evaluate("__acts"), [])  # the link was read, never opened
+        self.addCleanup(setattr, type(self), "ai_json", type(self).ai_json)
+        type(self).ai_json = type(self).ai_json | {"answer": "I rebuilt the nightly ETL on Spark and Airflow.", "missing": ""}
+        said = self.press(popup, "#fill")
+        self.assertIn("1 AI drafts (check each)", said)
+        self.assertIn("Nothing was submitted", said)
+        self.assertEqual(self.val(tab, "#xq"), "I rebuilt the nightly ETL on Spark and Airflow.")
+        self.assertEqual(self.val(tab, "#f2a4"), "")  # desired salary: never an AI draft, and not ticked
+        self.assertIn("xq", self.lit(tab))
+        self.assertEqual(tab.evaluate("__acts"), [])
 
     def test_fill_types_empty_fields_highlights_and_never_submits(self):
         tab, popup = self.form("greenhouse.html")
+        popup.uncheck("#aidraft")  # this test is the saved-answers path; AI drafts: test_capture_keeps_the_company_link...
         tab.fill("#phone", "555-0199")  # typed by you before Fill: never overwritten
         tab.evaluate("__acts.length = 0")
         said = self.press(popup, "#fill")

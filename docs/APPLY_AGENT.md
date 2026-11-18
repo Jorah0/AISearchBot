@@ -144,3 +144,7 @@ encrypted by the OS for your account; on macOS / Linux they are protected only b
 ## Commands and routes
 
 See COMMANDS.md > Apply agent.
+
+## Importing logins from a password manager
+
+Accounts > Site accounts > Import logins from a password manager (or `lodestar accounts import FILE --yes [--delete]`) reads the CSV export of Chrome, Edge, Firefox, Bitwarden, 1Password, LastPass, Dashlane or KeePass. Only job-application sites are kept: application systems (Greenhouse, Lever, Ashby, Workday...) and the sites of jobs you track; never LinkedIn, Indeed, Glassdoor, ZipRecruiter or SimplyHired, never over an account already saved. You review the sites and usernames first; passwords are never shown. On Import each password goes only into the OS keyring (Windows Credential Manager, encrypted with your Windows sign-in); the database keeps the site and username. The apply agent types a password only into that site's own password field; no AI ever sees one. The export file is plain text: delete it afterwards.

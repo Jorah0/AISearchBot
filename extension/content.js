@@ -164,12 +164,30 @@
     };
   }
 
+  function applyLinks() {  // the posting's own 'apply' links; a board's redirect gives its url= target (read, never opened)
+    const out = [];
+    for (const a of document.querySelectorAll("a[href]")) {
+      if (!/apply/i.test(`${a.innerText || ""} ${a.getAttribute("aria-label") || ""}`)) continue;
+      let href = a.href;
+      try {
+        const u = new URL(href);
+        for (const k of ["url", "dest", "destination", "target", "redirect", "u"]) {
+          const v = u.searchParams.get(k);
+          if (v && /^https?:\/\//i.test(v)) { href = v; break; }
+        }
+      } catch (e) { continue; }
+      if (/^https?:\/\//i.test(href) && !out.includes(href)) out.push(href.slice(0, 2048));
+      if (out.length >= 20) break;
+    }
+    return out;
+  }
+
   globalThis.LodestarReadPosting = () => {
     const sel = String(getSelection() || "");
     const main = document.querySelector("main") || document.querySelector("article") || document.body;
     return {
       title: document.title, url: location.href.split("#")[0],
-      desc: (sel.length > 200 ? sel : main ? main.innerText : "").slice(0, 12000), posting: jsonLd(),
+      desc: (sel.length > 200 ? sel : main ? main.innerText : "").slice(0, 12000), posting: jsonLd(), apply_links: applyLinks(),
     };
   };
 
@@ -197,8 +215,11 @@
     else if (k === "salary") { v = data.salary; kind = "answer"; }
     else if (k === "question") {
       const a = (data.answers || {})[f.d.label];
-      if (!a) return null;
-      return { value: String(a.answer || ""), kind: "answer", note: a.match === "suggested" ? `answer "${a.question}" (check)` : "" };
+      const gap = (data.missing || {})[f.d.label];
+      if (!a) return gap ? { needs: `the AI needs a fact first: ${gap}` } : null;
+      const note = a.match === "suggested" ? `answer "${a.question}" (check)` : a.match === "ai"
+        ? `AI draft${a.check === "agreed" ? ", cross-checked: all AIs agree" : a.check === "disagreed" ? ", AIs disagree" : ""}: check this` : "";
+      return { value: String(a.answer || ""), kind: "answer", note, ai: a.match === "ai" };
     } else if (k.startsWith("exp.") || k.startsWith("edu.")) {
       const [kindKey, field] = k.split(".");
       const row = (data[kindKey === "exp" ? "experience" : "education"] || [])[+(f.d.group || ":0").split(":")[1]];
@@ -225,13 +246,14 @@
 
   globalThis.LodestarFill = (data) => {
     const rows = [], needs = [];
-    let filled = 0, suggested = 0;
+    let filled = 0, suggested = 0, drafted = 0;
     const need = (f, hint) => { needs.push({ label: f.d.label || f.d.name || f.d.id, hint }); rows.push({ text: `${f.d.label || f.d.name}: ${hint} (needs you)` }); };
     for (const f of st.fields) {
       if (!f.el.isConnected) continue;
       if (f.key === "resume") { need(f, `upload ${data.job && data.job.resume ? data.job.resume : "your resume"}`); continue; }
       const w = wanted(f, data || {});
       if (!w) continue;
+      if (w.needs) { need(f, w.needs); continue; }
       let value = w.value;
       if (/\.(start|end)$/.test(f.key)) {
         const t = dateText(f, value);
@@ -253,11 +275,11 @@
       setValue(f.el, value);
       f.el.style.outline = w.kind === "answer" ? AMBER : BLUE;
       st.done.set(f.el, { prev, value: f.el.value, outline });
-      if (w.kind === "answer") suggested++; else filled++;
+      if (w.ai) drafted++; else if (w.kind === "answer") suggested++; else filled++;
       rows.push({ el: f.el, label: f.d.label || f.d.name, text: `${f.d.label || f.d.name} <- ${w.note || value.slice(0, 60)}` });
     }
     panel(rows);
-    return { filled, suggested, needsYou: needs };
+    return { filled, suggested, drafted, needsYou: needs };
   };
 
   function undo(el) {  // only while the field still holds what we typed: an edit of yours is never undone

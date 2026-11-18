@@ -693,6 +693,21 @@ def _remoteok(q):
     return out
 
 
+_SEEKER_FIELDS = re.compile(r"(?im)^\s*(?:location|remote|willing to relocate|technologies|r[ée�]sum[ée�]"
+                            r"(?:/cv)?|cv|email)\s*:")
+
+
+def _hn_seeker(text: str) -> bool:
+    """A job seeker's own post left in the hiring thread: the 'Who wants to be hired?' template (three or more of its
+    Location / Remote / Willing to relocate / Technologies / Résumé / Email lines), or an 'I'm <name> ... looking for'
+    introduction that says nothing of hiring. A posting that opens with one 'Location:' line still counts as a job."""
+    if len(_SEEKER_FIELDS.findall(text)) >= 3:
+        return True
+    head = text.strip()[:600]
+    return bool(re.match(r"(?i)(?:hi[,!.]?\s+)?(?:i'?m|i am)\s", head)) and not re.search(
+        r"(?i)\bhiring\b|\bwe(?:'re| are)\b|\bour team\b|\bjoin us\b", head)
+
+
 def _hn(q):
     """Hacker News 'Who is hiring?' (monthly thread) via the Algolia API. Top-level comments are the postings and
     conventionally start with 'Company | Role | Location'."""
@@ -710,7 +725,7 @@ def _hn(q):
             if str(h.get("parent_id")) != sid:
                 continue  # a reply, not a posting
             text = strip_html(h.get("comment_text") or "")
-            if not _has_all(words, text):
+            if not _has_all(words, text) or _hn_seeker(text):
                 continue
             lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
             header = next((ln for ln in lines[:4] if "|" in ln), lines[0] if lines else "")[:200]
@@ -768,7 +783,8 @@ def _adzuna(q):
         d = fetch_json(f"https://api.adzuna.com/v1/api/jobs/{country}/search/1?app_id="
                        f"{urllib.parse.quote(setting('ADZUNA_APP_ID') or '')}&app_key="
                        f"{urllib.parse.quote(setting('ADZUNA_APP_KEY') or '')}&what={urllib.parse.quote(q)}"
-                       + (f"&where={urllib.parse.quote(w)}&distance=40" if (w := getattr(_RUN, "where", "")) else "")
+                       + (f"&where={urllib.parse.quote(w)}&distance={round((getattr(_RUN, 'radius', None) or 25) * 1.609)}"
+                          if (w := getattr(_RUN, "where", "")) else "")  # Adzuna's distance is km; 25 miles by default
                        + "&results_per_page=50&content-type=application/json")
     except urllib.error.HTTPError:  # Adzuna answered: the call counts
         raise
@@ -792,7 +808,8 @@ def _usajobs(q):
 
     w = getattr(_RUN, "where", "")
     d = fetch_json(f"https://data.usajobs.gov/api/search?Keyword={urllib.parse.quote(q)}&ResultsPerPage=100"
-                   + (f"&LocationName={urllib.parse.quote(w)}" if w else ""),
+                   + (f"&LocationName={urllib.parse.quote(w)}" if w else "")
+                   + (f"&Radius={r}" if w and (r := getattr(_RUN, "radius", None)) else ""),  # miles
                    headers={"Host": "data.usajobs.gov", "User-Agent": setting("USAJOBS_EMAIL") or "",
                             "Authorization-Key": setting("USAJOBS_API_KEY") or ""})
     out = []
@@ -955,12 +972,13 @@ def _cached(name: str, url: str, parse=None):
 LOCAL = {"adzuna", "usajobs"}  # boards that search near a place (_RUN.where); the others are filtered here (refine)
 
 
-def _ask(name: str, query: str, scheduled: bool, where: str = "") -> list[dict]:
-    """One board's listings for a query (near `where`, on the LOCAL boards). scheduled (saved searches in the monitor
-    loop): reuse a recent answer, and a board asked within its EVERY window is skipped (Throttled), so every cycle times
-    every saved search stays within each board's published limits. A manual search asks afresh (GLOBAL boards still
-    reuse their fresh copy)."""
-    w = where.casefold() if name in LOCAL else ""
+def _ask(name: str, query: str, scheduled: bool, where: str = "", radius: int | None = None) -> list[dict]:
+    """One board's listings for a query (near `where`, within `radius` miles, on the LOCAL boards). scheduled (saved
+    searches in the monitor loop): reuse a recent answer, and a board asked within its EVERY window is skipped
+    (Throttled), so every cycle times every saved search stays within each board's published limits. A manual search
+    asks afresh (GLOBAL boards still reuse their fresh copy)."""
+    radius = radius if name in LOCAL and where else None
+    w = where.casefold() + (f"~{radius}" if radius else "") if name in LOCAL else ""
     fn, now, q = SOURCES[name], time.monotonic(), query.casefold()
     every = EVERY.get(name, WATCH_CACHE_DEFAULT)
     hit = _ANSWERS.get((fn, q, w))
@@ -970,11 +988,11 @@ def _ask(name: str, query: str, scheduled: bool, where: str = "") -> list[dict]:
     key = f"src:{name}:{q}" + (f"@{w}" if w else "")
     if scheduled and per_query and not _due(key, every):
         raise Throttled(f"{name}: asked less than {max(1, every // 3600)} h ago")
-    _RUN.scheduled, _RUN.where = scheduled, where if w else ""  # the place as typed; the cache key casefolded
+    _RUN.scheduled, _RUN.where, _RUN.radius = scheduled, where if w else "", radius  # as typed; the cache key casefolded
     try:
         hit = _ANSWERS[(fn, q, w)] = (now, fn(query))  # a failure raises and caches nothing
     finally:
-        _RUN.scheduled, _RUN.where = False, ""
+        _RUN.scheduled, _RUN.where, _RUN.radius = False, "", None
     if per_query:
         _ran(key)
     return [dict(j) for j in hit[1]]
@@ -987,17 +1005,60 @@ def alternatives(s, n: int = 3) -> list[str]:
     return list(dict.fromkeys(x for x in out if x))[:n]
 
 
+_REMOTE_IN = re.compile(r"(?i)^(?:remote|anywhere)\s*(?:[-–(,:/]|\bin\b)\s*(?:the\s+)?(?P<a>[^()]+?)\s*\)?$"
+                        r"|^(?P<b>[^()]+?)\s*[-–,/]?\s*\(?\s*remote\s*\)?$")
+
+
 def _loc_alts(s) -> list[str]:
     """A location filter's alternatives: 'Austin, TX or remote' -> ['Austin, TX', 'remote'] (a comma stays inside one
-    place). 'anywhere' is remote."""
+    place). 'anywhere' is remote. Remote in a region ('Remote (US)', 'Remote - USA', 'US Remote', 'Remote in the US')
+    is 'remote:<region>': remote jobs open to that region (remote_region_ok), never a city called 'Remote (US)'."""
     # a lowercase ' or ' only: 'Portland, OR' is a place
-    out = [" ".join(x.split()) for x in re.split(r"\s*[;|]\s*|\s+or\s+", str(s or ""))]
-    return list(dict.fromkeys("remote" if x.casefold() in ("remote", "anywhere", "remote only") else x for x in out if x))
+    out = []
+    for x in (" ".join(x.split()) for x in re.split(r"\s*[;|]\s*|\s+or\s+", str(s or ""))):
+        if x.casefold() in ("remote", "anywhere", "remote only"):
+            x = "remote"
+        elif (m := _REMOTE_IN.match(x)) and (region := (m["a"] or m["b"] or "").strip(" -,/")):
+            x = f"remote:{region}"
+        if x:
+            out.append(x)
+    return list(dict.fromkeys(out))
+
+
+def _remote(alt: str) -> bool:
+    return alt == "remote" or alt.startswith("remote:")
 
 
 def _where(location) -> str:
     """The place a LOCAL board searches near: the filter's first place (none for remote)."""
-    return next((x for x in _loc_alts(location) if x != "remote"), "")
+    return next((x for x in _loc_alts(location) if not _remote(x)), "")
+
+
+_POSTAL = re.compile(r"(?i)^(?:\d{4,6}(?:-\d{4})?|[a-z]\d[a-z] ?\d[a-z]\d)$")  # ZIP, ZIP+4, most postcodes, Canada's
+
+
+def _place_match(place: str, j: dict, text: str, near: str) -> bool:
+    """A place filter matches a listing: a LOCAL board that searched near this place found it (its radius did the work:
+    Round Rock for Austin, anything for a postal code), else the listing's location names the place (place_ok) or, for
+    a postal code, states that code."""
+    if place == near and j.get("source") in LOCAL:
+        return True
+    if _POSTAL.fullmatch(place):
+        return bool(re.search(rf"(?i)\b{re.escape(place)}\b", text or ""))
+    return bool(text) and place_ok(place, text)
+
+
+_WIDE = {"united states": ("north america", "americas"), "canada": ("north america", "americas")}
+
+
+def remote_region_ok(region: str, text) -> bool:
+    """A remote listing is open to the region a 'Remote (US)' filter names: it states no region, a worldwide one, or
+    that region ('USA Only', 'Europe, USA, Canada'; 'North America' for the US or Canada). 'Latin America Only',
+    'Pakistan' or 'Europe' are not. ponytail: whole-word matching on the stated region; a geocoder if it misreads."""
+    t = re.sub(r"(?i)\b(?:only|time ?zones?|based|remote|hours?|friendly|preferred)\b", " ", str(text or ""))
+    if re.search(r"(?i)\b(?:worldwide|anywhere|global|international)\b", t) or not re.sub(r"[\W_]+", "", t):
+        return True
+    return place_ok(region, t) or any(re.search(rf"(?i)\b{w}\b", t) for w in _WIDE.get(_canon(region), ()))
 
 
 def search(query: str, keywords: str = "", only_new: bool = False, sources=None, mark: bool | None = None,
@@ -1016,7 +1077,7 @@ def search(query: str, keywords: str = "", only_new: bool = False, sources=None,
         asked = False
         for q in queries:  # each role on its own; dedupe merges what several find
             try:
-                raw += _ask(name, q, scheduled, where)
+                raw += _ask(name, q, scheduled, where, filters.get("radius"))
                 asked = True
             except Throttled as e:
                 print(f"  skipped {e}")
@@ -1136,9 +1197,18 @@ def seniority_of(title) -> str:
     return _NUM_LEVEL[m[1] or m[2]] if m else "mid"
 
 
-def clean_filters(location="", min_salary=None, posted_within=None, seniority="") -> dict:
-    """Search filters, validated (web, CLI and saved searches all pass through here). Empty values drop out."""
+def clean_filters(location="", min_salary=None, posted_within=None, seniority="", radius=None) -> dict:
+    """Search filters, validated (web, CLI and saved searches all pass through here). Empty values drop out. radius:
+    miles around the place, for the boards that search near one (LOCAL)."""
     out, loc, lvl = {}, " ".join(str(location or "").split()), str(seniority or "").strip().lower()
+    if radius not in (None, ""):
+        try:
+            r = int(str(radius).strip())
+        except ValueError:
+            raise SystemExit(f"radius must be a whole number of miles: {str(radius)[:40]}") from None
+        if not 1 <= r <= 200:
+            raise SystemExit("radius must be between 1 and 200 miles")
+        out["radius"] = r
     if loc:
         if len(loc) > 80:
             raise SystemExit("location filter: at most 80 characters")
@@ -1191,6 +1261,24 @@ def place_ok(place: str, where: str) -> bool:
     return not (len(parts) > 1 and parts[1] in _REGIONS and named and parts[1] not in named)
 
 
+_QUALIFIER = re.compile(r"\([^)]*\)|\[[^\]]*\]|\s[-–—|:]\s.*$|,.*$")
+_LEVEL_WORDS = re.compile(r"(?i)\b(?:working student|student|internship|intern|trainee|apprentice|junior|jr|senior|sr|"
+                          r"entry[- ]level)\b\.?")
+
+
+def search_titles(titles) -> list[str]:
+    """Resume job titles as board searches: the bracketed or dashed specialty goes ('Software Engineer (Frontend /
+    Full-Stack)' -> 'Software Engineer': boards match keywords, and that exact wording is in almost no posting), level
+    words go (the seniority filter carries the level), each title once. Lead / staff / manager stay: they change the role.
+    ponytail: the specialty is dropped, not searched; Target roles (Jobs > Search profile) say exactly what to search."""
+    out: dict[str, str] = {}
+    for t in titles:
+        t = " ".join(_LEVEL_WORDS.sub(" ", _QUALIFIER.sub(" ", str(t or ""))).split()).strip(" -/&,")
+        if t:
+            out.setdefault(t.casefold(), t)
+    return list(out.values())
+
+
 def defaults() -> dict:
     """What the Jobs tab starts from, from your profile: the roles (Preferences > Target roles, else your latest job
     titles) and the place (Preferences > Locations / remote, else your profile's location). {} parts when unset."""
@@ -1201,7 +1289,7 @@ def defaults() -> dict:
     roles, src = _split(profile.pref_field("Target roles", pt)), "Preferences"
     doc = profile.structured(employer=False) if not roles or not profile.pref_field("Locations / remote", pt) else None
     if not roles:
-        roles = list(dict.fromkeys(t for e in doc["experience"][:4] if (t := " ".join(str(e.get("title") or "").split()))))
+        roles = search_titles(e.get("title") for e in doc["experience"][:4])
         src = "your resume" if roles else ""
     loc = profile.pref_field("Locations / remote", pt) or profile.pref_field("Locations", pt)
     mine = str((doc or {}).get("contact", {}).get("location") or "")
@@ -1243,7 +1331,9 @@ def refine(listings: list[dict], keywords: str = "", today: date | None = None, 
     bad_co = {norm_company(c) for c in _prefs_list("excluded_companies")}
     bad_words = [norm_title(w) for w in _prefs_list("excluded_title_words")]
     alts = _loc_alts(f.get("location", ""))
-    places = [a for a in alts if a != "remote"]
+    places = [a for a in alts if not _remote(a)]
+    regions = None if "remote" in alts else [a[7:] for a in alts if a.startswith("remote:")]  # None: remote anywhere
+    near = _where(f.get("location", ""))  # the place the LOCAL boards searched around
     out = []
     for j in listings:
         title = norm_title(j["title"])
@@ -1253,9 +1343,11 @@ def refine(listings: list[dict], keywords: str = "", today: date | None = None, 
             continue
         if alts:
             text, kind = j["location"].strip(), None
-            if "remote" in alts:
+            if any(_remote(a) for a in alts):
                 kind = "remote" if j["source"] in db.REMOTE_BOARDS else db.remote_kind(f"{j['location']}\n{j['desc'][:1500]}")
-            if kind == "remote" or (text and any(place_ok(p, text) for p in places)):
+                if kind == "remote" and regions and not any(remote_region_ok(r, text) for r in regions):
+                    kind = "elsewhere"  # remote, but only for another region
+            if kind == "remote" or any(_place_match(p, j, text, near) for p in places):
                 pass
             elif not text and kind is None:
                 j["location_unknown"] = True

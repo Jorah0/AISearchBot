@@ -285,6 +285,9 @@ def cycle(a) -> None:
     _step("readiness", readiness.snapshot_due)  # one snapshot per round, from 2 h before to 24 h after it
     from . import pipeline
 
+    from . import jobmodel
+
+    _step("job model", jobmodel.tick)  # rebuilds the local Ollama job model when what it learns changed (at most daily)
     _step("pipeline", lambda: pipeline.advance(a.provider))  # step states always; Autopilot runs only when switched on
     _step("desktop notifications", _desktop)
     if settings.auto("obsidian_sync"):

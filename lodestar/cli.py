@@ -146,6 +146,51 @@ def cmd_usage(a):
         print(f"{k:<40} {v['calls']:>6} {v['input']:>10} {v['output']:>10}")
 
 
+def cmd_primary(a):
+    """`lodestar primary [PROVIDER [MODEL]]`: show or swap the primary AI (pass 49)."""
+    r = ai.set_primary(a.provider, a.model) if a.provider else ai.primary()
+    print(f"primary AI: {r['provider']} / {r['model']}" if r else ai.NO_PROVIDER)
+
+
+def cmd_jobmodel(a):
+    """The local job model in Ollama (jobmodel.py): status, build, eval."""
+    from . import jobmodel
+
+    if a.op == "build":
+        r = jobmodel.build(force=a.force)
+        print(f"{jobmodel.NAME}: {'built' if r['changed'] else 'unchanged (nothing new to learn; --force rebuilds)'} on "
+              f"{r['base']}, learned from {r['examples']} decision(s), {r['held']} held out for eval")
+        return
+    if a.op == "eval":
+        r = jobmodel.evaluate()
+        print(f"held-out pairs: {r['pairs']} (pursued vs passed on); share ranked the right way round (0.5 = chance):")
+        for m, v in r["models"].items():
+            print(f"  {m:<40} {v['accuracy'] if v['accuracy'] is not None else 'no scores'} ({v['scored']} scored)")
+        return
+    s = jobmodel.status()
+    b, d = s["built"], s["decisions"]
+    print(f"{s['name']}: {'on' if s['on'] else 'off'}; " + (f"built {b['built_at']} UTC on {b['base']}" if b else "not built yet"))
+    print(f"decisions: {d['pursued']} pursued, {d['passed']} passed on; learns from {d['learned']}, {d['held']} held out")
+    if s["eval"]:
+        print("last eval: " + ", ".join(f"{m} {v['accuracy']}" for m, v in s["eval"]["models"].items()))
+
+
+def cmd_dev(a):
+    """Developer kit (devkit.py): start a board / stage / helper test first, or run the fast guards."""
+    from . import devkit
+
+    if a.op == "check":
+        raise SystemExit(devkit.check())
+    if not (a.kind and a.name):
+        raise SystemExit("usage: lodestar dev new board|stage|helper NAME")
+    r = devkit.new(a.kind, a.name)
+    print(f"wrote {r['test']} (it fails until the feature exists: run it, then make it pass)\n")
+    print(f"add the code here: {r['where']}\n\n{r['snippet']}\n\nkeep these rules:")
+    for c in r["checklist"]:
+        print(f"  - {c}")
+    print("\nthen: a docs/TESTS.md row naming the test, the CLAUDE.md test count, `lodestar dev check`, the full suites")
+
+
 def cmd_ask(a):
     print(ai.ask(a.prompt, provider=a.provider))
 
@@ -931,6 +976,28 @@ def cmd_accounts(a):
     Create run in the agent's window from Accounts > Site accounts."""
     from . import accounts
 
+    if a.op == "import":  # pass 48: a password manager's CSV export; passwords only to the OS keyring
+        from . import pwimport
+
+        path = Path(a.file)
+        r = pwimport.stage(path.read_text(encoding="utf-8-sig", errors="replace"))
+        print(f"{r['rows']} login(s) in the file; {len(r['sites'])} job-application site(s):")
+        for s in r["sites"]:
+            print(f"  {s['site']:<45} {s['username']}" + (f"  ({s['ats']})" if s["ats"] else ""))
+        for why, n in r["skipped"].items():
+            print(f"  skipped {n}: {why}")
+        if not a.yes:
+            pwimport.discard(r["id"])
+            print("nothing saved: run again with --yes to import these (add --delete to remove the export file after)")
+            return
+        out = pwimport.apply(r["id"])
+        print(f"imported {len(out['saved'])} into the OS keyring" + "".join(f"\n  not imported {s}: {w}" for s, w in out["failed"].items()))
+        if a.delete:
+            path.unlink(missing_ok=True)
+            print(f"deleted {path}")
+        else:
+            print(f"now delete {path}: it holds your passwords in plain text")
+        return
     if a.op in (None, "list"):
         rows = accounts.listing(getattr(a, "q", "") or "")
         for r in rows:
@@ -2080,6 +2147,19 @@ def build() -> argparse.ArgumentParser:
     s = sub.add_parser("usage", help="token usage per provider/model from ~/.lodestar/usage.jsonl")
     s.add_argument("--days", type=int, default=30)
     s.set_defaults(f=cmd_usage)
+    s = sub.add_parser("primary", help="show or swap the primary AI: lodestar primary [PROVIDER [MODEL]]")
+    s.add_argument("provider", nargs="?")
+    s.add_argument("model", nargs="?")
+    s.set_defaults(f=cmd_primary)
+    s = sub.add_parser("jobmodel", help="the local job model in Ollama: status, build (learn from your decisions), eval")
+    s.add_argument("op", nargs="?", default="status", choices=["status", "build", "eval"])
+    s.add_argument("--force", action="store_true", help="build even when nothing it learns changed")
+    s.set_defaults(f=cmd_jobmodel)
+    s = sub.add_parser("dev", help="developer kit: new board|stage|helper NAME (test first + code and checklist), check")
+    s.add_argument("op", choices=["new", "check"])
+    s.add_argument("kind", nargs="?", choices=["board", "stage", "helper"])
+    s.add_argument("name", nargs="?")
+    s.set_defaults(f=cmd_dev)
     s = sub.add_parser("ask", help="one-off question to an AI provider")
     s.add_argument("prompt")
     s.set_defaults(f=cmd_ask)
@@ -2237,6 +2317,10 @@ def build() -> argparse.ArgumentParser:
     x = v.add_parser("password", help="change the stored password (--generate prints a new one for the site's form)")
     x.add_argument("id", type=int); x.add_argument("--password"); x.add_argument("--generate", action="store_true")
     x = v.add_parser("remove", help="forget the account (its password leaves the OS keyring)"); x.add_argument("id", type=int)
+    x = v.add_parser("import", help="import job-site logins from a password manager's CSV export (review first; "
+                                    "--yes saves them to the OS keyring)")
+    x.add_argument("file"); x.add_argument("--yes", action="store_true"); x.add_argument("--delete", action="store_true",
+                                                                                     help="delete the export file after")
     s.set_defaults(f=cmd_accounts)
 
     s = sub.add_parser("intel", help="job intelligence: company facts and news, hiring signals, role and pay context, "
