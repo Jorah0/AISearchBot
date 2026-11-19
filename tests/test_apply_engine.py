@@ -86,6 +86,18 @@ class FakeTab:
     def blocker(self):
         return "code" if self.code else self.page().get("blocker")
 
+    def solved(self):
+        return self.page().get("blocker") != "captcha"
+
+    def captcha(self):
+        return None  # the test fakes have no real widget: the solver is unavailable → the old handoff
+
+    def captcha_do(self, kind, answer):
+        pass
+
+    def captcha_solved(self):
+        return self.page().get("blocker") != "captcha"
+
     def errors(self):
         if self.page().get("errors_once") and self.n not in self.errored:
             self.errored.add(self.n)

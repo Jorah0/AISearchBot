@@ -50,6 +50,14 @@ TOOLS = {
     "apply_agent": ("Apply agent: submit applications in its own browser window. Off = it fills and stops before Submit; "
                     "on = each submission waits in the Inbox with screenshots; auto = it submits on its own within the "
                     "caps (docs/APPLY_AGENT.md)", False, False),
+    # pass 57: the CAPTCHA auto-solver and the auto sign-on toolset (captcha.py, signon.py). Both stay on the no-spam
+    # contract: bounded by a daily solve cap and a two-strike sign-in lockout; a failed solve or two bad logins hands
+    # the window to you, never retries, never touches a forbidden board.
+    "captcha_solver": ("CAPTCHA auto-solver: when the apply agent meets a challenge widget, clear it with the vision AI "
+                       "(your local Ollama model first) within a daily cap. Off = every CAPTCHA is handed to you, as "
+                       "before", True, True),
+    "signon": ("Auto sign-on: sign in on a website with your saved account (password manager) and auto-clear a CAPTCHA "
+               "on the way, under the two-strike and no-spam caps. Off = sign-ins are handed to you", True, True),
 }
 PREFS = {
     "name": "",
@@ -68,6 +76,7 @@ PREFS = {
     "ai_crosscheck": False,  # other linked AIs fact-check each AI form answer, the writer revises until all agree
     "ai_crosscheck_rounds": 2,  # revisions at most before a disagreement is handed to you
     "ai_light": True,  # short structured AI judgements use the provider's light model (ai.LIGHT): fewer, cheaper tokens
+    "ai_light_local": False,  # those light judgements run on your Ollama when it is linked (the usual light model if it fails)
     "models": {},
     "signature": "",
     "desktop_notifications": False,  # OS toasts from the monitor loop: daily agenda, interview in 2 h, deadline tomorrow
@@ -116,6 +125,11 @@ PREFS = {
     "apply_agent_auto_ats": "",  # comma list of ATS names auto may submit on; ships with none
     "apply_agent_eeo": False,
     "accounts_auto_create": False,  # the agent ticks a sign-up's terms box and presses Create (accounts._finish)
+    # pass 57: the CAPTCHA auto-solver and the auto sign-on (captcha.py, signon.py)
+    "captcha_model": "",  # the vision model to name for solving (empty: the provider's vision model, Ollama first)
+    "captcha_daily_max": 15,  # CAPTCHA solves a day at most (the no-spam cap); 0 = every check is handed to you
+    "captcha_max_attempts": 2,  # tries on one widget before it is handed to you (1-5)
+    "login_max_failures": 2,  # failed sign-ins before Lodestar waits for you (two-strike lockout; 1-5)
     # pass 28: Google Calendar busy times (calendar_busy.py); on = the next Google sign-in also asks to see when you are
     # busy (calendar.freebusy only: no event titles, nothing written)
     "calendar_freebusy": False,
@@ -144,6 +158,9 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "ai_crosscheck_rounds": ("AI cross-check rounds", "revisions at most before a disagreement is handed to you (0-3)"),
     "ai_light": ("Light model for quick checks", "sorting mail, the duplicate check and picking a link or occupation use "
                  "the provider's smaller model (Claude Haiku, gpt-5-mini); writing stays on your main model. Off: one model"),
+    "ai_light_local": ("Quick checks on Ollama", "those quick checks (the apply agent's duplicate check and link pick, "
+                       "sorting mail, the pay occupation) run on your local Ollama when it is linked: free and private; "
+                       "if Ollama fails, the usual light model answers. Writing stays on your main model"),
     "council_judge": ("Council judge", "a second provider checks and improves the council's combined answer"),
     "models": ("Pinned models", "provider=model to pin a model id (Setup > List models)"),
     "signature": ("Email signature", "how drafted emails sign off; empty: your name"),
@@ -197,8 +214,17 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
                              "(greenhouse, lever, ashby, ...); empty: none"),
     "apply_agent_eeo": ("Apply agent: include EEO answers", "type your saved EEO answers into forms by default"),
     "accounts_auto_create": ("Site accounts: finish sign-ups for me", "the agent ticks only a sign-up's terms / privacy "
-                             "box (never marketing), presses Create and uses that site's emailed code or link; "
-                             "CAPTCHAs stay yours"),
+                              "box (never marketing), presses Create and uses that site's emailed code or link; "
+                              "a CAPTCHA on the way is auto-cleared within the solver's caps (else yours)"),
+    "captcha_model": ("CAPTCHA solver: vision model", "the model that reads the challenge and answers it; empty: your "
+                                                        "linked Ollama's vision model (Ollama first, then your primary AI)"),
+    "captcha_daily_max": ("CAPTCHA solver: solves a day", "at most this many CAPTCHAs a day Lodestar clears itself; "
+                                                           "after it, the check is handed to you (the no-spam cap) (0-100)"),
+    "captcha_max_attempts": ("CAPTCHA solver: tries a widget", "attempts on one challenge before it is handed to you "
+                                                                 "(1-5)"),
+    "login_max_failures": ("Auto sign-on: failed logins before you step in", "after this many failed sign-ins on a "
+                                                                    "site, Lodestar waits for you to finish the login "
+                                                                    "in the window before it tries again (1-5)"),
 }
 CHOICES = {"resume_style": ("classic", "modern", "compact"),  # prefs limited to a fixed set of values
            "provider": ("", *PROVIDERS),  # "" = the first configured one
@@ -212,7 +238,8 @@ RANGES = {"followup_days": (1, 90), "auto_track_min_score": (0, 100), "weekly_ta
           "activity_weekly_min": (0, 100), "update_every_hours": (1, 720),
           "autopilot_ai_per_cycle": (0, 500), "autopilot_ai_per_day": (0, 500), "autopilot_jobs_per_cycle": (0, 50),
           "years_experience": (0, 60), "auto_track_daily_max": (0, 100),
-          "apply_agent_daily_cap": (0, 25), "ai_crosscheck_rounds": (0, 3), "apply_agent_site_daily_cap": (0, 25), "autopilot_apply_daily": (0, 25), "apply_agent_min_fit": (0, 100)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
+           "apply_agent_daily_cap": (0, 25), "ai_crosscheck_rounds": (0, 3), "apply_agent_site_daily_cap": (0, 25), "autopilot_apply_daily": (0, 25), "apply_agent_min_fit": (0, 100),
+           "captcha_daily_max": (0, 100), "captcha_max_attempts": (1, 5), "login_max_failures": (1, 5)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
 GOALS = ("contacts", "tailored_applications", "mock_sessions", "applications")  # quality first, raw volume last
 
 

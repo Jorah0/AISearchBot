@@ -27,7 +27,7 @@
 ## Project notes
 
 - **Product**: Lodestar. Package `lodestar/`; `jobbot` is a legacy script alias in `pyproject.toml`.
-- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1214 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
+- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1224 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
 - **Test matrix** (`docs/TESTS.md`): one row per feature with its unit/integration and E2E tests by exact name
   (`module.Class.test_name`). Every new feature adds a TESTS.md row + a unit test + an E2E test when it has UI;
   `tests/test_feature_matrix.py` fails on a row with no test, an unknown name, a browser test in the unit column, a
@@ -194,7 +194,9 @@ PORT`, PORT = the server's own
   allowed hosts, never a password field), clicks only `Tab.button` by text. Missing values are pipeline questions
   (`pipeline.ask(stage='apply')`), never guesses. Submissions: `approvals.propose('apply_agent', 'submit_application')`;
   `approvals.record_submission` is the only status change; a run that clicked Submit and lost track is `unknown`, never
-  retried. No stealth, no CAPTCHA solving (`test_apply_engine.Surfaces`). Tests drive `_loop(new_driver)` with a fake
+  retried. No stealth, no CAPTCHA solving (`test_apply_engine.Surfaces`). A CAPTCHA parks its run (`_park`, pass 56)
+  so the worker fills the next one; `_watch` resumes it once the widget's own response field holds your token
+  (`Tab.solved`, read only, never written) or on Continue. Needs-you alerts go through `_alert`. Tests drive `_loop(new_driver)` with a fake
   browser; E2E (`e2e_apply_agent`) uses a temp profile, fixtures in tests/fixtures/apply and `MAP * 127.0.0.1`, never
   `HOME/browser-profile`; the worker's idle hook is the only thread that may touch the page.
 - **Daily applying** (pass 40, `apply_agent.site_key` / `same_role` / `autopilot_apply`): every run started counts against
@@ -275,7 +277,7 @@ PORT`, PORT = the server's own
 - **Token use** (pass 41): short structured judgements call `ai.ask_json_light` (mail `classify`, the duplicate
   check, `apply_find`'s link pick, the pay SOC pick, `pacing.site_queries`): the provider's `ai.LIGHT` model via the
   thread-local `ai.light()` (pref `ai_light`, on); a rejected light model falls back to the main one for that call and
-  is never saved. Writing, fit ranking and anything employer-facing stay on `model_for`. Mail sorting lists open jobs only.
+  is never saved. Pref `ai_light_local` (pass 56, off) asks a linked Ollama first when the caller names no provider, then the usual light model. Writing, fit ranking and anything employer-facing stay on `model_for`. Mail sorting lists open jobs only.
 - **Board bridge, AI Fill, cross-check** (pass 43): a capture keeps the posting page's 'apply on the company site' link
   (`web.page_apply_link`: an ATS first, never a `forbidden` board host) as `apply_url` with an `apply_link` event
   (BOOKKEEPING); `apply_agent.link_from_page` makes runs on it review, never auto. Fill's `ai` flag drafts open questions

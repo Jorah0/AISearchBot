@@ -880,11 +880,63 @@ def _check(rid: int, tab, started: float | None = None) -> dict:
     return run
 
 
+def _alert(job, hint: str) -> None:
+    """Tell you a run needs you: alerts.log (+ your notify email, which reaches your phone) and, with pref
+    desktop_notifications, a desktop toast on its own thread (the OS may take seconds; the worker never waits)."""
+    from . import util
+
+    text = f"{hint[:120]} for #{job['id']} {job['company']}"
+    try:
+        util.notify(f"Lodestar needs you: {text}")
+    except Exception:  # an alert that cannot be written never stops the run
+        pass
+    if settings.pref("desktop_notifications"):
+        threading.Thread(target=util.desktop_notify, args=("Lodestar needs you", text), daemon=True,
+                         name="lodestar-toast").start()
+
+
+def _park(rid: int, tab, n: int, hint: str = "") -> None:
+    """A CAPTCHA on page n: the run waits for you without holding the worker (the next queued run is filled meanwhile);
+    _watch resumes it on its own once the check is solved, or on Continue. hint: why (e.g. the solver gave up / the
+    daily cap is reached), else the default 'solve the check' line."""
+    hint = hint or "solve the check in the agent window: it carries on once Lodestar sees it solved, or press Continue"
+    run = db.get_run(rid)
+    db.update_run(rid, state="needs_you", needs=[{"reason": "captcha", "hint": hint}], step=hint,
+                  answers=run["answers"] | {"_parked": n})
+    tab.suspended = True
+    try:
+        tab.front()
+    except Exception:
+        pass
+    _alert(db.get_job(run["job_id"]), hint)
+
+
+def _captcha_first(rid: int, tab, n: int) -> tuple[bool, str]:
+    """A CAPTCHA on page n: try the auto-solver (captcha.solve, the no-spam caps included) before handing it to you.
+    (True, '') when it cleared the check (the page is filled); (False, hint) when it is off, capped or failed — the
+    hint always ends in 'solve the check in the agent window', so the handoff reads the same way. The worker never
+    blocks: the solver is one bounded burst of AI calls, then it is yours. A tab without the captcha() protocol (a
+    test fake) is a handoff too: the solver never crashes the run."""
+    from . import captcha
+
+    base = "solve the check in the agent window, then press Continue"
+    if not hasattr(tab, "captcha"):  # a tab without the solver protocol: the old handoff, unchanged
+        return False, base
+    try:
+        r = captcha.solve(tab)
+    except Exception as e:  # a solver that crashes is a handoff, never a dead run
+        return False, f"the auto-solver could not run ({str(e)[:120]}); {base}"
+    if r["result"] == "solved":
+        return True, ""
+    why = {"capped": "the daily solve cap is reached so this one is yours",
+           "failed": f"the AI tried {max(1, r.get('attempts') or 1)} time(s) and the check is still pending",
+           "unavailable": "the auto-solver is off or has no vision model"}.get(r["result"], "the auto-solver did not clear it")
+    return False, f"{why}; {base}"
+
+
 def _wait(rid: int, tab, needs: list[dict], until, limit: int = NEEDS_S) -> dict:
     """needs_you until until(run) is true: questions answered, Continue pressed, the code page gone. Every 2 s; the
     hosts rule is suspended meanwhile (you drive), the forbidden rule never is."""
-    from .util import notify
-
     run = db.get_run(rid)
     job = db.get_job(run["job_id"])
     db.update_run(rid, state="needs_you", needs=needs, step=needs[0].get("hint", "")[:200] if needs else "")
@@ -893,18 +945,14 @@ def _wait(rid: int, tab, needs: list[dict], until, limit: int = NEEDS_S) -> dict
         tab.front()
     except Exception:
         pass
-    try:
-        notify(f"Lodestar needs you: {needs[0].get('hint', 'a question')[:120] if needs else 'a question'} for "
-               f"#{job['id']} {job['company']}")
-    except Exception:  # an alert that cannot be written never stops the run
-        pass
+    _alert(job, needs[0].get("hint", "a question") if needs else "a question")
     t0 = time.monotonic()
     while True:
         run = _check(rid, tab)
         if until(run):
             tab.suspended = False
             db.claim_run(rid, "needs_you", "running", needs=[],
-                         answers={k: v for k, v in run["answers"].items() if k != "_continue"})
+                         answers={k: v for k, v in run["answers"].items() if k not in ("_continue", "_parked")})
             return run  # as it was when the wait ended (did you press Continue?)
         if time.monotonic() - t0 > limit:
             raise _End("stopped", f"waited {limit // 60} minutes for you; the tab is left open")
@@ -938,9 +986,11 @@ def _offsite(rid: int, tab) -> None:
     tab.goto(url)
 
 
-def _fill(rid: int, tab, n: int = 1, pages: list | None = None) -> None:
+def _fill(rid: int, tab, n: int = 1, pages: list | None = None, trust: bool = False) -> None:
     """Page by page (at most MAX_PAGES): handoffs, the plan, writes, read-back, a screenshot, then Next or the final
-    page (_final). Your questions pause on the page where they occur. n / pages: refill from the open page on."""
+    page (_final). Your questions pause on the page where they occur. n / pages: refill from the open page on.
+    trust: you pressed Continue at a CAPTCHA, so the first look takes your word that it is done (a widget Lodestar
+    cannot read stays passable); any later CAPTCHA parks again."""
     from .extras import ext_autofill
 
     started, retried, pages, ack = time.monotonic(), False, pages or [], set()
@@ -950,11 +1000,28 @@ def _fill(rid: int, tab, n: int = 1, pages: list | None = None) -> None:
         if tab.offsite:
             _offsite(rid, tab)
             continue
-        if reason := tab.blocker():
+        reason, trusted, trust = tab.blocker(), trust, False
+        if reason == "captcha" and trusted:
+            reason = None
+        if reason:
+            if reason == "captcha":
+                solved, hint = _captcha_first(rid, tab, n)
+                if solved:
+                    continue  # the solver cleared it: fill this page
+                return _park(rid, tab, n, hint)  # the solver gave up or is off: it is yours; _watch resumes from page n
             hint = ""
             if reason == "login":  # a sign-in or sign-up page: your saved site account, or a new one you create
-                from . import accounts
+                from . import accounts, signon
 
+                if signon.enabled():  # auto sign-on: sign in with the saved account, auto-clear a CAPTCHA, two strikes max
+                    pg = accounts.Page(tab)
+                    r = signon.login(pg, tab.host(), run["job_id"])
+                    if r["result"] == "ok":
+                        continue
+                    hint = r["reason"]
+                    if r["result"] in ("locked", "captcha"):
+                        _handoff(rid, tab, reason, hint)
+                        continue
                 r, hint = accounts.handle(accounts.Page(tab), lambda needs, until: _wait(rid, tab, needs, until),
                                           f"run:{rid}", run["job_id"])
                 if r in ("ok", "offsite"):
@@ -1086,6 +1153,20 @@ def _watch(rid: int, tabs: dict) -> None:
     if tab.closed:
         raise _End("stopped", "you closed the agent's tab")
     age = time.time() - datetime.strptime(run["updated_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+    if run["state"] == "needs_you" and "_parked" in run["answers"] and not run["submit_clicks"]:  # never after Submit
+        if tab.forbidden_hit:
+            raise _End("stopped", f"the page tried to open {tab.forbidden_hit}, which Lodestar never opens; use your own browser")
+        pressed = bool(run["answers"].get("_continue"))
+        if not (pressed or tab.solved()):  # positive evidence only: a page error mid-navigation is not 'solved'
+            if age > NEEDS_S:
+                raise _End("stopped", f"waited {NEEDS_S // 60} minutes for you; the tab is left open")
+            return
+        n = run["answers"]["_parked"]
+        tab.suspended = False
+        if db.claim_run(rid, "needs_you", "running", needs=[], step=f"page {n}",
+                        answers={k: v for k, v in run["answers"].items() if k not in ("_continue", "_parked")}):
+            return _fill(rid, tab, n, run["plan"] or [], trust=pressed)
+        return
     if run["state"] == "ready" or (run["state"] == "needs_you" and run["submit_clicks"]):
         if text := tab.confirmed():
             return _confirmed(rid, tab, text)

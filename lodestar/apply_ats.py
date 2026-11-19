@@ -37,6 +37,10 @@ CHALLENGE = ('iframe[src*="recaptcha/api2/anchor"], iframe[src*="recaptcha/api2/
              'iframe[src*="recaptcha.net/recaptcha/"], iframe[src*="hcaptcha.com"], '
              'iframe[src*="challenges.cloudflare.com"], iframe[src*="arkoselabs.com"], '
              'iframe[src*="funcaptcha.com"], iframe[src*="geetest.com"], iframe[src*="friendlycaptcha.com"]')
+# The widgets' own response fields on the host page: a token there means you solved the check (read only, never set).
+SOLVED_BY = {"recaptcha": 'textarea[name="g-recaptcha-response"]', "hcaptcha.com": 'textarea[name="h-captcha-response"]',
+             "challenges.cloudflare.com": 'input[name="cf-turnstile-response"]',
+             "friendlycaptcha.com": 'input[name="frc-captcha-solution"]'}
 BUTTONS = 'button, input[type="submit"], input[type="button"], [role="button"], a[role="button"]'
 CAPS = {"label": 300, "option": 100, "options": 200, "value": 4000}  # untrusted page strings, capped
 
@@ -159,11 +163,11 @@ class Tab:
 
     def blocker(self) -> str | None:
         """captcha | code | login when a challenge, a code request or a sign-in page shows; invisible reCAPTCHA is
-        not one (and is never touched)."""
+        not one (and is never touched). A widget you already solved (its response field holds a token) is not either:
+        the run carries on by itself."""
         try:
-            for el in self.page.locator(CHALLENGE).all():
-                if el.is_visible() and (box := el.bounding_box()) and box["width"] > 10 and box["height"] > 10:
-                    return "captcha"
+            if self._challenge() == "pending":
+                return "captcha"
             for f in self._allowed_frames():
                 if f.locator('input[type="password"]').filter(visible=True).count():
                     return "login"
@@ -172,6 +176,122 @@ class Tab:
         except Exception:
             return None
         return "code" if CODE_RE.search(self.text()) else None
+
+    def _challenge(self) -> str:
+        """'pending' while any visible challenge frame lacks its own token, else 'clear'. Raises on a page error.
+        Each frame is judged by its own type's field (SOLVED_BY); a type with none (Arkose, GeeTest) is never solved."""
+        for el in self.page.locator(CHALLENGE).all():
+            if not (el.is_visible() and (box := el.bounding_box()) and box["width"] > 10 and box["height"] > 10):
+                continue
+            try:
+                src = el.get_attribute("src") or ""
+            except Exception:  # an unreadable frame: an unknown type, so pending
+                src = ""
+            sel = next((s for k, s in SOLVED_BY.items() if k in src), None)
+            vals = [f.input_value() for f in self.page.locator(sel).all()] if sel else []
+            if not (vals and all(v.strip() for v in vals)):
+                return "pending"
+        return "clear"
+
+    def solved(self) -> bool:
+        """Positive evidence only: no visible challenge is still pending. A page error is not evidence."""
+        try:
+            return self._challenge() == "clear"
+        except Exception:
+            return False
+
+    # --- the CAPTCHA auto-solver's page-object protocol (captcha.solve uses it; the model is Ollama first)
+    def _cap_el(self):
+        """The first visible challenge element (or None); its type from its src (captcha's kinds)."""
+        from . import captcha
+
+        try:
+            for el in self.page.locator(CHALLENGE).all():
+                if not (el.is_visible() and (box := el.bounding_box()) and box["width"] > 10 and box["height"] > 10):
+                    continue
+                try:
+                    src = el.get_attribute("src") or ""
+                except Exception:
+                    src = ""
+                low = src.lower()
+                kind = ("geetest" if "geetest" in low else "recaptcha" if "recaptcha" in low
+                        else "hcaptcha" if "hcaptcha" in low else "turnstile" if "challenges.cloudflare" in low
+                        else "arkose" if ("funcaptcha" in low or "arkose" in low)
+                        else "friendly" if "friendlycaptcha" in low else "text" if ("mtcaptcha" in low or "captcha" in low)
+                        else "unknown")
+                return el, kind
+        except Exception:
+            return None, ""
+        return None, ""
+
+    def captcha(self) -> dict | None:
+        """The challenge for the solver: {type, screenshot} (the element's own pixels) or None. A type the solver
+        does not drive is still reported (captcha._can_drive decides); a page error is None, not a crash."""
+        el, kind = self._cap_el()
+        if not el:
+            return None
+        try:
+            shot = el.screenshot()
+        except Exception:
+            shot = b""
+        return {"type": kind, "screenshot": shot or b"", "hint": ""}
+
+    def captcha_do(self, kind: str, answer) -> None:
+        """Perform the model's answer, best effort (type into the input / drag the slider / click the checkbox).
+        A type we cannot drive raises (captcha.solve catches it and hands the check to the user)."""
+        el, _ = self._cap_el()
+        page = el.content_frame() if el else self.page
+        if not page:
+            page = self.page
+        try:
+            if kind in ("puzzle", "geetest", "slider"):
+                box = page.locator(".geetest_slider_button").first
+                b = box.bounding_box()
+                x0, y0 = b["x"] + b["width"] / 2, b["y"] + b["height"] / 2
+                box.hover()
+                box.mouse_down()
+                d = max(0, min(300, int(answer)))
+                x = d
+                while x > 0:
+                    step = min(24, x)
+                    box.mouse_move(x0 + x, y0, steps=2)
+                    x -= step
+                box.mouse_up()
+            elif kind in ("checkbox",):
+                for sel in (".recaptcha-checkbox-border", ".h-captcha input[type=checkbox]",
+                            ".cf-turnstile input[type=checkbox]", ".frc-captcha input[type=checkbox]"):
+                    try:
+                        loc = page.locator(sel).first
+                        if loc.count():
+                            loc.click()
+                            return
+                    except Exception:
+                        continue
+            else:  # a text captcha: type into the page's own input
+                val = str(answer)
+                for scope in (self.page, page):
+                    for sel in ("input.mtcap-inputtext", "input[type=text]:visible", "input:not([type=checkbox])"):
+                        try:
+                            loc = scope.locator(sel)
+                            if loc.count():
+                                loc.first.fill(val)
+                                return
+                        except Exception:
+                            continue
+                raise SystemExit("no captcha input to type into")
+        except Exception:
+            raise
+
+    def captcha_solved(self) -> bool:
+        """Positive evidence the check is cleared: the widget's own response field holds a token (solved), or the
+        page says it verified (GeeTest's 'Verification Success' text). A page error is not evidence."""
+        if self.solved():
+            return True
+        try:
+            return bool(re.search(r"verification (?:success|passed)|you'?re (?:now )?verified|challenge (?:solved|passed)",
+                                  self.text(4000), re.I))
+        except Exception:
+            return False
 
     def errors(self) -> list[str]:
         out = []

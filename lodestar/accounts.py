@@ -366,6 +366,19 @@ class Page:
     def blocker(self):
         return self.tab.blocker()
 
+    def solved(self) -> bool:
+        return bool(getattr(self.tab, "solved", None) and self.tab.solved())
+
+    def captcha(self) -> dict | None:
+        """The challenge for the auto-solver (captcha.solve), or None (a fake tab without one)."""
+        return self.tab.captcha() if hasattr(self.tab, "captcha") else None
+
+    def captcha_do(self, kind: str, answer) -> None:
+        self.tab.captcha_do(kind, answer)
+
+    def captcha_solved(self) -> bool:
+        return bool(self.tab.captcha_solved()) if hasattr(self.tab, "captcha_solved") else self.solved()
+
     def text(self) -> str:
         return self.tab.text()
 
@@ -441,6 +454,27 @@ def _serve(pg, key: str, acct: dict | None, last: list) -> str | None:
     return None
 
 
+def _captcha_first(pg) -> tuple[bool, str]:
+    """A CAPTCHA on the way: try the auto-solver (captcha.solve, the no-spam caps included) before handing it to you.
+    (True, '') when it cleared the check; (False, hint) when it is off, capped or failed (the hint ends in the
+    'solve the check in the agent window' line, so the handoff reads the same way)."""
+    from . import captcha
+
+    if not hasattr(pg, "captcha"):  # a page without the solver protocol (a test fake): the old handoff, unchanged
+        return False, "solve the check in the agent window, then press Continue"
+    try:
+        r = captcha.solve(pg)
+    except Exception as e:
+        return False, f"the auto-solver could not run ({str(e)[:120]}): solve the check in the agent window, then Continue"
+    if r["result"] == "solved":
+        return True, ""
+    why = {"capped": "today's solve cap is reached so this one is yours",
+           "failed": f"the AI tried {max(1, r.get('attempts') or 1)} time(s) and the check is still pending",
+           "unavailable": "Lodestar does not drive this kind of check (or the solver is off)"}.get(r["result"],
+                                                                          "the auto-solver did not clear it")
+    return False, f"{why}; solve the check in the agent window, then press Continue"
+
+
 def _until(pg, key: str, acct: dict | None, done=None, out: dict | None = None):
     """The wait's test (called in the thread that owns the page, so it may act): your Continue, a request you made (Fill
     code, Open link, I have an account), an automatic one, or done()."""
@@ -476,8 +510,10 @@ def _after(pg, wait, key: str, acct: dict) -> tuple[str, str]:
         acct = for_site(pg.site) or acct
         t, b, ins = pg.text(), pg.blocker(), pg.inputs()
         if b == "captcha":
-            wait(_need("captcha", pg.site), _until(pg, key, acct))
-            continue
+            solved, why = _captcha_first(pg)  # the auto-solver cleared it, or hands it to you
+            if solved:
+                continue
+            return "yours", why
         if EXISTS_RE.search(t) and acct["status"] == "pending":
             return "exists", HINT["exists"]
         if LOCKED_RE.search(t):
@@ -577,7 +613,12 @@ def handle(pg, wait, key: str, job_id: int | None = None, create: bool = True) -
                 return "offsite", ""
             if forbidden(pg.site):
                 return "yours", HINT["yours"]
-            if pg.blocker() == "captcha":  # yours, before anything is typed
+            if pg.blocker() == "captcha":  # before anything is typed: the auto-solver first, then yours
+                solved, why = _captcha_first(pg)
+                if solved:
+                    continue
+                if captcha.enabled():
+                    return "yours", why
                 wait(_need("captcha", pg.site), _until(pg, key, for_site(pg.site)))
                 continue
             k, acct = kind(pg.inputs()), for_site(pg.site)

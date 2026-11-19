@@ -350,11 +350,65 @@ def ask(prompt: str, system: str | None = None, provider: str | None = None, **k
     return chat([{"role": "user", "content": prompt}], system=system, provider=provider, **kw)
 
 
+def vision_provider() -> str:
+    """The provider a vision (image) call goes to: Ollama when it is linked (solving stays local and private), else the
+    usual primary AI."""
+    if "ollama" in available():
+        return "ollama"
+    return default_provider()
+
+
+def ask_image(prompt: str, image: bytes, system: str | None = None, provider: str | None = None,
+              mime: str = "image/png", model: str | None = None, max_tokens: int = 500) -> str:
+    """One image question to the vision provider: a screenshot plus a prompt -> the model's text. The Ollama / any
+    local model is the primary method when it is linked (vision_provider); a model that the provider rejects fails and
+    the caller falls back to the user (this never raises silently on a missing vision model)."""
+    import base64
+
+    name = str(provider or vision_provider()).strip().lower()
+    if name not in PROVIDERS:
+        raise SystemExit(f"unknown AI provider '{name}'. Providers: {', '.join(PROVIDERS)}")
+    p = PROVIDERS[name]
+    key = api_key(name)
+    if not key:
+        raise SystemExit(f"{name}: missing {p['key']} (lodestar vault set {p['key']})")
+    b64 = base64.b64encode(image or b"").decode()
+    use_model = model or settings_model_or(name)
+    if p["kind"] == "anthropic":
+        body = {"model": use_model, "max_tokens": max_tokens, "messages": [{"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}}]}]}
+        if system:
+            body["system"] = system
+        r = _post(p["url"], {"x-api-key": key, "anthropic-version": "2023-06-01"}, body)
+        return "".join(b.get("text", "") for b in r["content"])
+    msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+        {"type": "text", "text": prompt}]}]
+    r = _post(p["url"], {"Authorization": f"Bearer {key}"}, {"model": use_model, "messages": msgs})
+    return r["choices"][0]["message"]["content"]
+
+
+def settings_model_or(name: str) -> str:
+    """A vision model for this provider (env <NAME>_VISION_MODEL first, then the pinned model), else the main one."""
+    from . import settings
+
+    return setting(f"{name.upper()}_VISION_MODEL") or settings.pref("models").get(name) or model_for(name)
+
+
 def ask_json_light(prompt: str, system: str | None = None, provider: str | None = None, **kw):
-    """ask_json on the provider's light model (light()): for short structured judgements, never for writing."""
+    """ask_json on the provider's light model (light()): for short structured judgements, never for writing. With pref
+    ai_light_local and Ollama linked, a call that names no provider asks Ollama first, then the usual one if it fails."""
+    from . import settings
+
     if system is not None:
         kw["system"] = system
     with light():
+        if provider is None and settings.pref("ai_light_local") and "ollama" in available():
+            try:
+                return ask_json(prompt, provider="ollama", **kw)
+            except (Exception, SystemExit) as e:  # Ollama down or a model it lacks: the usual light model answers
+                print(f"  ollama (quick check) failed, using the usual model: {str(e)[:120]}")
         return ask_json(prompt, provider=provider, **kw)
 
 
