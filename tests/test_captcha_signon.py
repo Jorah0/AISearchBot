@@ -24,6 +24,12 @@ PROF = ("# Jane Doe\nJane Doe | jane@example.com\n## Summary\nData engineer.\n"
         "## Skills\nPython, SQL\n## Preferences\nSalary floor: $123,456\n")
 
 
+def _qkey() -> str:
+    from datetime import datetime
+
+    return f"quota:captcha:{datetime.now():%Y-%m-%d}"
+
+
 @contextlib.contextmanager
 def fake_ai(answer=""):
     old = ai.ask_image
@@ -135,7 +141,7 @@ class Solve(Base):
 
     def test_a_bad_model_answer_is_a_failure_not_a_guess(self):
         page = FakePage("text")
-        with fake_ai("I can't see it"):
+        with fake_ai("!@#"):  # no alphanumerics: not a usable answer, so nothing is typed
             r = captcha.solve(page)
         self.assertEqual((r["result"], r["attempts"], page.dos), ("failed", 1, []))
 
@@ -147,8 +153,10 @@ class Solve(Base):
         self.assertEqual((r["result"], page.dos, page.captcha_solved()), ("unavailable", [], False))
 
     def test_the_daily_cap_stops_the_solver(self):
+        from datetime import datetime
+
         settings.set_pref("captcha_daily_max", 1)
-        db.meta_set("quota:captcha", 1)
+        db.meta_set(f"quota:captcha:{datetime.now():%Y-%m-%d}", 1)
         page = FakePage("text")
         with fake_ai("abcd"):
             r = captcha.solve(page)

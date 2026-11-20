@@ -35,11 +35,17 @@ def _attempts() -> int:
     return max(1, int(settings.pref("captcha_max_attempts")))
 
 
+def _used() -> int:
+    from datetime import datetime
+
+    return db.meta_get(f"quota:captcha:{datetime.now():%Y-%m-%d}")
+
+
 def left() -> int:
     """Solves left today (the no-spam daily cap); 0 when the cap is reached or the solver is off."""
     if not enabled():
         return 0
-    return max(0, _cap() - db.meta_get("quota:captcha"))
+    return max(0, _cap() - _used())
 
 
 def _take() -> bool:

@@ -118,13 +118,14 @@ def login(pg, site: str, job_id: int | None = None) -> dict:
             accounts.link_job(site, job_id)
         return {"result": "ok", "reason": "signed in"}
     if v in ("failed", "locked"):
-        try:  # the site's own line, for the drawer / history (never the password)
-            accounts._mark(site, "failed" if v == "failed" else "locked",
-                           error=accounts._said(pg.text(), accounts.FAILED_RE if v == "failed" else accounts.LOCKED_RE),
-                           reset=pg.link(accounts.FORGOT_RE))
-        except (SystemExit, Exception):
-            pass
-        if _bump(site) >= max_failures():  # the two-strike: stop and wait for you
+        n = _bump(site)
+        if n >= max_failures():  # the two-strike: mark it and stop, so it waits for you
+            try:
+                accounts._mark(site, "failed" if v == "failed" else "locked",
+                               error=accounts._said(pg.text(), accounts.FAILED_RE if v == "failed" else accounts.LOCKED_RE),
+                               reset=pg.link(accounts.FORGOT_RE))
+            except (SystemExit, Exception):
+                pass
             return {"result": "locked", "reason": f"the saved password did not work after {max_failures()} sign-in(s): "
                                                   "please finish the login in the agent window; Lodestar will not try "
                                                   "again until you do"}
