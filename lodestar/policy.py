@@ -20,6 +20,9 @@ REASONS = {
     "requested_review": "the caller asked for your review",
     "tool_manual": "the tool is on manual (Tools)",
     "tool_auto": "the tool is on auto and nothing needs you",
+    # pass 57: the CAPTCHA auto-solver and the auto sign-on toolset
+    "captcha_solver": "a CAPTCHA the AI clears (the captcha_solver tool; off = every check is yours)",
+    "signon": "a website login the sign-on toolset handles (the signon tool; two strikes, then yours)",
 }
 
 

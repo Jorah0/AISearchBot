@@ -130,7 +130,7 @@ class Solve(Base):
             r = captcha.solve(page)
         self.assertEqual((r["result"], r["type"]), ("solved", "text"))
         self.assertEqual(page.dos, [("text", "ABCD12")])  # case preserved, punctuation stripped
-        self.assertGreaterEqual(db.meta_get("quota:captcha"), 1)
+        self.assertGreaterEqual(db.meta_get(_qkey()), 1)
 
     def test_a_puzzle_is_dragged_to_the_model_distance(self):
         page = FakePage("geetest")
@@ -153,10 +153,8 @@ class Solve(Base):
         self.assertEqual((r["result"], page.dos, page.captcha_solved()), ("unavailable", [], False))
 
     def test_the_daily_cap_stops_the_solver(self):
-        from datetime import datetime
-
         settings.set_pref("captcha_daily_max", 1)
-        db.meta_set(f"quota:captcha:{datetime.now():%Y-%m-%d}", 1)
+        db.meta_set(_qkey(), 1)
         page = FakePage("text")
         with fake_ai("abcd"):
             r = captcha.solve(page)
@@ -179,7 +177,7 @@ class Solve(Base):
         page = FakePage("text", solve_ok=False)
         with fake_ai("abcd"):
             captcha.solve(page)
-        self.assertEqual(db.meta_get("quota:captcha"), 2)
+        self.assertEqual(db.meta_get(_qkey()), 2)
 
     def test_a_checkbox_needs_no_ai(self):
         page = FakePage("checkbox")
@@ -206,7 +204,7 @@ class SignOn(Base):
         with fake_ai("abcd12"):
             r = signon.login(page, SITE)
         self.assertEqual(r["result"], "ok")
-        self.assertGreaterEqual(db.meta_get("quota:captcha"), 1)
+        self.assertGreaterEqual(db.meta_get(_qkey()), 1)
 
     def test_two_failed_signins_lock_the_site(self):
         accounts.add(LOGIN, "jane@example.com", "Wrong-Pass-1!")
@@ -221,10 +219,12 @@ class SignOn(Base):
 
     def test_a_correct_password_resets_the_count(self):
         accounts.add(LOGIN, "jane@example.com", "Wrong-Pass-1!")
-        signon._bump(SITE)
-        self.assertTrue(signon.locked_out(SITE))
-        signon.clear(SITE)
-        self.assertFalse(signon.locked_out(SITE))
+        signon.login(FakePage(verdict="failed"), SITE)  # first try fails, count goes to 1
+        self.assertEqual(signon.failures(SITE), 1)
+        accounts.set_password(accounts.for_site(SITE)["id"], "Right-Pass-1!")  # the user fixes it
+        r = signon.login(FakePage(verdict="ok"), SITE)  # now succeeds: the count clears
+        self.assertEqual(r["result"], "ok")
+        self.assertEqual(signon.failures(SITE), 0)
 
     def test_no_saved_account_is_yours(self):
         self.assertEqual(signon.login(FakePage(verdict="ok"), "nowhere.example")["result"], "yours")

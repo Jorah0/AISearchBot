@@ -371,7 +371,12 @@ class Page:
 
     def captcha(self) -> dict | None:
         """The challenge for the auto-solver (captcha.solve), or None (a fake tab without one)."""
-        return self.tab.captcha() if hasattr(self.tab, "captcha") else None
+        if callable(getattr(self.tab, "captcha", None)):
+            try:
+                return self.tab.captcha()
+            except Exception:
+                return None
+        return None
 
     def captcha_do(self, kind: str, answer) -> None:
         self.tab.captcha_do(kind, answer)
@@ -460,7 +465,7 @@ def _captcha_first(pg) -> tuple[bool, str]:
     'solve the check in the agent window' line, so the handoff reads the same way)."""
     from . import captcha
 
-    if not hasattr(pg, "captcha"):  # a page without the solver protocol (a test fake): the old handoff, unchanged
+    if not callable(getattr(pg, "captcha", None)):  # a page without the solver protocol (a test fake): the old handoff
         return False, "solve the check in the agent window, then press Continue"
     try:
         r = captcha.solve(pg)
@@ -614,11 +619,15 @@ def handle(pg, wait, key: str, job_id: int | None = None, create: bool = True) -
             if forbidden(pg.site):
                 return "yours", HINT["yours"]
             if pg.blocker() == "captcha":  # before anything is typed: the auto-solver first, then yours
+                from . import captcha
+
                 solved, why = _captcha_first(pg)
                 if solved:
                     continue
-                if captcha.enabled():
+                if captcha.enabled() and callable(getattr(pg, "captcha", None)):
+                    # the solver ran and gave up (or the page is a kind it doesn't drive): yours
                     return "yours", why
+                # a page without the captcha() protocol (a test fake): wait for you, as before
                 wait(_need("captcha", pg.site), _until(pg, key, for_site(pg.site)))
                 continue
             k, acct = kind(pg.inputs()), for_site(pg.site)

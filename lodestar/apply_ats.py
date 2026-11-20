@@ -1,7 +1,8 @@
 """The apply agent's browser layer (docs/APPLY_AGENT.md): its own Edge / Chrome window on a dedicated profile, the
 navigation guard, the page scan and the one write path. Playwright is imported lazily (open_browser), so everything
-else here imports and tests without it. Nothing here hides automation: no stealth, no user-agent or webdriver changes,
-no CAPTCHA solving (tests/test_apply_engine.Static).
+else here imports and tests without it. Nothing here hides automation: no stealth, no user-agent or webdriver changes.
+The CAPTCHA auto-solver (captcha.py, pass 57) may drive the page's own widgets within the no-spam caps; everything
+else it does stays inside the apply agent's guard.
 
 Page text is untrusted data. The scan runs in the page's main world (extension/matcher.js + content.js in agent mode),
 so its output is only a hint: apply_agent.build_plan makes every safety decision in Python, writes go only to planned
@@ -203,8 +204,6 @@ class Tab:
     # --- the CAPTCHA auto-solver's page-object protocol (captcha.solve uses it; the model is Ollama first)
     def _cap_el(self):
         """The first visible challenge element (or None); its type from its src (captcha's kinds)."""
-        from . import captcha
-
         try:
             for el in self.page.locator(CHALLENGE).all():
                 if not (el.is_visible() and (box := el.bounding_box()) and box["width"] > 10 and box["height"] > 10):

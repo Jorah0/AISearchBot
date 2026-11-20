@@ -27,7 +27,7 @@
 ## Project notes
 
 - **Product**: Lodestar. Package `lodestar/`; `jobbot` is a legacy script alias in `pyproject.toml`.
-- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1224 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
+- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1239 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
 - **Test matrix** (`docs/TESTS.md`): one row per feature with its unit/integration and E2E tests by exact name
   (`module.Class.test_name`). Every new feature adds a TESTS.md row + a unit test + an E2E test when it has UI;
   `tests/test_feature_matrix.py` fails on a row with no test, an unknown name, a browser test in the unit column, a
@@ -194,7 +194,8 @@ PORT`, PORT = the server's own
   allowed hosts, never a password field), clicks only `Tab.button` by text. Missing values are pipeline questions
   (`pipeline.ask(stage='apply')`), never guesses. Submissions: `approvals.propose('apply_agent', 'submit_application')`;
   `approvals.record_submission` is the only status change; a run that clicked Submit and lost track is `unknown`, never
-  retried. No stealth, no CAPTCHA solving (`test_apply_engine.Surfaces`). A CAPTCHA parks its run (`_park`, pass 56)
+  retried. No stealth, no CAPTCHA solving (`test_apply_engine.Surfaces`). A CAPTCHA the auto-solver (pass 57, captcha.py)
+  can clear is handled by the vision AI (Ollama first) within the no-spam caps; the rest parks its run (`_park`, pass 56)
   so the worker fills the next one; `_watch` resumes it once the widget's own response field holds your token
   (`Tab.solved`, read only, never written) or on Continue. Needs-you alerts go through `_alert`. Tests drive `_loop(new_driver)` with a fake
   browser; E2E (`e2e_apply_agent`) uses a temp profile, fixtures in tests/fixtures/apply and `MAP * 127.0.0.1`, never
