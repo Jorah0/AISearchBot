@@ -618,8 +618,12 @@ class Ui(unittest.TestCase):
         self.assertNotIn("createObjectURL", self.js.replace(self.fn("vwPdfLoad"), "").replace(self.fn("vwDownload"), ""))
         # the frames: the studio's preview (srcdoc in an empty sandbox) and the viewer's pages (srcdoc sandboxed without
         # scripts; same-origin only so the app can lay them out into sheets) plus its PDF frame (a blob it fetched)
-        self.assertEqual(self.js.count("<iframe"), 1)
+        self.assertEqual(self.js.count("<iframe"), 2)
         self.assertIn('<iframe id="sFrame" sandbox=""', self.js)
+        # pass 54: the formatted email: popups only (its links), never scripts or same-origin; remote loads blocked by CSP
+        self.assertIn('<iframe class="mailhtml" title="The email as written" sandbox="allow-popups allow-popups-to-escape-sandbox"', self.js)
+        self.assertNotRegex(self.fn("mailBody"), r"allow-scripts|allow-same-origin")
+        self.assertIn("default-src 'none'; img-src data:", self.fn("mailDoc"))
         self.assertEqual(self.html.count("<iframe"), 3)
         for frame in ('<iframe id="vwFrame" sandbox="allow-same-origin allow-modals"', '<iframe id="vwFrame2" sandbox="allow-same-origin"',
                       '<iframe id="vwPdf" '):

@@ -76,10 +76,17 @@ class Insights(E2ETestCase):
         self.assertIn("no tailored resume sent yet", self.page.text_content("#insFunnel"))
 
     # --- goals
+    def test_skill_gaps_and_career_tracks_panel(self):  # pass 29, blueprint 13.1 / 13.3
+        self.go("insights")
+        panel = self.page.locator("#gapPanel")
+        self.assertIn("Skill gaps", panel.locator("h3").text_content())
+        self.assertRegex(panel.locator(".gap-note").text_content(), r"based on \d+ (open )?jobs?")
+        self.assertIn("Career tracks", panel.text_content())
+
     def test_weekly_goals_save_bad_value_and_clear(self):
         self.allow_console()
         self.no_goals()
-        self.assertIn("no goals set", self.page.text_content("#goalBars"))
+        self.assertEqual(self.page.text_content("#goalBars").strip(), "")  # pass 54: the fields say "not set"
         self.assertEqual(self.page.get_attribute("#g_contacts", "placeholder"), "not set")
         self.page.fill("#g_contacts", "3")
         self.page.fill("#g_applications", "2")
@@ -105,7 +112,7 @@ class Insights(E2ETestCase):
         self.page.fill("#g_applications", "0")
         self.run_click(self.page.get_by_role("button", name="Save goals"))
         self.idle()
-        self.assertIn("no goals set", self.page.text_content("#goalBars"))
+        self.assertEqual(self.page.text_content("#goalBars").strip(), "")  # pass 54: the fields say "not set"
 
     # --- offers side by side
     def test_offers_side_by_side_best_market_and_private_floor(self):

@@ -178,6 +178,27 @@ class Search(E2ETestCase):
         self.go("monitor")
         self.assertIn("search:analytics engineer", self.page.text_content("#wList"))
 
+    def test_remote_jobs_near_me_and_distance(self):  # pass 44
+        self.go("search")
+        self.page.fill("#sQ", "data engineer")
+        self.page.select_option("#sRadius", "50")
+        self.run_click(self.page.get_by_role("button", name="Remote jobs"))
+        self.assertRegex(self.page.input_value("#sLoc"), r"(?i)^remote")
+        self.assertEqual(self.page.input_value("#sRadius"), "")  # distance means nothing for remote work
+        self.assertGreaterEqual(self.listing("Saltmarsh Data").count(), 1)  # a remote board's USA job
+        self.page.click("#sNear")
+        place = self.page.evaluate("placeParts().find(x => !/remote|anywhere/i.test(x))")
+        self.assertTrue(place)  # the profile's city (Portland, OR in the fictional resume)
+        self.assertEqual((self.page.input_value("#sLoc"), self.page.input_value("#sRadius")), (place, "25"))
+        self.expect_toast(f"searching near {place}", "ok")
+        self.page.fill("#sLoc", "97205")  # a ZIP code is a place too
+        self.page.select_option("#sRadius", "10")
+        self.run_click(self.page.get_by_role("button", name="Save as watch"))
+        w = next(w for w in self.state()["watches"] if w["url"] == "search:data engineer")
+        self.assertEqual((w["filters"]["location"], w["filters"]["radius"]), ("97205", 10))
+        db.con().execute("DELETE FROM watches WHERE id=?", (w["id"],))
+        db.con().commit()
+
     def test_search_profile_fills_blank_searches_and_the_place_filter(self):
         from harness import PROFILE_MD
 

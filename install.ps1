@@ -22,7 +22,8 @@ if ($LASTEXITCODE -ne 0) { throw "Python 3.11+ is required (found $(python --ver
 if (-not (Test-Path .venv)) { Write-Host "[1/6] creating .venv"; python -m venv .venv } else { Write-Host "[1/6] .venv exists" }
 $py = Join-Path $root ".venv\Scripts\python.exe"
 $jb = Join-Path $root ".venv\Scripts\lodestar.exe"
-foreach ($launcher in @("jobbot.exe", "lodestar.exe")) {  # not $exe: that name is the -Exe switch parameter
+$jbw = Join-Path $root ".venv\Scripts\lodestarw.exe"  # the same commands without a console window
+foreach ($launcher in @("jobbot.exe", "lodestar.exe", "lodestarw.exe")) {  # not $exe: that name is the -Exe switch parameter
   $path = Join-Path $root ".venv\Scripts\$launcher"
   if (Test-Path $path) { try { [IO.File]::Open($path, "Open", "ReadWrite", "None").Close() } catch { throw "$launcher is running (a Lodestar/jobbot window or monitor loop is open). Close it and run the installer again." } }
 }
@@ -45,15 +46,15 @@ if (-not $NoShortcuts) {
   $ws = New-Object -ComObject WScript.Shell
   $icon = Join-Path $root "assets\lodestar.ico"
   $targets = @(
-    @{ Name = "Lodestar";         Args = "desktop";            Desc = "Lodestar: job-search workbot (desktop window + monitor loop)" },
-    @{ Name = "Lodestar monitor"; Args = "run --every $Every"; Desc = "Lodestar monitor loop only" }
+    @{ Name = "Lodestar";         Exe = $jbw; Args = "desktop";            Desc = "Lodestar: job-search workbot (desktop window + monitor loop)" },
+    @{ Name = "Lodestar monitor"; Exe = $jb;  Args = "run --every $Every"; Desc = "Lodestar monitor loop only (shows its log)" }
   )
   foreach ($dir in @([Environment]::GetFolderPath("Desktop"), (Join-Path ([Environment]::GetFolderPath("Programs")) "Lodestar"))) {
     New-Item -ItemType Directory -Force $dir | Out-Null
     foreach ($old in @("lodestar.lnk", "lodestar monitor.lnk")) { Remove-Item -Force (Join-Path $dir $old) -ErrorAction SilentlyContinue }
     foreach ($t in $targets) {
       $lnk = $ws.CreateShortcut((Join-Path $dir ($t.Name + ".lnk")))
-      $lnk.TargetPath = $jb; $lnk.Arguments = $t.Args; $lnk.WorkingDirectory = $root; $lnk.Description = $t.Desc
+      $lnk.TargetPath = $t.Exe; $lnk.Arguments = $t.Args; $lnk.WorkingDirectory = $root; $lnk.Description = $t.Desc
       $lnk.IconLocation = if (Test-Path $icon) { "$icon,0" } else { "$env:SystemRoot\System32\shell32.dll,165" }
       $lnk.Save()
     }
@@ -63,7 +64,7 @@ if (-not $NoShortcuts) {
 # 5. scheduled task
 if ($Schedule) {
   Write-Host "[5/6] registering scheduled task 'lodestar' (every $Every min)"
-  schtasks /Create /SC MINUTE /MO $Every /TN lodestar /TR "`"$jb`" run --once" /F | Out-Null
+  schtasks /Create /SC MINUTE /MO $Every /TN lodestar /TR "`"$jbw`" run --once" /F | Out-Null  # no console window
 } else { Write-Host "[5/6] scheduled task skipped (re-run with -Schedule, or: lodestar schedule install)" }
 
 # 6. optional standalone exe

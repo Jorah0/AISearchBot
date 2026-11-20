@@ -272,7 +272,7 @@ class AccountFlows(E2ETestCase):
 
 
 class AccountsPanel(E2ETestCase):
-    """Setup > Site accounts: list, search, copy, reveal, change password, inbox switch, reset, re-login, remove, save a
+    """Accounts > Site accounts: list, search, copy, reveal, change password, inbox switch, reset, re-login, remove, save a
     login, create; waiting steps with Fill code and Continue; every page string escaped."""
 
     @classmethod
@@ -295,7 +295,7 @@ class AccountsPanel(E2ETestCase):
         old = apply_agent.login_window
         apply_agent.login_window = lambda url=None: self.calls.append(("window", url)) or {"opened": True, "url": url}
         self.addCleanup(setattr, apply_agent, "login_window", old)
-        self.go("setup")
+        self.go("accounts")
         self.page.wait_for_selector("#acctList .acct")
 
     def row(self, site):

@@ -8,10 +8,9 @@ Commands you type yourself are confirmed by typing them; only automatic flows go
 """
 import copy
 import json
-import os
-import time
 import threading
 
+from . import util
 from .ai import PROVIDERS
 from .config import HOME, full_ai_check
 
@@ -51,6 +50,14 @@ TOOLS = {
     "apply_agent": ("Apply agent: submit applications in its own browser window. Off = it fills and stops before Submit; "
                     "on = each submission waits in the Inbox with screenshots; auto = it submits on its own within the "
                     "caps (docs/APPLY_AGENT.md)", False, False),
+    # pass 57: the CAPTCHA auto-solver and the auto sign-on toolset (captcha.py, signon.py). Both stay on the no-spam
+    # contract: bounded by a daily solve cap and a two-strike sign-in lockout; a failed solve or two bad logins hands
+    # the window to you, never retries, never touches a forbidden board.
+    "captcha_solver": ("CAPTCHA auto-solver: when the apply agent meets a challenge widget, clear it with the vision AI "
+                       "(your local Ollama model first) within a daily cap. Off = every CAPTCHA is handed to you, as "
+                       "before", True, True),
+    "signon": ("Auto sign-on: sign in on a website with your saved account (password manager) and auto-clear a CAPTCHA "
+               "on the way, under the two-strike and no-spam caps. Off = sign-ins are handed to you", True, True),
 }
 PREFS = {
     "name": "",
@@ -61,7 +68,15 @@ PREFS = {
     "weekly_target": 10,
     "provider": "",
     "council_providers": "",
+    "council_members": "",  # the council's models: 'provider=model, ...' (the AI switcher); empty: every allowed provider
     "council_judge": False,
+    "jobmodel": True,  # build the local job model in Ollama (jobmodel.py) and use it as Ollama's model once built
+    "jobmodel_base": "",  # the general Ollama model it is built on; empty: the best one Ollama offers
+    "ai_novelty": True,  # pass 55: one light AI call tells a new listing from a copy or repost of an older one (capped daily)
+    "ai_crosscheck": False,  # other linked AIs fact-check each AI form answer, the writer revises until all agree
+    "ai_crosscheck_rounds": 2,  # revisions at most before a disagreement is handed to you
+    "ai_light": True,  # short structured AI judgements use the provider's light model (ai.LIGHT): fewer, cheaper tokens
+    "ai_light_local": False,  # those light judgements run on your Ollama when it is linked (the usual light model if it fails)
     "models": {},
     "signature": "",
     "desktop_notifications": False,  # OS toasts from the monitor loop: daily agenda, interview in 2 h, deadline tomorrow
@@ -72,6 +87,8 @@ PREFS = {
     "excluded_companies": "",
     "excluded_title_words": "",
     "weekly_goals": {},  # goal=number per week (GOALS); none by default, and no default application count
+    "council_on": True,  # pass 54: off = every "council" request and the AI cross-check use the primary AI alone
+    "phone_access": False,  # pass 53: Lodestar on your phone over your home Wi-Fi (phone.py); off = no LAN listener
     "activity_weekly_min": 0,  # activity log: activities a week your unemployment claim asks for (0 = none set)
     # self-update (updater.py): the monitor loop checks every update_every_hours; notify = an alert, auto = apply
     "update_mode": "notify",
@@ -101,10 +118,21 @@ PREFS = {
     # apply agent: stop = you press Submit; review = the Inbox first; auto = every gate in apply_agent.auto_blockers
     "apply_agent_mode": "stop",
     "apply_agent_daily_cap": 5,
+    "apply_agent_site_daily_cap": 3,  # applications started per site a day (an ATS such as greenhouse, or a company host)
+    "autopilot_apply": False,  # Autopilot starts the apply agent for jobs whose preparation is done (its mode still decides Submit)
+    "autopilot_apply_daily": 5,  # Autopilot starts at most this many applications a day (yours count too)
     "apply_agent_min_fit": 80,
     "apply_agent_auto_ats": "",  # comma list of ATS names auto may submit on; ships with none
     "apply_agent_eeo": False,
     "accounts_auto_create": False,  # the agent ticks a sign-up's terms box and presses Create (accounts._finish)
+    # pass 57: the CAPTCHA auto-solver and the auto sign-on (captcha.py, signon.py)
+    "captcha_model": "",  # the vision model to name for solving (empty: the provider's vision model, Ollama first)
+    "captcha_daily_max": 15,  # CAPTCHA solves a day at most (the no-spam cap); 0 = every check is handed to you
+    "captcha_max_attempts": 2,  # tries on one widget before it is handed to you (1-5)
+    "login_max_failures": 2,  # failed sign-ins before Lodestar waits for you (two-strike lockout; 1-5)
+    # pass 28: Google Calendar busy times (calendar_busy.py); on = the next Google sign-in also asks to see when you are
+    # busy (calendar.freebusy only: no event titles, nothing written)
+    "calendar_freebusy": False,
 }
 PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "name": ("Your name", "signs drafted emails when no signature is set"),
@@ -115,7 +143,24 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "reply_to_confirmations": ("Reply to confirmations", "also draft replies to 'we received your application' mail"),
     "weekly_target": ("Weekly application target", "applications a week; idea crafting plans around it (0-200)"),
     "provider": ("Default AI provider", "empty: the first configured one"),
+    "council_members": ("Council models", "the exact models the council asks, as provider=model, comma separated "
+                        "(choose them in the top bar's AI switcher); empty: every allowed provider with its current model"),
     "council_providers": ("Council providers", "comma list of the only providers the council and ideas may use; empty: all configured"),
+    "jobmodel": ("Local job model", "Lodestar builds 'lodestar-jobs' in your Ollama from a general model, your profile "
+                 "(never the salary floor) and what you pursued or passed on, rebuilds it daily when that changes, and "
+                 "uses it as Ollama's model; off: your chosen Ollama model"),
+    "jobmodel_base": ("Local job model: base", "the Ollama model it is built on (e.g. llama3.2, qwen3); empty: the best "
+                      "general model Ollama offers (code and embedding models last)"),
+    "ai_novelty": ("AI: new listing or copy?", "a light AI call tells a new job listing from another copy or a repost of one you already have (at most 40 a day); off: rules only"),
+    "ai_crosscheck": ("AI cross-check", "your other linked AIs fact-check each AI form answer against the same "
+                      "source; the writer revises on any objection until all agree, else the answer is flagged for you "
+                      "(costs more calls: up to rounds+1 reviews per AI plus the revisions)"),
+    "ai_crosscheck_rounds": ("AI cross-check rounds", "revisions at most before a disagreement is handed to you (0-3)"),
+    "ai_light": ("Light model for quick checks", "sorting mail, the duplicate check and picking a link or occupation use "
+                 "the provider's smaller model (Claude Haiku, gpt-5-mini); writing stays on your main model. Off: one model"),
+    "ai_light_local": ("Quick checks on Ollama", "those quick checks (the apply agent's duplicate check and link pick, "
+                       "sorting mail, the pay occupation) run on your local Ollama when it is linked: free and private; "
+                       "if Ollama fails, the usual light model answers. Writing stays on your main model"),
     "council_judge": ("Council judge", "a second provider checks and improves the council's combined answer"),
     "models": ("Pinned models", "provider=model to pin a model id (Setup > List models)"),
     "signature": ("Email signature", "how drafted emails sign off; empty: your name"),
@@ -126,6 +171,8 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "excluded_companies": ("Excluded companies (private)", "comma list dropped from search results and watches"),
     "excluded_title_words": ("Excluded title words (private)", "comma list: listings whose title has one are dropped"),
     "weekly_goals": ("Weekly goals", "goal=number, e.g. contacts=5 (also on the Insights tab)"),
+    "council_on": ("Council on", "off: council requests use the primary AI alone and the AI cross-check is paused"),
+    "phone_access": ("Phone access", "serve Lodestar to paired phones on your home Wi-Fi (Setup > Phone access)"),
     "activity_weekly_min": ("Activity log weekly minimum", "activities a week your unemployment claim asks for (0 = none)"),
     "update_mode": ("Updates", "off; notify: tell me when an update is out; auto: apply it (tested, rolled back on failure)"),
     "update_every_hours": ("Check for updates every (hours)", "how often the monitor loop looks for an update (1-720)"),
@@ -140,6 +187,8 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
                            "ask (labelled 'reported, unverified'; off: only your logs, your pastes, the company's pages, the JD)"),
     "bookmarklets": ("Bookmarklets", "auto: on until a browser extension is paired, then off; on / off: always "
                      "(the page a bookmarklet runs on can read its token)"),
+    "calendar_freebusy": ("Calendar busy times (Google)", "on: interview replies and proposed slots avoid times your Google "
+                          "Calendar shows busy (sign in with Google again under Email to allow it; only free/busy is read)"),
     "market_pay": ("Market pay (BLS)", "public BLS wage percentiles for each job's occupation and area; sends only "
                    "occupation and area codes to api.bls.gov (25 queries a day, 500 with a free BLS_API_KEY)"),
     "fit_weights": ("Fit weights", "part=number, e.g. skills=40 (0 turns a part off; 'reset' = the defaults): skills, role, "
@@ -151,17 +200,31 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "auto_track_daily_max": ("Auto-track proposals a day", "at most this many 'track this' items a day; the rest stay "
                              "scored in your results (0-100)"),
     "adzuna_country": ("Adzuna country", "two letters, e.g. us, gb, de, ca, au: which Adzuna site searches go to "
-                       "(only with an Adzuna key, Setup > Job sources)"),
+                       "(only with an Adzuna key, Accounts > Job sources)"),
     "apply_agent_mode": ("Apply agent mode", "stop: it fills and you press Submit; review: each submission waits in the "
                          "Inbox; auto: it submits on its own (tool apply_agent on auto, every gate passed)"),
     "apply_agent_daily_cap": ("Apply agent: automatic submissions a day", "at most this many (0-25)"),
+    "apply_agent_site_daily_cap": ("Apply agent: applications per site a day", "at most this many started on one site "
+                                   "(an application system such as Greenhouse, or a company's own site) a day (0-25)"),
+    "autopilot_apply": ("Autopilot applies", "Autopilot starts the apply agent for jobs whose resume, letter and answers "
+                        "are ready, best fit first; the agent's mode still decides who presses Submit"),
+    "autopilot_apply_daily": ("Autopilot applications a day", "Autopilot starts at most this many a day, yours included (0-25)"),
     "apply_agent_min_fit": ("Apply agent: minimum fit for auto", "auto submits only jobs whose fit score is at least this (0-100)"),
     "apply_agent_auto_ats": ("Apply agent: sites for auto", "comma list of application systems auto may submit on "
                              "(greenhouse, lever, ashby, ...); empty: none"),
     "apply_agent_eeo": ("Apply agent: include EEO answers", "type your saved EEO answers into forms by default"),
     "accounts_auto_create": ("Site accounts: finish sign-ups for me", "the agent ticks only a sign-up's terms / privacy "
-                             "box (never marketing), presses Create and uses that site's emailed code or link; "
-                             "CAPTCHAs stay yours"),
+                              "box (never marketing), presses Create and uses that site's emailed code or link; "
+                              "a CAPTCHA on the way is auto-cleared within the solver's caps (else yours)"),
+    "captcha_model": ("CAPTCHA solver: vision model", "the model that reads the challenge and answers it; empty: your "
+                                                        "linked Ollama's vision model (Ollama first, then your primary AI)"),
+    "captcha_daily_max": ("CAPTCHA solver: solves a day", "at most this many CAPTCHAs a day Lodestar clears itself; "
+                                                           "after it, the check is handed to you (the no-spam cap) (0-100)"),
+    "captcha_max_attempts": ("CAPTCHA solver: tries a widget", "attempts on one challenge before it is handed to you "
+                                                                 "(1-5)"),
+    "login_max_failures": ("Auto sign-on: failed logins before you step in", "after this many failed sign-ins on a "
+                                                                    "site, Lodestar waits for you to finish the login "
+                                                                    "in the window before it tries again (1-5)"),
 }
 CHOICES = {"resume_style": ("classic", "modern", "compact"),  # prefs limited to a fixed set of values
            "provider": ("", *PROVIDERS),  # "" = the first configured one
@@ -175,7 +238,8 @@ RANGES = {"followup_days": (1, 90), "auto_track_min_score": (0, 100), "weekly_ta
           "activity_weekly_min": (0, 100), "update_every_hours": (1, 720),
           "autopilot_ai_per_cycle": (0, 500), "autopilot_ai_per_day": (0, 500), "autopilot_jobs_per_cycle": (0, 50),
           "years_experience": (0, 60), "auto_track_daily_max": (0, 100),
-          "apply_agent_daily_cap": (0, 25), "apply_agent_min_fit": (0, 100)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
+           "apply_agent_daily_cap": (0, 25), "ai_crosscheck_rounds": (0, 3), "apply_agent_site_daily_cap": (0, 25), "autopilot_apply_daily": (0, 25), "apply_agent_min_fit": (0, 100),
+           "captcha_daily_max": (0, 100), "captcha_max_attempts": (1, 5), "login_max_failures": (1, 5)}  # whole-number prefs: a negative followup_days would nudge every job each cycle
 GOALS = ("contacts", "tailored_applications", "mock_sessions", "applications")  # quality first, raw volume last
 
 
@@ -230,15 +294,7 @@ def load() -> dict:
 
 def save(data: dict) -> None:
     full_ai_check("changes settings (automation, privacy, providers)")
-    tmp = PATH.with_name(PATH.name + ".tmp")  # write-then-rename: a crash mid-write never leaves a torn file
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    for i in range(40):  # Windows refuses the rename while another thread reads settings.json at this instant
-        try:
-            return os.replace(tmp, PATH)
-        except PermissionError:
-            if i == 39:
-                raise
-            time.sleep(0.025)
+    util.write_atomic(PATH, json.dumps(data, indent=2))  # write-then-rename, retried while Windows holds it open
 
 
 def enabled(tool: str) -> bool:

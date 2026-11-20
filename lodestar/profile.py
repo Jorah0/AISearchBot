@@ -72,7 +72,34 @@ TEMPLATE_MARKERS = ("Full Name", "Two or three sentences", "Achievement bullet w
 
 def empty() -> dict:
     return {"schema": SCHEMA, "contact": {k: "" for k in CONTACT}, "summary": "", **{k: [] for k in FIELDS}, "resumes": [],
-            "updated": ""}
+            "updated": "", "disputed": []}
+
+
+def _dispute_key(kind: str, entry: dict) -> str:
+    return kind + "|" + "|".join(_key(entry, kind))
+
+
+def is_disputed(kind: str, entry: dict, bank: dict | None = None) -> bool:
+    """A fact you marked wrong (blueprint 8.2 'disputed'): kept in the bank, left out of every document and of career
+    evidence until you clear it."""
+    return _dispute_key(kind, entry) in set((bank or load()).get("disputed") or [])
+
+
+def set_disputed(kind: str, values: list[str], on: bool = True) -> str:
+    """Mark (or clear) the fact identified by its KEYS values in order (experience: company, title)."""
+    from .config import full_ai_check
+
+    full_ai_check("changes your profile")
+    if kind not in KEYS:
+        raise SystemExit(f"kind must be one of {', '.join(KEYS)}")
+    if len(values) != len(KEYS[kind]):
+        raise SystemExit(f"{kind} is identified by {', '.join(KEYS[kind])}")
+    entry = dict(zip(KEYS[kind], values))
+    bank, key = load(), _dispute_key(kind, entry)
+    have = [k for k in bank.get("disputed") or [] if k != key]
+    bank["disputed"] = have + [key] if on else have
+    save(bank)
+    return key
 
 
 def load() -> dict:
@@ -95,14 +122,16 @@ def load() -> dict:
                 bank["contact"].update({c: str(v.get(c) or "") for c in CONTACT})
             elif k in bank and k != "schema":
                 bank[k] = v
+    if isinstance(bank.get("skills"), list):  # junk an older import stored ('to', '&', 'teams.') leaves on read
+        bank["skills"] = [s | {"name": n} for s in bank["skills"]
+                          if isinstance(s, dict) and (n := skill_name(s.get("name", "")))]
     return bank
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    from .util import write_atomic
+
+    write_atomic(path, text)
 
 
 def save(bank: dict) -> None:
@@ -151,7 +180,9 @@ def snapshot_master(keep: int = 30) -> Path | None:
     snaps = sorted(HISTORY.glob("profile-*.md"))
     if snaps and snaps[-1].read_text(encoding="utf-8") == text:
         return snaps[-1]
-    out = HISTORY / f"profile-{datetime.now():%Y%m%d-%H%M%S-%f}.md"
+    at = datetime.now()
+    while (out := HISTORY / f"profile-{at:%Y%m%d-%H%M%S-%f}.md").exists():  # a coarse clock (Windows ~15 ms) repeats
+        at += timedelta(microseconds=1)  # the next free name, still in time order
     out.write_text(text, encoding="utf-8")
     for old in sorted(HISTORY.glob("profile-*.md"))[:-keep]:
         old.unlink()
@@ -207,9 +238,29 @@ def _clean_item(kind: str, item, notes: list | None = None) -> dict | None:
             out[f] = "" if _personal_value(v, notes) else v
     if not any(out.get(f) for f in KEYS[kind]):
         return None
+    if kind == "skills":
+        out["name"] = skill_name(out["name"])
+        if not out["name"]:
+            return None
     if kind in ("skills", "languages") and not 1 <= len(out["name"]) <= 60:
         return None
     return out
+
+
+# words that are never a skill on their own: grammar, resume filler and section headings
+NOT_SKILLS = set("""a an the and or nor but of to in on at for with by from as into via per is are was were be been
+being this that these those it its our your my their etc also including include includes such using use used able
+ability proven strong focus skills skill technical summary experience profile objective tools other various key core
+competencies expertise knowledge proficient proficiency familiar excellent good great""".split())
+
+
+def skill_name(name: str) -> str:
+    """A skill as a key term: trailing punctuation dropped ('teams.' -> 'teams'); '' for a stopword, lone
+    punctuation, a section heading or a sentence (more than five words)."""
+    n = _norm(name).strip(" ,;:!?\"'()[]").rstrip(".")
+    if not re.search(r"\w", n) or n.casefold() in NOT_SKILLS or len(n.split()) > 5:
+        return ""
+    return n
 
 
 def _evidence(have: dict, source: str, quote) -> None:
@@ -726,6 +777,7 @@ def extract_heuristic(text: str, coverage: bool = False) -> dict:
     c["phone"] = _phone(header)
 
     used: set[int] = set()
+    skill_cat = ""
     unread: list[dict] = []
     head_lines: list[int] = []  # lines before the first section heading, and the Contact section
     sec, heading, summary = None, "", []
@@ -775,6 +827,9 @@ def extract_heuristic(text: str, coverage: bool = False) -> dict:
             cat = ""
             if ":" in item and len(item.split(":", 1)[0]) < 30:
                 cat, item = (x.strip() for x in item.split(":", 1))
+                skill_cat = cat if not item else ""  # 'Tools & DevOps:' alone: its list is on the next line
+            elif skill_cat:
+                cat, skill_cat = skill_cat, ""
             got = [{"name": s, "category": cat} for s in _split_list(item) if len(s) <= 40]
             for g in got:
                 add("skills", g, [n])
@@ -2003,6 +2058,8 @@ def structured(employer: bool = True) -> dict:
                         have[f] = v
             else:
                 doc[kind].append(item | {"on_file": True})
+        disputed = set(bank.get("disputed") or [])  # pass 27: a fact you dispute reaches no document until fixed
+        doc[kind] = [e for e in doc[kind] if _dispute_key(kind, e) not in disputed]
         for n, e in enumerate(doc[kind], 1):
             e["id"] = f"{PREFIX[kind]}{n}"
     doc["ids"] = {"headline": "h0", "summary": "s0", "contact": "c0"}
@@ -2071,7 +2128,14 @@ def candidate_text(limit: int | None = None, strict: bool = True, private: bool 
             raise SystemExit(f"your master profile is still the template: fill in {PROFILE} or import a resume "
                              "(lodestar profile import <file>, or the Profile tab)")
         master = render_markdown(bank, master)
-    extra = extras_text(master)
+    bank = load()
+    if disputed := set(bank.get("disputed") or []):  # pass 27: a fact you dispute reaches no prompt either
+        doc = extract_heuristic(master)
+        for kind in FIELDS:
+            doc[kind] = [e for e in doc.get(kind) or [] if _dispute_key(kind, e) not in disputed]
+            bank[kind] = [e for e in bank.get(kind) or [] if isinstance(e, dict) and _dispute_key(kind, e) not in disputed]
+        master = render_markdown(doc, master)
+    extra = extras_text(master, bank)
     text = master.rstrip() + ("\n\n" + extra if extra else "")
     if not private:
         text = employer_safe(text)

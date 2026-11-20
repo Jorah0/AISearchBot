@@ -50,6 +50,9 @@ def open_window(port: int, title: str = "Lodestar") -> None:
             webview.settings["ALLOW_DOWNLOADS"] = True  # the document viewer's Download buttons (a blob link) save files
         webview.create_window(title, url, width=1320, height=860, min_size=(960, 640), text_select=True,
                               background_color="#0f1115")  # the UI's own dark tile, so no white flash on launch
+        from . import browser
+
+        browser.ON = True  # job-site links now open in Lodestar's own browser window (pass 52)
         webview.start(icon=window_icon(), private_mode=False)  # the emblem: .ico on Windows, PNG on GTK / Qt
     except Exception as e:  # missing WebView2 runtime, headless session, etc.
         print(f"desktop window failed ({e}); opening the browser instead")
@@ -64,7 +67,9 @@ def relaunch() -> None:
     import threading
 
     cmd = [sys.executable, *sys.argv[1:]] if getattr(sys, "frozen", False) else [sys.executable, "-m", "lodestar", *sys.argv[1:]]
-    subprocess.Popen(cmd, cwd=str(Path(__file__).resolve().parent.parent))
+    from .util import NO_WINDOW
+
+    subprocess.Popen(cmd, cwd=str(Path(__file__).resolve().parent.parent), creationflags=NO_WINDOW)  # the new window, no console
     from . import updater
 
     updater.unregister()  # os._exit below skips atexit; the new process must not wait on this one

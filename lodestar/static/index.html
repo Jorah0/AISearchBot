@@ -4,47 +4,100 @@
 <meta charset="utf-8">
 <title>Lodestar</title>
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
+<script>try { const t = localStorage.getItem('ls_theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) { /* no storage: the system theme */ }</script>
 <link rel="stylesheet" href="/static/app.css">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
 <body>
 <div class="brand"><img src="/logo.svg" width="30" height="30" alt=""><div>Lodestar<small>the star you steer by</small></div></div>
-<div class="top"><div class="stats" id="stats"></div><span class="muted" id="loopStat" style="margin-left:14px"></span><div class="spacer"></div>
+<div class="top"><div class="stats" id="stats"></div><span class="muted" id="loopStat" style="margin-left:10px"></span><div class="spacer"></div>
   <button class="b ghost sm" id="codesPill" style="display:none" title="a sign-in code arrived by email" onclick="go('inbox');$('#codesPanel').open=true;codesLoad()">Codes</button>
+  <button class="b ghost sm" id="aiPill" title="The primary AI every task uses: click to switch provider or model" aria-expanded="false" aria-controls="aiSwitch" onclick="aiSwitchToggle()">AI: none</button>
+  <div class="panel" id="aiSwitch" hidden role="dialog" aria-label="Switch the primary AI" style="position:absolute;right:16px;top:52px;z-index:50;min-width:320px;max-width:calc(100vw - 32px)">
+    <h3 style="margin-top:0">Primary AI</h3>
+    <div class="row"><label class="muted">Provider <select id="aiProv" onchange="aiModels()"></select></label></div>
+    <div class="row"><label class="muted">Model <select id="aiModel"></select></label><input id="aiModelOwn" placeholder="or type a model id" aria-label="model id" style="width:170px"></div>
+    <div class="row"><button class="b" onclick="aiUse(this)">Use</button><button class="b ghost" onclick="aiSwitchToggle(false)">Close</button><span class="muted" id="aiSwitchNote"></span></div>
+    <h4>Council <label class="muted" style="font-weight:400"><input type="checkbox" id="aiCouncilOn" onchange="aiCouncilOn(this)"> on</label></h4>
+    <p class="muted" id="aiCouncilNote">The models the council asks (when you tick "council") and the AI cross-check uses as reviewers. Off: those requests use the primary AI alone.</p>
+    <div id="aiCouncilBox">
+      <div id="aiCouncil" class="chips" aria-label="Council models"></div>
+      <div class="row"><label class="muted">Provider <select id="aiCProv" onchange="aiCModels()" aria-label="Council provider"></select></label>
+        <label class="muted">Model <select id="aiCModel" aria-label="Council model"></select></label>
+        <input id="aiCModelOwn" placeholder="or type a model id" aria-label="council model id" style="width:150px"></div>
+      <div class="row"><button class="b ghost sm" onclick="aiCouncilAdd(this)">Add to the council</button><button class="b ghost sm" onclick="aiCouncilSet([],this)">Reset: every provider</button></div></div></div>
   <button class="b ghost sm" id="apPill" title="Autopilot runs pipeline steps in the monitor loop within its AI budgets" onclick="go('setup');$('#apCard').scrollIntoView()">Autopilot: off</button>
   <button class="b ghost sm" id="updPill" style="display:none" onclick="go('setup');$('#updCard').scrollIntoView()">Update available</button>
   <button class="b ghost sm" id="topEmail" onclick="run('email_check',{days:3},r=>toast((r.found||[]).length+' relevant email(s)'+(r.alerts?' · '+r.alerts+' new listing(s) from job alerts (Jobs tab)':'')+(r.note?'\n'+r.note:''),r.note?'err':'ok'),this)">Check email</button>
+  <button class="b ghost sm" id="themeBtn" onclick="toggleTheme()" title="Switch between the light and the dark theme">Theme</button>
   <button class="b ghost sm" id="topWatches" onclick="run('watch_run',{},r=>toast((r.alerts||[]).length+' alert(s)','ok'),this)">Run watches</button>
 </div>
 <nav aria-label="Sections">
-  <button data-tab="board" class="on"><span class="ico" aria-hidden="true">▦</span>Board</button>
-  <button data-tab="inbox"><span class="ico" aria-hidden="true">✓</span>Inbox<span class="badge zero" id="inboxN" aria-label="pending approvals and questions">0</span></button>
-  <button data-tab="contacts"><span class="ico" aria-hidden="true">☏</span>Contacts</button>
-  <button data-tab="search"><span class="ico" aria-hidden="true">⌕</span>Jobs</button>
-  <button data-tab="monitor"><span class="ico" aria-hidden="true">◉</span>Monitor</button>
-  <button data-tab="ideas"><span class="ico" aria-hidden="true">✦</span>Ideas</button>
-  <button data-tab="answers"><span class="ico" aria-hidden="true">≡</span>Answers</button>
-  <button data-tab="coach"><span class="ico" aria-hidden="true">☺</span>Coach</button>
-  <button data-tab="insights"><span class="ico" aria-hidden="true">▥</span>Insights</button>
-  <button data-tab="profile"><span class="ico" aria-hidden="true">☰</span>Profile</button>
-  <button data-tab="studio"><span class="ico" aria-hidden="true">✎</span>Studio</button>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 13h4l2 3h4l2-3h4M4 13V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-board" viewBox="0 0 24 24"><path d="M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v13h-4z"/></symbol>
+    <symbol id="i-contacts" viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 20a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-5-5"/></symbol>
+    <symbol id="i-careers" viewBox="0 0 24 24"><path d="M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4zM10 21h4"/></symbol>
+    <symbol id="i-profile" viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 10h4M8 14h8"/></symbol>
+    <symbol id="i-studio" viewBox="0 0 24 24"><path d="M4 20l4-1 11-11-3-3L5 16zM14 6l3 3"/></symbol>
+    <symbol id="i-answers" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h1M4 12h1M4 18h1"/></symbol>
+    <symbol id="i-coach" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></symbol>
+    <symbol id="i-ideas" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3 11v2h6v-2a6 6 0 0 0-3-11z"/></symbol>
+    <symbol id="i-insights" viewBox="0 0 24 24"><path d="M5 20V11M11 20V5M17 20v-7M3 20h18"/></symbol>
+    <symbol id="i-tools" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4"/></symbol>
+    <symbol id="i-setup" viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><path d="M3 6h18v12H3zM3 7l9 6 9-6"/></symbol>
+    <symbol id="i-today" viewBox="0 0 24 24"><path d="M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></symbol>
+  </svg>
+  <button data-tab="home" class="on"><svg class="ico" aria-hidden="true"><use href="#i-today"/></svg>Today</button>
+  <button data-tab="inbox"><svg class="ico" aria-hidden="true"><use href="#i-inbox"/></svg>Inbox<span class="badge zero" id="inboxN" aria-label="pending approvals and questions">0</span></button>
+  <button data-tab="mail"><svg class="ico" aria-hidden="true"><use href="#i-mail"/></svg>Mail</button>
+  <div class="nav-group" role="group" aria-labelledby="nh-pipe"><div class="nav-h" id="nh-pipe">Pipeline</div>
+    <button data-tab="board"><svg class="ico" aria-hidden="true"><use href="#i-board"/></svg>Board</button>
+    <button data-tab="contacts"><svg class="ico" aria-hidden="true"><use href="#i-contacts"/></svg>Contacts</button></div>
+  <div class="nav-group" role="group" aria-labelledby="nh-disc"><div class="nav-h" id="nh-disc">Discover</div>
+    <button data-tab="search"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg>Jobs</button>
+    <button data-tab="careers"><svg class="ico" aria-hidden="true"><use href="#i-careers"/></svg>Careers</button>
+    <button data-tab="monitor"><svg class="ico" aria-hidden="true"><use href="#i-monitor"/></svg>Monitor</button></div>
+  <div class="nav-group" role="group" aria-labelledby="nh-res"><div class="nav-h" id="nh-res">Resume</div>
+    <button data-tab="profile"><svg class="ico" aria-hidden="true"><use href="#i-profile"/></svg>Profile</button>
+    <button data-tab="studio"><svg class="ico" aria-hidden="true"><use href="#i-studio"/></svg>Studio</button></div>
+  <div class="nav-group" role="group" aria-labelledby="nh-prep"><div class="nav-h" id="nh-prep">Prepare</div>
+    <button data-tab="answers"><svg class="ico" aria-hidden="true"><use href="#i-answers"/></svg>Answers</button>
+    <button data-tab="coach"><svg class="ico" aria-hidden="true"><use href="#i-coach"/></svg>Coach</button>
+    <button data-tab="ideas"><svg class="ico" aria-hidden="true"><use href="#i-ideas"/></svg>Ideas</button></div>
+  <div class="nav-group" role="group" aria-labelledby="nh-prog"><div class="nav-h" id="nh-prog">Progress</div>
+    <button data-tab="insights"><svg class="ico" aria-hidden="true"><use href="#i-insights"/></svg>Insights</button></div>
   <span class="sep"></span>
-  <button data-tab="tools"><span class="ico" aria-hidden="true">⚙</span>Tools</button>
-  <button data-tab="setup"><span class="ico" aria-hidden="true">⚑</span>Setup</button>
+  <div class="nav-group" role="group" aria-labelledby="nh-set"><div class="nav-h" id="nh-set">Settings</div>
+    <button data-tab="accounts"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg>Accounts<span class="badge zero" id="lostN" aria-label="connections that stopped working">0</span></button>
+    <button data-tab="tools"><svg class="ico" aria-hidden="true"><use href="#i-tools"/></svg>Tools</button>
+    <button data-tab="setup"><svg class="ico" aria-hidden="true"><use href="#i-setup"/></svg>Setup</button></div>
   <div class="foot">localhost only · Esc closes a job · Ctrl+K commands</div>
 </nav>
 
 <main>
-<section id="board" class="on">
+<section id="home" class="on">
+  <h2>Today</h2>
+  <p class="sub">What needs you now: due actions, interviews, the Inbox, suggested emails and new fits. Each block hides when there is nothing in it.</p>
+  <div id="homeLost" role="alert"></div>
+  <div id="homePace" role="status"></div>
   <div class="panel" id="onboard" style="display:none"></div>
+  <div class="aihead" data-adv-slot="today"></div>
+  <div class="panel today" id="today" style="display:none"></div>
+  <div class="row panel" id="upcoming" style="margin-top:4px"></div>
+  <div class="panel" id="todayEmpty"><h3>Nothing is due right now</h3><div class="row">Track a job to start: <button class="b sm" onclick="go('board')">Open the Board</button> <button class="b ghost sm" onclick="go('search')">Search for jobs</button></div></div>
+</section>
+
+<section id="board">
   <div class="row" style="margin-top:0">
     <input id="nCo" placeholder="Company" style="width:160px"><input id="nTi" placeholder="Title" style="width:220px">
     <input id="nJd" class="grow" placeholder="Job description: URL or pasted text"><button class="b" onclick="addJob()">Add job</button>
   </div>
-  <div class="aihead" data-adv-slot="today"></div>
   <div class="aihead" data-ai-menu="board"></div>
-  <div class="panel today" id="today" style="display:none"></div>
-  <div class="row" id="upcoming" style="margin-top:4px"></div>
   <div class="muted" id="variants"></div>
   <div class="muted" id="funnel"></div>
   <div class="panel" id="boardEmpty" style="display:none"><h3>No jobs tracked yet</h3><div class="row">Paste a job description above and click Add job,
@@ -58,8 +111,10 @@
     <label class="muted"><input type="checkbox" id="fDl"> has deadline</label>
     <label class="muted">sort <select id="fSort" aria-label="Sort jobs"><option value="updated">last activity</option><option value="stale">stalest first</option><option value="fit">best fit</option><option value="match">coverage</option><option value="salary">salary</option><option value="excitement">excitement</option><option value="deadline">deadline</option><option value="">(table column)</option></select></label>
     <button class="b ghost sm" id="fView" onclick="toggleView()" aria-pressed="false">Table view</button>
+    <button class="b ghost sm" id="fMap" onclick="mapToggle(this)" aria-pressed="false" title="where your open jobs are and how far from your home place (offline, U.S. places)">Map</button>
     <span class="muted">drag a card to another column, or change its status in the job drawer</span>
   </div>
+  <div class="panel" id="boardMap" hidden></div>
   <div class="row" id="bulk" style="display:none"><b id="bulkN"></b>
     <select id="bulkStatus" aria-label="New status for the selected jobs"></select><button class="b ghost sm" onclick="bulkStatus()">Set status</button>
     <input id="bulkTag" placeholder="tag" aria-label="Tag to add to the selected jobs" style="width:110px"><button class="b ghost sm" onclick="bulkTag()">Add tag</button>
@@ -78,7 +133,7 @@
   <details class="panel" id="codesPanel" ontoggle="if(this.open)codesLoad()"><summary><b>Emailed sign-in codes</b> <span class="muted" id="codesN"></span></summary>
     <div class="row"><button class="b ghost sm" onclick="codesCheck(this)">Check for a code now</button></div>
     <div id="codesList" role="status" aria-live="polite"></div>
-    <p class="muted">Codes that job sites email you, from senders that pass DKIM/DMARC, received in the last 15 minutes. They are kept in memory only and never saved. Lodestar enters one only into a site account's form in the agent's window, when you click Fill code under Setup &gt; Site accounts (or by itself on a site where you allowed that).</p></details>
+    <details class="help"><summary>About this</summary><div><p>Codes that job sites email you, from senders that pass DKIM/DMARC, received in the last 15 minutes. They are kept in memory only and never saved. Lodestar enters one only into a site account's form in the agent's window, when you click Fill code under Accounts &gt; Site accounts (or by itself on a site where you allowed that).</p></div></details></details>
   <div id="questions"></div>
   <div id="inboxList"></div>
   <h3>Unmatched mail</h3>
@@ -86,6 +141,60 @@
   <div id="mailList"></div>
   <h3>Recently decided</h3>
   <div class="list muted" id="decidedList"></div>
+</section>
+
+<section id="mail" class="inbox">
+  <h2>Mail</h2>
+  <p class="sub">Every email Lodestar filed, sorted by type, and everything it sent. Open one to read it in full, then reply in your own words, ask the AI to improve your text, or let the AI write the reply. Nothing is sent from here: a reply goes to the Inbox, where you approve it.</p>
+  <div class="row"><div id="mvTypes" class="row" role="toolbar" aria-label="mail type"></div>
+    <input id="mvQ" class="grow" placeholder="search subject, sender, company" aria-label="Search mail" oninput="MV.q=this.value;renderMailPage()">
+    <button class="b ghost sm" onclick="loadMailPage()">Refresh</button></div>
+  <div class="mailview"><div id="mvList" class="mvlist" aria-label="messages"></div>
+    <article id="mvRead" class="mvread" aria-live="polite"><div class="empty">Choose a message to read it.</div></article></div>
+</section>
+
+<section id="accounts">
+  <h2>Accounts</h2>
+  <p class="sub">Every place Lodestar connects to, whether it works right now, and what changed. Link job-board keys and the logins for employer application sites here. Keys and passwords stay in Windows Credential Manager (the OS keyring) and never come back to this page.</p>
+  <div class="panel" id="connCard"><h3>Connections</h3>
+    <div id="connLost" role="alert"></div>
+    <div class="row"><button class="b" id="connCheck" onclick="connCheck(this)">Check all now</button>
+      <span class="muted">AI keys and your mailbox are checked without spending tokens: when Lodestar starts, every 6 hours while it runs, and when you click. Job boards are checked by every search; a site account by every sign-in.</span></div>
+    <div id="connList" class="list" role="status" aria-live="polite"></div>
+    <details id="connHistD"><summary><b>What changed</b> <span class="muted" id="connHistN"></span></summary><div id="connHist" class="list"></div></details>
+    <details class="help"><summary>About this</summary><div><p>LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired cannot be linked: their terms forbid automated access, and signing in for you could get your account closed. Their jobs reach Lodestar through their job-alert emails (Job alerts below); apply to those on the site yourself.</p></div></details></div>
+  <div class="panel" id="siteCard"><h3>Job sites you browse yourself</h3>
+    <details class="help"><summary>About this</summary><div><p>LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired: you sign in and browse there in your own browser (Lodestar never opens them itself). Save a posting with the Lodestar extension and it is scored, sorted and shown on every tab; the extension fills an application form when you click Fill, and never submits. To keep your accounts in good standing, each site has a daily and weekly cap: Lodestar counts the jobs you mark applied from that site and pauses the extension's Fill there once a cap is reached.</p></div></details>
+    <div id="siteList" class="list" role="status" aria-live="polite"></div></div>
+  <div class="panel" id="srcCard"><h3>Job sources</h3>
+    <details class="help"><summary>About this</summary><div><p>Where Jobs searches and saved searches look. Keyless boards always run; Adzuna and USAJOBS run once you add their free keys here (stored in the OS keyring, checked with one small search). Saved searches ask each board at most once per window (Remotive every 6 hours for all your searches together), so Lodestar stays inside each board's published limits. Listings from Adzuna, Himalayas and We Work Remotely always show the source's name as a link: their terms ask for that credit. LinkedIn, Indeed, Glassdoor and ZipRecruiter are never fetched (their terms forbid it).</p></div></details>
+    <div id="srcList" class="list" role="status" aria-live="polite"></div></div>
+  <div class="panel" id="acctCard"><h3>Site accounts</h3>
+    <details class="help"><summary>About this</summary><div><p>Your accounts on employer application sites (a Workday tenant, an iCIMS portal), one per site. When an application asks you to sign in, the apply agent signs in with the saved account, or fills the site's sign-up form with your email and a new strong password and stops: you tick the terms and press Create yourself. Passwords stay in the OS keyring and show only when you press Reveal. Codes and verification links come from your connected inbox: used when you click Fill code or Open link, or by themselves on a site where you tick "use my inbox". A CAPTCHA is always yours. Never for LinkedIn, Indeed, Glassdoor, ZipRecruiter or SimplyHired.</p></div></details>
+    <div id="acctWait" role="status" aria-live="polite"></div>
+    <details id="acctGen"><summary class="muted">General login for new accounts <span id="acctGenState"></span></summary>
+      <div class="row"><input id="acctGenUser" autocomplete="off" placeholder="username (empty: your profile email)" aria-label="general username" style="width:240px">
+        <input id="acctGenPw" type="password" autocomplete="new-password" placeholder="general password" aria-label="general password" style="width:200px">
+        <button class="b sm" onclick="acctGeneral(this)">Save</button><button class="b ghost sm" onclick="acctGeneral(this,true)">Clear</button></div>
+      <div class="row"><label class="muted"><input type="checkbox" id="acctAutoCreate" onchange="acctAutoCreate(this)"> finish sign-ups for me: tick only the terms / privacy box, press Create and use that site's emailed code or link (a CAPTCHA stays yours)</label></div>
+      <details class="help"><summary>About this</summary><div><p>New accounts use this password instead of a generated one, and a site that already knows your email gets one sign-in try with it. It lives only in the OS keyring. One password on many sites means a leak on one site opens the others.</p></div></details></details>
+    <div class="row"><input id="acctQ" type="search" class="grow" placeholder="search sites, usernames, jobs" aria-label="search site accounts" oninput="acctPaint()"></div>
+    <div id="acctList" class="list"></div>
+    <details id="acctNew"><summary class="muted">Save a login, or create an account</summary>
+      <div class="row"><input id="acctUrl" class="grow" autocomplete="off" placeholder="the site's sign-in page link" aria-label="sign-in page link">
+        <input id="acctUser" autocomplete="off" placeholder="username or email" aria-label="username or email" style="width:200px">
+        <input id="acctPw" type="password" autocomplete="new-password" placeholder="password (empty: Lodestar makes one)" aria-label="password" style="width:220px"></div>
+      <div class="row"><button class="b" onclick="acctAdd(this)">Save login</button><button class="b ghost" onclick="acctCreate(this)">Create an account there</button>
+        <span class="muted">Create opens the link in the agent's window and fills the sign-up form; you press Create.</span></div></details>
+    <details id="acctImport"><summary class="muted">Import logins from a password manager</summary>
+      <details class="help"><summary>About this</summary><div><p>Export your logins as CSV from Chrome, Edge, Firefox, Bitwarden, 1Password, LastPass, Dashlane or KeePass, then choose the file. Lodestar keeps only job-application sites (application systems such as Greenhouse or Workday, and the sites of jobs you track), never LinkedIn, Indeed, Glassdoor, ZipRecruiter or SimplyHired. You see the sites and usernames first; passwords are never shown. On Import each password goes only into Windows' encrypted credential store, used by the apply agent to sign in; no AI ever sees one. Delete the export file afterwards: it is plain text.</p></div></details>
+      <div class="row"><input type="file" id="acctImpFile" accept=".csv,text/csv" aria-label="password manager export (CSV)" onchange="acctImpRead(this)"></div>
+      <div id="acctImpReview"></div></details></div>
+  <div class="panel" id="alertCard"><h3>Job alerts</h3>
+    <details class="help"><summary>About this</summary><div><p>Subscribe to job alerts on LinkedIn (Jobs &gt; search &gt; Set alert), Indeed, Glassdoor or ZipRecruiter, delivered to the mailbox you connected under Connect email. The mail monitor reads only your own inbox: an alert counts only when its sender is the site's known alert address and the mail passed DKIM/DMARC, and its jobs go to All jobs (Jobs tab), merged with every other source. Lodestar never opens an alert's links (the sites' terms forbid automated visits, and those links can carry one-click sign-in tokens): a link opens only when you click it. Alert mails are not stored. Reading alert mail is low risk under those sites' terms, but not none: switch it off here if you prefer.</p></div></details>
+    <div class="row"><label><input type="checkbox" id="alertsOn" onchange="alertsToggle(this.checked)"> Read job-alert emails (tool job_alerts)</label></div>
+    <div id="alertList" class="list" role="status" aria-live="polite"></div>
+    <div class="muted">An alert that cannot be read sends one notice a day; save it as a .eml file and run <code>lodestar email parse-alert FILE.eml</code> to see what Lodestar finds in it.</div></div>
 </section>
 
 <section id="contacts">
@@ -107,26 +216,33 @@
 
 <section id="search">
   <h2>Jobs</h2>
-  <div class="aihead" data-adv-slot="searches"></div>
   <div class="aihead" data-ai-menu="search"></div>
   <details id="sProfile"><summary class="muted">Search profile <span id="sProfFrom"></span></summary>
-    <div class="row"><input id="spRoles" class="grow" placeholder="roles you want, comma-separated (e.g. Data Engineer, Analytics Engineer)" aria-label="Target roles">
+    <div class="row"><input id="spRoles" class="grow" placeholder="roles you want, comma-separated (e.g. Store Manager, Medical Office Coordinator, Data Analyst)" aria-label="Target roles">
       <input id="spLoc" placeholder='where, e.g. "Austin, TX or remote"' aria-label="Locations or remote" style="width:220px">
       <button class="b sm" onclick="spSave(this)">Save to my Preferences</button></div>
     <div class="chips" id="spChips" aria-label="Search one role"></div>
-    <p class="muted">Blank Jobs searches use these roles. They start from Preferences (Target roles, Locations / remote), else your resume's latest titles and location. Saved here, they also feed the fit score. Commas search each role on its own; "or remote" keeps remote jobs too.</p></details>
-  <div class="row"><input id="sQ" placeholder='roles, e.g. "data engineer, analytics engineer" (blank: your search profile)' style="width:300px"><input id="sK" placeholder="must-have keywords (comma)" style="width:220px">
-    <label class="muted"><input type="checkbox" id="sRank"> AI rank vs my profile</label><button class="b" onclick="doSearch(this)">Search boards now</button>
+    <details class="help"><summary>About this</summary><div><p>Blank Jobs searches use these roles. They start from Preferences (Target roles, Locations / remote), else your resume's latest titles and location. Saved here, they also feed the fit score. Commas search each role on its own; "or remote" keeps remote jobs too.</p></div></details></details>
+  <div class="row"><input id="sQ" oninput="renderSiteSearch()" placeholder='roles, e.g. "store manager, hotel manager" (blank: your search profile)' style="width:300px"><input id="sK" placeholder="must-have keywords (comma)" style="width:220px">
+    <label class="muted"><input type="checkbox" id="sRank"> AI rank vs my profile</label></div>
+  <div class="row" aria-label="Search actions"><button class="b" onclick="doSearch(this)">Search boards now</button>
     <button class="b ghost" title="AI-judge the results; strong fits go to the Inbox (tool: auto_track). Listings that look stale are skipped." onclick="run('auto_track',searchParams(),r=>toast(r.results.length+' strong fit(s) proposed (Inbox, or tracked if auto_track is auto)'+((r.errors||[]).length?'\ncould not read: '+r.errors.join('; '):''),(r.errors||[]).length?'err':'ok'),this)">Auto-track strong fits</button>
     <button class="b ghost" title="alert on new listings for this query and these filters (Monitor > Watches)" onclick="saveSearch()">Save as watch</button></div>
   <div class="row filters" aria-label="Search filters">
-    <input id="sLoc" placeholder='location, e.g. "Austin, TX or remote"' aria-label="Location filter" style="width:200px">
+    <input id="sLoc" oninput="renderSiteSearch()" placeholder='city, state, ZIP or remote, e.g. "Austin, TX", "78701", "TX", "Remote (US)"' aria-label="Location filter" style="width:260px">
+    <select id="sRadius" aria-label="Distance" title="How far from the place: USAJOBS and Adzuna search around it; the other boards match the place named in each listing"><option value="">any distance</option><option value="10">within 10 miles</option><option value="25">within 25 miles</option><option value="50">within 50 miles</option><option value="100">within 100 miles</option></select>
+    <button class="b ghost sm" id="sNear" onclick="nearMe()" title="Use the place in your profile (Preferences > Locations, else your contact line)">Near me</button>
+    <button class="b ghost sm" id="sRemote" onclick="remoteSearch(this)" title="Search remote jobs only (open to your country when your location says e.g. Remote (US))">Remote jobs</button>
     <input id="sSal" type="number" min="0" step="1000" placeholder="min salary" aria-label="Minimum salary" style="width:110px">
-    <input id="sDays" type="number" min="1" max="3650" placeholder="posted within (days)" aria-label="Posted within days" style="width:150px">
-    <select id="sLevel" aria-label="Seniority"><option value="">any seniority</option><option>intern</option><option>junior</option><option>mid</option><option>senior</option><option>staff</option><option>lead</option><option>manager</option></select>
-    <span class="muted">Listings that do not state a salary, location or date are kept and marked "unknown". Your private dealbreakers (Tools &gt; Preferences: excluded_companies, excluded_title_words) are dropped first.</span></div>
-  <div class="muted" id="sBoards">Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse, Himalayas and We Work Remotely need no key; Adzuna and USAJOBS run once you add their free keys (Setup &gt; Job sources). The same posting found on several boards is shown once with every link. LinkedIn, Indeed, Glassdoor and ZipRecruiter are never fetched: use the browser extension or capture bookmarklet there. Monitor &gt; Companies follows a company's own job board.</div>
-  <div class="panel" id="sRes"><div class="empty">No results yet.</div></div>
+    <input id="sDays" type="number" min="1" max="3650" placeholder="max days old" aria-label="Posted within days" style="width:150px">
+    <select id="sLevel" aria-label="Seniority" onchange="renderSiteSearch()"><option value="">any seniority</option><option>intern</option><option>junior</option><option>mid</option><option>senior</option><option>staff</option><option>lead</option><option>manager</option></select><span id="sLevelHint"></span>
+</div>
+  <div class="row" id="siteSearch" aria-label="Search these job sites yourself"></div>
+  <div id="siteIdeas" aria-live="polite"></div>
+  <details class="help"><summary>How the boards and filters work</summary><div>
+    <p>Listings that do not state a salary, location or date are kept and marked "unknown". Your private dealbreakers (Tools &gt; Preferences: excluded_companies, excluded_title_words) are dropped first.</p>
+    <p id="sBoards">Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, Himalayas and We Work Remotely need no key; Adzuna and USAJOBS run once you add their free keys (Accounts &gt; Job sources). The same posting found on several boards is shown once with every link. LinkedIn, Indeed, Glassdoor and ZipRecruiter are never fetched: use the browser extension or capture bookmarklet there. Monitor &gt; Companies follows a company's own job board. In the desktop app, "Search these yourself" links open in Lodestar's own browser window: browse as usual, then press Save this job in the bar at the bottom.</p></div></details>
+  <div class="panel" id="sRes"><div class="empty">No results yet: type a role (or leave it blank for your search profile), then press Search boards now.</div></div>
   <div class="panel" id="allJobs"><h3>All jobs <span class="muted" id="ajCount"></span></h3>
     <p class="muted">Every listing any source found: searches, saved searches, company boards and captures, merged across sources. Untracked listings not seen again for 45 days drop off.</p>
     <div class="row filters" role="search" aria-label="Filter all jobs">
@@ -134,7 +250,7 @@
       <select id="ajFit" aria-label="Minimum fit" onchange="loadAllJobs()"><option value="">any fit</option><option value="50">fit 50+</option><option value="60">fit 60+</option><option value="70">fit 70+</option><option value="80">fit 80+</option></select>
       <select id="ajRemote" aria-label="Workplace" onchange="loadAllJobs()"><option value="">any workplace</option><option value="remote">remote</option><option value="hybrid">hybrid</option><option value="onsite">onsite</option></select>
       <input id="ajSal" type="number" min="0" step="1000" placeholder="min salary" aria-label="All jobs minimum salary" style="width:110px" onchange="loadAllJobs()">
-      <input id="ajDays" type="number" min="1" max="3650" placeholder="posted within (days)" aria-label="All jobs posted within days" style="width:150px" onchange="loadAllJobs()">
+      <input id="ajDays" type="number" min="1" max="3650" placeholder="max days old" aria-label="All jobs posted within days" style="width:150px" onchange="loadAllJobs()">
       <select id="ajShow" aria-label="Which listings" onchange="loadAllJobs()"><option value="open">not tracked</option><option value="tracked">tracked</option><option value="dismissed">dismissed</option><option value="all">all</option></select>
       <select id="ajSort" aria-label="Sort all jobs" onchange="loadAllJobs()"><option value="fit">Best fit</option><option value="new">Newest</option><option value="salary">Pay</option><option value="company">Company</option></select>
       <label class="muted"><input type="checkbox" id="ajNew" onchange="loadAllJobs()"> New since last visit</label>
@@ -143,33 +259,63 @@
     <div id="ajList" role="list"></div></div>
 </section>
 
+<section id="careers">
+  <h2>Careers</h2>
+  <details class="help"><summary>About this</summary><div><p>Occupations your profile points to and the fields you choose, from the O*NET occupation database. Your resume is evidence, not a boundary: add any field as a career track. A career class is a reading of your evidence, never a hiring probability.</p></div></details>
+  <div class="panel">
+    <h3>Career tracks</h3>
+    <div class="row">
+      <input id="trackLabel" placeholder="name, e.g. Hospitality" aria-label="Track name" style="width:180px">
+      <select id="trackIntent" aria-label="Intent">
+        <option value="desired_field">Desired field</option><option value="pivot">Career pivot</option>
+        <option value="combined">Combined</option><option value="resume_led">From my resume</option><option value="exploration">Exploration</option>
+      </select>
+      <input id="trackTitles" class="grow" placeholder="job titles, comma-separated (e.g. hotel manager, front office manager)" aria-label="Job titles">
+      <input id="trackLoc" placeholder="location (optional)" aria-label="Track location" style="width:160px">
+      <button class="b" id="trackAdd" onclick="trackAdd(this)">Add track</button>
+    </div>
+    <fieldset class="row tiers" aria-label="Expansion tiers to search"><legend class="muted">Search these tiers (blank: the intent's default)</legend><span id="trackTiers"></span></fieldset>
+    <div id="trackErr" class="err" role="alert"></div>
+    <div id="trackList"></div>
+  </div>
+  <div class="panel">
+    <h3>Explore further</h3>
+    <div class="row"><input id="exploreQ" class="grow" placeholder="what interests you: work you enjoy, settings, people, values" aria-label="Interests to explore">
+      <button class="b" id="exploreGo" onclick="careerExplore(this)">Explore (one AI call)</button></div>
+    <p class="muted">The AI suggests occupations from your interests and your profile (never your salary floor). Each is matched to O*NET; one it does not know is marked as an unmapped suggestion to review.</p>
+    <div id="careerExplore"></div>
+  </div>
+  <div id="careerRes"></div>
+  <div id="careerSug"></div>
+  <p class="muted credit" id="careerCredit"></p>
+</section>
 <section id="monitor">
   <h2>Monitor</h2>
   <div class="aihead" data-adv-slot="searches"></div>
   <div class="aihead" data-ai-menu="monitor"></div>
   <div class="grid2">
     <div class="panel"><h3>Watches</h3>
-      <div class="row"><input id="wUrl" class="grow" placeholder="career page URL, or a search query"><input id="wKw" placeholder="keywords" style="width:130px"><label class="muted"><input type="checkbox" id="wSearch"> is a search</label><button class="b" onclick="addWatch()">Add</button></div>
+      <div class="row"><input id="wUrl" class="grow" placeholder="career page URL, or a search query" style="min-width:260px"><input id="wKw" placeholder="keywords (optional)" style="width:170px"><label class="muted"><input type="checkbox" id="wSearch"> is a search</label><button class="b" onclick="addWatch()">Add</button></div>
       <div id="wList"></div>
       <div class="row"><button class="b ghost" onclick="run('email_check',{days:7,dry:true},r=>show('aOut',r.found),this)">Email dry-run (7 days)</button>
         <button class="b ghost" onclick="run('digest',{days:7},r=>show('aOut',r.text),this)">Weekly digest</button>
         <button class="b ghost" title="also emails it to you: LODESTAR_NOTIFY_EMAIL if stored in the Vault, else your connected mailbox" onclick="run('digest',{days:7,send:true},r=>{toast('digest emailed to '+r.sent_to,'ok');show('aOut',r.text)},this)">Email digest</button>
         <button class="b ghost" title="one note per job in your Obsidian vault; store OBSIDIAN_VAULT in Setup > Vault to choose the folder" onclick="exportObsidian(this)">Export tracker to Obsidian</button></div>
       <pre id="aOut" style="display:none"></pre></div>
-    <div class="panel"><h3>Alerts</h3><pre id="alerts"></pre></div>
+    <div class="panel"><h3>Alerts</h3><div class="empty" id="alertsEmpty">No alerts yet: watches and company boards report new postings here after Run watches (top bar) or the next monitor cycle.</div><pre id="alerts" hidden></pre></div>
     <div class="panel"><h3>Companies</h3>
-      <p class="muted">Follow a company's public job board. Paste its careers or job link (boards.greenhouse.io/…, jobs.lever.co/…, jobs.ashbyhq.com/…) or type greenhouse:slug, lever:slug or ashby:slug. Each monitor cycle reads the board once; new postings alert and go through the same AI judgement as saved searches. <b>Workday, Taleo and iCIMS have no public feed</b>: add their careers page under Watches instead.</p>
-      <div class="row"><input id="cSrc" class="grow" placeholder="https://boards.greenhouse.io/acme or lever:acme" aria-label="Company board link"><input id="cName" placeholder="name (optional)" aria-label="Company name" style="width:140px"><input id="cKw" placeholder="keywords (comma)" aria-label="Company keywords" style="width:140px"><button class="b" onclick="addCompany()">Add</button></div>
+      <details class="help"><summary>About this</summary><div><p>Follow a company's public job board. Paste its careers or job link (boards.greenhouse.io/…, jobs.lever.co/…, jobs.ashbyhq.com/…) or type greenhouse:slug, lever:slug or ashby:slug. Each monitor cycle reads the board once; new postings alert and go through the same AI judgement as saved searches. <b>Workday, Taleo and iCIMS have no public feed</b>: add their careers page under Watches instead.</p></div></details>
+      <div class="row"><input id="cSrc" class="grow" placeholder="https://boards.greenhouse.io/acme or lever:acme" aria-label="Company board link" style="min-width:300px"><input id="cName" placeholder="name (optional)" aria-label="Company name" style="width:140px"><input id="cKw" placeholder="keywords (comma)" aria-label="Company keywords" style="width:140px"><button class="b" onclick="addCompany()">Add</button></div>
       <div id="coList"></div></div>
   </div>
 </section>
 
 <section id="ideas">
   <h2>Ideas</h2>
-  <p class="sub">Diverge across every configured provider (or one provider plus a critic pass), merge, score impact × fit ÷ effort, save. Grounded in your profile, tracker stats, variant outcomes and gap checks.</p>
+  <p class="sub">Several AIs suggest job-search moves from your profile and results so far; each is scored by impact, fit and effort, best first.</p>
   <div class="panel"><div class="row" style="margin:0">
     <select id="iTopic" aria-label="Idea topic"></select><select id="iJob" aria-label="Job this idea is for"></select><input id="iRole" placeholder="target role (optional)" style="width:180px">
-    <input id="iExtra" class="grow" placeholder="extra instructions, or the custom topic"><input id="iN" type="number" min="1" max="20" value="8" title="number of ideas" style="width:60px"><label class="muted"><input type="checkbox" id="iSingle"> single provider</label>
+    <input id="iExtra" class="grow" placeholder="extra instructions, or the custom topic"><label class="muted">ideas <input id="iN" type="number" min="1" max="20" value="8" title="number of ideas" aria-label="Number of ideas" style="width:60px"></label><label class="muted council-opt"><input type="checkbox" id="iSingle"> single provider</label>
     <button class="b" onclick="craft(this)">Craft</button></div></div>
   <div id="ideaList"></div>
 </section>
@@ -206,9 +352,9 @@
     <div class="chat" id="chat"><div class="msg ai">Ask me anything about your search. I can see your profile and tracker.</div></div>
     <div class="mock-sum muted" id="mockSum" style="display:none"></div>
     <div class="mock-sum muted" id="mockReady" style="display:none"></div>
-    <div class="row"><input id="cIn" class="grow" placeholder="e.g. Which of my applications should I follow up on first?" onkeydown="if(event.key==='Enter')sendChat()"><button class="b ghost" id="cMic" onclick="dictate()" aria-label="Dictate" title="Dictate (browser speech recognition)">🎤</button><button class="b" id="cGo" onclick="sendChat()">Send</button><label class="muted" id="cSpeakL" style="display:none"><input type="checkbox" id="cSpeak" onchange="if(!this.checked)window.speechSynthesis?.cancel()"> speak replies</label><label class="muted"><input type="checkbox" id="cCouncil"> council (all providers)</label></div></div>
+    <div class="row"><input id="cIn" class="grow" placeholder="e.g. Which of my applications should I follow up on first?" onkeydown="if(event.key==='Enter')sendChat()"><button class="b ghost" id="cMic" onclick="dictate()" aria-label="Dictate" title="Dictate (browser speech recognition)">🎤</button><button class="b" id="cGo" onclick="sendChat()">Send</button><label class="muted" id="cSpeakL" style="display:none"><input type="checkbox" id="cSpeak" onchange="if(!this.checked)window.speechSynthesis?.cancel()"> speak replies</label><label class="muted council-opt"><input type="checkbox" id="cCouncil"> council</label></div></div>
   <div class="panel" id="mockTrend" style="display:none"><h3>Mock interview trend</h3><div id="trendSvg"></div>
-    <p class="muted">STAR average (0-2) per scored session, oldest left. Each answer in a mock interview gets a card: the STAR rubric needs an AI provider; word count, estimated speaking time (~140 words a minute against a 60-120 second target), repeated words and the posting's keywords you used are computed offline. Words per minute appear only when you dictate the answer.</p></div>
+    <details class="help"><summary>About this</summary><div><p>STAR average (0-2) per scored session, oldest left. Each answer in a mock interview gets a card: the STAR rubric needs an AI provider; word count, estimated speaking time (~140 words a minute against a 60-120 second target), repeated words and the posting's keywords you used are computed offline. Words per minute appear only when you dictate the answer.</p></div></details></div>
 </section>
 
 <section id="insights">
@@ -216,6 +362,10 @@
   <p class="sub">What you did each week, what is working, your offers side by side, and an activity log. Counted from your own actions only: jobs moved to applied, mail sent from the Inbox, interview rounds and the contact touches you record. Auto-tracked saves and Inbox items you did not send never count.</p>
   <div class="aihead" data-adv-slot="insights"></div>
   <div class="aihead" data-ai-menu="insights"></div>
+  <div class="panel" id="gapPanel"><h3>Skill gaps</h3>
+    <p class="muted">What your open jobs keep asking for that your profile does not show, most repeated first. A legal requirement (a license, a clearance) is marked apart from an employer's preference. Possible actions only; nothing is changed for you.</p>
+    <div id="gapRows"></div><p class="muted gap-note" id="gapNote"></p>
+    <h4 id="gapTracksH" hidden>Career tracks</h4><div id="gapTracks"></div></div>
   <div class="panel"><h3>Weekly goals</h3>
     <p class="muted">None are set until you choose. Reaching people and tailoring each application usually pay off more than a raw application count, so those come first.</p>
     <div class="row" id="goalForm"></div><div id="goalBars"></div></div>
@@ -225,14 +375,14 @@
     <div class="panel"><h3>Response rate by source</h3><div id="insSource"></div></div>
     <div class="panel"><h3>Response rate by fit score</h3><div id="insBand"></div></div></div>
   <div class="panel" id="boostPanel"><h3>Chance boosters across your search</h3>
-    <p class="muted">The actions most likely to help your open jobs right now, ranked by expected effect (high, medium, low), with why and a button into the feature that does it. Worked out by rules from your own data, no AI; never a probability. Titles and workplaces where your own response record is better show once a group holds 5 applications, as counts.</p>
+    <details class="help"><summary>About this</summary><div><p>The actions most likely to help your open jobs right now, ranked by expected effect (high, medium, low), with why and a button into the feature that does it. Worked out by rules from your own data, no AI; never a probability. Titles and workplaces where your own response record is better show once a group holds 5 applications, as counts.</p></div></details>
     <div id="insBoost"></div></div>
   <div class="panel"><h3>Funnel and resume variants</h3><div id="insFunnel"></div></div>
   <div class="panel" id="readyPanel"><h3>Readiness vs results</h3>
-    <p class="muted">Your interview rounds with a readiness snapshot (taken from 2 hours before to 24 hours after each round while Lodestar runs) and a result, counted per readiness band. Plain counts from your own interviews: not a probability, and they never move the bands.</p>
+    <details class="help"><summary>About this</summary><div><p>Your interview rounds with a readiness snapshot (taken from 2 hours before to 24 hours after each round while Lodestar runs) and a result, counted per readiness band. Plain counts from your own interviews: not a probability, and they never move the bands.</p></div></details>
     <div id="insReady"></div></div>
   <div class="panel" id="offerPanel"><h3>Offers</h3>
-    <p class="muted">Live offers (status offer or accepted) side by side. Bonus, match and equity are estimates (target bonus, a match you contribute enough to get, equity at your own estimate with no growth, vesting monthly after the cliff). The salary-floor row is private: it is shown here only and never goes into anything sent to an employer.</p>
+    <details class="help"><summary>About this</summary><div><p>Live offers (status offer or accepted) side by side. Bonus, match and equity are estimates (target bonus, a match you contribute enough to get, equity at your own estimate with no growth, vesting monthly after the cliff). The salary-floor row is private: it is shown here only and never goes into anything sent to an employer.</p></div></details>
     <div id="offerTable"></div>
     <details><summary class="muted">Record or edit an offer</summary><div class="row"><select id="ofJob" aria-label="Job the offer is for" onchange="fillOffer()"></select></div><div class="row" id="ofForm"></div>
       <div class="row"><button class="b sm" onclick="saveOffer()">Save offer</button><span class="muted">a job not yet at "offer" moves there; an empty field clears it</span></div></details>
@@ -269,7 +419,7 @@
     <p class="muted">Every resume you import is kept, and its skills, languages, roles, education and certifications are pooled here with their source. Prompts read your master profile plus anything here it does not mention yet.</p>
     <div class="row"><b style="width:90px">LinkedIn</b><input id="liUrl" class="grow" placeholder="https://www.linkedin.com/in/your-name"><button class="b ghost sm" onclick="bankOp({op:'contact',field:'linkedin',value:$('#liUrl').value},'LinkedIn linked')">Link</button>
       <a id="liExport" class="b ghost sm" target="_blank" rel="noopener" href="#">Request my LinkedIn data ↗</a></div>
-    <div class="row"><input type="file" id="liFile" accept=".zip,.pdf"><button class="b ghost" onclick="importToBank('liFile',true,this)">Import LinkedIn</button><span class="muted">the "Download your data" .zip, or your profile's "Save to PDF". Only profile facts are kept from the zip.</span></div>
+    <div class="row"><input type="file" id="liFile" accept=".zip,.pdf" aria-label="LinkedIn export (.zip or profile PDF)"><button class="b ghost" onclick="importToBank('liFile',true,this)">Import LinkedIn</button><span class="muted">the "Download your data" .zip, or your profile's "Save to PDF". Only profile facts are kept from the zip.</span></div>
     <div class="row"><label class="muted"><input type="checkbox" id="pNoAi"> offline only: imports here and below never send the file to an AI provider (extracts contact, skills and languages)</label></div>
     <div class="row"><b style="width:90px">Skills</b><div id="bSkills" class="grow"></div></div>
     <div class="row"><span style="width:90px"></span><input id="bSkill" placeholder="add a skill" style="width:200px"><input id="bSkillCat" placeholder="category (optional)" style="width:180px"><button class="b ghost sm" onclick="bankOp({op:'add',kind:'skills',name:$('#bSkill').value,detail:$('#bSkillCat').value},'skill added')">Add</button></div>
@@ -286,7 +436,7 @@
     <div class="row"><button class="b ghost" onclick="run('audit',{},r=>{$('#bAudit').innerHTML=auditHtml(r)},this)">Audit latest saved resume file</button><span class="muted">the newest .docx or .pdf you imported: header/footer contact, tables, text boxes, columns, small fonts, scans, and the text a parser sees</span></div>
     <div id="bAudit"></div></div>
   <div class="panel"><h3>Import an existing resume</h3>
-    <div class="row"><input type="file" id="pFile" accept=".docx,.pdf,.md,.txt"><button class="b ghost" onclick="importToBank('pFile',false,this)">Import</button><span class="muted">.docx, .pdf, .md, .txt · every fact is read into a review below; nothing reaches your profile until you accept it. Personal details (date of birth, ID numbers, photo, pay, references) are never stored.</span></div>
+    <div class="row"><input type="file" id="pFile" accept=".docx,.pdf,.odt,.rtf,.html,.htm,.md,.txt" aria-label="Resume file (.docx, .pdf, .odt, .rtf, .html, .md, .txt)"><button class="b ghost" onclick="importToBank('pFile',false,this)">Import</button><span class="muted">.docx, .pdf, .md, .txt · every fact is read into a review below; nothing reaches your profile until you accept it. Personal details (date of birth, ID numbers, photo, pay, references) are never stored.</span></div>
     <div id="pReview"></div>
     <textarea id="pImport" style="display:none; min-height:160px" placeholder="imported text appears here"></textarea>
     <div class="row" id="pImportActions" style="display:none"><button class="b" onclick="run('merge_profile',{text:$('#pImport').value,current:$('#pText').value},r=>{$('#pText').value=r.text;toast('merged into the editor; review, then Save','ok')},this)">Merge into my profile (AI)</button><button class="b ghost" onclick="$('#pText').value=$('#pImport').value;toast('replaced the editor; review, then Save','ok')">Replace profile with this text</button></div></div>
@@ -309,13 +459,13 @@
     <div class="row"><button class="b" id="sBuild" onclick="studioBuild(true,this)">Build</button><button class="b ghost" onclick="studioBuild(false,this)">Build without AI</button><span class="muted" id="sHint"></span></div>
   </div>
   <div class="panel" id="sResult" style="display:none"></div>
-  <div class="panel"><h3>Versions</h3><div class="row"><button class="b ghost sm" onclick="api('/api/open_folder',{which:'studio'}).then(r=>r.error&&toast('error: '+r.error,'err'))">Show folder</button></div><div id="sHist" class="list"></div></div>
+  <div class="panel"><h3>Versions</h3><div class="row"><button class="b ghost sm" id="sFolder" hidden onclick="api('/api/open_folder',{which:'studio'}).then(r=>r.error&&toast('error: '+r.error,'err'))">Show folder</button></div><div id="sHist" class="list"></div></div>
 </section>
 
 <section id="tools">
   <h2>Tools</h2>
   <div class="aihead" data-ai-menu="setup"></div>
-  <p class="sub"><b>enabled</b> off = never runs. <b>auto</b> off = proposes into the Inbox and waits. <b>auto</b> on = runs immediately and logs an event. Commands you run yourself are confirmed by running them. Pipeline tools (fit_check to thank_you): <b>enabled</b> = Autopilot may use this step; <b>auto</b> = it runs without asking; otherwise Autopilot asks once per job in the Inbox (Setup &gt; Autopilot).</p>
+  <p class="sub"><b>enabled</b> off = never runs. <b>auto</b> off = proposes into the Inbox and waits. <b>auto</b> on = runs immediately and logs an event. Commands you run yourself are confirmed by running them. Pipeline tools (Fit check to Thank-you): <b>enabled</b> = Autopilot may use this step; <b>auto</b> = it runs without asking; otherwise Autopilot asks once per job in the Inbox (Setup &gt; Autopilot).</p>
   <div class="panel" id="toolTable"></div>
   <div class="panel"><h3>Preferences</h3><div id="prefs"></div></div>
 </section>
@@ -324,7 +474,7 @@
   <h2>Setup</h2>
   <div class="aihead" data-ai-menu="setup"></div>
   <div class="panel" id="emailCard"><h3>Connect email</h3>
-    <p class="muted">Lodestar reads hiring replies over IMAP and sends only the mail you approve over SMTP. Sign in with Google or Microsoft, or use an app password (never your normal password). Either one stays in the OS keyring and is never shown again. Step-by-step guide: docs/CONNECT.md.</p>
+    <details class="help"><summary>About this</summary><div><p>Lodestar reads hiring replies over IMAP and sends only the mail you approve over SMTP. Sign in with Google or Microsoft, or use an app password (never your normal password). Either one stays in the OS keyring and is never shown again. Step-by-step guide: docs/CONNECT.md.</p></div></details>
     <div class="row"><select id="eProv" aria-label="mail provider" onchange="emailPreset()"></select>
       <input id="eUser" type="email" autocomplete="off" aria-label="email address" placeholder="you@example.com" style="width:240px" onchange="emailGuess()"></div>
     <div id="eOauth" style="display:none">
@@ -349,8 +499,19 @@
       <button class="b ghost" id="eSend" onclick="emailSend(this)">Send me a test email</button>
       <button class="b ghost" id="eOff" onclick="emailDisconnect()">Disconnect</button></div>
     <div id="eStatus" role="status" aria-live="polite"></div></div>
+  <div class="panel" id="jmCard"><h3>Local job model</h3>
+    <details class="help"><summary>About this</summary><div><p>Lodestar builds <b>lodestar-jobs</b> in your Ollama from a general model, your profile and what you pursued or passed on, so local AI ranks, sorts and drafts the way you choose. It is rebuilt daily when something new is learned. Everything stays on this computer, and your salary floor is never in it. Evaluate scores it against its base model on decisions it never saw.</p></div></details>
+    <div class="row"><label><input type="checkbox" id="jmOn" onchange="setPref('jobmodel',this.checked)"> Use it as the Ollama model</label>
+      <button class="b" id="jmBuild" onclick="jmRun('build',this)">Build now</button><button class="b ghost" id="jmEval" onclick="jmRun('eval',this)">Evaluate</button></div>
+    <div id="jmStatus" class="muted" aria-live="polite"></div></div>
+  <div class="panel" id="phoneCard"><h3>Phone access</h3>
+    <p class="muted">Open Lodestar on your phone over your home Wi-Fi. Off by default. Each phone pairs once with a one-time code from here; keys, passwords, sign-in codes, backups and updates stay on this computer. Plain HTTP on your network: use it at home, not on public Wi-Fi.</p>
+    <div class="row"><button class="b" id="phoneToggle" onclick="phoneSet(this)">Turn on phone access</button><span id="phoneUrl" class="muted"></span></div>
+    <div class="row"><button class="b ghost sm" id="phoneCodeBtn" onclick="phoneCode(this)">New pairing code</button><b id="phoneCode" class="mono"></b>
+      <button class="b ghost sm" onclick="phoneRevoke(this)">Sign out all phones</button></div>
+    <div id="phoneList" class="muted"></div></div>
   <div class="panel" id="apCard"><h3>Autopilot</h3>
-    <p class="muted">Off by default. When on, the monitor loop moves each job along its pipeline (Board drawer &gt; Pipeline): steps set to <b>auto</b> run within the AI budgets below; the others ask once per job in the Inbox. Nothing is sent, submitted or moved without its own approval, a stale step is never redone on its own, and eligibility or EEO answers are never drafted. Jobs whose fit check says skip are left alone.</p>
+    <details class="help"><summary>About this</summary><div><p>Off by default. When on, the monitor loop moves each job along its pipeline (Board drawer &gt; Pipeline): steps set to <b>auto</b> run within the AI budgets below; the others ask once per job in the Inbox. Nothing is sent, submitted or moved without its own approval, a stale step is never redone on its own, and eligibility or EEO answers are never drafted. Jobs whose fit check says skip are left alone.</p></div></details>
     <div class="row"><label><input type="checkbox" id="apOn" onchange="setPref('autopilot',this.checked)"> Autopilot on</label>
       <label class="muted">AI calls per cycle <input id="apCycle" type="number" min="0" max="500" style="width:80px" onchange="setPref('autopilot_ai_per_cycle',Number(this.value))"></label>
       <label class="muted">per day <input id="apDay" type="number" min="0" max="500" style="width:80px" onchange="setPref('autopilot_ai_per_day',Number(this.value))"></label>
@@ -359,31 +520,6 @@
     <div class="muted" id="apLast"></div>
     <div class="row"><button class="b ghost" onclick="pipeLog(this)">Show the run log</button><span class="muted">every step run: by you, Autopilot or an approval, with its outcome and AI calls (also <code>lodestar pipeline log</code>)</span></div>
     <div id="apLog"></div></div>
-  <div class="panel" id="srcCard"><h3>Job sources</h3>
-    <p class="muted">Where Jobs searches and saved searches look. Keyless boards always run; Adzuna and USAJOBS run once you add their free keys here (stored in the OS keyring, checked with one small search). Saved searches ask each board at most once per window (Remotive every 6 hours for all your searches together), so Lodestar stays inside each board's published limits. Listings from Adzuna, Himalayas and We Work Remotely always show the source's name as a link: their terms ask for that credit. LinkedIn, Indeed, Glassdoor and ZipRecruiter are never fetched (their terms forbid it).</p>
-    <div id="srcList" class="list" role="status" aria-live="polite"></div></div>
-  <div class="panel" id="alertCard"><h3>Job alerts</h3>
-    <p class="muted">Subscribe to job alerts on LinkedIn (Jobs &gt; search &gt; Set alert), Indeed, Glassdoor or ZipRecruiter, delivered to the mailbox you connected under Connect email. The mail monitor reads only your own inbox: an alert counts only when its sender is the site's known alert address and the mail passed DKIM/DMARC, and its jobs go to All jobs (Jobs tab), merged with every other source. Lodestar never opens an alert's links (the sites' terms forbid automated visits, and those links can carry one-click sign-in tokens): a link opens only when you click it. Alert mails are not stored. Reading alert mail is low risk under those sites' terms, but not none: switch it off here if you prefer.</p>
-    <div class="row"><label><input type="checkbox" id="alertsOn" onchange="alertsToggle(this.checked)"> Read job-alert emails (tool job_alerts)</label></div>
-    <div id="alertList" class="list" role="status" aria-live="polite"></div>
-    <div class="muted">An alert that cannot be read sends one notice a day; save it as a .eml file and run <code>lodestar email parse-alert FILE.eml</code> to see what Lodestar finds in it.</div></div>
-  <div class="panel" id="acctCard"><h3>Site accounts</h3>
-    <p class="muted">Your accounts on employer application sites (a Workday tenant, an iCIMS portal), one per site. When an application asks you to sign in, the apply agent signs in with the saved account, or fills the site's sign-up form with your email and a new strong password and stops: you tick the terms and press Create yourself. Passwords stay in the OS keyring and show only when you press Reveal. Codes and verification links come from your connected inbox: used when you click Fill code or Open link, or by themselves on a site where you tick "use my inbox". A CAPTCHA is always yours. Never for LinkedIn, Indeed, Glassdoor, ZipRecruiter or SimplyHired.</p>
-    <div id="acctWait" role="status" aria-live="polite"></div>
-    <details id="acctGen"><summary class="muted">General login for new accounts <span id="acctGenState"></span></summary>
-      <div class="row"><input id="acctGenUser" autocomplete="off" placeholder="username (empty: your profile email)" aria-label="general username" style="width:240px">
-        <input id="acctGenPw" type="password" autocomplete="new-password" placeholder="general password" aria-label="general password" style="width:200px">
-        <button class="b sm" onclick="acctGeneral(this)">Save</button><button class="b ghost sm" onclick="acctGeneral(this,true)">Clear</button></div>
-      <div class="row"><label class="muted"><input type="checkbox" id="acctAutoCreate" onchange="acctAutoCreate(this)"> finish sign-ups for me: tick only the terms / privacy box, press Create and use that site's emailed code or link (a CAPTCHA stays yours)</label></div>
-      <p class="muted">New accounts use this password instead of a generated one, and a site that already knows your email gets one sign-in try with it. It lives only in the OS keyring. One password on many sites means a leak on one site opens the others.</p></details>
-    <div class="row"><input id="acctQ" type="search" class="grow" placeholder="search sites, usernames, jobs" aria-label="search site accounts" oninput="acctPaint()"></div>
-    <div id="acctList" class="list"></div>
-    <details id="acctNew"><summary class="muted">Save a login, or create an account</summary>
-      <div class="row"><input id="acctUrl" class="grow" autocomplete="off" placeholder="the site's sign-in page link" aria-label="sign-in page link">
-        <input id="acctUser" autocomplete="off" placeholder="username or email" aria-label="username or email" style="width:200px">
-        <input id="acctPw" type="password" autocomplete="new-password" placeholder="password (empty: Lodestar makes one)" aria-label="password" style="width:220px"></div>
-      <div class="row"><button class="b" onclick="acctAdd(this)">Save login</button><button class="b ghost" onclick="acctCreate(this)">Create an account there</button>
-        <span class="muted">Create opens the link in the agent's window and fills the sign-up form; you press Create.</span></div></details></div>
   <div class="grid2">
     <div class="panel" id="keysCard"><h3>Link an AI key</h3>
       <div class="row"><select id="kProv" aria-label="AI provider" onchange="keyHint()"></select><input id="kVal" type="password" autocomplete="off" class="grow" placeholder="paste the key" aria-label="API key"><button class="b" onclick="keyLink(this)">Link</button></div>
@@ -398,17 +534,17 @@
     <div class="panel"><h3>Other secrets (OS keyring)</h3>
       <div class="row"><input id="vName" placeholder="ANTHROPIC_API_KEY / OBSIDIAN_VAULT" aria-label="vault entry name" style="width:240px"><input id="vUser" placeholder="username (optional)" aria-label="vault entry username" style="width:150px"><input id="vVal" type="password" class="grow" placeholder="secret" aria-label="secret"><button class="b" onclick="setVault()">Store</button></div>
       <div class="muted" id="vList"></div>
-      <p class="muted">AI keys and email have their own cards above. Local: OLLAMA_MODEL (or "Local only" above). Optional: OBSIDIAN_VAULT (folder for the Obsidian export), LODESTAR_NOTIFY_EMAIL (where alerts and the emailed digest go; the digest falls back to your connected mailbox), BLS_API_KEY (free from data.bls.gov/registrationEngine: raises market pay lookups from 25 to 500 a day; renew it yearly).</p></div>
+      <details class="help"><summary>About this</summary><div><p>AI keys and email have their own cards above. Local: OLLAMA_MODEL (or "Local only" above). Optional: OBSIDIAN_VAULT (folder for the Obsidian export), LODESTAR_NOTIFY_EMAIL (where alerts and the emailed digest go; the digest falls back to your connected mailbox), BLS_API_KEY (free from data.bls.gov/registrationEngine: raises market pay lookups from 25 to 500 a day; renew it yearly).</p></div></details></div>
     <div class="panel"><h3>Market rates</h3>
       <p class="muted">Your own annual pay ranges by title keyword (and city). Lodestar never guesses pay: gap checks, offer evaluation and interview prep quote these plus figures stated in postings.</p>
-      <div class="row"><input id="mTitle" placeholder="title keyword, e.g. data engineer" style="width:200px"><input id="mCity" placeholder="city (empty = any)" style="width:130px"><input id="mLow" type="number" min="0" placeholder="low" style="width:100px"><input id="mHigh" type="number" min="0" placeholder="high" style="width:100px"><button class="b" onclick="compOp({op:'set',title:$('#mTitle').value,city:$('#mCity').value,low:$('#mLow').value,high:$('#mHigh').value})">Record</button></div>
+      <div class="row"><input id="mTitle" placeholder="title keyword, e.g. electrician" style="width:200px"><input id="mCity" placeholder="city (empty = any)" style="width:130px"><input id="mLow" type="number" min="0" placeholder="low" style="width:100px"><input id="mHigh" type="number" min="0" placeholder="high" style="width:100px"><button class="b" onclick="compOp({op:'set',title:$('#mTitle').value,city:$('#mCity').value,low:$('#mLow').value,high:$('#mHigh').value})">Record</button></div>
       <div id="compList" class="list"></div></div>
     <div class="panel" id="extCard"><h3>Browser extension</h3>
-      <p class="muted">Sends the posting on your tab to the Board and fills application forms; it never clicks, submits or ticks anything. Install: edge://extensions or chrome://extensions &gt; Developer mode &gt; Load unpacked &gt; the <code>extension</code> folder of your Lodestar install. Not for LinkedIn: its User Agreement bans browser add-ons that scrape or copy it, so capture and fill do nothing there.</p>
+      <details class="help"><summary>About this</summary><div><p>Sends the posting on your tab to the Board and fills application forms; it never clicks, submits or ticks anything. Install: edge://extensions or chrome://extensions &gt; Developer mode &gt; Load unpacked &gt; the <code>extension</code> folder of your Lodestar install. Not for LinkedIn: its User Agreement bans browser add-ons that scrape or copy it, so capture and fill do nothing there.</p></div></details>
       <div class="row"><button class="b" onclick="extPair(this)">Pair a browser</button><code id="extCode" aria-live="polite"></code><span class="muted" id="extLeft"></span></div>
       <div id="extList" class="list"></div>
       <div class="row"><label class="muted" for="extBm">Bookmarklets</label><select id="extBm" onchange="setPref('bookmarklets',this.value)"><option value="auto">auto: off once a browser is paired</option><option value="on">on</option><option value="off">off</option></select></div>
-      <p class="muted">Form answers come from your answer bank (Answers tab), never your Preferences or anything marked private. EEO answers: save them under <code>EEO: gender</code>, <code>EEO: race</code>, <code>EEO: hispanic or latino</code>, <code>EEO: veteran status</code>, <code>EEO: disability status</code>; they go only when you tick "include EEO answers" in the extension. Desired salary: an answer to <code>Desired salary</code>, sent only when you tick it; it must not be your floor. Radio buttons and dropdown widgets stay yours to click.</p></div>
+      <details class="help"><summary>About this</summary><div><p>Form answers come from your answer bank (Answers tab), never your Preferences or anything marked private. EEO answers: save them under <code>EEO: gender</code>, <code>EEO: race</code>, <code>EEO: hispanic or latino</code>, <code>EEO: veteran status</code>, <code>EEO: disability status</code>; they go only when you tick "include EEO answers" in the extension. Desired salary: an answer to <code>Desired salary</code>, sent only when you tick it; it must not be your floor. Radio buttons and dropdown widgets stay yours to click.</p></div></details></div>
     <div class="panel"><h3>Browser bookmarklets</h3>
       <p class="muted" id="bmState">Drag these to your bookmarks bar. The UI must be running.</p>
       <div class="row" id="bmLinks"><a id="bm" class="b" href="#">+ Lodestar capture</a><a id="af" class="b ghost" href="#">+ Lodestar autofill</a></div>
@@ -436,10 +572,13 @@
       <div class="row"><select id="rsPick" aria-label="Backup to restore"></select><button class="b ghost sm" onclick="restoreLoad()">Refresh</button>
         <button class="b danger" id="rsGo" onclick="restoreRun(this)">Restore</button></div>
       <div id="rsOut" role="status" aria-live="polite"></div>
-      <p class="muted">Puts your data folder back to the zip you pick from the backups folder (Open backups to add one). A safety backup of what is there now is taken first, and the backup's database must open and pass its checks before anything changes. Refused while the monitor loop is mid-cycle, mail is being sent or scanned, an update runs, or another Lodestar window or loop is open. Keyring secrets (AI keys, mail sign-in) and paired browsers are not in backups and stay as they are. Same as <code>lodestar restore ZIP</code>.</p>
+      <details class="help"><summary>About this</summary><div><p>Puts your data folder back to the zip you pick from the backups folder (Open backups to add one). A safety backup of what is there now is taken first, and the backup's database must open and pass its checks before anything changes. Refused while the monitor loop is mid-cycle, mail is being sent or scanned, an update runs, or another Lodestar window or loop is open. Keyring secrets (AI keys, mail sign-in) and paired browsers are not in backups and stay as they are. Same as <code>lodestar restore ZIP</code>.</p></div></details>
       <h4>AI changes</h4>
       <p class="muted">Every change Apply suggestions and Full AI made to your content, newest first, with what it was before. Undo puts a batch back exactly; a field you changed since keeps your version.</p>
       <div id="aiHist" class="list"></div></div>
+    <div class="panel" id="auditCard"><h3>Audit log</h3>
+      <p class="muted">Every decision the policy made about an automatic action (allowed, waits for you, blocked) with its reasons, and every action that ran, newest first. Kept for good: the log cannot be edited. <span id="auditVer"></span></p>
+      <div id="auditLog" class="list"></div></div>
     <div class="panel" id="updCard"><h3>Updates</h3>
       <div class="row"><label>Updates <select id="uMode" onchange="setPref('update_mode',this.value)"><option value="off">off</option><option value="notify">tell me (notify)</option><option value="auto">install automatically</option></select></label>
         <label>check every <input id="uEvery" type="number" min="1" max="720" style="width:70px" onchange="setPref('update_every_hours',Number(this.value))"> hours</label>
@@ -448,7 +587,7 @@
       <div id="uPlan"></div>
       <div id="uResult" role="status" aria-live="polite"></div>
       <details id="uLogBox"><summary class="muted">Update log</summary><div id="uLog" class="list"></div></details>
-      <p class="muted">The monitor loop checks on this interval. An update comes only from the configured origin, fast-forward only, never over your own changes or while mail is being sent or scanned: a backup first, then the tests and <code>lodestar doctor</code> on the new code, rolled back if anything fails. Same as <code>lodestar update</code>.</p></div>
+      <details class="help"><summary>About this</summary><div><p>The monitor loop checks on this interval. An update comes only from the configured origin, fast-forward only, never over your own changes or while mail is being sent or scanned: a backup first, then the tests and <code>lodestar doctor</code> on the new code, rolled back if anything fails. Same as <code>lodestar update</code>.</p></div></details></div>
     <div class="panel"><h3>About</h3><p class="muted"><span id="ver"></span> · Lodestar is local-first: the UI binds to 127.0.0.1, secrets live in the OS keyring, data is in your home folder. Docs: README.md, docs/SETUP.md, docs/AUTOMATION.md, docs/COMMANDS.md.</p></div>
   </div>
 </section>
@@ -491,6 +630,19 @@
     <ul id="palList" role="listbox" aria-label="Commands"></ul>
     <div class="muted palhint"><span id="palN" role="status" aria-live="polite"></span> · ↑↓ move · Enter runs · Esc closes</div>
   </div>
+</div>
+<div id="browserBar" role="toolbar" aria-label="In-app browser" hidden>
+  <span class="brTag">Browser</span>
+  <button class="b ghost sm" id="brBack" title="Back" aria-label="Back">&#8592;</button>
+  <button class="b ghost sm" id="brFwd" title="Forward" aria-label="Forward">&#8594;</button>
+  <button class="b ghost sm" id="brReload" title="Reload" aria-label="Reload">&#8635;</button>
+  <input id="brUrl" type="url" aria-label="Address" placeholder="https://" spellcheck="false">
+  <button class="b ghost sm" id="brGo">Go</button>
+  <button class="b sm" id="brSave" title="Reads this page once and adds it to your Board">Save this job</button>
+  <button class="b ghost sm" id="brKeys" title="Marks this posting's keywords on the page: yellow = missing from your resume, green = in it">Keywords</button>
+  <button class="b ghost sm" id="brApplied" title="You sent this application yourself: the job (saved first if new) moves to applied">I applied</button>
+  <button class="b ghost sm" id="brSys" title="Open this page in your system browser">System browser &#8599;</button>
+  <button class="b ghost sm" id="brHide" title="Hide this bar (the browser window stays open)" aria-label="Hide the browser bar">&#215;</button>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
 <script>window.LODESTAR_TOKEN = "__TOKEN__"; window.LODESTAR_CAPTURE = "__CAPTURE__";</script>

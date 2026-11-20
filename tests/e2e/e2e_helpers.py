@@ -109,6 +109,7 @@ class Helpers(E2ETestCase):
         story = lambda: next(s for s in self.state()["stories"] if s["id"] == sid)  # noqa: E731
         self.assertEqual(story()["action"], "")  # nothing written yet
         bar = self.page.locator(f'#storyList .aibar[data-adv="stories_{sid}"]')
+        panel.get_by_role("button", name="Tick all", exact=True).click()  # pass 54: suggestions start unticked
         self.run_click(bar.get_by_role("button", name="Apply suggestions", exact=True))
         self.assertEqual((story()["action"], story()["result"]), ("I wrote the plan and moved 200 tables to Iceberg", "Costs fell by a third"))
         self.assertIn("I wrote the plan and moved 200 tables", self.page.text_content("#storyList"))

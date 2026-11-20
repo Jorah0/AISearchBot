@@ -225,7 +225,7 @@ class Search(unittest.TestCase):
         profile.write_master(PROF)
         d = wm.defaults()
         self.assertEqual((d["roles"], d["roles_from"], d["location"], d["location_from"]),
-                         (["Senior Data Engineer"], "your resume", "Austin, TX", "your profile"))
+                         (["Data Engineer"], "your resume", "Austin, TX", "your profile"))  # pass 42: the level is the filter's
         profile.set_pref_fields({"Target roles": "Data Engineer, Analytics Engineer", "Locations / remote": "Austin, TX, Remote"})
         d = wm.defaults()
         self.assertEqual((d["query"], d["roles_from"], d["location"]),

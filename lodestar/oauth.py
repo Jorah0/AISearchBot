@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
-from . import vault
+from . import settings, vault
 from .config import setting
 
 PROVIDERS = {
@@ -171,7 +171,10 @@ def auth_url(provider: str, port: int, state: str, challenge: str, account: str 
     """(the provider's sign-in URL, the redirect URI). The URL carries no secret: client id, challenge, state, redirect."""
     p = _provider(provider)
     redirect = p["redirect"].format(port=port)
-    q = {"client_id": setting(p["client"]) or "", "response_type": "code", "redirect_uri": redirect, "scope": p["scope"],
+    scope = p["scope"]
+    if provider == "google" and settings.pref("calendar_freebusy"):  # least privilege: asked only once you turn it on
+        scope += " https://www.googleapis.com/auth/calendar.freebusy"
+    q = {"client_id": setting(p["client"]) or "", "response_type": "code", "redirect_uri": redirect, "scope": scope,
          "state": state, "code_challenge": challenge, "code_challenge_method": "S256"} | p["params"]
     if login_hint:
         q["login_hint"] = login_hint

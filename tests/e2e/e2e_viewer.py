@@ -17,7 +17,19 @@ from harness import FLOOR, E2ETestCase, db, resume
 from lodestar import settings, studio, viewer
 
 REAL_BROWSER = resume._browser  # the harness pins the print-page fallback per class; this suite prints real PDFs
-EDGE = REAL_BROWSER()
+
+
+def _prints():
+    """A browser that can actually print here: a Linux CI runner has Edge but not its sandbox helper (skip, not fail)."""
+    if not REAL_BROWSER():
+        return False
+    try:
+        return viewer.pdf("<!doctype html><p>probe</p>").startswith(b"%PDF")
+    except (SystemExit, OSError):
+        return False
+
+
+EDGE = REAL_BROWSER() if _prints() else None
 LONG = "# Research: Northwind Analytics\n\n" + "\n\n".join(
     f"## Topic {n}\n" + "\n".join(f"- Finding {n}.{k}: Northwind ships data products to {k + 3} regional teams" for k in range(8))
     for n in range(1, 9))
@@ -123,6 +135,21 @@ class Viewer(E2ETestCase):
         self.assertEqual(name, "Pat-Rivera-Resume.pdf")
         self.assertTrue(data.startswith(b"%PDF"))
         self.assertEqual(len(re.findall(rb"/Type\s*/Page(?!s)", data)), 1)
+
+    def test_look_gallery_and_ai_pick(self):  # pass 53
+        self.open_doc("resume.md")
+        self.page.locator("#vwFmt .looks").get_by_role("button", name="Executive").click()
+        self.ready()
+        self.assertIn("Georgia", self.frame("getComputedStyle(d.body).fontFamily"))
+        self.assertEqual(self.page.input_value("#vw_font"), "Georgia")
+        old = type(self).ai_json
+        type(self).ai_json = {"look": "Technical", "why": "an engineering role"}
+        self.addCleanup(setattr, type(self), "ai_json", old)
+        self.page.locator("#vwLookAI").click()
+        self.idle()
+        self.ready()
+        self.assertIn("Technical: an engineering role", self.page.text_content("#vwLookWhy"))
+        self.assertIn("Arial", self.frame("getComputedStyle(d.body).fontFamily"))
 
     def test_every_formatting_control_changes_the_preview_and_the_export(self):
         frame = self.open_doc("resume.md")
@@ -349,7 +376,7 @@ class Viewer(E2ETestCase):
         self.ready()
         self.assertIn("research.md", self.page.text_content("#vwTitle"))
         self.page.click("#vwClose")
-        drawer.get_by_role("button", name="View documents").click()
+        drawer.get_by_role("button", name="View packet").click()
         self.ready()
         self.assertEqual(self.page.locator("#vwDoc option").all_text_contents(),
                          ["resume.md", "cover_letter.md", "interview_prep.md", "research.md"])

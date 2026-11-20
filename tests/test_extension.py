@@ -327,14 +327,59 @@ class Capture(Base):
         made.append(bm["id"])
         self.assertEqual((bm["company"], bm["title"]), ("Mark Co", "BI Dev"))
 
-    def test_linkedin_is_never_captured_or_filled(self):
+    def test_keywords_for_a_tracked_job_or_an_untracked_page(self):  # pass 53
         cred = self.pair()
-        for path in ("/api/ext/capture", "/api/ext/autofill"):
-            for u in ("https://www.linkedin.com/jobs/view/1", "https://linkedin.com/x", "https://de.LinkedIn.com./y"):
-                st, out, _ = self.ext(cred, path, {"title": "Role - Co", "url": u})
-                self.assertEqual((st, out["error"]), (400, extension.LINKEDIN), (path, u))
-        self.assertFalse(extension.linkedin("https://notlinkedin.com/x"))
-        self.assertFalse(extension.linkedin("https://linkedin.com.evil.example/x"))
+        from lodestar import resume
+
+        old = resume.candidate_text
+        resume.candidate_text = lambda *a, **k: "Data Analyst. SQL and Python reporting."  # the shared home's profile may be the template
+        self.addCleanup(setattr, resume, "candidate_text", old)
+        jd = "We need SQL, Python and Tableau for reporting. Strong communication and stakeholder skills. " * 3
+        st, out, _ = self.ext(cred, "/api/ext/keywords", {"url": "https://jobs.example.org/untracked-kw", "title": "Data Analyst",
+                                                          "posting": {"title": "Data Analyst", "description": jd}})
+        self.assertEqual(st, 200, out)
+        self.assertIsNone(out["job_id"])
+        self.assertEqual(out["target"], 75)
+        self.assertTrue(set(map(str.lower, out["missing"] + out["matched"])) >= {"sql", "python", "tableau"})
+        self.assertEqual(self.ext(cred, "/api/ext/keywords", {"url": "https://jobs.example.org/x", "desc": "too short"})[0], 400)
+        jid = db.add_job("Quince Labs", "Data Analyst", "https://jobs.example.org/tracked-kw", jd, "test")
+        self.addCleanup(db.delete_job, jid)
+        self.assertEqual(self.ext(cred, "/api/ext/keywords", {"url": "https://jobs.example.org/tracked-kw"})[1]["job_id"], jid)
+
+    def test_i_applied_moves_a_saved_job_or_captures_it_first(self):  # pass 53
+        cred, made = self.pair(), []
+        self.addCleanup(lambda: [db.delete_job(j) for j in made])
+        jid = db.add_job("Thistle Ware", "Buyer", "https://jobs.thistle.example/buyer-9", "Buy things.", "test")
+        made.append(jid)
+        st, out, _ = self.ext(cred, "/api/ext/applied", {"title": "Buyer", "url": "https://jobs.thistle.example/buyer-9"})
+        self.assertEqual((st, out["id"], out["moved"], out["captured"]), (200, jid, True, False), out)
+        ev = db.con().execute("SELECT actor_type, evidence FROM stage_events WHERE job_id=? ORDER BY id DESC", (jid,)).fetchone()
+        self.assertEqual(ev[0], "user")
+        self.assertIn("extension", ev[1])
+        self.assertFalse(self.ext(cred, "/api/ext/applied", {"url": "https://jobs.thistle.example/buyer-9"})[1]["moved"])
+        st, out, _ = self.ext(cred, "/api/ext/applied", {"title": "Planner - Thistle Ware", "url": "https://jobs.thistle.example/planner-2"})
+        made.append(out["id"])
+        self.assertEqual((out["captured"], out["moved"], db.get_job(out["id"])["status"]), (True, True, "applied"))
+        self.assertEqual(self.ext(cred, "/api/ext/applied", {"url": "javascript:alert(1)"})[0], 400)
+
+    def test_linkedin_saves_and_fills_on_your_click_and_a_full_site_waits(self):  # pass 36: you browse, the cap paces
+        from lodestar import pacing
+
+        cred, made = self.pair(), []
+        self.addCleanup(lambda: [db.delete_job(j) for j in made])
+        self.addCleanup(lambda: (db.con().execute("DELETE FROM meta WHERE key=?", (pacing.KEY,)), db.con().commit()))
+        url = "https://www.linkedin.com/jobs/view/4242"
+        st, out, _ = self.ext(cred, "/api/ext/capture", {"title": "Data Engineer | Pace Co | LinkedIn", "url": url})
+        self.assertEqual(st, 200, out)
+        made.append(out["id"])
+        st, out, _ = self.ext(cred, "/api/ext/autofill", {"url": url, "questions": []})
+        self.assertNotEqual(st, 429, out)  # LinkedIn is no longer refused (any answer here is about the profile)
+        pacing.set_cap("LinkedIn", 0, 5)  # at today's cap: the fill waits, the save still works
+        st, out, _ = self.ext(cred, "/api/ext/autofill", {"url": url, "questions": []})
+        self.assertEqual(st, 429)
+        self.assertIn("LinkedIn: 0 of 0 today", out["error"])
+        self.assertNotEqual(self.ext(cred, "/api/ext/autofill", {"url": "https://boards.example.org/apply", "questions": []})[0], 429)
+        self.assertEqual(self.ext(cred, "/api/ext/capture", {"title": "x", "url": url})[0], 200)
 
 
 class Autofill(Base):

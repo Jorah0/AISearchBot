@@ -71,7 +71,7 @@ PERSONIO = ("<?xml version='1.0' encoding='UTF-8'?><workzag-jobs><position><id>2
 
 # the real boards: an earlier test module may leave web_monitor.SOURCES set to its fakes
 BOARDS = {n: getattr(wm, f) for n, f in (("remotive", "_remotive"), ("arbeitnow", "_arbeitnow"), ("remoteok", "_remoteok"),
-                                         ("hn", "_hn"), ("jobicy", "_jobicy"), ("themuse", "_muse"), ("himalayas", "_himalayas"),
+                                         ("hn", "_hn"), ("jobicy", "_jobicy"), ("himalayas", "_himalayas"),
                                          ("wwr", "_wwr"), ("adzuna", "_adzuna"), ("usajobs", "_usajobs"))}
 
 

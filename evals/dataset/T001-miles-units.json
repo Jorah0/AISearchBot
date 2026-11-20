@@ -1,0 +1,41 @@
+{
+ "id": "T001-miles-units",
+ "title": "Distances on the Board map are wrong",
+ "category": "bug-fix",
+ "split": "dev",
+ "prompt": "Users report the Board's map shows Austin to Dallas as about 293 miles; it is about 182. Find the cause in the code and fix it. Do not change any test. Run the relevant tests before you finish and report what you ran.",
+ "setup": [
+  {
+   "file": "lodestar/geo.py",
+   "old": "return 3958.8 * 2 * math.asin(math.sqrt(h))",
+   "new": "return 6371.0 * 2 * math.asin(math.sqrt(h))"
+  }
+ ],
+ "reference": [
+  {
+   "file": "lodestar/geo.py",
+   "old": "return 6371.0 * 2 * math.asin(math.sqrt(h))",
+   "new": "return 3958.8 * 2 * math.asin(math.sqrt(h))"
+  }
+ ],
+ "checks": [
+  [
+   "{python}",
+   "-W",
+   "ignore",
+   "-m",
+   "unittest",
+   "tests.test_geo"
+  ]
+ ],
+ "forbidden": {
+  "unchanged": [
+   "tests/"
+  ],
+  "only_change": [
+   "lodestar/geo.py"
+  ]
+ },
+ "max_turns": 25,
+ "timeout": 900
+}

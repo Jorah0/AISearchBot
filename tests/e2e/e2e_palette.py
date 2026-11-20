@@ -120,7 +120,7 @@ class Palette(E2ETestCase):
         self.expect_toast("This tab has no AI recommendations", "err")
         self.open()
         self.pick("open today", "Open Today")
-        self.page.wait_for_selector("section#board.on")
+        self.page.wait_for_selector("section#home.on")  # pass 32: Today is its own page
         self.assertEqual(self.focused().split(" ")[0], "div#today.panel.today")
 
     def test_labels_are_escaped_and_no_match_says_so(self):

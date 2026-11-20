@@ -8,6 +8,10 @@ CARD_IDS = "s => [...document.querySelectorAll(s)].map(e => Number(e.dataset.id)
 
 
 class Board(E2ETestCase):
+    def setUp(self):
+        super().setUp()
+        self.go("board")  # pass 32: the page opens on Today
+
     # --- helpers
     def new_job(self, company, title, jd="Python, SQL and Airflow pipelines.", **fields):
         jid = self.api("/api/jobs", {"company": company, "title": title, "jd": jd})["id"]

@@ -36,6 +36,7 @@ supports them.
   - [Where your data lives](#where-your-data-lives)
   - [Settings and secrets: .env and the keyring vault](#settings-and-secrets-env-and-the-keyring-vault)
   - [lodestar doctor](#lodestar-doctor)
+  - [The policy and the audit log (Setup > Audit log, `lodestar audit`)](#the-policy-and-the-audit-log-setup--audit-log-lodestar-audit)
   - [Backups, export and restore](#backups-export-and-restore)
   - [Obsidian export](#obsidian-export)
   - [Auto-update](#auto-update)
@@ -75,6 +76,7 @@ supports them.
   - [Settings in this area](#settings-in-this-area)
   - [Safety rules in this area, in short](#safety-rules-in-this-area-in-short)
 - [Finding and tracking jobs](#finding-and-tracking-jobs)
+  - [Career discovery (Careers tab, `lodestar careers`)](#career-discovery-careers-tab-lodestar-careers)
   - [Job search (Search tab, `lodestar jobs search`)](#job-search-search-tab-lodestar-jobs-search)
   - [The fit score](#the-fit-score)
   - [All jobs and job sources](#all-jobs-and-job-sources)
@@ -213,11 +215,15 @@ and Groq have free tiers; [Local models (Ollama)](#local-models-ollama) need no 
 
 ### The app at a glance
 
-- **Left sidebar** (the tabs): **Board** (your tracked jobs, Today, Getting started), **Inbox** (approvals, questions,
-  sign-in codes, unmatched mail), **Contacts**, **Search**, **Monitor** (watches, company boards, alerts, digest),
-  **Ideas** (idea crafting across providers, `lodestar ideas`), **Answers** (answer bank, form answers, STAR stories),
-  **Coach** (career-coach chat, `lodestar chat`, and mock interviews), **Insights**, **Profile**, **Studio**, and at
-  the bottom **Tools** (tool switches and preferences) and **Setup** (keys, email, data, updates, diagnostics).
+- **Left sidebar**, grouped (pass 32): **Today** (the home page: Getting started, what is due, interviews, the Inbox
+  count, suggested emails, new fits), **Inbox** (approvals, questions, sign-in codes, unmatched mail); **Pipeline**:
+  Board (your tracked jobs) and Contacts; **Discover**: Jobs (search, All jobs), Careers (career discovery) and
+  Monitor (watches, company boards, alerts, digest); **Resume**: Profile and Studio; **Prepare**: Answers (answer
+  bank, form answers, STAR stories), Coach (chat and mock interviews) and Ideas; **Progress**: Insights (skill gaps,
+  goals, offers, activity); **Settings**: Tools (tool switches and preferences) and Setup (keys, email, data, audit
+  log, updates, diagnostics). Keys: g then a letter opens a page (? lists them), Ctrl+K opens commands. The Theme
+  button switches light and dark. In a job's drawer the header stays on top, a section index jumps to Fit,
+  Documents, Messages, Interview and Timeline, and the Apply group starts or stops the apply agent.
 - **Top bar**: **Check email**, **Run watches**, the monitor-loop status line, the **Autopilot** pill, and badges such
   as **Update available** or **Codes** when they apply.
 - **Job drawer**: the panel that opens when you click a card on the Board ([The job drawer](#the-job-drawer)). Esc closes it.
@@ -856,6 +862,16 @@ code is 1 only in the last case.
 | `last update` FAIL with `ROLLBACK FAILED` | Run the `git reset --hard` command the line prints, from the install folder; see "Auto-update". |
 
 `--live` costs a few tokens (one short call per configured provider); without it doctor never goes on the network.
+
+### The policy and the audit log (Setup > Audit log, `lodestar audit`)
+
+Every automatic action (a mail, a status change, a new job, a saved answer, a submission) is proposed through one
+policy that decides, the same way every time and never by AI: **allowed** when its tool is on auto and nothing needs
+you, **waits for you** (the Inbox) otherwise, or **blocked** (the tool is off, or Full AI is running). These always
+wait for you whatever the tool's switch says: a withdrawal or acceptance, a scheduling commitment, mail to a job at the
+offer stage, a reply to a sender Lodestar could not verify, and mail with attachments. The apply agent's auto mode
+also sends a licensed occupation to review. Each decision and each action that ran is written to the audit log with
+its reasons and the policy version; the database refuses any change or deletion of it.
 
 ### Backups, export and restore
 
@@ -1647,6 +1663,95 @@ lodestar digest --send     # try it: prints where it went
 If sending fails, the alert still lands in `~/.lodestar/alerts.log` and the terminal shows `(email notify failed: ...)`.
 Pop-up notifications on this computer are a separate switch (Setup > Desktop notifications).
 
+### Job sites you browse yourself (LinkedIn, Indeed, Glassdoor, ZipRecruiter, SimplyHired)
+
+Lodestar never signs into, browses or applies on these five sites itself: their terms forbid bots, and an account
+that a site flags is yours. Instead it works alongside you:
+
+- **Search links.** Under the Jobs tab's search box, one link per site opens that site's own search in your browser
+  with your role, place and level filled in (LinkedIn and Indeed use their experience-level filters; the others put
+  the level word in the search). Lodestar fetches nothing.
+- **AI search ideas.** *AI: search ideas for these sites* (next to the links) asks your AI provider once for up to six
+  searches you qualify for (your titles, real synonyms, adjacent titles) and one boolean string for LinkedIn's and
+  Indeed's keyword box, from your profile and saved searches (never your salary floor). Each idea comes with links to
+  all five sites' own search; **Use** puts it in the search box. The AI never sees these sites.
+- **Save as you browse.** On a posting you have open, the extension's **Save** sends it to Lodestar: it is scored for
+  fit, sorted (seniority, career class) and appears on the Board, in All jobs, on Today and in Insights like any other
+  job. Job-alert emails from these sites keep arriving in All jobs too.
+- **Fill on your click.** On an application form you have open, the extension's **Fill** fills what Lodestar knows;
+  you review and press Submit yourself.
+- **Caps.** Accounts > *Job sites you browse yourself* sets a daily and a weekly cap per site (defaults: LinkedIn 10 /
+  40, Indeed 15 / 60, the others 10 / 40). Lodestar counts the jobs you mark applied whose link (or application link)
+  is on that site. At a cap the site shows *At cap: paused*, Today and the job's drawer say so, and the extension's
+  Fill waits there until the day (or the 7 days) has passed. Mark jobs applied after you apply, so the count is right.
+- **More sites.** Next to the five, *More* links open Google Jobs, Monster, Dice, Built In, Idealist and USAJOBS's own
+  search the same way. Dice, Monster (CareerBuilder too), Built In, Idealist and USAJOBS get the same caps (10 / 40 by
+  default; Google Jobs only links onward), and Lodestar never visits their pages in the background: the daily posting
+  check skips a job whose link is on them. CAPTCHAs on any of these sites are yours to answer: Lodestar never solves
+  or works around one.
+
+### Phone access (your home Wi-Fi)
+
+Off by default (pref `phone_access`). **Setup > Phone access > Turn on** starts a second listener on this computer's
+private Wi-Fi address only (never every address, never a public one) and shows its link and a QR code. On the phone,
+open the link and type the one-time pairing code Setup shows (8 characters, 5 minutes, 5 tries); the phone keeps a
+session cookie, stored hashed in `phone.json` (never in backups). **Sign out all phones** ends every session.
+
+A phone can use the board, jobs, documents, the Inbox and the AI helpers. It cannot reach keys, the vault, accounts,
+sign-in codes, mail sign-in, backups / restore / updates, settings and tool switches, the apply agent's browser, files
+opened on this computer, the extension or the in-app browser: those answer "use Lodestar on your computer". The
+traffic is plain HTTP on your own network: use it at home, not on public Wi-Fi. The Android companion (`android/`,
+README there) opens the same address and loads only private hosts.
+
+### The Accounts tab: every connection, and when one stops working
+
+**Accounts** (Settings in the sidebar) is where every link Lodestar uses lives:
+
+- **Connections** lists them grouped, each with its state and when it was last checked: your mailbox, your AI keys,
+  every job board (*Working* after its last search answered, *Failed* when it did not, *Needs a key* for Adzuna and
+  USAJOBS until you link one) and your site accounts (from their last sign-in).
+- A link that worked and then stopped shows **Disconnected since** the moment it stopped, with the reason. A red
+  count on the Accounts tab and a line on Today say the same, so you see it even if it happened while you were away.
+  A key, your mailbox or a site account that stops working also sends a notice (the alert log, and your notify email
+  when set); a job board that blips does not.
+- **What changed** is the history: every change of state with its time (a key verified, a board that stopped
+  answering, a sign-in refused).
+- **Check all now** re-checks every AI key and the mailbox (no tokens are spent). The running app also does this when
+  it starts and every 6 hours.
+- **Job sources**, **Site accounts** and **Job alerts** (described below) are on this tab. A site account is linked
+  either by saving its username and password (*Save login*) or by signing in yourself (*Re-login* opens the site in
+  the agent's window); a successful sign-in shows the account as *Working*.
+
+LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired cannot be linked: their terms forbid automated access, and
+signing in for you could get your account closed. Their jobs reach Lodestar through their job-alert emails.
+
+### The Mail page: read and answer your job mail
+
+**Mail** (under Inbox in the sidebar, or press g then l) lists every email Lodestar filed and everything it sent,
+newest first. The buttons along the top sort it by type, each with its count: Interview, Offer, Recruiter,
+Application received, Assessment, Rejection, Not classified, Other, Not filed under a job, and Sent. The search box
+narrows by subject, sender, company or summary.
+
+Click a message to read it:
+
+- **The header**: subject, type, sender (marked *verified sender* when it passed DKIM/DMARC and is tied to the job,
+  *unverified sender* otherwise), recipient, date, and the job it is filed under (click it to open the job).
+- **What the AI read from it**: a one-line summary, the next step it asks of you, and a date it names (an interview
+  time or a deadline).
+- **The whole email** as plain text (links and images in mail are never loaded), and its attachments.
+
+To reply (mail filed under a job; link other mail to a job first, or Track it as a new job):
+
+- **Write it yourself** and click **Send for review**.
+- **Improve your text**: shorter, warmer, more formal, more direct, or your own instruction ("custom…"). The AI
+  rewrites your draft in place; read it before sending.
+- **AI: write replies**: up to three replies from one AI call, one recommended with the reason. **Use this** sends it
+  for review as written; **Edit first** puts it in the box above for you to change.
+
+Nothing is sent from this page. Every reply goes to the **Inbox**, where you approve it (one click), edit it or
+reject it; the recipient is always the sender Lodestar has on file, never one typed into the page. Mail scanned before
+this page existed shows its first 1,500 characters; mail scanned from now on keeps its whole text.
+
 ### Email commands
 
 | Command | What it does |
@@ -2406,12 +2511,62 @@ where anything Lodestar wants to do on its own waits for your approval.
    Board, watches, company boards, H-1B hints and the Inbox all work without AI. AI ranking, auto-tracking, the fit
    verdict and the document steps of the pipeline need a provider.
 
+### Career discovery (Careers tab, `lodestar careers`)
+
+Career discovery reads your profile bank as evidence about you, never as a boundary. Your past titles are matched to
+occupations in the bundled O*NET 31.0 database (by O*NET's own lists of job titles; a title it does not know is left
+alone, never guessed). Related occupations are then grouped in expansion tiers:
+
+| Tier | Label | What it means |
+|---|---|---|
+| 0 | Requested target | a field you chose in a career track |
+| 1 | Equivalent roles | your own occupation (and, in a track, its O*NET title and job titles) |
+| 2 | Closely related | related in O*NET and in the same major occupation group |
+| 3 | Transferable fit | related in O*NET in another group: some of your work carries over |
+| 4 | Bridge opportunity | a role that leads into a target needing more preparation than you show |
+| 5 | Longer-term pathway | related, but needs at least two Job Zones more preparation |
+
+Each suggestion gets a career class: **Qualified now**, **Competitive with framing**, **Bridge required**,
+**Longer-term development**, **Currently ineligible** (a word you excluded) or **Insufficient evidence**. The class
+compares the occupation's O*NET Job Zone (1 = little preparation ... 5 = extensive) with yours: your own occupations'
+zones (a title O*NET files under several occupations counts at the lowest), or your degree. It is a reading of your
+evidence, never a hiring probability. Each card says why it fits, what is missing (technology the occupation uses that
+your profile does not list), what does not transfer (core tasks sharing nothing with your experience) and how to close
+the gap. Licensed occupations carry a warning and are never Qualified now without a matching credential.
+
+**Career tracks** are fields you want to search, any field, even one your resume does not show. A desired field
+searches its own words only; tick tier 1 to add the occupation's O*NET titles. Search live openings asks the job
+boards (three titles per round) and lists what it found with a Track button, then the boards asked, the ones that
+failed and the ones that need a key. Lodestar never searches every job board.
+
+```powershell
+lodestar careers suggest                       # by career class
+lodestar careers track-add Hospitality --intent desired_field --titles "hotel manager, front office manager"
+lodestar careers search 1
+lodestar careers occupation 11-9081.00         # one O*NET occupation
+```
+
+**Explore further** (one AI call): type what interests you (work you enjoy, settings, people, values). The AI
+suggests occupations from that and your profile as an employer sees it (never your salary floor or Preferences).
+Each is matched to O*NET by title and gets the same card; a role O*NET does not know is kept, marked "AI-suggested
+unmapped role: review". `lodestar careers explore "working with people, puzzles"`.
+
+**On every job (pass 24):** hard requirements are eligibility gates, each met, not met or unknown (unknown never
+counts as met), kept out of the fit score and listed in the job drawer: work authorization / visa sponsorship
+(Preferences > Work authorization), a security clearance (met when your profile mentions one), a license or
+certification the requirements name (met when your profile shows every word of it), and your excluded companies,
+title words and deal-breakers. The job's career class shows beside its fit. auto_track and Autopilot never act on a
+job with an unknown requirement by themselves.
+
+A new O*NET release: download its Text zip from https://www.onetcenter.org/database.html and run
+`python -I scripts/build_onet.py db_XX_X_text.zip --version XX.X`.
+
 ### Job search (Search tab, `lodestar jobs search`)
 
 **What it is for.** (Since pass 21 the tab is called **Jobs**, it also searches Himalayas, We Work Remotely and, with
 your keys, Adzuna and USAJOBS, and every result is kept in All jobs: see [All jobs and job sources](#all-jobs-and-job-sources).)
 One search across the free job sources that need no account or key: Remotive, Arbeitnow,
-RemoteOK, HN Who is hiring, Jobicy and The Muse. Results are de-duplicated (the same company without Inc / LLC /
+RemoteOK, HN Who is hiring, and Jobicy. Results are de-duplicated (the same company without Inc / LLC /
 GmbH..., same title and same location is shown once, with the richest description and every link), filtered, and
 optionally ranked against your profile by AI. LinkedIn and Indeed have no public API: use the Capture bookmarklet
 (below) for those.
@@ -2492,6 +2647,15 @@ on your Board is never proposed again. Auto-tracked jobs never count as applicat
 
 **AI helpers (Search):** **AI rank vs my profile**, **Auto-track strong fits**, the toolbar (saved-search keywords) and **✦ AI help** > **Suggest search terms** (queries and filters from your profile; you type the one you want).
 
+**Stages and history (pass 26).** Beside its board column every job has a stage: saved, applied, acknowledged,
+screening, recruiter_screen, assessment, interview, technical_interview, panel_interview, final_interview, references,
+offer, negotiation, accepted, rejected, no_response, position_closed, withdrawn, declined_offer, on_hold. Setting one
+in the job drawer (or `lodestar jobs stage ID STAGE`) moves the column with it (on_hold keeps the column). Each move is
+kept in the drawer's Stage history with who moved it and the evidence; it cannot be edited. Moving a job to applied
+copies the resume, cover letter and form answers as they were into the job's `submitted/` folder with a SHA-256
+manifest. The drawer also shows when the posting last answered; the apply agent stops before submitting a posting
+that looked removed.
+
 ### The fit score
 
 **What it is for.** One number from 0 to 100 per job and per listing that says how well the posting matches you, with
@@ -2537,7 +2701,7 @@ lodestar jobs list --sort fit
 searches, saved searches, company boards, captures and job-alert emails, merged across sources (the same company and
 title at the same place is one row with every link and source), each with its fit.
 
-**The sources.** Keyless: Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse, Himalayas (expired
+**The sources.** Keyless: Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, Himalayas (expired
 listings are removed) and We Work Remotely (RSS). With your own free keys: **Adzuna** and **USAJOBS**. Company feeds:
 Greenhouse, Lever, Ashby, and SmartRecruiters, Recruitee and Personio where the employer made the feed public (when it
 is not, Lodestar says so; add the careers page as a page watch instead). LinkedIn, Indeed, Glassdoor and ZipRecruiter
@@ -2864,8 +3028,11 @@ your answer bank for the questions the page shows. It never clicks, submits, pre
 uploads a file: radio buttons, dropdown widgets, file uploads and date pickers are listed as "needs you" with your
 stored answer.
 
-**Not on LinkedIn.** LinkedIn's User Agreement bans browser plugins and add-ons that scrape or copy its site, so the
-extension does nothing there (the server refuses LinkedIn pages too). Open the job on the company's own careers page.
+**On LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired** the extension works only when you click: Save sends
+the posting you have open, Fill fills the application form you have open, and nothing is ever submitted. LinkedIn's
+User Agreement discourages add-ons on its site, so use it sparingly there. Each of these five sites has an application
+cap (Accounts > Job sites you browse yourself); once a site reaches today's or this week's cap, Fill waits there
+until the window passes (Save still works).
 
 **Install (load unpacked, no store):**
 
@@ -4480,7 +4647,7 @@ Where to look first:
 | AI keys | `unknown AI provider '...'` | A typo in `-p`, `LODESTAR_PROVIDER` or the `provider` preference: use one of anthropic, openai, gemini, groq, openrouter, mistral, ollama. |
 | AI keys | `<provider>: missing <KEY>` | The key is not in the environment, `.env` or the vault: `lodestar keys link <provider>`. |
 | AI keys | `<provider>: the model '...' was rejected` | Run `lodestar providers models NAME` and pin one ([Choose models, the default provider and council providers](#choose-models-the-default-provider-and-council-providers)); Lodestar also tries to switch once on its own. |
-| AI keys | `provider X is not in council_providers=...` | The default provider is outside your `council_providers` list: add it with `lodestar tools set council_providers ...`, or change the default provider. |
+| AI keys | `X is not in council_providers=...` | A council model's provider is outside your `council_providers` list: add it with `lodestar tools set council_providers ...`, or pick other council models. (Since pass 51 the primary AI may be any linked provider.) |
 | AI keys | The Getting started banner says "<provider> key failed: ..." | Open Setup, read the detail next to the pill, fix it at the provider, click **Re-check**. |
 | AI keys | `local-only preset NOT applied (nothing changed): Ollama is not reachable at localhost:11434 or serves no model.` | Start Ollama, `ollama pull llama3.1`, run `lodestar providers local` again. |
 | AI keys | With `LODESTAR_HOME` set, your keys and mailbox show as not linked | Expected: a data folder other than `~/.lodestar` has its own keyring namespace (`lodestar doctor`, `vault namespace` line). Link them again there, or set `LODESTAR_VAULT_SERVICE=lodestar` on purpose to share the default folder's secrets. |

@@ -72,7 +72,7 @@ async function connect() {
   live = port;
   say(`Lodestar ${version} connected (port ${port}).`, "ok");
   const lockedOut = !tab || !/^https?:/.test(tab.url || "") || hostOf(tab.url) === "";
-  $("capture").disabled = $("fill").disabled = lockedOut || LodestarMatcher.linkedin(hostOf(tab.url));
+  $("capture").disabled = $("fill").disabled = $("applied").disabled = $("keywords").disabled = lockedOut || LodestarMatcher.linkedin(hostOf(tab.url));
 }
 
 function hostOf(url) {
@@ -124,11 +124,54 @@ async function capture() {
     if (posting.error) return say(posting.error, "err");
     const { status, data } = await post(live, "/api/ext/capture", posting);
     if (status !== 200) return say(data.error || `Lodestar answered ${status}.`, "err");
-    say(data.duplicate ? `Already on your Board (#${data.id}).` : `Tracked #${data.id}: ${data.company} - ${data.title}`, "ok");
+    const where = data.apply_url ? ` The apply agent can apply on ${hostOf(data.apply_url)}${data.ats ? ` (${data.ats})` : ""}; you review before it submits.`
+      : " No company application link on this page: Lodestar looks for the posting on the employer's own site when you press Apply.";
+    say((data.duplicate ? `Already on your Board (#${data.id}).` : `Tracked #${data.id}: ${data.company} - ${data.title}.`) + where, "ok");
   } catch (e) {
     say(`Lodestar did not answer: ${e.message}`, "err");
   } finally {
     $("capture").disabled = false;
+  }
+}
+
+async function keywords() {  // pass 53: missing keywords for this posting, marked on the page (your click)
+  $("keywords").disabled = true;
+  try {
+    let posting;
+    try {
+      await inject(false);
+      [{ result: posting }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => LodestarReadPosting() });
+    } catch (e) {
+      return say(CANNOT, "err");
+    }
+    const { status, data } = await post(live, "/api/ext/keywords", posting);
+    if (status !== 200) return say(data.error || `Lodestar answered ${status}.`, "err");
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: (m, h) => LodestarMark(m, h), args: [data.missing, data.matched] });
+    say(`Match ${data.score}% (target ${data.target}%+). Missing: ${data.missing.slice(0, 12).join(", ") || "none"}.`, data.score >= data.target ? "ok" : "");
+  } catch (e) {
+    say(`Lodestar did not answer: ${e.message}`, "err");
+  } finally {
+    $("keywords").disabled = false;
+  }
+}
+
+async function applied() {  // pass 53: your 'I applied' click; the page is read like Capture
+  $("applied").disabled = true;
+  try {
+    let posting;
+    try {
+      await inject(false);
+      [{ result: posting }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => LodestarReadPosting() });
+    } catch (e) {
+      return say(CANNOT, "err");
+    }
+    const { status, data } = await post(live, "/api/ext/applied", posting);
+    if (status !== 200) return say(data.error || `Lodestar answered ${status}.`, "err");
+    say(data.moved ? `Marked applied: #${data.id} ${data.company} - ${data.title}.` : `#${data.id} is already ${data.status}.`, "ok");
+  } catch (e) {
+    say(`Lodestar did not answer: ${e.message}`, "err");
+  } finally {
+    $("applied").disabled = false;
   }
 }
 
@@ -156,16 +199,17 @@ async function fill() {
     const frames = ok.filter((s) => s.result.fields.length);
     if (!frames.length) return say("No form fields here that Lodestar can fill.", "err");
     const questions = [...new Set(frames.flatMap((s) => s.result.questions))].slice(0, 100);
-    const { status, data } = await post(live, "/api/ext/autofill", { url: tab.url, questions, eeo: $("eeo").checked, salary: $("salary").checked });
+    const { status, data } = await post(live, "/api/ext/autofill", { url: tab.url, questions, eeo: $("eeo").checked, salary: $("salary").checked, ai: $("aidraft").checked });
     if (status !== 200) return say(data.error || `Lodestar answered ${status}.`, "err");
     const res = await chrome.scripting.executeScript({
       target: { tabId: tab.id, frameIds: frames.map((s) => s.frameId) }, func: (d) => LodestarFill(d), args: [data],
     });
-    let filled = 0, suggested = 0;
+    let filled = 0, suggested = 0, drafted = 0;
     for (const { result } of res) {
       if (!result) continue;
       filled += result.filled;
       suggested += result.suggested;
+      drafted += result.drafted || 0;
       for (const n of result.needsYou) {
         const li = document.createElement("li");
         li.textContent = `${n.label}: ${n.hint}`;
@@ -173,7 +217,9 @@ async function fill() {
       }
     }
     const held = data.withheld ? `, ${data.withheld} withheld by the salary-floor guard` : "";
-    say(`Filled ${filled} from your profile, ${suggested} from your answers${held}. ${$("needs").children.length} need you. Nothing was submitted.`, "ok");
+    const ai = drafted ? `, ${drafted} AI drafts (check each)` : "";
+    const note = data.ai_note ? ` ${data.ai_note}.` : "";
+    say(`Filled ${filled} from your profile, ${suggested} from your answers${ai}${held}. ${$("needs").children.length} need you. Nothing was submitted.${note}`, "ok");
   } catch (e) {
     say(`Lodestar did not answer: ${e.message}`, "err");
   } finally {
@@ -190,16 +236,14 @@ async function show() {
   tab = await target();
   const host = tab ? hostOf(tab.url) : "";
   $("host").textContent = host ? `This tab: ${host}` : "No web page in this tab.";
-  if (LodestarMatcher.linkedin(host)) {
-    $("host").textContent = LodestarMatcher.LINKEDIN;
-    $("host").className = "err";
-  }
   await connect();
 }
 
 $("pair").addEventListener("click", pair);
 $("pairing").addEventListener("keydown", (e) => { if (e.key === "Enter") pair(); });
 $("capture").addEventListener("click", capture);
+$("applied").addEventListener("click", applied);
+$("keywords").addEventListener("click", keywords);
 $("fill").addEventListener("click", fill);
 $("open").addEventListener("click", () => chrome.tabs.create({ url: `http://127.0.0.1:${live || cred.port}/` }));
 $("unpair").addEventListener("click", async () => {  // this browser forgets; Setup > Browser extension > Revoke ends it there

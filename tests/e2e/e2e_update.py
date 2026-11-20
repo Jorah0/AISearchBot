@@ -148,7 +148,7 @@ class Updates(E2ETestCase):
         self.assertEqual(self.head(), self.v1)  # the exact previous commit
         self.assertFalse(self.page.is_visible("#uRestart"))
         self.assertEqual(self.page.text_content("#updPill"), "Update available")  # still offered
-        self.go("board")
+        self.go("home")  # pass 32: Getting started lives on Today
         note = self.page.text_content("#onboard")
         self.assertIn("Last update failed", note)
         self.assertIn("rolled back", note)

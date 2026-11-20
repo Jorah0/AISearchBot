@@ -11,7 +11,6 @@ Rules (later passes too): stage functions never send, submit, add a job or chang
 employer text comes from candidate_text(private=False) / the tailored resume and db.employer_answers(); eligibility and
 EEO answers are never AI-drafted; pipeline bookkeeping never goes to `events` (the follow-up clock reads it).
 """
-import hashlib
 import json
 import re
 import threading
@@ -22,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
-from . import ai, db, log, settings
+from . import ai, db, log, settings, util
 
 AUTO = False  # True: kicks run in a daemon thread. Set by the cli ui / app / desktop commands only (never start_server)
 STUCK_MINUTES = 30  # a 'running' row this old: Lodestar closed while it ran (reads as error, can be claimed again)
@@ -31,8 +30,6 @@ CLOSED = ("accepted", "rejected", "withdrawn")
 LIVE = ("saved", "applied", "screening", "interview", "offer")
 ROOTS = ("jd", "profile", "stories", "questions")  # fingerprints that are not stages (questions: interview.qset_fp)
 # the two intake steps before a job exists: global loop steps, documented here and not registered per job
-GLOBAL = {"discover": "saved searches, page watches and company boards (loop step 'watches', Search tab)",
-          "shortlist": "auto_track proposes strong fits for the Board (Inbox add_job), or you track a listing"}
 NONE_FP = "none"  # the fingerprint of an answers step with no form questions: done, and never stale
 NEVER_AI_MSG = "Lodestar never drafts eligibility or EEO answers: write your own under Answers"
 
@@ -85,8 +82,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")  # sub-second: the claim compares it
 
 
-def _h(text) -> str:
-    return hashlib.sha1(str(text).encode("utf-8")).hexdigest()[:12]
+_h = util.short_hash
 
 
 def _dir(job):
@@ -145,11 +141,7 @@ def _questions_fp(job) -> str:
         return "?"
 
 
-def _load(v, default):
-    try:
-        return json.loads(v) if v else default
-    except ValueError:
-        return default
+_load = util.load_json
 
 
 def _rows(job_id: int) -> dict:
@@ -418,9 +410,12 @@ def _score(job, ctx):
             ctx.spent += "budget is used up" not in str(e)  # an unusable reply still cost the call
             log.get("pipeline").info("#%s AI fit skipped: %s", job["id"], e)
     chips = [f"{c['sign']} {c['text']}" for c in fit.top(f)]
-    skip = f["blocked"] or f["score"] < int(settings.pref("auto_track_min_score"))
+    unknown = [f"{g['requirement']}: unknown" for g in f.get("gates") or [] if g["state"] == "unknown"]
+    # a gate not met, or one nobody knows (unknown is never met), keeps Autopilot away; a click still runs the next step
+    skip = f["blocked"] or bool(unknown) or f["score"] < int(settings.pref("auto_track_min_score"))
     return {"fp": _h(json.dumps([f["score"], f["rev"], chips])), "score": f["score"], "known": f["known"], "chips": chips,
-            "verdict": "skip" if skip else "go", "why": "; ".join(chips) or f"fit {f['score']}",
+            "class": fit.job_class(f), "verdict": "skip" if skip else "go",
+            "why": "; ".join(["needs you: " + ", ".join(unknown)] * bool(unknown) + chips) or f"fit {f['score']}",
             "missing": ((f.get("parts") or {}).get("skills") or {}).get("missing") or []}
 
 
@@ -1441,8 +1436,19 @@ def advance(provider: str | None = None, now=None) -> dict:
     if not settings.pref("autopilot"):
         LAST["note"] = "Autopilot is off"
         return res
+    try:  # Apply (pref autopilot_apply): jobs prepared in an earlier cycle; no AI spent
+        from . import apply_agent
+
+        res["applying"] = apply_agent.autopilot_apply(states)
+    except (Exception, SystemExit) as x:
+        db.release(close=False)
+        log.get("pipeline").warning("autopilot apply failed: %s", x)
     per_cycle, per_day = int(settings.pref("autopilot_ai_per_cycle")), int(settings.pref("autopilot_ai_per_day"))
     day, cycle = spent_today(), 0
+    from . import apply_agent  # the AI judges copies of a role first (blocked until it says 'different'), in budget
+
+    res["dup_checks"] = apply_agent.autopilot_dups(states, min(per_cycle, per_day - day), provider)
+    day, cycle = day + len(res["dup_checks"]), len(res["dup_checks"])
     cands = [j for j in live if j["id"] in states and not fit_skip(states[j["id"]]) and _next_action(states[j["id"]])]
     cands.sort(key=lambda j: (j["deadline"] is None, j["deadline"] or "", -(j["excitement"] or 0), j["updated_at"]))
     for j in cands[:int(settings.pref("autopilot_jobs_per_cycle"))]:

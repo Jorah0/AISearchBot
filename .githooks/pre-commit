@@ -1,0 +1,6 @@
+#!/bin/sh
+# Engineering loop: no secret reaches a commit (scripts/secret_scan.py over the staged diff). Bypass only on purpose.
+PY=python
+[ -x .venv/Scripts/python.exe ] && PY=.venv/Scripts/python.exe
+[ -x .venv/bin/python ] && PY=.venv/bin/python
+exec "$PY" scripts/secret_scan.py --staged

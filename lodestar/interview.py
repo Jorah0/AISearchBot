@@ -8,7 +8,7 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
-from . import ai, db
+from . import ai, db, util
 from .resume import app_dir, candidate_text, write_doc
 
 SYSTEM = "You are a veteran hiring manager and interview coach. Be concrete, honest, and grounded in the candidate's real history."
@@ -772,11 +772,7 @@ def emphasis_text(hits: dict, ev: dict, company: str) -> str:
                                    + ")" for c in top)
 
 
-def _load(v, default):
-    try:
-        return json.loads(v) if v else default
-    except ValueError:
-        return default
+_load = util.load_json
 
 
 def _still_sourced(e: dict, pastes, pages, job) -> bool:

@@ -33,6 +33,7 @@ class Fit(E2ETestCase):
         db.release()
 
     def test_board_badge_table_columns_and_best_fit_sort(self):
+        self.go("board")  # pass 32: the page opens on Today
         badge = self.page.locator(f'.card[data-id="{self.ids["fit"]}"] .chip.fit')
         self.assertRegex(badge.text_content(), r"^fit \d+")
         self.assertIn("fit-", badge.get_attribute("class"))
@@ -71,6 +72,17 @@ class Fit(E2ETestCase):
         self.assertNotIn("165,000", prompt); self.assertNotIn('"chips"', prompt)
         self.assertEqual(json.loads(db.get_job(self.ids["fit"])["ai_fit"])["score"], 88)
 
+    def test_career_class_on_the_card_and_hard_requirements_in_the_drawer(self):  # pass 24
+        card = self.page.locator(f'.card[data-id="{self.ids["fit"]}"]')
+        self.assertEqual(card.locator(".chip.fit-class").text_content(), "Currently ineligible")  # its deal-breaker
+        group = self.open_job(self.ids["fit"]).locator("#jFit")
+        self.assertEqual(group.locator(".chip.fit-class").text_content(), "Currently ineligible")
+        gates = group.locator(".gates").text_content()
+        self.assertIn("Hard requirements (kept out of the score)", gates)
+        self.assertIn("Deal-breaker: not met", gates)
+        self.assertRegex(group.text_content(), r"confidence \d+%")
+        self.assertIsNone(self.page.evaluate("window.__xss"))
+
     def test_today_top_new_fit_tracks_the_listing(self):
         today = self.page.locator("#today")
         self.assertIn("Top new fits", today.text_content())
@@ -105,6 +117,7 @@ class Fit(E2ETestCase):
         self.page.locator(f"#prefs .row:has(#pl{i})").get_by_role("button", name="Reset weights").click()
         self.page.wait_for_function("() => S.prefs.fit_weights && Object.keys(S.prefs.fit_weights).length === 0")
         self.assertEqual(settings.load()["prefs"]["fit_weights"], {})
+        self.idle()  # the row re-renders after the reset: typing into the old input would send nothing
         self.allow_console()  # the refused value below is a 400
         bad = self.page.locator(f"#prefs .row:has(#pl{i}) input")
         bad.fill("skills=500")

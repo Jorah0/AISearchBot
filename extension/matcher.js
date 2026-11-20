@@ -9,9 +9,6 @@
   // never filled: identity numbers, birth date, money routes, secrets. False positives only mean "not filled".
   const DENY = /ssn|social.?security|national.?id|passport|birth|\bdob\b|driver.?s?.?licen[cs]e|tax.?id|iban|routing|bank|card.?number|cvv|password/i;
   const NO_TYPES = new Set(["password", "file", "hidden", "checkbox", "submit", "button", "image", "reset"]);
-  const LINKEDIN = "Lodestar does not capture or fill on LinkedIn: its User Agreement bans browser add-ons that scrape " +
-    "or copy it. Open the job on the company's own careers page instead.";
-
   const ATS_HOSTS = [
     ["greenhouse", /(^|\.)greenhouse\.io$/], ["lever", /(^|\.)lever\.co$/], ["ashby", /(^|\.)ashbyhq\.com$/],
     ["workday", /(^|\.)myworkday(jobs|site)?\.com$/], ["icims", /(^|\.)icims\.com$/],
@@ -162,7 +159,7 @@
     }
   }
 
-  const api = { detectAts, classify, groups, normalizeDate, pickOption, linkedin, atsFrame, MARKERS, LINKEDIN, MONTHS };
+  const api = { detectAts, classify, groups, normalizeDate, pickOption, linkedin, atsFrame, MARKERS, MONTHS };
   root.LodestarMatcher = api;
   if (typeof module === "object" && module && module.exports) module.exports = api;
 })(globalThis);

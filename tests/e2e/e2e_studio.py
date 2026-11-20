@@ -57,6 +57,18 @@ class Studio(E2ETestCase):
         self.assertEqual(self.page.locator("#sHist .row").count(), 2)
         self.assertIn("refined from", self.page.text_content("#sResult"))
 
+    def test_claim_check_shows_each_claim_beside_its_fact(self):  # pass 27, blueprint 8.5
+        self.page.fill("#sReq", "lead with cost savings")
+        self.run_click("#sBuild")
+        self.expect_toast("version built", "ok")
+        claims = self.page.locator("#sClaims")
+        self.assertIn("1 put back", claims.locator("summary").text_content())
+        claims.locator("summary").click()
+        item = claims.locator("li", has_text="e1.b2")
+        self.assertIn("reverted", item.text_content())
+        self.assertIn("your fact: Cut warehouse spend 40% by moving cold tables to Iceberg on S3", item.text_content())
+        self.assertIn("new number 45", item.text_content())
+
     def test_formatting_offline_use_for_job_default_look_open_and_delete(self):
         self.page.click("#sMore > summary")
         self.page.select_option("#sL_font", "Georgia")

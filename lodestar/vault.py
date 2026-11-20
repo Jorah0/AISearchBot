@@ -11,6 +11,7 @@ from pathlib import Path
 
 import keyring
 
+from . import util
 from .config import HOME, full_ai_check
 
 
@@ -42,9 +43,7 @@ def _index() -> dict:
 
 
 def _save_index(idx: dict) -> None:
-    tmp = INDEX.with_suffix(".tmp")
-    tmp.write_text(json.dumps(idx, indent=2))
-    os.replace(tmp, INDEX)  # atomic: a crash leaves the old index or the new one, never half of one
+    util.write_atomic(INDEX, json.dumps(idx, indent=2))  # a crash leaves the old index or the new one, never half
 
 
 # A secret longer than CHUNK is stored as a head "MARK<n>:<h>:<first piece>" under NAME plus NAME~<h>~1 .. NAME~<h>~<n-1>,

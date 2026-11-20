@@ -261,10 +261,8 @@ address, always reviewed in the Inbox.
   "track this company" proposal the same mail raised in the Inbox is tied to it by Message-ID: tracking or linking the
   mail closes the proposal, and approving the proposal files the mail under the new job, so you never get two jobs.
   Deleting a job deletes its mail records too. Exports include the mail table (CSV formula cells neutralised).
-- `council_providers` limits which providers receive your profile: the council, idea crafting and the default provider
-  (a `provider` pref or `LODESTAR_PROVIDER` outside the list stops with an error; names compare without case, so
-  `Anthropic` = `anthropic`). Only an explicit `-p NAME` on one
-  command overrides it. `backup` keeps the last 7 nightly zips.
+- `council_providers` limits which providers the council, its cross-check reviewers and idea crafting send your profile to; the primary AI you choose need not be in it (with none chosen, the default comes from it)
+  (names compare without case, so `Anthropic` = `anthropic`). `backup` keeps the last 7 nightly zips.
 
 ### After the ECC and security reviews (2026-11-04)
 
@@ -282,7 +280,7 @@ address, always reviewed in the Inbox.
   (pass 16 review: `acme.xyz` can claim to be Acme as easily as `acme.com`), and its sender is never the contact.
 - Approving an item claims it atomically: a double-click or a CLI/UI race cannot send twice. Rejecting a decided item
   is a no-op, so the record of a sent mail is never overwritten.
-- `council_providers` is a hard boundary: synthesis and the default provider come from the list, and a list that
+- `council_providers` is a hard boundary for the council: synthesis and every reviewer come from the list (the primary AI you pick is yours to choose), and a list that
   matches no configured provider stops with an error instead of widening to everyone.
 - Page fetches (watches, job descriptions, research) refuse loopback, link-local and private addresses and re-check
   every redirect; `LODESTAR_ALLOW_PRIVATE_URLS=1` opts an intranet careers page back in.

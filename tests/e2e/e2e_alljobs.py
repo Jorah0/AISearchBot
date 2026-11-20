@@ -1,6 +1,6 @@
 """All jobs (pass 21, Jobs tab): every stored listing with fit badges, source chips (Adzuna's credit link at its size),
 filters, New since last visit / Mark all seen, Track, Dismiss, AI fit, the expanded row, search results marked "from
-this search", and Setup > Job sources (linking an Adzuna key, verified by one small search). Text stays escaped."""
+this search", and Accounts > Job sources (linking an Adzuna key, verified by one small search). Text stays escaped."""
 import json
 import unittest
 
@@ -138,7 +138,7 @@ class AllJobs(E2ETestCase):
         self.assertIn("from this search", hi.first.text_content())
 
     def test_setup_job_sources_link_an_adzuna_key(self):
-        self.go("setup")
+        self.go("accounts")
         src = self.page.locator("#srcList")
         self.assertIn("Remotive", src.text_content())
         ad = src.locator(".srckey", has_text="Adzuna")

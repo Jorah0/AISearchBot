@@ -1,0 +1,128 @@
+"""Pass 32 UI overhaul: the grouped sidebar (blueprint 18.1; seven sections like the best tools in the class), with
+every existing tab kept under its section heading and still opening its own page."""
+import unittest
+
+from harness import E2ETestCase
+
+GROUPS = {"Pipeline": ["board", "contacts"], "Discover": ["search", "careers", "monitor"],
+          "Resume": ["profile", "studio"], "Prepare": ["answers", "coach", "ideas"], "Progress": ["insights"],
+          "Settings": ["accounts", "tools", "setup"]}
+
+
+class UI(E2ETestCase):
+    def test_sidebar_groups_every_tab_under_its_section(self):
+        for heading, tabs in GROUPS.items():
+            group = self.page.locator("nav .nav-group", has=self.page.locator(".nav-h", has_text=heading))
+            self.assertEqual(group.count(), 1, heading)
+            self.assertEqual(group.locator("button[data-tab]").evaluate_all("bs => bs.map(b => b.dataset.tab)"), tabs, heading)
+        self.assertEqual(self.page.locator("nav button[data-tab] svg.ico").count(), self.page.locator("nav button[data-tab]").count())
+        for tabs in GROUPS.values():
+            for tab in tabs:
+                self.go(tab)  # every old tab still opens its own page
+        self.assertEqual(self.page.locator("nav [role=group]").count(), len(GROUPS))
+
+    def test_today_is_the_home_page(self):
+        self.assertEqual(self.page.locator("nav button[data-tab]").first.get_attribute("data-tab"), "home")
+        self.page.wait_for_selector("section#home.on")  # the page opens on Today
+        for block in ("#onboard", "#today", "#upcoming"):
+            self.assertEqual(self.page.locator(f"section#home {block}").count(), 1, block)
+            self.assertEqual(self.page.locator(f"section#board {block}").count(), 0, block)
+        self.go("board")
+        self.assertTrue(self.page.locator("#nCo").is_visible())  # Board starts with its tracker
+        self.go("home")
+
+    def test_theme_switch_changes_the_colours_and_is_kept(self):
+        bg = lambda: self.page.evaluate("getComputedStyle(document.body).backgroundColor")  # noqa: E731
+        before, theme = bg(), self.page.evaluate("document.documentElement.dataset.theme || ''")
+        self.page.click("#themeBtn")
+        after = self.page.evaluate("document.documentElement.dataset.theme")
+        self.assertIn(after, ("light", "dark"))
+        self.assertNotEqual(after, theme)
+        self.assertNotEqual(bg(), before)
+        self.page.reload()
+        self.page.wait_for_selector("section#home.on")
+        self.assertEqual(self.page.evaluate("document.documentElement.dataset.theme"), after)  # kept for this browser
+        self.page.set_viewport_size({"width": 420, "height": 800})
+        self.assertEqual(self.overflow(), [])
+
+    def test_job_drawer_header_stays_and_the_index_jumps(self):
+        d = self.open_job(self.ids["saved"])
+        idx = d.locator("nav.jIndex")
+        self.assertEqual(idx.get_by_role("link").all_text_contents()[:2], ["Fit", "Documents"])
+        idx.get_by_role("link", name="Documents").click()
+        self.page.wait_for_function("() => { const g = document.querySelector('#jDocs').getBoundingClientRect(); return g.top < innerHeight / 2 && g.bottom > 0; }")
+        top = self.page.evaluate("document.querySelector('#drawer .head').getBoundingClientRect().top")
+        self.assertLess(abs(top - self.page.evaluate("document.querySelector('#drawer').getBoundingClientRect().top")), 40)  # still on top
+
+
+    def test_go_to_keys_and_the_cheat_sheet(self):
+        self.page.locator("body").click(position={"x": 5, "y": 300})
+        self.page.keyboard.press("g")
+        self.page.keyboard.press("b")
+        self.page.wait_for_selector("section#board.on")
+        self.page.keyboard.press("g")
+        self.page.keyboard.press("t")
+        self.page.wait_for_selector("section#home.on")
+        self.go("search")
+        self.page.fill("#sQ", "")
+        self.page.focus("#sQ")
+        self.page.keyboard.type("gb")  # typing in a field never navigates
+        self.assertTrue(self.page.locator("section#search.on").count())
+        self.assertEqual(self.page.input_value("#sQ"), "gb")
+        self.page.locator("body").click(position={"x": 5, "y": 300})
+        self.page.keyboard.press("?")
+        sheet = self.page.locator("#keysHelp")
+        self.assertTrue(sheet.is_visible())
+        self.assertIn("g then b", sheet.text_content())
+        self.page.keyboard.press("Escape")
+        self.assertFalse(sheet.is_visible())
+        self.page.keyboard.press("?")
+        self.assertTrue(sheet.is_visible())
+        sheet.click()  # a click inside keeps it
+        self.assertTrue(sheet.is_visible())
+        self.page.locator("body").click(position={"x": 5, "y": 300})  # a click outside closes it
+        self.assertFalse(sheet.is_visible())
+
+
+    def test_keys_wait_while_the_drawer_is_open_and_esc_closes_only_the_sheet(self):  # review fixes
+        self.open_job(self.ids["saved"])
+        self.page.locator("#drawer h4").first.click()
+        self.page.keyboard.press("g")
+        self.page.keyboard.press("p")
+        self.assertTrue(self.page.locator("section#board.on").count())  # no page switch behind an open drawer
+        self.page.evaluate("keysHelp(true)")
+        self.page.keyboard.press("Escape")
+        self.assertFalse(self.page.locator("#keysHelp").is_visible())
+        self.assertTrue(self.page.locator("#drawer.open").count())  # one Esc, one thing closed
+
+    def test_apply_agent_controls_in_the_drawer(self):  # blueprint 2.2 human control: start, mode and stop in the page
+        import json
+
+        sent = []
+
+        def start(route):
+            sent.append(json.loads(route.request.post_data))
+            route.fulfill(json={"runs": [], "refused": [{"job_id": sent[-1]["ids"][0], "error": "no application link: add one"}]})
+        self.page.route("**/api/apply/start", start)
+        self.page.route("**/api/apply/stop", lambda r: r.fulfill(json={"stopped": True}))
+        self.page.evaluate("S.apply.available = null")  # the harness stubs the browser lookup: say the agent can run
+        d = self.open_job(self.ids["saved"])
+        grp = d.locator("#jApply")
+        grp.locator("#jApplyMode").select_option("review")
+        grp.get_by_role("button", name="Fill application").click()
+        self.page.wait_for_function("() => document.querySelector('#jApplyOut').textContent.includes('no application link')")
+        self.assertEqual(sent[-1], {"ids": [self.ids["saved"]], "mode": "review"})
+        with self.page.expect_request("**/api/apply/stop"):
+            grp.get_by_role("button", name="Stop the agent").click()
+
+
+    def test_apply_group_says_why_the_agent_cannot_run(self):  # pass 35: no browser / Playwright -> the reason, no dead button
+        self.page.evaluate("S.apply.available = 'no Edge or Chrome found (set LODESTAR_BROWSER to a Chromium browser)'")
+        grp = self.open_job(self.ids["saved"]).locator("#jApply")
+        self.assertTrue(grp.get_by_role("button", name="Fill application").is_disabled())
+        self.assertIn("no Edge or Chrome found", grp.text_content())
+        self.assertEqual(grp.locator("#jApplyMode").count(), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

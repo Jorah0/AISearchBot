@@ -1,5 +1,208 @@
 # Changelog (development passes, newest first)
 
+## Pass 38 (2026-11-17): review fixes for passes 33-37
+
+- Application caps count the site you applied on: a job found on LinkedIn whose application link is the company's
+  own site never counts against LinkedIn.
+- Accounts: a mailbox you disconnected or replaced, and a site account you removed, no longer show as "stopped
+  working"; a job board whose state did not change is not written again on every search; the 6-hourly re-check runs
+  beside the monitor loop instead of holding it up.
+- Watches: a malformed careers link never blocks adding other watches; hash-routed career pages (#/jobs/1) are told
+  apart and the same page with its query in another order is one watch.
+- Seniority: 'Associate Principal Scientist' reads staff, 'Associate General Counsel' and shift or range numbers
+  ('(Shift 1)', 'Cashier 2 - Night', '(1-2 yrs)') no longer read as levels.
+
+## Pass 37 (2026-11-17): AI search ideas for the job sites you browse yourself
+
+- *AI: search ideas for these sites* on the Jobs tab: one AI call turns your profile (never the salary floor) and
+  saved searches into up to six searches you qualify for, plus a boolean string for LinkedIn's and Indeed's keyword
+  box. Each comes with links to LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired's own search; Use puts it
+  in the search box. The AI never sees those sites and Lodestar never opens them.
+
+## Pass 36 (2026-11-17): the job sites you browse yourself
+
+- LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired: Lodestar still never signs in, browses or applies there
+  itself (their terms forbid bots, and a flagged account is yours). It now works alongside you instead:
+  - the Jobs tab links to each site's own search with your role, place and level filled in;
+  - the extension's Save and Fill work on all five, LinkedIn included, only when you click (it never submits);
+  - Accounts > *Job sites you browse yourself* sets a daily and weekly application cap per site; at a cap, Today,
+    the job drawer and the Accounts tab say so and the extension's Fill waits until the window passes.
+
+## Pass 35 (2026-11-17): loose ends
+
+- The light or dark theme you picked applies before the page paints (no flash of the other theme on load).
+- A click outside the keyboard-shortcut sheet (?) closes it.
+- The job drawer's Apply group says why the apply agent cannot run here (no Playwright, no Edge / Chrome) instead
+  of showing a button that fails.
+
+## Pass 34 (2026-11-13): the Accounts tab, connection history, search seniority
+
+- A new **Accounts** tab (under Settings) lists everything Lodestar connects to, grouped: your mailbox, AI keys, each
+  job board (from its last search) and each site account (from its last sign-in), with its state and when it was
+  checked. Job sources (Adzuna / USAJOBS keys), Site accounts (username + password, or sign in to verify) and Job
+  alerts moved here from Setup.
+- Every change of state is kept in a history ("What changed"). A link that worked and then stopped is flagged as
+  *Disconnected since* the time it stopped, on the tab, on its nav badge and on Today; a key, the mailbox or a site
+  account that stops working also sends a notice. The running app re-checks keys and the mailbox every 6 hours (no
+  tokens), and **Check all now** checks them at once.
+- Seniority reads numbered levels (Engineer I / II / III / IV, Analyst 2), working-student roles, C-level titles,
+  'Associate' and 'Early-career' starts and 'Supervisor'. The Jobs tab starts from Setup > Preferences > Target level,
+  and offers the level your years suggest. Must-have keywords match whole words ('git' no longer matches 'digital').
+  A board a search could not ask (asked by another search moments ago) is named instead of left out silently.
+- LinkedIn, Indeed, Glassdoor, ZipRecruiter and SimplyHired still cannot be linked or signed into (their terms forbid
+  automated access); their jobs keep arriving through their job-alert emails.
+
+## Pass 33 (2026-11-13): the Mail page
+
+- A Mail page lists every email Lodestar filed and everything it sent, sorted by type with counts, with search.
+- Open a message to read it in full: header, verified or unverified sender, the job, the AI's summary, the next step
+  it asks of you and the date it names, the whole text and its attachments. New mail keeps its whole text (codes
+  masked as before), and the classifier's next step and date are kept with it.
+- Reply in your own words, have the AI improve your text, or have the AI write the reply (up to three options, one
+  recommended; use one as is or edit it first). Every reply goes to the Inbox for your approval.
+- The job drawer's mail has a Read in Mail button; g then l opens the page.
+- No duplicate watches: the same saved search typed with other capitals or spacing, the same careers page with
+  http / https, www., a trailing slash or a #part, and the same company board slug in other capitals update the
+  watch you already have instead of adding a second one (Monitor says "already watched").
+- No cmd window behind the desktop app: the Lodestar shortcut opens the new windowless launcher `lodestarw.exe`
+  (its output goes to `logs\console.log`), and git, the update check, PDF printing and the scheduled task start
+  without a console. Re-run install.ps1 (or point your Lodestar shortcut at `.venv\Scripts\lodestarw.exe desktop`).
+
+## Fix (2026-11-13): The Muse retired; profile skills are key terms only
+
+- A PDF whose text comes out one word per line (some resume builders write it that way) is now read in layout mode,
+  so a summary sentence no longer turns into one "skill" per word. Skills never hold stopwords ('to', 'and'), lone
+  punctuation, headings or sentences, and lose trailing periods; junk an earlier import stored is dropped when the
+  profile loads. A lone 'Tools & DevOps:' line now names the skills listed below it.
+- Job search, checked live against every keyless board: Arbeitnow ignored the query (every search got the same 300
+  listings) and Himalayas matched loosely, so both are now filtered by your words; RemoteOK's garbled dashes and accents
+  are repaired; an HN post whose header starts with a link no longer uses the link as the job title.
+
+- The Muse's public jobs API now answers 404 everywhere, so every search ended with "could not read: themuse".
+  The source is removed; the other boards are unchanged.
+
+## Pass 32 (2026-11-13): a clearer page
+
+- The sidebar is grouped into sections (Pipeline, Discover, Resume, Prepare, Progress, Settings) under Today and the
+  Inbox, with line icons; every page is where it was, under its section.
+- Today is the home page: Getting started, what is due, interviews, the Inbox count, suggested emails and new fits;
+  an empty Today says so and offers the next step. No more jump to Setup on a first run.
+- A light theme (follows your system until you pick one with the Theme button), readable section headings and a
+  visible focus ring on every control.
+- The job drawer's header stays on top while you scroll, and a section index jumps to Fit, Documents, Messages,
+  Interview and Timeline. The drawer's new Apply group starts the apply agent (fill only, or submit after your Inbox
+  approval) and stops it.
+- Keyboard: g then a letter opens a page (g t Today, g i Inbox, g b Board, g j Jobs ...); ? lists the keys.
+
+## Pass 31 (2026-11-13): refactor and cleanup to the blueprint
+
+- Board keyword filters match whole words ('intern' no longer finds 'Internal Auditor'); The Muse is no longer
+  narrowed to software or IT listings by an ambiguous word such as 'engineer' or 'security'.
+- Research the AI marked (unverified) never reaches a cover letter or form answer; sponsorship signals are a hard
+  requirement only, never points in the fit score.
+- Company careers sites on country domains (jobs.ibm.ca, careers.sap.de) are recognised as the company's own.
+- Code: dead constants removed; small helpers have one home (util: atomic writes with the Windows retry, hashing,
+  word matching, UTC times); resume readers moved to ingest.py, untrusted-text fences to ai.py.
+
+## Pass 30 (2026-11-13): industry-agnostic audit and the v1.1 acceptance journey
+
+- The page's examples no longer assume software work (store manager, hotel manager, medical office coordinator,
+  electrician ...); a guard test keeps placeholders from turning software-only again, keeps "stack and engineering
+  culture" wording behind the occupation check, and checks a blank profile starts no software search.
+- An end-to-end acceptance test walks the blueprint's journey with a retail resume: suggestions across different
+  occupation groups with their source, a nursing pivot accepted and labelled honestly (licensed, so never Qualified
+  now), a live search with its coverage, a tracked posting whose license requirement shows as unknown, and a stage
+  move kept in its history.
+
+## Pass 29 (2026-11-13): skill-gap planner, career tracks in Insights
+
+- Insights > Skill gaps and `lodestar gaps`: what your open jobs keep asking for that your profile does not show
+  (required skills missing, hard requirements not met or unknown), most repeated first, each with possible actions (a
+  project, a short course, a certification or license, a degree, supervised experience). A legal requirement is marked
+  apart from an employer's preference. Fewer than 5 jobs is said: a list, not a trend.
+- Insights > Career tracks: per career track, the listings its searches found, the ones you track and those jobs by
+  career class.
+
+## Pass 28 (2026-11-13): calendar busy times, research for every kind of job
+
+- New preference calendar_freebusy (off by default): interview replies and the slots Lodestar proposes avoid the times
+  your Google Calendar shows busy. Turning it on makes the next Google sign-in also ask for free/busy access only (no
+  event titles, nothing written). Without it, or without a Google sign-in, nothing changes and the reason is logged.
+- The interview research pack and its web search look for a team's stack and engineering culture only for computer and
+  engineering occupations; for every other job they look for its ways of working and culture.
+
+## Pass 27 (2026-11-13): more resume formats, disputed facts, the claim check
+
+- Resume import also reads .odt (OpenDocument), .rtf and .html files. A PDF with no text layer (a scan) is refused
+  with what to do instead; nothing is guessed from it.
+- `lodestar profile dispute KIND VALUES...` marks a fact in your profile bank as wrong: it stays in the bank but is
+  left out of the master resume, studio versions, letters and career suggestions until you clear it (--undo).
+- Studio versions show a Claim check: every claim beside the fact it cites, marked as written, reworded (checked
+  against your facts) or put back by the guard with the reason.
+
+## Pass 26 (2026-11-13): source capabilities, coverage, posting freshness, application stages, submitted copies
+
+- Every job board declares what it can do (search, full descriptions, how you apply, keys, regions): none is an apply
+  API, applying always happens on the posting's own page. Every Jobs search now says which boards were asked, which
+  failed and which need a key, and that coverage is partial.
+- The job drawer shows when the posting last answered (its feed listed it or its page was up). The apply agent never
+  submits by itself for a posting that looked removed: it fills it and you decide.
+- Applications have fine-grained stages (acknowledged, recruiter screen, assessment, technical / panel / final
+  interview, references, negotiation, on hold, no response, position closed, declined offer ...) on top of the board
+  columns, and every move is kept in a stage history: who moved it (you, or Lodestar with its tool and Inbox item) and
+  on what evidence (the mail it read, the apply run). The history cannot be edited. `lodestar jobs stage ID STAGE`.
+- When a job moves to applied, the resume, cover letter and form answers as they were are copied to the job's
+  submitted/ folder with a SHA-256 manifest; later edits never touch them.
+
+## Pass 25 (2026-11-13): one policy for every automatic action, and an audit log
+
+- Every action a tool proposes now goes through one deterministic policy (no AI decides): allowed (the tool is on auto
+  and nothing needs you), waits for you (the Inbox), or blocked, always with its reasons.
+- Some things always wait for you, whatever a tool's auto switch says: a withdrawal or acceptance, a scheduling
+  commitment (an interview slot), mail to a job at the offer stage (offers and negotiation), a reply to a sender
+  Lodestar could not verify, and mail with attachments.
+- The apply agent never submits by itself for a licensed occupation (nursing, law, CDL driving, trades ...): it goes
+  to review.
+- Setup > Audit log and `lodestar audit`: every decision and every action that ran, newest first, with the reasons in
+  words. The log cannot be edited or deleted (the database refuses it).
+
+## Pass 24 (2026-11-13): eligibility gates, career class on every job, Explore further
+
+**Hard requirements are no longer hidden inside the fit score**
+- Work authorization / visa sponsorship, a security clearance, a license or certification the requirements name, and
+  your own excluded companies, title words and deal-breakers are now eligibility gates: each is met, not met or
+  unknown, and unknown never counts as met. They are listed in the job drawer under "Hard requirements (kept out of
+  the score)". The fit score is the same with or without them; a job with a gate not met is still marked blocked.
+- Every job and listing shows its career class (Qualified now, Competitive with framing, Bridge required,
+  Longer-term development, Currently ineligible, Insufficient evidence) beside the fit, and the drawer shows the fit's
+  confidence (how much of it could be measured).
+- auto_track never adds a job with an unknown hard requirement by itself (it waits in the Inbox, even on auto), and the
+  pipeline's fit check keeps Autopilot away from it ("needs you: ... unknown"); a click still runs the next step.
+- Every stored fit is re-scored once (fit.json version 2).
+
+**Explore further (Careers tab, `lodestar careers explore`)**
+- One AI call suggests occupations from what interests you and your profile (never your salary floor). Each is
+  matched to O*NET by title; one O*NET does not know stays, marked "AI-suggested unmapped role: review".
+
+## Pass 23 (2026-11-13): career discovery foundation (blueprint v1.1, first vertical slice)
+
+**Your resume is evidence, not a boundary**
+- New Careers tab and `lodestar careers`: the occupations your profile points to, from the O*NET 31.0 occupation
+  database (1,016 occupations, bundled; Source: O*NET 31.0 Database by the U.S. Department of Labor, Employment and
+  Training Administration, used under the CC BY 4.0 license).
+- Your past titles map to O*NET occupations by O*NET's own title lists (never a guess). Their related occupations
+  become expansion tiers: Equivalent roles, Closely related, Transferable fit, Longer-term pathway; the fields you
+  choose are Requested targets, with Bridge opportunity roles into them when they need more preparation than you show.
+- Each suggestion has a career class (Qualified now, Competitive with framing, Bridge required, Longer-term
+  development, Currently ineligible, Insufficient evidence) from O*NET's Job Zones against yours, and says why it
+  fits, what is missing, what does not transfer and how to close the gap. Licensed occupations (nursing, law, CDL
+  driving, trades ...) carry a licensing warning and are never "Qualified now" without a matching credential.
+- Career tracks: any field, even one your resume does not show. A desired field searches its own words only until you
+  turn on Equivalent roles; nothing is broadened silently. Searching a track shows which job boards were asked, which
+  failed and which need a key, and always says coverage is partial.
+- Deliberately later (pass 24): hard eligibility gates kept apart from the fit score, the class on job cards, AI open
+  exploration.
+
 ## Pass 21 (2026-11-11): fit score, sourcing everywhere, alerts, listing monitor, chance boosters
 
 **Fit score: how well a job suits you, 0 to 100**

@@ -1,0 +1,36 @@
+{
+ "id": "T003-geo-km",
+ "title": "Add a kilometre distance helper",
+ "category": "feature",
+ "split": "dev",
+ "prompt": "Add a function `km(a, b) -> float` to lodestar/geo.py that returns the great-circle distance in kilometres between two (lat, lon) points, next to the existing `miles`. Reuse what is there; do not change `miles` or anything else. Add a unit test for it in tests/test_geo.py and run that test module.",
+ "reference": [
+  {
+   "file": "lodestar/geo.py",
+   "old": "def board_map() -> dict:",
+   "new": "def km(a, b) -> float:\n    \"\"\"Great-circle kilometres between two (lat, lon) points.\"\"\"\n    return miles(a, b) * 1.609344\n\n\ndef board_map() -> dict:"
+  }
+ ],
+ "hidden_tests": {
+  "tests/test_eval_t003.py": "import os, sys, tempfile, unittest\nos.environ.setdefault('LODESTAR_VAULT_SERVICE', '')\nfrom lodestar import geo\n\n\nclass Km(unittest.TestCase):\n    def test_km(self):\n        self.assertAlmostEqual(geo.km((30.299, -97.754), (32.794, -96.765)), geo.miles((30.299, -97.754), (32.794, -96.765)) * 1.609344, delta=0.5)\n        self.assertEqual(geo.km((1, 1), (1, 1)), 0)\n        self.assertAlmostEqual(geo.miles((30.299, -97.754), (32.794, -96.765)), 182, delta=8)\n"
+ },
+ "checks": [
+  [
+   "{python}",
+   "-W",
+   "ignore",
+   "-m",
+   "unittest",
+   "tests.test_eval_t003",
+   "tests.test_geo"
+  ]
+ ],
+ "forbidden": {
+  "only_change": [
+   "lodestar/geo.py",
+   "tests/test_geo.py"
+  ]
+ },
+ "max_turns": 25,
+ "timeout": 900
+}

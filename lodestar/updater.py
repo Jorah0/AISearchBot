@@ -23,6 +23,7 @@ from pathlib import Path
 
 from . import __version__, db, settings
 from .config import HOME
+from .util import NO_WINDOW
 
 ROOT = Path(__file__).resolve().parent.parent  # the install: a git checkout for install.ps1 / editable installs
 LOG = HOME / "update-log.jsonl"
@@ -130,7 +131,7 @@ def _git(repo: Path, *args, timeout: int = 120) -> str:
     env = os.environ | {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
     try:
         r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=timeout, env=env,
-                           encoding="utf-8", errors="replace")
+                           encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     except FileNotFoundError:
         raise SystemExit("git is not installed or not on PATH") from None
     except subprocess.TimeoutExpired:
@@ -298,7 +299,7 @@ def check(repo: Path = ROOT, record: bool = True) -> dict:
 def _kill_tree(p: subprocess.Popen) -> None:
     try:
         if os.name == "nt":
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True, timeout=60)
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True, timeout=60, creationflags=NO_WINDOW)
         else:
             os.killpg(p.pid, signal.SIGKILL)
     except (OSError, subprocess.SubprocessError):
@@ -313,7 +314,8 @@ def _kill_tree(p: subprocess.Popen) -> None:
 def _proc(cmd: list, cwd: Path, timeout: int, env: dict | None = None) -> tuple[int, str, str]:
     """(exit code, stdout, stderr). Output goes to temp files, not pipes, so a helper process a test leaves running
     cannot hold the wait open; on a timeout the whole process tree is killed."""
-    group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+    group = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | NO_WINDOW} if os.name == "nt"
+             else {"start_new_session": True})  # no console window behind the desktop app (git, the gate, headless Edge)
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         p = subprocess.Popen(cmd, cwd=str(cwd), stdin=subprocess.DEVNULL, stdout=out, stderr=err, env=env, **group)
         try:

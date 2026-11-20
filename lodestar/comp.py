@@ -12,7 +12,9 @@ def load() -> dict:
 
 
 def _save(data: dict) -> None:
-    PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    from .util import write_atomic
+
+    write_atomic(PATH, json.dumps(data, indent=2))  # pass 31: atomic like every other settings file
 
 
 def money(name: str, v) -> int:

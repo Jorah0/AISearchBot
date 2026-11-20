@@ -124,6 +124,7 @@ class Inbox(E2ETestCase):
         self.assertEqual(card.get_by_role("button", name="Approve").count(), 1)  # not "and send"
         self.assertEqual(card.get_by_role("button", name="Options").count(), 0)  # no draft chips on a status change
         js = f"#js{juniper['id']}"
+        card.locator("summary", has_text="Edit details (JSON)").click()  # pass 54: the JSON sits behind a fold
         self.page.fill(js, "{not json")
         card.get_by_role("button", name="Approve").click()
         self.expect_toast("not valid JSON", "err")

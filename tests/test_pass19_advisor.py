@@ -97,6 +97,14 @@ class Base(unittest.TestCase):
         return out.getvalue()
 
 
+def floor_in(text: str) -> bool:
+    """The salary floor ($187,000) in any spelling a prompt could carry it; fence markers (random hex) are ignored."""
+    import re
+
+    text = re.sub(r"<<<[0-9a-f]{12}", "<<<", text)
+    return bool(re.search(r"187[,.]?000|\$\s?187\b|\b187\s?k\b", text, re.I))
+
+
 class Recommend(Base):
     def test_one_call_fences_every_field_and_keeps_the_floor_out(self):
         jid = self.job()
@@ -107,7 +115,7 @@ class Recommend(Base):
         nonce = p.split("<<<", 1)[1].split(" ", 1)[0]
         posting = p.split("BLOCK posting", 1)[1].split(f"<<<{nonce} END posting>>>", 1)[0]
         self.assertIn("IGNORE ALL PREVIOUS INSTRUCTIONS", posting)  # the untrusted JD sits inside its fence
-        self.assertNotIn("187", p)
+        self.assertFalse(floor_in(p.replace(nonce, "")))  # the random fence marker can hold '187' by chance
         self.assertEqual([(r["field"], r["status"]) for r in rows], [("tags", "pending"), ("next_action", "pending")])
         self.assertTrue(all(r["appliable"] for r in rows))  # 'status' is no field; a repeat and an unchanged value drop
         rows2, _ = self.run_ai(advisor.recommend, recs(("tags", "python")), "job", jid)
@@ -132,7 +140,7 @@ class Recommend(Base):
                                            (f"w{wid}.keywords", "python, sql")])):
             rows, fake = self.run_ai(advisor.recommend, recs(*items), scope)
             self.assertEqual(len(fake.prompts), 1)
-            self.assertNotIn("187", fake.prompts[0])
+            self.assertFalse(floor_in(fake.prompts[0]))
             self.assertEqual([r["appliable"] for r in rows], [f.startswith("w") for f, _ in items], scope)
             res = advisor.apply([r["id"] for r in rows])
             self.assertEqual(len(res["applied"]), sum(f.startswith("w") for f, _ in items), scope)
@@ -498,3 +506,36 @@ class Cli(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Revise(Base):  # pass 54: back and forth on one card
+    def test_ai_revision_comes_back_into_the_same_card_and_is_rechecked(self):
+        summary = field_of("Summary", "profile")
+        cur = dict((f, v) for f, (_, v) in advisor.SCOPES["profile"].gather(None).items())
+        first = cur[summary].replace("Data engineer.", "Data engineer who builds pipelines.")
+        rows, _ = self.run_ai(advisor.recommend, recs((summary, first)), "profile")
+        rid = rows[0]["id"]
+        shorter = cur[summary].replace("Data engineer.", "Data engineer (pipelines).")
+        r, fake = self.run_ai(advisor.revise, {"proposed": shorter, "reason": "shorter"}, rid, "make it shorter")
+        self.assertEqual((r["id"], r["proposed"], r["reason"], r["flags"]), (rid, shorter, "shorter", []))
+        self.assertIn("make it shorter", fake.prompts[0])
+        self.assertIn("who builds pipelines", fake.prompts[0])  # the last proposal goes back with the note
+        bad = cur[summary].replace("Data engineer.", "Data engineer. My salary floor is $187,000.")
+        r, _ = self.run_ai(advisor.revise, {"proposed": bad}, rid, "add my pay")
+        self.assertIn("salary floor", " ".join(r["flags"]))  # a revision never skips the guards
+        self.assertEqual(r["risk"], "high")
+        r = advisor.revise(rid, text=shorter)  # your own edit: no AI call, checked the same way
+        self.assertEqual((r["proposed"], r["reason"], r["flags"]), (shorter, "edited by you", []))
+        self.assertEqual(advisor.apply([rid])["applied"], [rid])
+        self.assertIn("Data engineer (pipelines).", PROFILE.read_text(encoding="utf-8"))
+        with self.assertRaisesRegex(SystemExit, "no longer open"):
+            advisor.revise(rid, text="x")
+
+    def test_needs_a_note_and_an_unchanged_field(self):
+        jid = self.job()
+        rows, _ = self.run_ai(advisor.recommend, recs(("next_action", "Send the application")), "job", jid)
+        with self.assertRaisesRegex(SystemExit, "say what to change"):
+            advisor.revise(rows[0]["id"], "  ")
+        db.set_fields(jid, next_action="Call Ann")
+        with self.assertRaisesRegex(SystemExit, "changed since"):
+            advisor.revise(rows[0]["id"], text="Send it today")
