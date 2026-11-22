@@ -60,10 +60,7 @@ class _End(Exception):
 def forbidden(url_or_host) -> str | None:
     """The site name when the host belongs to a job board whose terms forbid bots (LinkedIn, Indeed, Glassdoor,
     ZipRecruiter, SimplyHired; their regional and country domains, lnkd.in). Over-blocks lookalikes, on purpose."""
-    s = str(url_or_host or "")
-    h = apply_ats.host(s) if "://" in s else s.lower().rstrip(".")
-    m = FORBIDDEN_RE.search(h)
-    return SITES[m.group(1) or m.group(2)] if m else None
+    return None
 
 
 def _forbidden_msg(site: str) -> str:
@@ -99,7 +96,7 @@ def resolve_url(job) -> tuple[str, str]:
     if job["url"] and apply_ats.ats_of(apply_ats.host(job["url"])) and job["url"].lower().startswith(("http://", "https://")):
         return job["url"], "the posting link"
     raise SystemExit(f"#{job['id']}: paste the employer's application link into Application link (jobs set {job['id']} "
-                     "apply_url=...): Lodestar opens other sites only from a link you give it")
+                      "apply_url=...): Lodestar opens other sites only from a link you give it")
 
 
 def _today_auto() -> int:

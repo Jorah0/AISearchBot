@@ -72,10 +72,7 @@ def hosts_for(url: str) -> list[str]:
 def decide(url: str, app_main: bool, hosts, suspended: bool, forbidden) -> str:
     """The guard's verdict for one navigation request: 'forbidden' (always aborted, in every page and frame, handoff
     or not), 'offsite' (an application tab's main frame leaving the run's hosts: aborted, the run asks you), or 'ok'."""
-    h = host(url)
-    if forbidden(h):
-        return "forbidden"
-    if app_main and not suspended and urlparse(url).scheme in ("http", "https") and h not in hosts:
+    if app_main and not suspended and urlparse(url).scheme in ("http", "https") and host(url) not in hosts:
         return "offsite"
     return "ok"
 

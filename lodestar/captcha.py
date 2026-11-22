@@ -19,6 +19,7 @@ Nothing here hides automation: the solver drives the page's own widgets the way 
 import re
 
 from . import ai, db, settings
+from .captcha_solver import solve_captcha as _solve_captcha_integration
 
 CHECKBOX = ("checkbox",)  # a one-click check, no AI needed
 
