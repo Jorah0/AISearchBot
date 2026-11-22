@@ -358,6 +358,26 @@ def vision_provider() -> str:
     return default_provider()
 
 
+_VISION_HINTS = re.compile(r"vision|vl|llava|gemma.*\d+.*b|moondream|llama.*\d+.*b.*vision|pixtral|granite3", re.I)
+
+
+def local_vision_models() -> list[str]:
+    """Vision models the local Ollama serves, ordered for the solver's chain: name hints first (the models that can
+    read an image), then the remaining ids as a secondary fallback. Empty when Ollama is not linked or serves no
+    model. A user can force one id via pref captcha_model (it goes first in the chain); the solver tries this list
+    in order until one clears the check, bounded by captcha_max_attempts (so a long list never spams)."""
+    if "ollama" not in available():
+        return []
+    try:
+        ids = [m for m in list_models("ollama") if m and not re.search(r"embed|coder|codellama", m, re.I)]
+    except (Exception, SystemExit):
+        return []
+    vision = [m for m in ids if _VISION_HINTS.search(m)]
+    if not vision:
+        return ids
+    return vision + [m for m in ids if m not in vision]
+
+
 def ask_image(prompt: str, image: bytes, system: str | None = None, provider: str | None = None,
               mime: str = "image/png", model: str | None = None, max_tokens: int = 500) -> str:
     """One image question to the vision provider: a screenshot plus a prompt -> the model's text. The Ollama / any

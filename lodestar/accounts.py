@@ -12,7 +12,9 @@ The rules:
   your general password, else you sign in yourself.
 - Signing in: the username and password are typed only on the account's own host, the password only into a password
   field (Page.type). A password that failed or a locked account is never tried again by itself (no lockouts).
-- A CAPTCHA is always yours. Codes and verification links come from your connected inbox (codes.py): used when you click
+- A CAPTCHA on the way is cleared by the auto-solver (captcha.py) on its own with the local vision AI (Ollama first);
+  only when it can't (off, capped, or no local model) does it wait for you to solve it in the window. Codes and
+  verification links come from your connected inbox (codes.py): used when you click
   Fill code / Open link, or by themselves only on a site where you ticked that; a link opens only on the account's host.
 - Page text is untrusted: what to do is decided here from fixed patterns; nothing hides that the window is automated.
 """

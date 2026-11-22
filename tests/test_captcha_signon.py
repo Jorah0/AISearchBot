@@ -140,10 +140,51 @@ class Solve(Base):
         self.assertEqual(page.dos[0], ("geetest", 128))
 
     def test_a_bad_model_answer_is_a_failure_not_a_guess(self):
+        settings.set_pref("captcha_max_attempts", 2)
         page = FakePage("text")
-        with fake_ai("!@#"):  # no alphanumerics: not a usable answer, so nothing is typed
+        with fake_ai("!@#"):  # no alphanumerics: not a usable answer, so nothing is typed on any attempt
             r = captcha.solve(page)
-        self.assertEqual((r["result"], r["attempts"], page.dos), ("failed", 1, []))
+        self.assertEqual((r["result"], r["attempts"], page.dos), ("failed", 2, []))  # 2 attempts (the per-widget stop)
+
+    def test_a_first_local_model_miss_and_the_second_hits(self):
+        """The solver rotates through the local model chain: a bad answer on one model is not a stop, the next local
+        model's read is tried and clears the check."""
+        page = FakePage("text")
+        chain = ["llava:7b", "llama3.2-vision"]
+        old_models = ai.local_vision_models
+        ai.local_vision_models = lambda: chain
+        seen = []
+
+        def by_model(prompt, image, provider=None, model=None, **kw):
+            seen.append(model)
+            return "!@#" if model == "llava:7b" else "ABCD12"
+
+        old_ask = ai.ask_image
+        ai.ask_image = by_model
+        self.addCleanup(setattr, ai, "ask_image", old_ask)
+        self.addCleanup(setattr, ai, "local_vision_models", old_models)
+        r = captcha.solve(page)
+        self.assertEqual((r["result"], page.dos), ("solved", [("text", "ABCD12")]))
+        self.assertEqual(seen[:2], ["llava:7b", "llama3.2-vision"])  # first local model, then the next
+
+    def test_the_named_pref_model_goes_first(self):
+        settings.set_pref("captcha_model", "mymodel:13b")
+        old_models = ai.local_vision_models
+        ai.local_vision_models = lambda: ["llava"]
+        seen = []
+
+        def by_model(prompt, image, provider=None, model=None, **kw):
+            seen.append(model)
+            return "ABCD12"
+
+        old_ask = ai.ask_image
+        ai.ask_image = by_model
+        self.addCleanup(setattr, ai, "ask_image", old_ask)
+        self.addCleanup(setattr, ai, "local_vision_models", old_models)
+        self.addCleanup(settings.set_pref, "captcha_model", "")
+        with self.subTest():
+            captcha.solve(FakePage("text"))
+        self.assertEqual(seen[0], "mymodel:13b")  # the pref model is the first of the chain
 
     def test_off_is_a_handoff_not_a_solve(self):
         settings.set_tool("captcha_solver", enabled=False)
@@ -160,11 +201,20 @@ class Solve(Base):
             r = captcha.solve(page)
         self.assertEqual((r["result"], page.dos), ("capped", []))
 
-    def test_a_kind_the_solver_cannot_drive_is_yours(self):
-        page = FakePage("turnstile")
+    def test_a_unknown_kind_is_yours(self):
+        page = FakePage("unknown-kind")
         with fake_ai("yes"):
             r = captcha.solve(page)
         self.assertEqual((r["result"], page.dos), ("unavailable", []))
+
+    def test_a_turnstile_is_clicked_on_its_own(self):
+        page = FakePage("turnstile")
+        calls = []
+        old = ai.ask_image
+        ai.ask_image = lambda *a, **k: calls.append(1) or "x"
+        self.addCleanup(setattr, ai, "ask_image", old)
+        r = captcha.solve(page)
+        self.assertEqual((r["result"], calls, page.dos[0]), ("solved", [], ("turnstile", "click")))  # no AI, a best-effort click
 
     def test_the_per_widget_stop_limits_attempts(self):
         settings.set_pref("captcha_max_attempts", 3)
@@ -174,6 +224,7 @@ class Solve(Base):
         self.assertEqual((r["result"], r["attempts"], len(page.dos)), ("failed", 3, 3))
 
     def test_a_failed_solver_costs_a_quota_unit(self):
+        settings.set_pref("captcha_max_attempts", 2)
         page = FakePage("text", solve_ok=False)
         with fake_ai("abcd"):
             captcha.solve(page)

@@ -53,9 +53,23 @@ def _take() -> bool:
     return bool(_cap() and db.quota("captcha", _cap()))
 
 
-def model() -> str | None:
-    """The vision model id to name (pref captcha_model), else None (the provider's own vision model)."""
-    return str(settings.pref("captcha_model") or "").strip() or None
+def model_chain() -> list[str]:
+    """The vision model ids the solver tries, in order: the pref captcha_model first (if set), then every vision
+    model the local Ollama serves (local_vision_models), deduped. Empty when nothing is linked. The solver falls
+    through this list until one answers and the page's own evidence flips; only then does it hand the widget to the
+    user. A pref captcha_model names one model; Ollama's list is the local fallback chain."""
+    pref = str(settings.pref("captcha_model") or "").strip()
+    chain = [pref] if pref else []
+    for m in ai.local_vision_models():
+        if m not in chain:
+            chain.append(m)
+    if not chain:
+        # Ollama is not linked: name the primary provider's vision model so ask_image has a concrete id
+        try:
+            chain = [ai.settings_model_or(ai.vision_provider())]
+        except (Exception, SystemExit):
+            pass
+    return chain
 
 
 def _prompt(kind: str, hint: str) -> str:
@@ -93,26 +107,33 @@ def _answer(kind: str, raw: str) -> object | None:
 
 
 def _kind_action(kind: str) -> str:
-    """The page object's action for a kind: 'type' | 'drag' | 'click' (a click for a one-check widget)."""
+    """The page object's action for a kind: 'type' | 'drag' | 'click' (a click for the one-click widget kinds)."""
     if kind in ("puzzle", "geetest", "slider"):
         return "drag"
-    if kind in ("image", "recaptcha", "select"):
-        return "click"
-    if kind in CHECKBOX:
+    if _drives_by_click(kind) or kind in ("image", "recaptcha", "select"):
         return "click"
     return "type"
 
 
 def _can_drive(kind: str) -> bool:
-    """A type the solver knows how to clear. Turnstile / Arkose / Friendly have no reliable path: handed to the user."""
-    return kind in ("text", "complicated_text", "puzzle", "geetest", "slider", "image", "recaptcha", "select", "checkbox")
+    """A type the solver knows how to clear on its own. Every visible challenge kind is driven (best effort for the
+    harder ones); the user handoff is only the fallback once the caps are used or a model can't answer, not a hard stop."""
+    return kind in ("text", "complicated_text", "puzzle", "geetest", "slider", "image", "recaptcha", "select",
+                    "checkbox", "turnstile", "hcaptcha", "arkose", "friendly")
+
+
+def _drives_by_click(kind: str) -> bool:
+    """The one-click kinds (a checkbox check): the solver clicks its own control, no AI needed."""
+    return kind in ("checkbox", "hcaptcha", "turnstile", "friendly")
 
 
 def solve(page) -> dict:
-    """Solve the page's visible CAPTCHA, within the no-spam caps.
-    {result: solved | failed | unavailable | capped, type, attempts, reason}.
-    solved: the page's own evidence says it is cleared. The other results mean the caller hands it to the user
-    (it stops, never retries by itself)."""
+    """Solve the page's visible CAPTCHA on its own, within the no-spam caps.
+    {result: solved | failed | unavailable | capped, type, attempts, reason, model}.
+    Each attempt names the next model in the local chain (model_chain: your local Ollama vision models, pref
+    captcha_model first), so the solver rotates through local models until one clears the check. It hands the widget
+    to the user only after every local model has had its turn (or the caps are reached). solved: the page's own
+    evidence says it is cleared; the other results mean the caller waits for you (it never retries by itself)."""
     if not enabled():
         return {"result": "unavailable", "type": "", "attempts": 0, "reason": "the captcha_solver tool is off"}
     try:
@@ -128,35 +149,42 @@ def solve(page) -> dict:
     if not left():
         return {"result": "capped", "type": kind, "attempts": 0,
                 "reason": f"today's solve cap is reached ({_cap()}): this one is yours to solve in the agent window"}
-    made = 0
+    chain = model_chain()
+    if not chain:
+        return {"result": "unavailable", "type": kind, "attempts": 0,
+                "reason": "no local vision model is linked: pull one in Ollama (e.g. `ollama pull llava`) and it "
+                          "solves on its own, or solve this one in the agent window"}
+    made, errors = 0, []
     for i in range(_attempts()):
         made = i + 1
         if not _take():
             return {"result": "capped", "type": kind, "attempts": made,
                     "reason": "today's solve cap is reached: this one is yours to solve in the agent window"}
         action = _kind_action(kind)
-        if action == "click" and kind in CHECKBOX:  # a one-check widget: no AI, just the click
+        if action == "click" and _drives_by_click(kind):  # a one-click widget: no AI, just the click (best effort)
             page.captcha_do(kind, "click")
         else:
+            use_model = chain[i % len(chain)]  # rotate: attempt 1 -> first local model, attempt 2 -> the next, ...
             try:
                 raw = ai.ask_image(_prompt(kind, info.get("hint") or ""), info.get("screenshot") or b"",
-                                   provider=ai.vision_provider(), model=model())
-            except (SystemExit, Exception) as e:  # no vision AI, a rejected model, or a page error: it is yours
-                return {"result": "unavailable", "type": kind, "attempts": made,
-                        "reason": f"the vision AI could not answer ({str(e)[:120]}): solve the check in the agent "
-                                  "window, then press Continue"}
-            if (ans := _answer(kind, raw)) is None:
-                return {"result": "failed", "type": kind, "attempts": made,
-                        "reason": "the AI gave no usable answer: solve the check in the agent window, then press Continue"}
+                                   provider=ai.vision_provider(), model=use_model)
+            except (SystemExit, Exception) as e:  # this model failed (down, rejected, no vision): the next attempt's model
+                errors.append(f"{use_model}: {str(e)[:80]}")
+                continue
+            if (ans := _answer(kind, raw)) is None:  # a usable-but-wrong answer: try the next model's read
+                errors.append(f"{use_model}: no usable answer")
+                continue
             try:
                 page.captcha_do(kind, ans)
             except Exception:
                 pass
         try:
             if page.captcha_solved():
-                return {"result": "solved", "type": kind, "attempts": made, "reason": "solved by the AI"}
+                return {"result": "solved", "type": kind, "attempts": made,
+                        "reason": "solved by the AI", "model": chain[i % len(chain)]}
         except Exception:
             pass
+    why = f" ({'; '.join(errors[:3])})" if errors else ""
     return {"result": "failed", "type": kind, "attempts": made,
-            "reason": f"the AI tried {made} time(s) and the check is still pending: solve it in the agent window, "
-                      "then press Continue"}
+            "reason": f"the local AI tried {made} time(s) and the check is still pending{why}: solve it in the agent "
+                      "window, then press Continue"}

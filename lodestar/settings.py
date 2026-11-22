@@ -127,8 +127,8 @@ PREFS = {
     "accounts_auto_create": False,  # the agent ticks a sign-up's terms box and presses Create (accounts._finish)
     # pass 57: the CAPTCHA auto-solver and the auto sign-on (captcha.py, signon.py)
     "captcha_model": "",  # the vision model to name for solving (empty: the provider's vision model, Ollama first)
-    "captcha_daily_max": 15,  # CAPTCHA solves a day at most (the no-spam cap); 0 = every check is handed to you
-    "captcha_max_attempts": 2,  # tries on one widget before it is handed to you (1-5)
+    "captcha_daily_max": 100,  # CAPTCHA solves a day at most (the no-spam cap); 0 = every check is handed to you
+    "captcha_max_attempts": 5,  # tries on one widget before it is handed to you (1-5)
     "login_max_failures": 2,  # failed sign-ins before Lodestar waits for you (two-strike lockout; 1-5)
     # pass 28: Google Calendar busy times (calendar_busy.py); on = the next Google sign-in also asks to see when you are
     # busy (calendar.freebusy only: no event titles, nothing written)
