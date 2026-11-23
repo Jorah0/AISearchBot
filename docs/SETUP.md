@@ -1703,6 +1703,14 @@ opened on this computer, the extension or the in-app browser: those answer "use 
 traffic is plain HTTP on your own network: use it at home, not on public Wi-Fi. The Android companion (`android/`,
 README there) opens the same address and loads only private hosts.
 
+**From anywhere, through a private VPN.** Install [Tailscale](https://tailscale.com/download) on this computer and
+on the phone and sign both in to the same account (or use your own WireGuard with a 10.x address). Turn phone access
+off and on again: Lodestar asks Tailscale for this computer's address (100.x) and also listens there; Setup lists
+that link (use the 100.x link, not a MagicDNS name). An ISP's shared 100.x address that Tailscale did not hand out is
+never served. If the phone cannot connect, allow Lodestar through Windows Firewall on the Tailscale network too. Open it on the phone, or type it into the Android app, and pair as usual. Nothing is opened to the
+internet: only devices on your VPN can reach it, and the pairing code, cookie and refused routes all still apply. The
+VPN also encrypts the traffic, so this is the way to use Lodestar away from home.
+
 ### The Accounts tab: every connection, and when one stops working
 
 **Accounts** (Settings in the sidebar) is where every link Lodestar uses lives:

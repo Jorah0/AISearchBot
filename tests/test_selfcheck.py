@@ -89,9 +89,9 @@ class PhoneAddresses(unittest.TestCase):
         import socket
 
         fake = [(socket.AF_INET, 0, 0, "", (ip, 0)) for ip in ("192.168.42.129", "8.8.8.8", "127.0.0.1", "169.254.1.2", "192.168.1.153")]
-        with patched(phone, lan_ip=lambda: "192.168.1.153"), patched(socket, getaddrinfo=lambda *a, **k: fake):
+        with patched(phone, lan_ip=lambda: "192.168.1.153", tailscale_ips=lambda: []), patched(socket, getaddrinfo=lambda *a, **k: fake):
             self.assertEqual(phone.lan_ips(), ["192.168.1.153", "192.168.42.129"])  # a USB tether's address too
-        with patched(phone, lan_ip=lambda: None), patched(socket, getaddrinfo=lambda *a, **k: []):
+        with patched(phone, lan_ip=lambda: None, tailscale_ips=lambda: []), patched(socket, getaddrinfo=lambda *a, **k: []):
             self.assertEqual(phone.lan_ips(), [])
 
 

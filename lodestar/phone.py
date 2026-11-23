@@ -1,6 +1,7 @@
 """Phone access (pass 53): Lodestar on your phone over your home Wi-Fi. Off by default (pref `phone_access`).
 
-When on, a second listener binds this computer's private LAN address only (never 0.0.0.0, never a public address).
+When on, a second listener binds this computer's private LAN addresses only (never 0.0.0.0, never a public address),
+plus its Tailscale address when Tailscale reports one (away from home over a private VPN).
 Every request there needs a phone session cookie, won by typing a one-time pairing code that Setup shows on this
 computer (8 characters, 5 minutes, 5 tries). Sessions are stored hashed in HOME/phone.json (never in backups), and
 Setup's "Sign out all phones" drops them. Secrets stay on this computer: the phone listener refuses keys, vault,
@@ -132,20 +133,53 @@ def _private(ip: str) -> bool:
         a = ipaddress.ip_address(ip)
     except ValueError:
         return False
-    return a.version == 4 and a.is_private and not a.is_loopback and not a.is_link_local
+    return (a.version == 4 and a.is_private and not a.is_loopback and not a.is_link_local
+            and not a.is_unspecified)  # 0.0.0.0 counts as private in Python, and is every address: never
+
+
+_VPN = ipaddress.ip_network("100.64.0.0/10")  # Tailscale's range, but also an ISP's carrier-grade NAT (RFC 6598)
+
+
+def tailscale_ips() -> list[str]:
+    """This computer's Tailscale addresses, as Tailscale itself reports them; [] without Tailscale. A 100.64/10 address
+    counts only from here, so an ISP's shared NAT address on this PC (a USB modem, a bridged ONT) is never served."""
+    import shutil
+    from pathlib import Path
+
+    from . import updater
+
+    exe = shutil.which("tailscale") or next((str(p) for p in [Path(r"C:\Program Files\Tailscale\tailscale.exe")]
+                                             if p.is_file()), None)
+    if not exe:
+        return []
+    try:
+        code, out, _ = updater._proc([exe, "ip", "-4"], HOME, 5)
+    except (Exception, SystemExit):
+        return []
+    ips = [s.strip() for s in out.splitlines()] if code == 0 else []
+    return [ip for ip in ips if _is_v4(ip) and ipaddress.ip_address(ip) in _VPN]
+
+
+def _is_v4(s: str) -> bool:
+    try:
+        return ipaddress.ip_address(s).version == 4
+    except ValueError:
+        return False
 
 
 def lan_ips() -> list[str]:
     """Every private IPv4 address this computer has (pass 55): the home Wi-Fi one first (lan_ip), then any other, such
-    as the one a phone gives it while tethered (USB or hotspot) or a second network card."""
+    as the one a phone gives it while tethered (USB or hotspot) or a second network card, then its Tailscale address
+    (a private VPN: your phone reaches it from anywhere, nothing opened to the internet)."""
     out = [ip] if (ip := lan_ip()) else []
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            a = info[4][0]
+            a = str(info[4][0])
             if _private(a) and a not in out:
                 out.append(a)
     except OSError:
         pass
+    out += [a for a in tailscale_ips() if a not in out]
     return out
 
 

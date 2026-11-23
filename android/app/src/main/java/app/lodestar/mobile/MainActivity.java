@@ -123,7 +123,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (!isPrivate(Uri.parse(b).getHost())) {
-            showSetup("That is not an address on your own network. Lodestar only serves your home Wi-Fi or a tether.");
+            showSetup("That is not an address on your own network. Lodestar only serves your home Wi-Fi, a tether or your Tailscale VPN.");
             return;
         }
         base = b;
@@ -142,7 +142,7 @@ public class MainActivity extends Activity {
         return u.getScheme().toLowerCase(Locale.ROOT) + "://" + u.getHost() + ":" + port;
     }
 
-    /** Private IPv4 (10/8, 172.16/12, 192.168/16) or a .local name: the only hosts this app loads. */
+    /** Private IPv4 (10/8, 172.16/12, 192.168/16, a VPN's 100.64/10) or a .local name: the only hosts this app loads. */
     static boolean isPrivate(String host) {
         if (host == null) return false;
         String h = host.toLowerCase(Locale.ROOT);
@@ -158,7 +158,8 @@ public class MainActivity extends Activity {
         } catch (NumberFormatException e) {
             return false;
         }
-        return n[0] == 10 || (n[0] == 172 && n[1] >= 16 && n[1] <= 31) || (n[0] == 192 && n[1] == 168);
+        return n[0] == 10 || (n[0] == 172 && n[1] >= 16 && n[1] <= 31) || (n[0] == 192 && n[1] == 168)
+                || (n[0] == 100 && n[1] >= 64 && n[1] <= 127); // a private VPN (Tailscale): reach it from anywhere
     }
 
     // ---- find: try every address on this phone's private networks (Wi-Fi, hotspot, USB tether) on Lodestar's ports
@@ -209,7 +210,13 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    /** "192.168.1." for each private IPv4 network this phone is on. */
+    /** A network Find may scan: private, but never 100.64/10, which on mobile data is the carrier's shared NAT (other
+     *  people's phones); a Tailscale address is typed, never scanned. */
+    static boolean scannable(String ip) {
+        return isPrivate(ip) && !ip.startsWith("100.");
+    }
+
+    /** "192.168.1." for each private IPv4 network this phone is on (never a carrier's or a VPN's: scannable). */
     static List<String> localPrefixes() {
         List<String> out = new ArrayList<>();
         try {
@@ -218,7 +225,7 @@ public class MainActivity extends Activity {
                 for (InetAddress a : Collections.list(ni.getInetAddresses())) {
                     if (!(a instanceof Inet4Address)) continue;
                     String ip = a.getHostAddress();
-                    if (!isPrivate(ip)) continue;
+                    if (!scannable(ip)) continue;
                     String prefix = ip.substring(0, ip.lastIndexOf('.') + 1);
                     if (!out.contains(prefix)) out.add(prefix);
                 }

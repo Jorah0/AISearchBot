@@ -1,8 +1,8 @@
 # Lodestar for Android
 
 A small native app that opens **your own Lodestar** on your phone: over your home Wi-Fi, or when the phone is
-tethered to the computer (USB tethering or the phone's hotspot). Everything still runs on your computer; the app only
-shows it. No third-party libraries, no account, no cloud.
+tethered to the computer (USB tethering or the phone's hotspot). Away from home, install Tailscale on both and type the 100.x address Setup shows
+(docs/SETUP.md > Phone access). Everything still runs on your computer; the app only shows it. No third-party libraries, no account, no cloud.
 
 ## Install
 
@@ -18,7 +18,9 @@ shows it. No third-party libraries, no account, no cloud.
 
 ## What it does and does not do
 
-- Loads only private addresses (10.x, 172.16-31.x, 192.168.x, `.local`). Any other link opens in your browser.
+- Loads only private addresses (10.x, 172.16-31.x, 192.168.x, a Tailscale VPN's 100.64-127.x, `.local`). Any other link
+  opens in your browser. **Find** scans only your Wi-Fi or tether, never a 100.x network (on mobile data that is the
+  carrier's, shared with other people).
 - Keys, passwords, sign-in codes, mail sign-in, backups, restore and updates are refused from a phone (the computer
   enforces this, not the app).
 - Uploads (resume import, attachments) use the phone's file picker; downloads of Lodestar files go to Downloads.

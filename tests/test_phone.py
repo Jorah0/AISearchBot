@@ -111,6 +111,38 @@ class Pairing(unittest.TestCase):
         self.assertTrue(all(phone.valid(f"{phone.COOKIE}={t}") for t in toks))
         phone.revoke_all()
 
+    def test_a_private_vpn_address_counts_public_ones_never(self):
+        # WireGuard setups use 10/8 (private); 0.0.0.0 is every address; 100.64/10 alone is an ISP's shared NAT too
+        for ip in ("10.8.0.2", "192.168.1.5"):
+            self.assertTrue(phone._private(ip), ip)
+        for ip in ("100.101.102.103", "8.8.8.8", "127.0.0.1", "169.254.1.1", "0.0.0.0", "fd7a:115c::1", "x"):
+            self.assertFalse(phone._private(ip), ip)
+        # a 100.64/10 address is served only when Tailscale reports it, never one that only an interface holds
+        addrs = [(2, 1, 6, "", ("192.168.1.5", 0)), (2, 1, 6, "", ("100.70.1.1", 0))]
+        with patched(phone, lan_ip=lambda: "192.168.1.5", tailscale_ips=lambda: ["100.101.102.103"]), \
+                patched(phone.socket, getaddrinfo=lambda *a, **k: addrs):
+            self.assertEqual(phone.lan_ips(), ["192.168.1.5", "100.101.102.103"])
+        with patched(phone, lan_ip=lambda: None, tailscale_ips=lambda: []), \
+                patched(phone.socket, getaddrinfo=lambda *a, **k: addrs):
+            self.assertEqual(phone.lan_ips(), ["192.168.1.5"])
+
+    def test_tailscale_ips_reads_its_own_report_and_keeps_only_its_range(self):
+        import shutil
+
+        from lodestar import updater
+
+        def timeout(*a):
+            raise SystemExit("took longer")
+
+        out = "100.101.102.103\n8.8.8.8\nnot-an-ip\n100.200.1.1\n"
+        with patched(shutil, which=lambda n: "tailscale"):
+            with patched(updater, _proc=lambda cmd, cwd, t: (0, out, "")):
+                self.assertEqual(phone.tailscale_ips(), ["100.101.102.103"])
+            with patched(updater, _proc=timeout):
+                self.assertEqual(phone.tailscale_ips(), [])
+            with patched(updater, _proc=lambda cmd, cwd, t: (1, out, "")):
+                self.assertEqual(phone.tailscale_ips(), [])
+
     def test_start_needs_a_private_lan_address(self):
         with patched(phone, lan_ips=lambda: []):
             with self.assertRaisesRegex(SystemExit, "home-network"):
