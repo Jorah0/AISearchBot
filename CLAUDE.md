@@ -12,7 +12,9 @@
   UI / browser-facing work (browser suite + Android build, tests, lint). CI runs the same steps. A SKIPPED step is not a
   pass: say so. Never report done without the output. A Stop hook enforces it (`~/.claude/hooks/engineering-loop-gate.py`: blocks
   finishing while the tree differs from the last passing run's `.verify/last.json`); commits run the staged secret scan
-  (`.githooks/pre-commit`, `git config core.hooksPath .githooks`).
+  (`.githooks/pre-commit`, `git config core.hooksPath .githooks`). Where `dist\lodestar.exe` exists, commits and pulls
+  (the updater's merge too) also rebuild it in the background (`post-commit` / `post-merge` -> `scripts\build_exe.ps1`,
+  minutes of CPU; log `build\exe-build.log`).
 - **Definition of done**: acceptance criteria written first for non-trivial work; a failing test before the fix; a unit
   test (+ a browser test for UI) and a `docs/TESTS.md` row; verify run and read; docs / this file updated when behaviour
   or a rule changed; then the **`lodestar-reviewer`** agent on the diff (fresh context; fix critical / important).
@@ -27,7 +29,7 @@
 ## Project notes
 
 - **Product**: Lodestar. Package `lodestar/`; `jobbot` is a legacy script alias in `pyproject.toml`.
-- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1245 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
+- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1247 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
 - **Test matrix** (`docs/TESTS.md`): one row per feature with its unit/integration and E2E tests by exact name
   (`module.Class.test_name`). Every new feature adds a TESTS.md row + a unit test + an E2E test when it has UI;
   `tests/test_feature_matrix.py` fails on a row with no test, an unknown name, a browser test in the unit column, a

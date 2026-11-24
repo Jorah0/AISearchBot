@@ -169,7 +169,9 @@ class Packaging(unittest.TestCase):  # outcomes-platform-package-data, -pyinstal
         self.assertTrue(any(d.startswith("playwright") for d in pp["project"]["optional-dependencies"]["e2e"]))
 
     def test_exe_build_bundles_the_data_folders_and_the_icon(self):
-        line = next(ln for ln in self.text("install.ps1").splitlines() if "-m PyInstaller" in ln)
+        self.assertIn(r"scripts\build_exe.ps1", self.text("install.ps1"))  # one build line, shared with the git hooks
+        self.assertNotIn("-m PyInstaller", self.text("install.ps1"))
+        line = next(ln for ln in self.text("scripts/build_exe.ps1").splitlines() if "-m PyInstaller" in ln)
         adds = re.findall(r'--add-data "([^;"]+);([^"]+)"', line)
         self.assertEqual({src for src, _ in adds}, {"lodestar/static", "lodestar/data", "assets"})
         for src, dest in adds:
@@ -183,6 +185,41 @@ class Packaging(unittest.TestCase):  # outcomes-platform-package-data, -pyinstal
         # the app looks for them where --add-data puts them
         self.assertEqual(web.STATIC.resolve(), ROOT / "lodestar" / "static")
         self.assertEqual(desktop.ASSETS.resolve(), ROOT / "assets")
+
+    def test_commits_and_pulls_rebuild_the_exe_in_the_background(self):
+        hook = self.text(".githooks/post-commit")
+        self.assertTrue(hook.startswith("#!/bin/sh"))
+        self.assertIn("scripts/build_exe.ps1", hook)
+        self.assertIn("-WindowStyle Hidden", hook)  # no console window
+        self.assertIn("2>&1 &)", hook)  # detached: git never waits for the build
+        self.assertIn("[ -f dist/lodestar.exe ] || exit 0", hook)  # only where install.ps1 -Exe opted in
+        merge = self.text(".githooks/post-merge")  # a pull rebuilds too
+        self.assertTrue(merge.startswith("#!/bin/sh"))
+        self.assertIn('exec "$(dirname "$0")/post-commit"', merge)
+        ps = self.text("scripts/build_exe.ps1")
+        self.assertIn("lodestar assets pyproject.toml", ps)  # a rebuild only when what the exe bundles changed
+
+    @unittest.skipUnless(sys.platform == "win32", "PowerShell build script")
+    def test_the_exe_build_runs_only_when_due(self):
+        import subprocess
+        rev = subprocess.run(["git", "log", "-1", "--format=%H", "--", "lodestar", "assets", "pyproject.toml"],
+                             cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+
+        def due(dist):
+            r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                                str(ROOT / "scripts" / "build_exe.ps1"), "-Dist", str(dist), "-DryRun"],
+                               capture_output=True, text=True, timeout=60)
+            return r.stdout.strip().splitlines()[-1]
+
+        with tempfile.TemporaryDirectory() as d:
+            dist = Path(d)
+            self.assertTrue(due(dist).startswith("skip: no exe"))  # not opted in: never builds
+            (dist / "lodestar.exe").write_bytes(b"old")
+            self.assertTrue(due(dist).startswith("build"))  # no record of what it was built from
+            (dist / "lodestar.exe.rev").write_text("0" * 40, encoding="utf-8")
+            self.assertTrue(due(dist).startswith("build"))  # built from an older commit
+            (dist / "lodestar.exe.rev").write_text(rev, encoding="utf-8")
+            self.assertTrue(due(dist).startswith("up to date"))
 
     def test_start_scripts_call_commands_the_cli_accepts(self):
         ps1, sh, bat = self.text("start.ps1"), self.text("start.sh"), self.text("start.bat")

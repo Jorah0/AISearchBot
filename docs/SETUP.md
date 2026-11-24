@@ -433,8 +433,14 @@ Things to know:
 - It reads a `.env` from the folder you start it in or from the data folder (`%USERPROFILE%\.lodestar\.env`), not
   from inside the exe. Secrets belong in the keyring vault either way.
 - `lodestar schedule install` run from the exe schedules the exe itself (`"<exe>" run --once`).
-- It never updates itself. It is a snapshot of the code at build time: rebuild with `-Exe` after updating the git
-  install, or set `update_manifest_url` so it tells you when a newer version is published (see "Auto-update").
+- It is a snapshot of the code at build time. In a git checkout with the hooks on (`git config core.hooksPath
+  .githooks`), every commit and every `git pull` that changes `lodestar\`, `assets\` or `pyproject.toml` rebuilds
+  `dist\lodestar.exe` in the background (`scripts\build_exe.ps1`, log in `build\exe-build.log`; `dist\lodestar.exe.rev`
+  records the commit it was built from). An update the app applies is a pull too, so it rebuilds; a build whose commit
+  moved while it ran (a rolled-back update, a checkout) is thrown away. Saving a file is not a commit: run
+  `scripts\build_exe.ps1 -Force` to build from uncommitted edits (an exe built with them is stamped `-dirty` and the next
+  commit rebuilds it). While the exe is running it cannot be replaced: the old one stays and the next commit rebuilds it. Elsewhere, set `update_manifest_url` so it tells you when a newer version is published (see
+  "Auto-update").
 - `uninstall.ps1` deletes `dist\` (and `build\`, `lodestar.spec`). Copy the exe elsewhere first if you want to keep it.
 
 ### macOS and Linux: install.sh

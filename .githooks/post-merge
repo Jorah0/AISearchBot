@@ -1,0 +1,3 @@
+#!/bin/sh
+# A pull or merge rebuilds the exe like a commit does.
+exec "$(dirname "$0")/post-commit"
