@@ -80,7 +80,8 @@ class Android(unittest.TestCase):
         self.assertEqual(deps, [("testImplementation", "junit:junit:4.13.2")])
         manifest = (ANDROID / "app/src/main/AndroidManifest.xml").read_text(encoding="utf-8")
         self.assertEqual(sorted(re.findall(r'uses-permission android:name="android\.permission\.(\w+)"', manifest)),
-                         ["ACCESS_NETWORK_STATE", "INTERNET"])
+                         ["ACCESS_NETWORK_STATE", "INTERNET", "POST_NOTIFICATIONS",  # pass 58: self-update from the
+                          "REQUEST_INSTALL_PACKAGES"])  # paired computer (its own newer build only) + "tap to open"
         self.assertIn('android:allowBackup="false"', manifest)
 
 

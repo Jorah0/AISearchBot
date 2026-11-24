@@ -2,6 +2,7 @@
 cookie; the phone listener checks Host and the cookie on every request, keeps the page token on /api/, and refuses the
 secret-bearing routes; phone.json stays out of backups. The listener here binds loopback (no LAN needed)."""
 import http.client
+import json
 import os
 import sys
 import tempfile
@@ -193,6 +194,27 @@ class Listener(unittest.TestCase):
         self.assertEqual(self.call("POST", "/api/phone", b'{"op": "code"}', both | {"Content-Type": "application/json"})[0], 403)
         self.assertEqual(self.call("GET", "/", headers=cookie, host=f"evil.example:{self.port}")[0], 421)
         self.assertEqual(self.call("OPTIONS", "/api/state", headers=both)[0], 404)
+
+    def test_the_android_app_and_its_version_download_before_pairing(self):
+        d = Path(tempfile.mkdtemp())
+        with patched(phone, APP_DIR=d):
+            self.assertIsNone(phone.app_info())
+            self.assertEqual(self.call("GET", "/phone/app.json")[0], 404)  # not built: nothing to offer
+            self.assertNotIn(b"/phone/app.apk", self.call("GET", "/phone")[2])
+            (d / "lodestar.apk").write_bytes(b"PK\x03\x04apk")
+            (d / "lodestar.version.json").write_text('{"code": 7, "name": "0.1.7"}', encoding="utf-8")
+            self.assertEqual(phone.app_info(), {"code": 7, "name": "0.1.7", "size": 7})
+            st, h, body = self.call("GET", "/phone/app.json")  # no cookie: a phone without the app can install it
+            self.assertEqual((st, json.loads(body)), (200, {"code": 7, "name": "0.1.7", "size": 7}))
+            st, h, body = self.call("GET", "/phone/app.apk")
+            self.assertEqual((st, body), (200, b"PK\x03\x04apk"))
+            self.assertEqual(h["Content-Type"], "application/vnd.android.package-archive")
+            self.assertIn(b'href="/phone/app.apk"', self.call("GET", "/phone")[2])
+            self.assertEqual(self.call("GET", "/phone/app.apk", host=f"evil.example:{self.port}")[0], 421)
+            self.assertEqual(self.call("GET", "/phone/../phone.json")[0], 303)  # only the two exact names
+            self.assertEqual(phone.status()["app"]["code"], 7)
+            (d / "lodestar.version.json").write_text("not json", encoding="utf-8")
+            self.assertIsNone(phone.app_info())  # a broken sidecar offers no update rather than a wrong one
 
 
 if __name__ == "__main__":

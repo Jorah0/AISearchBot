@@ -45,6 +45,7 @@ android/.gradle/
 android/local.properties
 android/app/build/
 android/lodestar.apk
+android/lodestar.version.json
 
 # golden-task eval run results (pass 56)
 evals/reports/

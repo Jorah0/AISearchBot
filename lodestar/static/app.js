@@ -3859,6 +3859,9 @@ function phonePaint(r) {
   $('#phoneUrl').textContent = r.on ? `On your phone (app or browser), open ${(r.urls || [r.url]).join('  or  ')}` : (r.lan_ip ? 'off' : 'off (no home-network address found)');  // pass 55: every private address
   $('#phoneCodeBtn').disabled = !r.on;
   if (r.code) $('#phoneCode').textContent = `${r.code} (5 minutes, once)`;
+  $('#phoneApp').textContent = r.app && r.on  // android\build.ps1 built it: phones install it, then it updates itself
+    ? `Android app ${r.app.name}: on the phone open ${(r.urls || [r.url]).map(u => u.replace(/\/phone$/, '/phone/app.apk')).join('  or  ')}. Installed apps update themselves from here.`
+    : (r.app ? '' : 'Android app: not built on this computer (android\\build.ps1).');
   $('#phoneList').textContent = r.phones.length ? 'Paired: ' + r.phones.map(x => `${x.label} (${localTs(x.created, 16)})`).join(', ') : 'No phones paired.';
 }
 async function phoneLoad() { phonePaint(await api('/api/phone', { op: 'status' })); }

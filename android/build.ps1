@@ -12,7 +12,11 @@ foreach ($p in @("$env:JAVA_HOME\bin\java.exe", "$env:ANDROID_HOME\platforms\and
     if (-not (Test-Path $p)) { throw "missing $p : install the toolchain first (see android\README.md)" }
 }
 Set-Content -Encoding ascii (Join-Path $here 'local.properties') ("sdk.dir=" + ($env:ANDROID_HOME -replace '\\', '\\'))
-$tasks = @('assembleDebug')
+# every build is newer than the last (minutes since 2026-01-01 UTC): the phone app updates itself to it from Lodestar
+$now = (Get-Date).ToUniversalTime()
+$code = [int][math]::Floor(($now - [datetime]'2026-01-01').TotalMinutes)
+$name = $now.ToString('yyyy.MM.dd-HHmm')
+$tasks = @("-PlodestarCode=$code", "-PlodestarName=$name", 'assembleDebug')
 if ($Test) { $tasks += @('testDebugUnitTest', 'lintDebug') }
 Push-Location $here
 try {
@@ -21,4 +25,6 @@ try {
 } finally { Pop-Location }
 $apk = Join-Path $here 'app\build\outputs\apk\debug\app-debug.apk'
 Copy-Item $apk (Join-Path $here 'lodestar.apk') -Force
-"built: " + (Join-Path $here 'lodestar.apk') + " (" + [math]::Round((Get-Item $apk).Length / 1KB) + " KB)"
+# what Lodestar's phone listener offers (/phone/app.json); written after the APK so it never names a build not there yet
+Set-Content -Encoding ascii (Join-Path $here 'lodestar.version.json') ('{"code": ' + $code + ', "name": "' + $name + '"}')
+"built: " + (Join-Path $here 'lodestar.apk') + " (" + [math]::Round((Get-Item $apk).Length / 1KB) + " KB, build $code / $name)"

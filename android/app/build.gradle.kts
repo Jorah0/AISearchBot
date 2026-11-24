@@ -10,8 +10,9 @@ android {
         applicationId = "app.lodestar.mobile"
         minSdk = 26  // Android 8.0+
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // build.ps1 passes a build number that grows with every build (the phone's self-update needs a newer one)
+        versionCode = (project.findProperty("lodestarCode") as String?)?.toInt() ?: 1
+        versionName = (project.findProperty("lodestarName") as String?) ?: "0.1.0"
     }
 
     buildTypes {

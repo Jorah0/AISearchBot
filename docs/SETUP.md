@@ -1711,6 +1711,12 @@ never served. If the phone cannot connect, allow Lodestar through Windows Firewa
 internet: only devices on your VPN can reach it, and the pairing code, cookie and refused routes all still apply. The
 VPN also encrypts the traffic, so this is the way to use Lodestar away from home.
 
+**The Android app** (`android\build.ps1` builds it). With phone access on, open the address on the phone's browser
+and tap **install the Lodestar app**, or open the `.../phone/app.apk` link the Setup card shows. After that the app
+updates itself: each time it opens it asks this computer for a newer build, and **Update** downloads and installs it
+(menu: **Check for update**); tap the **Lodestar updated** notice to reopen it (Android 10+ does not let an app reopen
+itself). The first update asks you to confirm once. Details in `android/README.md`.
+
 ### The Accounts tab: every connection, and when one stops working
 
 **Accounts** (Settings in the sidebar) is where every link Lodestar uses lives:
@@ -2730,7 +2736,7 @@ the browser extension. Each source's name is shown as a link back to it, as Adzu
 **Throttles.** Saved searches ask each board at most once per window (Remotive every 6 hours, Jobicy and most others
 hourly). Remotive, Jobicy, RemoteOK and We Work Remotely limit calls per user, not per query, so Lodestar fetches them
 once per window for all your searches together and filters locally. A manual search reuses that fresh copy, also
-after a restart or from a separate `lodestar jobs search` run (the copy is saved under `cacheoards` in your data
+after a restart or from a separate `lodestar jobs search` run (the copy is saved under `cache\boards` in your data
 folder); with no saved copy inside the window the board is skipped until the window passes. Setup >
 Job sources shows each board's window and when it was last asked.
 

@@ -2080,7 +2080,10 @@ border-radius:8px;border:1px solid #262b36;background:#171a21;color:inherit}butt
 p{color:#8a93a6}.err{color:#f87171}</style></head><body><form method="post" action="/phone">
 <h1>Lodestar</h1><p>On your computer: Lodestar &gt; Setup &gt; Phone access &gt; New pairing code. Type it here.</p>
 __MSG__<input name="code" placeholder="ABCD-EFGH" autocomplete="one-time-code" autocapitalize="characters" required>
-<input name="label" placeholder="name this phone (optional)" maxlength="60"><button>Pair this phone</button></form></body></html>"""
+<input name="label" placeholder="name this phone (optional)" maxlength="60"><button>Pair this phone</button>
+__APP__</form></body></html>"""
+APP_LINK = ('<p>Android: <a href="/phone/app.apk" style="color:#60a5fa">install the Lodestar app</a> (__NAME__). Allow your '
+            'browser to install apps when Android asks; the app updates itself from this computer after that.</p>')
 
 
 class PhoneHandler(Handler):
@@ -2092,7 +2095,13 @@ class PhoneHandler(Handler):
         return (self.headers.get("Host") or "").lower() == f"{a[0]}:{a[1]}"
 
     def _pair_page(self, msg: str = "") -> None:
-        body = PAIR_PAGE.replace("__MSG__", f'<p class="err">{msg}</p>' if msg else "").encode()
+        from html import escape
+
+        from . import phone
+
+        app = phone.app_info()
+        link = APP_LINK.replace("__NAME__", escape(app["name"])) if app else ""
+        body = PAIR_PAGE.replace("__MSG__", f'<p class="err">{msg}</p>' if msg else "").replace("__APP__", link).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -2109,6 +2118,22 @@ class PhoneHandler(Handler):
         path = urlparse(self.path).path
         if not self._host_ok():
             self._json({"error": "bad host"}, 421)
+            return False
+        if path in ("/phone/app.json", "/phone/app.apk") and not post:  # before pairing: the app installs, then pairs
+            app = phone.app_info()
+            if not app:
+                self._json({"error": "no Android app built on this computer (android\\build.ps1)"}, 404)
+            elif path.endswith(".json"):
+                self._json(app)
+            else:
+                data = (phone.APP_DIR / "lodestar.apk").read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/vnd.android.package-archive")
+                self.send_header("Content-Disposition", 'attachment; filename="lodestar.apk"')
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
             return False
         if path == "/phone":
             if not post:

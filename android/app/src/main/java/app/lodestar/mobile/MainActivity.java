@@ -61,6 +61,7 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> fileCallback;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private ExecutorService scan;
+    private boolean updateChecked;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -287,6 +288,10 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String u) {
                 CookieManager.getInstance().flush();  // the pairing cookie survives the app closing
                 setTitle("Lodestar");
+                if (!updateChecked && sameOrigin(Uri.parse(u))) {  // once per launch: a newer build on the computer?
+                    updateChecked = true;
+                    Updater.check(MainActivity.this, base, true);
+                }
             }
         });
         web.setWebChromeClient(new WebChromeClient() {
@@ -372,6 +377,7 @@ public class MainActivity extends Activity {
         menu.add(0, 1, 0, "Reload");
         menu.add(0, 2, 1, "Change address");
         menu.add(0, 3, 2, "Forget this computer");
+        menu.add(0, 4, 3, "Check for update");
         return true;
     }
 
@@ -390,6 +396,10 @@ public class MainActivity extends Activity {
                 CookieManager.getInstance().removeAllCookies(null);
                 base = null;
                 showSetup("This phone forgot the computer. Pair again with a new code.");
+                return true;
+            case 4:
+                if (base == null) toast("Connect to Lodestar on your computer first");
+                else Updater.check(this, base, false);
                 return true;
             default:
                 return super.onOptionsItemSelected(item);

@@ -17,6 +17,7 @@ import socket
 import threading
 import time
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 
 from .config import HOME
 
@@ -144,7 +145,6 @@ def tailscale_ips() -> list[str]:
     """This computer's Tailscale addresses, as Tailscale itself reports them; [] without Tailscale. A 100.64/10 address
     counts only from here, so an ISP's shared NAT address on this PC (a USB modem, a bridged ONT) is never served."""
     import shutil
-    from pathlib import Path
 
     from . import updater
 
@@ -183,10 +183,25 @@ def lan_ips() -> list[str]:
     return out
 
 
+APP_DIR = Path(__file__).resolve().parents[1] / "android"  # android\build.ps1 writes lodestar.apk + its version here
+
+
+def app_info() -> dict | None:
+    """The Android app this computer offers paired phones, {code, name, size}, else None (not built, or no readable
+    version: an update is never offered on a guess). Android itself refuses an APK signed by another key."""
+    apk, ver = APP_DIR / "lodestar.apk", APP_DIR / "lodestar.version.json"
+    try:
+        v = json.loads(ver.read_text(encoding="utf-8"))
+        code, name = int(v["code"]), str(v["name"])[:40]
+        return {"code": code, "name": name, "size": apk.stat().st_size} if code > 0 else None
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
 def status() -> dict:
     srvs = list(_SRVS)
     urls = [f"http://{s.server_address[0]}:{s.server_address[1]}/phone" for s in srvs]
-    return {"on": bool(srvs), "url": urls[0] if urls else None, "urls": urls, "lan_ip": lan_ip(),
+    return {"on": bool(srvs), "url": urls[0] if urls else None, "urls": urls, "lan_ip": lan_ip(), "app": app_info(),
             "phones": [{"label": s["label"], "created": s["created"]} for s in _load()["sessions"]],
             "code_live": bool(_CODE) and time.time() < _CODE.get("until", 0)}
 

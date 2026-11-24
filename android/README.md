@@ -11,6 +11,8 @@ tethered to the computer (USB tethering or the phone's hotspot). Away from home,
    private networks.
 2. Copy `android\lodestar.apk` to the phone (USB, or email it to yourself) and open it. Android asks to allow installing
    from that app once.
+   Or, on the phone's browser, open the address Setup shows and tap **install the Lodestar app** on the pairing page
+   (it downloads `/phone/app.apk` from your computer).
 3. Open **Lodestar** on the phone: type the address Setup shows (for example `192.168.1.153:8780`), or tap
    **Find Lodestar on this network**.
 4. Back on the computer: **New pairing code**. Type the code on the phone. The phone stays paired until you choose
@@ -26,6 +28,18 @@ tethered to the computer (USB tethering or the phone's hotspot). Away from home,
 - Uploads (resume import, attachments) use the phone's file picker; downloads of Lodestar files go to Downloads.
   Files the computer builds in the browser (some exports) are saved from the computer.
 - Plain HTTP on your own network, like the browser version: use it at home or on your own tether, not on public Wi-Fi.
+
+## Updates
+
+Each `android\build.ps1` run makes a newer build (its number grows with the time it was built). Once a phone has the
+app, it checks the computer it is connected to each time it opens (and from the menu: **Check for update**). When the
+computer has a newer build it offers it: **Update** downloads it from the computer and installs it. The first time,
+Android asks you to allow Lodestar to install apps, and the first update shows one confirm screen (the browser
+installed the app); later updates on Android 12+ install without a prompt. Android 8-9 reopen the app by themselves;
+Android 10+ does not let an app reopen itself, so tap the "Lodestar updated" notice (allow notifications when asked).
+Every `android\build.ps1` run (also `scripts/verify.py --full`) makes a new build, so paired phones are offered it.
+Android only accepts a build signed like the installed one (this computer's debug key), so a changed file on the
+network cannot replace the app; a build from another computer is refused (install it from the pairing page instead).
 
 ## Build
 

@@ -509,7 +509,8 @@
     <div class="row"><button class="b" id="phoneToggle" onclick="phoneSet(this)">Turn on phone access</button><span id="phoneUrl" class="muted"></span></div>
     <div class="row"><button class="b ghost sm" id="phoneCodeBtn" onclick="phoneCode(this)">New pairing code</button><b id="phoneCode" class="mono"></b>
       <button class="b ghost sm" onclick="phoneRevoke(this)">Sign out all phones</button></div>
-    <div id="phoneList" class="muted"></div></div>
+    <div id="phoneList" class="muted"></div>
+    <div id="phoneApp" class="muted"></div></div>
   <div class="panel" id="apCard"><h3>Autopilot</h3>
     <details class="help"><summary>About this</summary><div><p>Off by default. When on, the monitor loop moves each job along its pipeline (Board drawer &gt; Pipeline): steps set to <b>auto</b> run within the AI budgets below; the others ask once per job in the Inbox. Nothing is sent, submitted or moved without its own approval, a stale step is never redone on its own, and eligibility or EEO answers are never drafted. Jobs whose fit check says skip are left alone.</p></div></details>
     <div class="row"><label><input type="checkbox" id="apOn" onchange="setPref('autopilot',this.checked)"> Autopilot on</label>

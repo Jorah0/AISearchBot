@@ -7,6 +7,9 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- self-update from your computer (Updater): install its newer build of this same app; the "tap to open" notice -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="false"
@@ -27,5 +30,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <receiver android:name=".Updater$Status" android:exported="false">
+            <intent-filter>
+                <action android:name="app.lodestar.mobile.UPDATE_STATUS" />
+            </intent-filter>
+        </receiver>
+        <receiver android:name=".Updater$Restart" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
