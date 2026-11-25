@@ -173,8 +173,12 @@ class Packaging(unittest.TestCase):  # outcomes-platform-package-data, -pyinstal
         self.assertNotIn("-m PyInstaller", self.text("install.ps1"))
         line = next(ln for ln in self.text("scripts/build_exe.ps1").splitlines() if "-m PyInstaller" in ln)
         adds = re.findall(r'--add-data "([^;"]+);([^"]+)"', line)
-        self.assertEqual({src for src, _ in adds}, {"lodestar/static", "lodestar/data", "assets"})
-        for src, dest in adds:
+        self.assertEqual({src for src, _ in adds}, {"lodestar/static", "lodestar/data", "assets", "pyproject.toml"})
+        self.assertIn(("pyproject.toml", "."), adds)  # deps.py reads it at the bundle root
+        from lodestar import deps
+
+        self.assertEqual(deps.PYPROJECT, ROOT / "pyproject.toml")
+        for src, dest in [x for x in adds if x[0] != "pyproject.toml"]:
             self.assertEqual(src, dest)  # same relative place inside the bundle as beside the source
             self.assertTrue((ROOT / src).is_dir(), src)
         for mod in ("keyring", "docx", "webview"):

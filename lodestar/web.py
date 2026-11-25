@@ -1491,6 +1491,7 @@ class Handler(BaseHTTPRequestHandler):
                     ids = p.get("ids") if isinstance(p.get("ids"), list) else [p.get("id")]
                     mode = p.get("mode") if p.get("mode") in apply_agent.MODES else None
                     eeo = p.get("eeo") if isinstance(p.get("eeo"), bool) else None
+                    apply_agent.install_playwright()  # your click: the apply extra from pyproject, when missing
                     runs = apply_agent.enqueue(ids[:200], mode, eeo)
                     return self._json({"runs": [r for r in runs if "run_id" in r], "refused": [r for r in runs if "error" in r]})
                 if path == "/api/apply/stop":

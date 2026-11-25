@@ -29,7 +29,7 @@
 ## Project notes
 
 - **Product**: Lodestar. Package `lodestar/`; `jobbot` is a legacy script alias in `pyproject.toml`.
-- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1357 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
+- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1364 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
 - **Test matrix** (`docs/TESTS.md`): one row per feature with its unit/integration and E2E tests by exact name
   (`module.Class.test_name`). Every new feature adds a TESTS.md row + a unit test + an E2E test when it has UI;
   `tests/test_feature_matrix.py` fails on a row with no test, an unknown name, a browser test in the unit column, a
@@ -336,6 +336,9 @@ PORT`, PORT = the server's own
   (requisition numbers, >50 miles) beats the AI, never hide on a guess (unchecked = new). Android companion = `android/` (emulator end to end: `scripts/android_e2e.py`, a `verify --full` step: the `lodestar_test` AVD headless, a real Lodestar in a temp home, its own adb server port `LODESTAR_ADB_PORT` (5039: another tool's adb holds 5037), emulator and adb always shut down)
   (Java, no third-party deps; `android/build.ps1 -Test`; only private hosts load: keep `isPrivate` and the phone
   listener's own guards in step). The app installs and updates from the computer it is paired with (pass 58): `/phone/app.json` + `/phone/app.apk` are the only paths the phone listener serves before pairing (`phone.app_info` reads android/lodestar.version.json, which build.ps1 writes; no readable version = no offer); the app (`Updater`) installs only a strictly newer build, and Android refuses one signed by another key. Phone access binds every private address (`phone.lan_ips`), plus the address `phone.tailscale_ips` reads from Tailscale itself: a bare 100.64/10 is an ISP's shared NAT too, never served; Android `isPrivate` accepts 100.64/10 to connect but `scannable` never scans it; tests patch `lan_ips`.
+- **Dependencies** (`deps.py`): missing packages are installed only from pyproject.toml's specs, only into a venv
+  (`updater._proc`, hidden, `logs/deps.log`), only on `lodestar desktop` / `lodestar deps install` / the apply agent's Start
+  (never `playwright install`); never by the frozen exe (rebuild it), never under Full AI; tests fake `updater._proc`.
 - **Gotcha, SystemExit**: `ai.*` and `profile_text()` report user-facing problems (no key, model rejected, template profile) as `SystemExit`, which `except Exception` does not catch. Background paths catch `(Exception, SystemExit)`.
 - **Run**: `lodestar doctor` (add `--live` for one real AI call per provider), `lodestar desktop` (WebView2 window; falls back to the browser).
 - **Answer bank sources**: every `db.save_answer` from a path where you typed the answer passes `source` (Answers tab "typed under Answers", CLI, `pipeline.answer`); an AI `save_answer` proposal carries `source: "AI draft for job #N"`. Eligibility / EEO answers (`pipeline.never_ai`, which also knows the CANON legal keys) are reused only when `pipeline.yours(source)`, and AI prompts read bank rows only via `db.employer_answers()` (`pipeline.for_prompts`: never such a row, tagged or not). A new event kind a document builder writes goes in `db.BOOKKEEPING` (the follow-up clock).

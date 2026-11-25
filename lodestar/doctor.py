@@ -19,6 +19,11 @@ def checks() -> list[tuple[str, str, str]]:
             out.append(("ok", f"module {mod}", "installed"))
         except ImportError:
             out.append(("warn" if extra else "fail", f"module {mod}", f"missing{extra}"))
+    from . import deps
+
+    gaps = [x for x in deps.REQUIREMENTS if x not in ("core", "all", "e2e") and deps.missing(x)]  # e2e: tests only
+    out.append(("warn" if gaps else "ok", "extras", f"missing: {', '.join(gaps)} (lodestar deps install --extra NAME)"
+                if gaps else "every optional extra is installed" if deps.REQUIREMENTS else "pyproject.toml not found"))
     try:
         import keyring
 

@@ -10,7 +10,7 @@ import unittest
 
 from test_pass16_update import Base, patched
 
-from lodestar import cli, connections, desktop, updater, web
+from lodestar import cli, connections, deps, desktop, updater, web
 from lodestar.config import HOME
 
 
@@ -163,7 +163,7 @@ class Relaunch(unittest.TestCase):
         a = cli.build().parse_args(["desktop", "--no-loop", "--minimized"])  # --minimized: what start_on_boot runs
         srv = type("Srv", (), {"shutdown": lambda self: None})()  # no real server: nothing to leave open
         with patched(desktop, open_window=lambda port, minimized=False: seen.append((web.RESTART, web.QUIT, minimized))), \
-                patched(connections, start_checks=lambda: None), \
+                patched(connections, start_checks=lambda: None), patched(deps, missing=lambda extra=None: []), \
                 patched(web, RESTART=None, QUIT=None, start_server=lambda port: srv):
             cli.cmd_desktop(a)
         self.assertEqual(seen, [(desktop.relaunch, desktop.quit, True)])

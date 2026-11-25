@@ -28,6 +28,7 @@ supports them.
   - [macOS and Linux: install.sh](#macos-and-linux-installsh)
   - [Quick start without installing shortcuts: start.bat, start.ps1, start.sh](#quick-start-without-installing-shortcuts-startbat-startps1-startsh)
   - [Manual install with pip](#manual-install-with-pip)
+  - [Missing packages install themselves (`lodestar deps`)](#missing-packages-install-themselves-lodestar-deps)
   - [Running `lodestar` commands](#running-lodestar-commands)
   - [Uninstall: uninstall.ps1](#uninstall-uninstallps1)
   - [First run](#first-run)
@@ -537,6 +538,25 @@ To check a development install, run the offline unit tests (pytest is not used):
 ```powershell
 .venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
 ```
+
+### Missing packages install themselves (`lodestar deps`)
+
+In a source install, Lodestar installs a missing extra when you need it: `lodestar desktop` installs pywebview before
+it opens the window (on failure it opens the browser, as before), and Start on the apply agent (or `lodestar apply-agent
+run`) installs Playwright. Only the specs `pyproject.toml` declares are installed (`pip install
+--disable-pip-version-check <specs>` into the interpreter Lodestar runs on, no console window, log in
+`logs\deps.log` under your data folder), and only into a virtual environment: on a system Python Lodestar prints the
+exact command for you to run instead. It never runs `playwright install`: the agent drives your installed Edge or
+Chrome. Full AI cannot install anything.
+
+```powershell
+lodestar deps                          # which extras are missing (core, desktop, pdf, apply, e2e, all)
+lodestar deps install --extra desktop  # install one; no --extra = the core dependencies
+```
+
+The standalone exe never installs packages: it has no pip, and its packages (core + desktop) are fixed when it is
+built. If one is missing there, rebuild it (`scripts\build_exe.ps1 -Force` or `install.ps1 -Exe`). `lodestar doctor`
+lists missing extras on its `extras` row.
 
 ### Running `lodestar` commands
 

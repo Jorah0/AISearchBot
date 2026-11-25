@@ -940,6 +940,7 @@ def cmd_apply_agent(a):
     from . import apply_agent
 
     if a.op == "run":
+        apply_agent.install_playwright()
         for r in apply_agent.run_foreground(a.ids, a.mode, True if a.eeo else None, a.headless):
             print(f"#{r['job_id']}: " + (f"refused: {r['error']}" if "error" in r else
                                          f"run #{r['run_id']} {r['mode']} -> {r['state']}"
@@ -1458,6 +1459,22 @@ def cmd_doctor(a):
     raise SystemExit(0 if report(a.live) < 2 else 1)
 
 
+def cmd_deps(a):
+    """`lodestar deps [check|install] [--extra NAME]`: deps.py (only specs pyproject.toml declares)."""
+    from . import deps
+
+    if a.op == "install":
+        r = deps.ensure(None if a.extra in (None, "core") else a.extra)
+        for s in r["installed"]:
+            print(f"installed {s}")
+        if r["error"]:
+            raise SystemExit(r["error"])
+        return print("nothing was missing" if not r["installed"] else f"log: {r['log']}")
+    for name in [a.extra] if a.extra else deps.REQUIREMENTS:
+        m = deps.missing(None if name == "core" else name)
+        print(f"{name:<8} {'missing: ' + ', '.join(m) if m else 'ok'}")
+
+
 def _print_update(p: dict) -> None:
     print(p["result"])
     if p.get("origin"):
@@ -1520,6 +1537,15 @@ def cmd_desktop(a):
     from . import pipeline, studio
 
     pipeline.AUTO = studio.AUTO = True  # question answers resume steps; profile edits rebuild the master resume
+
+    from . import deps
+
+    try:  # pywebview before the window: installed into the venv once; on failure the browser fallback stays
+        if deps.missing("desktop"):
+            r = deps.ensure("desktop")
+            print(f"installed {', '.join(r['installed'])}" if r["installed"] else f"desktop window: {r['error']}")
+    except (Exception, SystemExit) as e:
+        print(f"desktop window: {e}")
 
     from . import desktop, web
     from .web import start_server
@@ -2562,6 +2588,10 @@ def build() -> argparse.ArgumentParser:
     s = sub.add_parser("doctor", help="check the install: Python, modules, WebView2, keyring, data folder, profile, providers, mail")
     s.add_argument("--live", action="store_true", help="also make one real call per configured provider")
     s.set_defaults(f=cmd_doctor)
+    s = sub.add_parser("deps", help="missing packages: check, or install what pyproject.toml declares (venv only; never the exe)")
+    s.add_argument("op", nargs="?", choices=("check", "install"), default="check")
+    s.add_argument("--extra", help="core (default for install), desktop, pdf, apply, e2e, all")
+    s.set_defaults(f=cmd_deps)
 
     s = sub.add_parser("selfcheck", help="check and test the app: every tab in a headless browser (throwaway data), "
                                          "optional AI review of each page, optional live test of each AI tool")

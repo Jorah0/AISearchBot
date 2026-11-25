@@ -86,6 +86,15 @@ def available() -> str | None:
     return None
 
 
+def install_playwright() -> None:
+    """Your click only (Start in the page, `apply-agent run`): pip install the apply extra when Playwright is missing,
+    never its browsers (the agent drives your installed Edge / Chrome; no 'playwright install'). Raises why it could not."""
+    from . import deps
+
+    if deps.missing("apply") and (why := deps.ensure("apply")["error"]):
+        raise SystemExit(f"the apply agent needs Playwright: {why}")
+
+
 def resolve_url(job) -> tuple[str, str]:
     """(url, how) the agent opens for a job: your Application link, else the posting link when it is on a known
     application system. A forbidden site, or any other site without your link, is refused with what to do."""

@@ -3,7 +3,9 @@
 # the last commit touching what the exe bundles differs from the one it was built from (dist\lodestar.exe.rev).
 # PyInstaller reads the working tree: an exe built with uncommitted edits there is stamped "<rev>-dirty" (rebuilt by the
 # next commit), and one whose commit moved during the build (a checkout, the updater's merge and rollback) is thrown
-# away. The new exe is built aside and then moved in: while the old one is running the move fails, the old exe stays and
+# away. The exe bundles the core packages plus the desktop extra (pywebview, --collect-all webview) and pyproject.toml
+# (lodestar.deps reads it); it never installs packages itself (a frozen exe has no pip): `lodestar deps` there only says
+# to rebuild. The new exe is built aside and then moved in: while the old one is running the move fails, the old exe stays and
 # the stamp is not written, so the next commit tries again. One build at a time (build\exe.lock); a second one waits.
 param([string]$Dist, [switch]$DryRun, [switch]$Force)
 $ErrorActionPreference = "Stop"
@@ -45,7 +47,7 @@ try {
   & $py -m pip install --quiet --disable-pip-version-check pyinstaller
   if ($LASTEXITCODE -ne 0) { throw "pip could not install PyInstaller (exit $LASTEXITCODE)" }
   $tmp = Join-Path $root "build\exe-new"
-  & $py -m PyInstaller --noconfirm --onefile --distpath $tmp --name lodestar --add-data "lodestar/static;lodestar/static" --add-data "lodestar/data;lodestar/data" --add-data "assets;assets" --collect-all keyring --collect-all docx --collect-all webview --icon (Join-Path $root "assets\lodestar.ico") (Join-Path $root "lodestar\__main__.py") | Out-Null
+  & $py -m PyInstaller --noconfirm --onefile --distpath $tmp --name lodestar --add-data "lodestar/static;lodestar/static" --add-data "lodestar/data;lodestar/data" --add-data "assets;assets" --add-data "pyproject.toml;." --collect-all keyring --collect-all docx --collect-all webview --icon (Join-Path $root "assets\lodestar.ico") (Join-Path $root "lodestar\__main__.py") | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed (exit $LASTEXITCODE)" }
   if ((Get-BundleRev) -ne $rev) { throw "the checkout moved during the build; the new exe was discarded (the next commit rebuilds)" }
   if (git -C $root status --porcelain -- $bundled) { $rev = "$rev-dirty" }  # built with uncommitted edits
