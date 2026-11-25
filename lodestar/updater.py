@@ -346,12 +346,16 @@ def _pip(repo: Path) -> None:
 def _gate(repo: Path) -> None:
     """The new code must pass its own offline unit suite (on a throwaway data folder, never yours) and `lodestar
     doctor` must run to its verdict. Raises SystemExit with the failure."""
-    env = os.environ | {"PYTHONDONTWRITEBYTECODE": "1"}  # no __pycache__ left behind to make the tree look dirty
-    if (repo / "tests").is_dir():
-        with tempfile.TemporaryDirectory(prefix="lodestar-update-gate-", ignore_cleanup_errors=True) as home:
-            _run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], repo, GATE_TIMEOUT,
-                 env | {"LODESTAR_HOME": home, "LODESTAR_VAULT_SERVICE": ""})  # "": the temp home's own keyring namespace
-    _, out, err = _proc([sys.executable, "-m", "lodestar", "doctor"], repo, 300, env)
+    import re
+
+    # code not yet trusted: no secret-named variables from this process, and (below) never your data folder or keyring
+    env = {k: v for k, v in os.environ.items() if not re.search(r"KEY|TOKEN|SECRET|PASS|PWD|CREDENTIAL|AUTH|COOKIE", k, re.I)}
+    env |= {"PYTHONDONTWRITEBYTECODE": "1"}  # no __pycache__ left behind to make the tree look dirty
+    with tempfile.TemporaryDirectory(prefix="lodestar-update-gate-", ignore_cleanup_errors=True) as home:
+        env |= {"LODESTAR_HOME": home, "LODESTAR_VAULT_SERVICE": ""}  # "": the temp home's own keyring namespace
+        if (repo / "tests").is_dir():
+            _run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], repo, GATE_TIMEOUT, env)
+        _, out, err = _proc([sys.executable, "-m", "lodestar", "doctor"], repo, 300, env)
     last = (out.strip().splitlines() or [""])[-1]
     if last not in ("all good", "usable; see WARN lines", "something is broken; see FAIL lines"):  # it crashed
         raise SystemExit(f"lodestar doctor did not finish: {(err.strip().splitlines() or [last])[-1][:300]}")

@@ -362,7 +362,7 @@ class AccountsPanel(E2ETestCase):
         self.assertTrue(settings.pref("accounts_auto_create"))
         self.assertIn("finishes sign-ups", self.page.text_content("#acctGenState"))
         self.answer(True)
-        self.run_click("#acctGen >> text=Clear")
+        self.run_click(self.page.locator("#acctGen").get_by_role("button", name="Clear"))  # the help text says "auto-cleared"
         self.assertIsNone(vault.get(accounts.GENERAL))
         self.assertEqual(self.page.text_content("#acctGenState"), "(not set)")
 

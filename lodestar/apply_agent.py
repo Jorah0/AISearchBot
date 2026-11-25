@@ -60,7 +60,10 @@ class _End(Exception):
 def forbidden(url_or_host) -> str | None:
     """The site name when the host belongs to a job board whose terms forbid bots (LinkedIn, Indeed, Glassdoor,
     ZipRecruiter, SimplyHired; their regional and country domains, lnkd.in). Over-blocks lookalikes, on purpose."""
-    return None
+    s = str(url_or_host or "")
+    h = apply_ats.host(s) if "://" in s else s.lower().rstrip(".")
+    m = FORBIDDEN_RE.search(h)
+    return SITES[m.group(1) or m.group(2)] if m else None
 
 
 def _forbidden_msg(site: str) -> str:

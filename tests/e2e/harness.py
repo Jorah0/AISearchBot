@@ -55,8 +55,8 @@ from lodestar import config  # noqa: E402
 for _m in pkgutil.iter_modules(lodestar.__path__):  # every module now, so the per-class home rebinding sees them all
     if _m.name not in ("__main__", "desktop"):
         importlib.import_module(f"lodestar.{_m.name}")
-from lodestar import (ai, approvals, codes, comp, connections, contacts, db, extras, interview, mailconn,  # noqa: E402
-                      mailfiles, oauth, profile, resume, util, vault, web, web_monitor)
+from lodestar import (ai, approvals, codes, comp, connections, contacts, db, extras, interview, jobmodel,  # noqa: E402
+                      mailconn, mailfiles, oauth, profile, resume, util, vault, web, web_monitor)
 
 TABS = ("board", "inbox", "contacts", "search", "monitor", "ideas", "answers", "coach", "insights", "profile", "studio",
         "tools", "setup")
@@ -273,7 +273,7 @@ class E2ETestCase(unittest.TestCase):
                               "token_type": "Bearer", "scope": "openid email https://mail.google.com/"})
             return _resp({"data": [], "content": [{"type": "text", "text": cls.ai_text}]})
 
-        for mod in (urllib.request, connections, oauth):
+        for mod in (urllib.request, connections, oauth, jobmodel):  # jobmodel: its proxy-free loopback opener
             cls._patch(mod, "urlopen", urlopen)
         for name in ("IMAP4", "IMAP4_SSL"):
             cls._patch(imaplib, name, FakeMail)

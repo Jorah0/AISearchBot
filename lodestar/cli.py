@@ -1528,6 +1528,7 @@ def cmd_desktop(a):
 
     updater.startup()
     web.RESTART = desktop.relaunch  # Setup > Updates offers Restart after an update
+    web.QUIT = desktop.quit  # Setup > Updates > Quit Lodestar (the close button only minimizes: close_to_taskbar)
     port = a.port or desktop.free_port()
     srv = start_server(port)
     connections.start_checks()  # background, once; never blocks or crashes the window
@@ -1537,9 +1538,12 @@ def cmd_desktop(a):
         threading.Thread(target=cmd_run, args=(a,), daemon=True, name="lodestar-loop").start()
     print(f"Lodestar desktop on http://127.0.0.1:{port}  (close the window to stop)")
     try:
-        desktop.open_window(port)
+        desktop.open_window(port, minimized=getattr(a, "minimized", False))
     finally:
         srv.shutdown()
+        from . import labtrain
+
+        labtrain.pause_all()  # Model lab training checkpoints and stops with the app (resume it from the lab)
 
 
 def cmd_outreach(a):
@@ -2581,6 +2585,7 @@ def build() -> argparse.ArgumentParser:
     loop_args(s)
     s.add_argument("--port", type=int, default=None, help="default: first free port from 8765")
     s.add_argument("--no-loop", action="store_true", help="window only")
+    s.add_argument("--minimized", action="store_true", help="start on the taskbar (what start_on_boot runs)")
     s.set_defaults(f=cmd_desktop)
 
     s = sub.add_parser("app", help="the workbot: monitor loop + web UI in one process")

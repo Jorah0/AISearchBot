@@ -29,11 +29,13 @@ DENY = ("/api/keys", "/api/vault", "/api/accounts", "/api/codes", "/api/email", 
         "/api/upload", "/api/open_folder", "/api/extension", "/api/ext/", "/api/browser", "/api/phone",
         # settings (update_origin + update_mode = code run by the updater), tool auto flags, files opened on this PC,
         # and the apply agent's browser (start / login window / forget logins / widen hosts)
-        "/api/prefs", "/api/tools", "/api/master/open", "/api/view/open", "/api/apply/")
+        "/api/prefs", "/api/tools", "/api/master/open", "/api/view/open", "/api/apply/",
+        "/api/desktop")  # quitting the desktop app on this PC
+# (Model lab's actions run through /api/run/lab: DENY_RUN keeps it off phones: installs, GPU jobs, model changes)
 APPLY_OK = ("/api/apply/status",)  # read-only views of the apply agent stay (its screenshots too)
 DENY_RUN = {"restore", "backup", "update_apply", "update_check", "export", "email_signin", "obsidian", "profile_import",
             "contacts_import", "doctor", "keys_check", "providers_test", "providers_local", "notify_test",
-            "jobmodel", "export_pdf", "council_set", "ai_primary", "council_on", "activity"}
+            "jobmodel", "export_pdf", "council_set", "ai_primary", "council_on", "activity", "lab"}
 _CODE: dict = {}
 _SRVS: list = []  # one listener per private address
 _LOCK = threading.Lock()

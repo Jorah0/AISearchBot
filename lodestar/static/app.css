@@ -346,6 +346,17 @@ a.chip.attr-adzuna { display: inline-block; min-width: 116px; min-height: 23px; 
 
 /* pass 36: the five job sites you browse yourself */
 #siteSearch a.full { border-color: var(--bad); }
+#siteSearch .siteplace { margin-top: 4px; }
+.placebar .b.on { border-color: var(--acc); color: var(--acc); }
+/* Model lab (pass 59) */
+#lab .meter { display: inline-block; width: 120px; height: 8px; border: 1px solid var(--line); border-radius: 4px; vertical-align: middle; overflow: hidden; }
+#lab .meter > span { display: block; height: 100%; background: var(--acc); }
+#lab .chip.fit-fits { border-color: var(--ok); color: var(--ok); }
+#lab .chip.fit-borderline { border-color: var(--warn); color: var(--warn); }
+#lab .chip.fit-incompatible { border-color: var(--bad); color: var(--bad); }
+#lab .gate { margin: 2px 0; }
+#lab table.cmp { border-collapse: collapse; margin-top: 6px; }
+#lab table.cmp th, #lab table.cmp td { border: 1px solid var(--line); padding: 2px 6px; text-align: left; }
 #homePace:empty, #siteIdeas:empty { display: none; }
 #siteIdeas code { overflow-wrap: anywhere; }
 #siteList input { padding: 2px 6px; }

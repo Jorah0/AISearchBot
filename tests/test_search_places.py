@@ -71,6 +71,24 @@ class Places(unittest.TestCase):
         self.assertIn(("usajobs", "78701", 10), seen)
         self.assertIn(("hn", "78701", 10), seen)  # _ask itself keeps place and radius only for the local boards
 
+    def test_every_place_is_searched_and_each_result_names_its_place(self):
+        seen = []
+
+        def ask(name, q, scheduled, where="", radius=None):
+            seen.append((name, where))
+            if name == "usajobs":  # a local board answers near the place it was asked about
+                return [listing({"Austin, TX": "Round Rock, Texas", "Denver, CO": "Lakewood, Colorado"}[where], "usajobs")]
+            return [listing("Dallas, TX", "hn"), listing("Remote", "hn")]
+        with patched(wm, _ask=ask, annotate=lambda rows: rows):
+            got = wm.search("nurse", location="Austin, TX or Denver, CO or remote", sources=["usajobs", "hn"])
+        self.assertEqual(seen, [("usajobs", "Austin, TX"), ("usajobs", "Denver, CO"), ("hn", "Austin, TX")])
+        self.assertEqual(sorted((j["location"], j["place"]) for j in got),
+                         [("Lakewood, Colorado", "Denver, CO"), ("Remote", "remote"), ("Round Rock, Texas", "Austin, TX")])
+        seen.clear()  # at most 3 places per local board (Adzuna's daily quota), like 3 roles
+        with patched(wm, _ask=lambda name, q, scheduled, where="", radius=None: seen.append(where) or [], annotate=lambda r: r):
+            wm.search("nurse", location="78701; 78702; 78703; 78704; 78705", sources=["usajobs"])
+        self.assertEqual(seen, ["78701", "78702", "78703"])
+
 
 if __name__ == "__main__":
     unittest.main()

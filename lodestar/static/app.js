@@ -6,7 +6,7 @@ const TOPICS = ['strategy', 'resume', 'gap', 'outreach', 'stories', 'pivot', 'qu
 const TOKEN = window.LODESTAR_TOKEN || '', CAPTURE = window.LODESTAR_CAPTURE || '';
 const safeUrl = u => /^https?:\/\//i.test(u || '') ? u : '';
 const api = (p, body) => fetch(p, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', 'X-Lodestar-Token': TOKEN }, body: body ? JSON.stringify(body) : undefined }).then(r => r.json());
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));  // ' too (single-quoted attributes); a JS string inside onclick still needs data-* attributes
 const opt = (list, sel) => list.map(s => `<option ${s === sel ? 'selected' : ''}>${s}</option>`).join('');
 // stored timestamps are UTC ('YYYY-MM-DD HH:MM:SS', SQLite datetime('now')); show them in this computer's time zone.
 // n: how many characters to keep (10 = the date, 16 = date and minutes). Dates and local times (interview rounds) pass
@@ -48,6 +48,7 @@ function go(tab) {
   if (tab === 'profile') loadMaster();  // the master card follows background rebuilds
   if (tab === 'mail') loadMailPage();
   if (tab === 'accounts') { acctLoad(); renderConnections(); }
+  if (tab === 'lab') labLoad();
 }
 
 /* ---- background tasks ---- */
@@ -1501,7 +1502,7 @@ function listingHtml(j, i) {
   const more = (j.urls || []).slice(1).filter(safeUrl).map(u => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(host(u))} ↗</a>`).join(' ');
   const g = j.ghost && j.ghost.score >= GHOST_SHOW ? `<div class="muted">possibly stale: ${esc(j.ghost.reasons.join('; '))}</div>` : '';
   const c = (j.fit_chips || []).length ? `<div class="muted fitwhy">${esc(j.fit_chips.join(' · '))}</div>` : '';  // the fit's top reasons
-  return `<div>${j.score != null ? `<span class="score">${esc(j.score)}</span>` : ''}<b>${esc(j.title)}</b> @ ${esc(j.company)} <span class="muted">${esc(j.location)} ${esc(j.salary)} &lt;${esc((j.sources || [j.source]).join(', '))}&gt;</span>
+  return `<div data-place="${esc(placeOf(j))}">${j.score != null ? `<span class="score">${esc(j.score)}</span>` : ''}<b>${esc(j.title)}</b> @ ${esc(j.company)} <span class="muted">${esc(j.location)} ${esc(j.salary)} &lt;${esc((j.sources || [j.source]).join(', '))}&gt;</span>
     ${safeUrl(j.url) ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">open ↗</a>` : ''} ${more} <button class="b ghost sm" onclick="saveListing(${i})">track</button>
     <div class="chips">${j.tracked ? `<span class="chip" title="already on your Board">tracked as #${esc(j.tracked)}</span>` : ''}${cov}${staleChip(j.ghost)}${sponsorChip(j.sponsor)}${warmChip(j.warm)}${unknown}${j.seniority ? `<span class="chip">${esc(j.seniority)}</span>` : ''}</div>${c}${g}${j.why ? `<div class="muted">${esc(j.why)}</div>` : ''}</div>`;
 }
@@ -1534,7 +1535,23 @@ async function spSave(btn) {
 }
 /* pass 44: search by place. Remote jobs: remote only (open to your country when your profile's place says so, e.g.
    'Remote (US)'). Near me: the place in your profile (a city, state or ZIP), 25 miles unless you picked a distance */
-const placeParts = () => String((typeof SP !== 'undefined' && SP.location) || '').split(/\s*[;|]\s*|\s+or\s+/).filter(Boolean);
+// a location's alternatives, split like web_monitor._loc_alts: ';', '|' and a lowercase ' or ' ('Portland, OR' is one place)
+const locAlts = s => [...new Set(String(s || '').split(/\s*[;|]\s*|\s+or\s+/).map(x => x.trim()).filter(Boolean))];
+const placeParts = () => locAlts((typeof SP !== 'undefined' && SP.location) || '');
+/* results by the place they matched (web_monitor.refine sets j.place): one chip per place with its count; a click shows
+   only that place's listings */
+const placeOf = j => j.place || (j.location_unknown ? 'place unknown' : '');
+function placeBar(rs) {
+  const n = {}; rs.forEach(j => { const k = placeOf(j); if (k) n[k] = (n[k] || 0) + 1; });
+  const ks = Object.keys(n); if (ks.length < 2) return '';
+  return `<div class="row placebar" role="group" aria-label="Results by place"><span class="muted">By place:</span> <button class="b ghost sm on" data-place="" aria-pressed="true" onclick="placeFilter(this)">all · ${rs.length}</button> `
+    + ks.map(k => `<button class="b ghost sm" data-place="${esc(k)}" aria-pressed="false" onclick="placeFilter(this)">${esc(k)} · ${n[k]}</button>`).join(' ') + '</div>';
+}
+function placeFilter(btn) {
+  const p = btn.dataset.place;
+  document.querySelectorAll('.placebar button').forEach(b => { b.classList.toggle('on', b === btn); b.setAttribute('aria-pressed', String(b === btn)); });
+  document.querySelectorAll('#sRes .list > [data-place]').forEach(r => { r.hidden = !!p && r.dataset.place !== p; });
+}
 function remoteSearch(btn) {
   const mine = placeParts().find(x => /remote|anywhere/i.test(x));
   $('#sLoc').value = mine && /\(|-|,|\bin\b/.test(mine) ? mine : 'remote'; $('#sRadius').value = '';
@@ -1555,7 +1572,7 @@ function doSearch(btn) {
       ? 'No job board could be reached, so nothing was checked. Check your connection and try again.' : 'nothing found';
     $('#sRes').innerHTML = (!$('#sQ').value.trim() && r.query ? `<div class="muted">searched your roles: ${esc(r.query)}</div>` : '')
       + (errs.length ? `<div class="warnbox" role="alert">${errs.map(e => 'could not ' + (e.startsWith('AI rank') ? 'rank: ' + esc(e.slice(9)) : 'read ' + esc(e))).join('<br>')}</div>` : '')
-      + `<div class="list">` + (RESULTS.map(listingHtml).join('') || `<div class="empty">${esc(none)}</div>`) + '</div>'
+      + placeBar(RESULTS) + `<div class="list">` + (RESULTS.map(listingHtml).join('') || `<div class="empty">${esc(none)}</div>`) + '</div>'
       + (r.coverage ? coverageLine(r.coverage) : '');
   }, btn);
 }
@@ -1819,7 +1836,8 @@ function renderUpdate() {
   if (document.activeElement !== $('#uEvery')) $('#uEvery').value = u.every_hours ?? 24;
   const kind = { git: 'git install', exe: 'standalone build: an update is announced with its download link, never installed', none: 'not a git install: reinstall with install.ps1 to get updates' }[u.kind] || '';
   const last = e => e ? `${esc(String(e.at).slice(0, 16))}: ${esc(e.result)}` : 'never';
-  $('#uInfo').innerHTML = `${esc(kind)} · Lodestar ${esc(u.version || S.version)}<br>last check ${last(u.last_check)}${u.last_update ? '<br>last update ' + last(u.last_update) : ''}${u.error ? '<br>' + esc(u.error) : ''}`;
+  $('#uInfo').innerHTML = `${esc(kind)} · Lodestar ${esc(u.version || S.version)}<br>last check ${last(u.last_check)}${u.last_update ? '<br>last update ' + last(u.last_update) : ''}${u.error ? '<br>' + esc(u.error) : ''}`
+    + (u.quit ? `<div class="row" id="uQuitRow"><button class="b ghost sm" id="uQuit" onclick="desktopQuit(this)">Quit Lodestar</button> <span class="muted">${S.prefs && S.prefs.close_to_taskbar === false ? 'closing the window also stops it' : "the window's close button only minimizes it, so searches and alerts keep running"}</span></div>` : '');
   $('#uLog').innerHTML = (u.log || []).map(e => `<div><span class="pill ${e.kind === 'apply' ? (e.ok ? 'ok' : 'warn') : ''}">${esc(e.kind)}</span> <span class="muted">${esc(String(e.at).slice(0, 16))}</span> ${e.from || e.to ? `<code>${esc(String(e.from).slice(0, 7))}..${esc(String(e.to).slice(0, 7))}</code> ` : ''}${esc(e.result)}</div>`).join('') || '<div class="muted">no checks yet</div>';
   if (u.updating && !$('#uProgress')) {  // another tab or the loop is updating: no Restart until it ends
     if (!$('#uBusy')) $('#uResult').innerHTML = '<div class="muted" id="uBusy">An update is running. Restart comes back when it has finished.</div>';
@@ -1829,6 +1847,10 @@ function renderUpdate() {
 const restartHtml = () => S.update.restart
   ? '<div class="row" id="uRestartRow"><span>Updated. Restart Lodestar to run the new version.</span><button class="b" id="uRestart" onclick="updRestart(this)">Restart</button></div>'
   : '<div class="row" id="uRestartRow">Updated. Close Lodestar and start it again to run the new version.</div>';
+function desktopQuit(btn) {
+  if (!confirm('Quit Lodestar? Searches, mail checks and alerts stop until you open it again.')) return;
+  run('/api/desktop/quit', {}, () => toast('Lodestar is closing', 'ok'), btn);
+}
 function updCheck(btn) { run('/api/update/check', {}, p => { UPLAN = p; updPlan(p); }, btn); }
 function updPlan(p) {
   if (!p.available) { $('#uPlan').innerHTML = `<div ${p.result.startsWith('could not') ? 'style="color:var(--warn)"' : 'class="muted"'} id="uUpToDate">${esc(p.result)}</div>`; return; }
@@ -1956,6 +1978,130 @@ function renderConnections() {
   $('#connHistN').textContent = hist.length ? `(${hist.length} recent)` : '(nothing yet)';
   $('#connHist').innerHTML = hist.map(x => `<div><span class="muted">${esc(localTs(x.at, 16))}</span> ${esc(x.label)}: ${esc(CONN_WORD[x.from] || x.from || 'new')} → <b>${esc(CONN_WORD[x.to] || x.to)}</b>${x.detail ? ` <span class="muted">${esc(x.detail)}</span>` : ''}</div>`).join('') || '<div class="muted">Changes of state show here: a key verified, a board that stopped answering, a sign-in refused.</div>';
 }
+/* ---- Model lab (pass 59, modellab.do; plan docs/superpowers/plans/2026-11-24-model-lab.md). Every action is one
+   background task run('lab', {op}); LAB keeps the last answer of each part and the renderers only read it ---- */
+let LAB = {}, LAB_CMP = new Set();
+const gib = x => x == null ? '?' : (Math.round(x * 10) / 10).toString();
+const FIT_WORD = { fits: 'fits', borderline: 'borderline', incompatible: "won't fit", unknown: 'unknown' };
+function labDo(op, params, btn, done) { run('lab', { op, ...(params || {}) }, r => { labApply(r); if (done) done(r); }, btn); }
+function labLoad() { labDo('state', {}); }
+function labApply(r) { if (!r || typeof r !== 'object') return; Object.assign(LAB, r); labRender(); if (r.note) toast(r.note, 'ok'); }
+function labRender() {
+  if (!$('#lab')) return;
+  const hw = LAB.hw, b = LAB.budget || {};
+  if (LAB.profiles) $('#labProfile').innerHTML = Object.entries(LAB.profiles).map(([n, p]) => `<option value="${esc(n)}" ${n === LAB.profile ? 'selected' : ''}>${esc(n)} (reserve ${esc(gib(p.reserve_gib))} GiB)</option>`).join('');
+  $('#labHw').innerHTML = !hw ? 'not checked yet' : (hw.gpus || []).length
+    ? (hw.gpus || []).map(g => { const used = g.total_gib ? Math.round(100 * (g.total_gib - (g.free_gib ?? g.total_gib)) / g.total_gib) : 0;
+      return `<div><b>${esc(g.name)}</b>: ${gib(g.total_gib)} GiB, ${gib(g.free_gib)} free <span class="meter" role="img" aria-label="${used}% in use"><span style="width:${used}%"></span></span></div>`; }).join('')
+      + `<div class="muted">Budget for a model under "${esc(LAB.profile || 'Idle')}": <b>${gib(b.effective_gib)} GiB</b> of ${gib(b.total_gib)} (free memory minus the ${gib(b.reserve_gib)} GiB reserve) · RAM ${gib(hw.ram?.free_gib)} of ${gib(hw.ram?.total_gib)} GiB free · disk ${gib(hw.disk?.free_gib)} GiB free · checked ${esc(localTs(hw.at || '', 16))}${hw.manual ? ' (entered by hand)' : ''}${hw.error ? ' · ' + esc(hw.error) : ''}</div>`
+      + ((hw.ollama?.running || []).length ? `<div class="muted">Loaded in Ollama now: ${hw.ollama.running.map(m => `${esc(m.name)} (${gib(m.size_vram_gib)} GiB)`).join(', ')}</div>` : '')
+    : `<span class="muted">No GPU found${hw.error ? ': ' + esc(hw.error) : ''}. Models run on the CPU.</span>`;
+  labRenderCat(); labRenderSels(); labRenderLearn(); labRenderRel(); labRenderTrain(); labRenderEv(); labRenderMedia();
+}
+function fitChip(f) {
+  if (!f) return '<span class="chip">fit unknown</span>';
+  const pct = f.pct_lo != null ? ` · ${f.pct_lo}–${f.pct_hi}% of your GPU` : '';
+  const room = f.headroom_lo != null ? (f.headroom_hi < 0 ? ` · short ${gib(-f.headroom_hi)}–${gib(-f.headroom_lo)} GiB` : ` · ${gib(Math.max(0, f.headroom_lo))}–${gib(f.headroom_hi)} GiB left`) : '';
+  return `<span class="chip fit-${esc(f.status)}" title="${esc((f.reasons || []).join('; '))}">${esc(FIT_WORD[f.status] || f.status)}${pct}${room}</span>`;
+}
+function labCard(v) {
+  const e = v.estimate || {}, io = `${(v.inputs || []).join('+') || '?'} → ${(v.outputs || []).join('+') || '?'}`;
+  return `<div class="connrow labvar" data-id="${esc(v.id)}"><b>${esc(v.name || v.id)}</b> <span class="muted">${esc(v.publisher || v.source || '')} · ${esc(v.task || '')} · ${esc(io)}${v.quant ? ' · ' + esc(v.quant) : ''}${v.params_b ? ' · ' + esc(v.params_b) + 'B' : ''}</span>
+    ${v.installed ? '<span class="chip">installed</span>' : ''} ${e.lo_gib != null ? `<span class="chip">est. ${gib(e.lo_gib)}–${gib(e.hi_gib)} GiB</span>` : '<span class="chip">memory unknown</span>'} ${fitChip(v.fit)}
+    <button class="b ghost sm" onclick="labUse(this.closest('[data-id]').dataset.id)">Use</button>
+    <label class="muted"><input type="checkbox" ${LAB_CMP.has(v.id) ? 'checked' : ''} onchange="labCmp(this.closest('[data-id]').dataset.id, this.checked)"> compare</label>
+    ${v.notes ? `<div class="muted">${esc(v.notes)}</div>` : ''}</div>`;
+}
+function labRenderCat() {
+  const c = LAB.catalog; if (!c) return;
+  const counts = (c.counts || {}).view || {}, src = Object.entries(c.sources || {}).map(([n, s]) => `${n} ${s.count ?? 0}${s.ok === false ? ' (unavailable' + (s.error ? ': ' + s.error : '') + ')' : ''}`).join(', ');
+  $('#labCat').innerHTML = `<div class="muted">${(c.items || []).length} shown${counts.all != null ? ` of ${counts.all} · fits ${counts.fits ?? '?'} · installed ${counts.installed ?? '?'}` : ''}${src ? ' · sources: ' + esc(src) : ''}${c.sources?.curated?.verified ? ' · curated list ' + esc(c.sources.curated.verified) : ''}</div>`
+    + ((c.items || []).map(labCard).join('') || '<div class="empty">no model matches: clear the search or show All models</div>');
+  const vars = (LAB.catalog_all || c.items || []).filter(v => (v.task || '').includes('text') || v.installed);
+  const sel = $('#labVar'), keep = sel.value;
+  sel.innerHTML = vars.map(v => `<option value="${esc(v.id)}">${esc(v.name || v.id)}${v.installed ? ' (installed)' : ''}</option>`).join('');
+  if (keep) sel.value = keep;
+  labRenderCmp();
+}
+function labUse(id) { $('input[name=labMode][value=existing]').checked = true; labMode(); const s = $('#labVar'); if (![...s.options].some(o => o.value === id)) s.add(new Option(id, id)); s.value = id; $('#labDesignCard').scrollIntoView({ block: 'start' }); }
+function labCmp(id, on) { if (on && LAB_CMP.size >= 4) { toast('compare at most four models', 'err'); labRenderCat(); return; } on ? LAB_CMP.add(id) : LAB_CMP.delete(id); labRenderCmp(); }
+function labRenderCmp() {
+  const all = [...(LAB.catalog?.items || []), ...(LAB.catalog_all || [])], rows = [...LAB_CMP].map(id => all.find(v => v.id === id)).filter(Boolean);
+  $('#labCompare').innerHTML = rows.length < 2 ? '' : `<table class="cmp"><caption>Compared at the same context, requests and profile</caption><tr><th>Model</th><th>Task</th><th>Size</th><th>Memory (est.)</th><th>Fit</th><th>Licence</th></tr>`
+    + rows.map(v => `<tr><td>${esc(v.name || v.id)}</td><td>${esc(v.task || '')}</td><td>${v.size_gib != null ? gib(v.size_gib) + ' GiB' : '?'}</td><td>${v.estimate?.lo_gib != null ? gib(v.estimate.lo_gib) + '–' + gib(v.estimate.hi_gib) + ' GiB' : 'unknown'}</td><td>${fitChip(v.fit)}</td><td>${esc(v.license || '?')}</td></tr>`).join('') + '</table>';
+}
+function labSearch(btn) { labDo('search', { q: $('#labQ').value, view: $('#labView').value }, btn); }
+function labMode() { const m = $('input[name=labMode]:checked').value; $('#labExisting').hidden = m !== 'existing'; $('#labScratch').hidden = m !== 'scratch'; }
+function labSpec() {
+  const m = $('input[name=labMode]:checked').value, n = id => Number($(id).value);
+  return m === 'existing'
+    ? { mode: m, spec: { variant_id: $('#labVar').value, route: $('#labRoute').value, num_ctx: n('#labCtx'), concurrency: n('#labConc'), kv_type: $('#labKv').value, hf_repo: $('#labHf').value.trim(), profile: LAB.profile || '' } }
+    : { mode: m, spec: { vocab: n('#lsVocab'), layers: n('#lsLayers'), hidden: n('#lsHidden'), mlp: n('#lsMlp'), heads: n('#lsHeads'), kv_heads: n('#lsKv'), head_dim: n('#lsHd'), context: n('#lsCtx'), tied: $('#lsTied').checked, seed: n('#lsSeed'), tokens_budget: n('#lsTok'), profile: LAB.profile || '' } };
+}
+function labEstimate(btn) { labDo('estimate', labSpec(), btn); }
+function labSave(btn) { const s = labSpec(); labDo('save', { ...s, sel_id: LAB.editing?.id, expected_rev: LAB.editing?.rev }, btn); }
+function gatesHtml(gs) { return (gs || []).map(g => `<div class="gate gate-${esc(g.status)}"><b>${esc(g.gate)}</b>: <span class="pill ${g.status === 'pass' ? 'ok' : g.status === 'fail' ? 'bad' : ''}">${esc(g.status)}</span> ${esc(g.detail || '')}${g.remedy ? ` <span class="muted">→ ${esc(g.remedy)}</span>` : ''}</div>`).join(''); }
+function labRenderSels() {
+  const a = LAB.assessment;
+  $('#labEst').innerHTML = !a ? '' : `<div class="panel sub"><b>Estimate</b> (${esc(a.operation || '')}): ${a.estimate?.lo_gib != null ? `${gib(a.estimate.lo_gib)}–${gib(a.estimate.hi_gib)} GiB` : 'unknown'} ${fitChip(a.fit)}`
+    + (a.params ? ` · <b>${Number(a.params.total).toLocaleString()}</b> parameters` : '') + (a.estimate?.parts ? `<div class="muted">${esc(Object.entries(a.estimate.parts).map(([k, v]) => `${k} ${Array.isArray(v) ? v.map(gib).join('–') : gib(v)} GiB`).join(' · '))}</div>` : '')
+    + (a.plan ? `<div class="muted">${esc(a.plan)}</div>` : '') + `<div class="muted">${esc(a.estimate?.basis || '')} (an estimate until measured here)</div></div>`;
+  $('#labGates').innerHTML = LAB.preflight ? `<div class="panel sub"><b>Preflight for selection #${esc(LAB.preflight.selection.id)} rev ${esc(LAB.preflight.selection.rev)}</b>${gatesHtml(LAB.preflight.gates)}`
+    + (LAB.preflight.ready ? `<button class="b" onclick="labDo('build', {sel_id: ${Number(LAB.preflight.selection.id)}}, this)">Build a candidate</button>` : '<div class="muted">Fix the failed gates first.</div>') + '</div>' : '';
+  const chosen = LAB.chosen?.id;
+  $('#labSels').innerHTML = (LAB.selections || []).length ? '<h4>Saved selections</h4>' + LAB.selections.map(s => `<div class="connrow"><b>#${esc(s.id)}</b> rev ${esc(s.rev)} · ${esc(s.mode)} · ${esc(s.mode === 'existing' ? `${s.spec.variant_id} (${s.spec.route}, ${s.spec.num_ctx} ctx)` : `${s.spec.layers}×${s.spec.hidden} scratch`)} ${s.id === chosen ? '<span class="chip">chosen</span>' : ''}
+    <button class="b ghost sm" onclick="labDo('choose', {sel_id: ${Number(s.id)}}, this)">Choose</button><button class="b ghost sm" onclick="labDo('preflight', {sel_id: ${Number(s.id)}}, this)">Preflight</button></div>`).join('') : '';
+  if (LAB.help) $('#labGates').innerHTML += '<div class="panel sub"><b>Suggestions for this computer</b>' + (LAB.help.items || []).map(x => `<div class="connrow" data-id="${esc(x.variant.id)}"><b>${esc(x.variant.name || x.variant.id)}</b> ${fitChip(x.variant.fit)} <span class="muted">${esc(x.why.join('; '))}</span> <button class="b ghost sm" onclick="labUse(this.closest('[data-id]').dataset.id)">Use</button></div>`).join('') + '</div>';
+}
+function labRenderLearn() {
+  const t = LAB.teacher; if (t) $('#labLearnStat').textContent = `${t.pending_decisions} decisions not taught yet · accepted ${Object.entries(t.by_split || {}).map(([k, v]) => `${v} ${k}`).join(', ') || 'none'}${t.flagged ? ` · ${t.flagged} to check` : ''}`;
+  const ex = (LAB.examples || []).filter(e => e.status === 'proposed');
+  $('#labExamples').innerHTML = ex.map(e => `<div class="connrow" data-ex="${esc(e.id)}"><span class="muted">${esc(e.prompt.split('\n')[1] || e.prompt).slice(0, 140)}</span>
+    <b>${esc(e.target.verdict)}</b> (${esc(e.target.score)}) <span class="muted">${esc((e.target.reasons || []).join('; '))}</span> ${e.flag ? `<span class="pill bad">${esc(e.flag)}</span>` : ''}
+    <button class="b ghost sm" onclick="labReview(${Number(e.id)}, 'accepted')">Accept</button>
+    <button class="b ghost sm" onclick="labReview(${Number(e.id)}, 'edit')">Edit</button>
+    <button class="b ghost sm" onclick="labReview(${Number(e.id)}, 'rejected')">Reject</button></div>`).join('') || (LAB.examples ? '<div class="muted">No examples waiting for you.</div>' : '');
+}
+function labReview(id, status) {
+  const e = (LAB.examples || []).find(x => x.id === id); if (!e) return;
+  if (status !== 'edit') return labDo('review', { id, status });
+  const v = prompt('Verdict (pursue or pass), score 0-100, reasons; e.g. "pass, 20, wrong field"', `${e.target.verdict}, ${e.target.score}, ${(e.target.reasons || []).join('; ')}`);
+  if (!v) return;
+  const [verdict, score, ...rest] = v.split(',').map(x => x.trim());
+  labDo('review', { id, status: 'accepted', target: { verdict, score: Number(score), reasons: rest.join(',').split(';').map(x => x.trim()).filter(Boolean) } });
+}
+function labRenderRel() {
+  const r = LAB.releases; if (!r) return;
+  const act = r.active;
+  $('#labRel').innerHTML = `<div>Live: <b>${esc(act ? act.tag : (S?.jobmodel?.built ? 'lodestar-jobs (built from your profile)' : 'none yet'))}</b>${act?.accuracy != null ? ` · held-out accuracy ${esc(act.accuracy)}` : ''}
+    ${(r.previous || []).length ? `<button class="b ghost sm" onclick="if(confirm('Put the previous live model back?'))labDo('rollback', {}, this)">Roll back</button>` : ''}</div>`
+    + (r.candidates || []).slice().reverse().map(c => { const ev = c.eval;
+      return `<div class="connrow" data-tag="${esc(c.tag)}"><b>${esc(c.tag)}</b> <span class="muted">${esc(c.kind)} · selection #${esc(c.sel_id)} rev ${esc(c.rev)} · ${esc(c.status)}</span>
+      ${ev ? `<span class="chip">accuracy ${esc(ev.candidate?.accuracy ?? '?')} vs live ${esc(ev.live?.accuracy ?? 'n/a')} (${esc(ev.candidate?.scored ?? 0)} pairs)</span>` : ''}
+      ${['built', 'exported'].includes(c.status) ? `<button class="b ghost sm" onclick="labDo('evaluate', {tag: this.closest('[data-tag]').dataset.tag}, this)">Evaluate</button>` : ''}
+      ${ev && c.status !== 'live' ? `<button class="b sm" onclick="labDo('promote', {tag: this.closest('[data-tag]').dataset.tag}, this)">Make live</button>` : ''}</div>`; }).join('');
+}
+function labRenderTrain() {
+  const e = LAB.env; if (!e) return;
+  const pk = e.packages || {}, have = Object.entries(pk).filter(([, v]) => v).map(([k, v]) => `${k} ${v === true ? '' : v}`);
+  $('#labEnv').innerHTML = e.exists ? `Training environment: ${esc(have.join(', ') || 'no packages yet')}${e.cuda ? ' · CUDA ' + esc(e.cuda) : ' · no CUDA'}${e.error ? ' · ' + esc(e.error) : ''}`
+    + (!pk.torch ? ` <button class="b sm" onclick="labSetup(this)">Finish setting it up</button>` : '')
+    : `Not set up. Training needs PyTorch with CUDA, Transformers, PEFT and TRL (several GB) in its own folder. <button class="b sm" onclick="labSetup(this)">Set up the training environment</button>`;
+  $('#labJobs').innerHTML = (LAB.jobs || []).map(j => { const p = j.progress || {};
+    return `<div class="connrow"><b>job #${esc(j.id)}</b> ${esc(j.kind)} · ${esc(j.status)} ${p.step != null ? `· step ${esc(p.step)}${p.loss != null ? ' loss ' + esc(Number(p.loss).toFixed(3)) : ''}${p.tok_per_s ? ' · ' + esc(Math.round(p.tok_per_s)) + ' tok/s' : ''}${p.vram_peak_gib ? ' · peak ' + gib(p.vram_peak_gib) + ' GiB' : ''}` : ''} ${p.msg ? `<span class="muted">${esc(p.msg)}</span>` : ''}
+      <button class="b ghost sm" onclick="labDo('job_poll', {id: ${Number(j.id)}}, this)">Refresh</button>
+      ${j.status === 'running' ? `<button class="b ghost sm" onclick="labDo('job_pause', {id: ${Number(j.id)}}, this)">Pause</button><button class="b ghost sm" onclick="labDo('job_cancel', {id: ${Number(j.id)}}, this)">Cancel</button>` : ''}</div>`; }).join('');
+}
+function labSetup(btn) { if (confirm('Download and install PyTorch (CUDA), Transformers, PEFT and TRL into Lodestar\'s training folder? This is several gigabytes and takes a while.')) labDo('env_setup', {}, btn); }
+function labRenderEv() {
+  const ev = LAB.evidence; if (!ev) return;
+  $('#labEv').innerHTML = (ev.records || []).map(r => `<div class="connrow" data-ev="${esc(r.evidence_id)}"><b>${esc(r.evidence_id)}</b> r${esc(r.revision)} <span class="muted">${esc(r.provider_id)} · ${esc(r.state)} · may be used for ${esc((r.uses || []).join(', ') || '?')}</span> ${esc(r.title || '')}
+    ${r.state === 'current' ? `<button class="b ghost sm" onclick="labDo('ev_retract', {evidence_id: this.closest('[data-ev]').dataset.ev}, this)">Retract</button>` : ''}</div>`).join('') || '<div class="muted">No evidence published yet.</div>';
+}
+function labRenderMedia() {
+  const m = LAB.media; if (!m) return;
+  $('#labMedia').innerHTML = (m.runtimes || []).map(x => `<div class="connrow"><b>${esc(x.name)}</b> <span class="pill ${x.up ? 'ok' : ''}">${x.up ? 'running' : 'not running'}</span> <span class="muted">${esc((x.operations || []).join(', '))}${x.version ? ' · ' + esc(x.version) : ''}${x.error && !x.up ? ' · ' + esc(x.error) : ''}</span></div>`).join('');
+}
 /* ---- pass 36: the five job sites you browse yourself. Search links open the site's own search in your browser
    (nothing is fetched); caps pace the applications you make there (pacing.py) ---- */
 const PACE_SITES = ['LinkedIn', 'Indeed', 'Glassdoor', 'ZipRecruiter', 'SimplyHired'];
@@ -1991,9 +2137,12 @@ function siteQuery() { return { q: ($('#sQ')?.value || (typeof SP !== 'undefined
 function paceText(u) { return `${u.day} of ${u.cap_day} today · ${u.week} of ${u.cap_week} this week`; }
 function renderSiteSearch() {
   const el = $('#siteSearch'); if (!el) return;
-  const { q, loc, lv } = siteQuery(), pace = S.pacing || {};
-  el.innerHTML = q ? '<span class="muted">Search these yourself:</span> ' + PACE_SITES.map(s => `<a class="b ghost sm${(pace[s] || {}).full ? ' full' : ''}" data-site="${esc(s)}" href="${esc(siteSearchUrl(s, q, loc, lv))}" target="_blank" rel="noopener" title="opens ${esc(s)}'s own search${S.browser ? " in Lodestar's browser window" : " in your browser"}${pace[s] ? ': ' + esc(paceText(pace[s])) : ''}">${esc(s)} ↗</a>`).join(' ')
-      + ` <span class="more" role="group" aria-label="More job sites to search yourself"><span class="muted">More:</span> ${moreSiteLinks(q, loc, lv)}</span>`
+  const { q, loc, lv } = siteQuery(), pace = S.pacing || {}, alts = locAlts(loc);
+  const row = p => PACE_SITES.map(s => `<a class="b ghost sm${(pace[s] || {}).full ? ' full' : ''}" data-site="${esc(s)}" href="${esc(siteSearchUrl(s, q, p, lv))}" target="_blank" rel="noopener" title="opens ${esc(s)}'s own search${p ? ' near ' + esc(p) : ''}${S.browser ? " in Lodestar's browser window" : " in your browser"}${pace[s] ? ': ' + esc(paceText(pace[s])) : ''}">${esc(s)} ↗</a>`).join(' ')
+      + ` <span class="more" role="group" aria-label="More job sites to search yourself${alts.length > 1 ? ' near ' + esc(p) : ''}"><span class="muted">More:</span> ${moreSiteLinks(q, p, lv)}</span>`;
+  // several places ('Austin, TX or Denver, CO or remote'): one row of links per place, never the whole string as one place
+  el.innerHTML = q ? '<span class="muted">Search these yourself:</span> '
+      + (alts.length > 1 ? alts.map(p => `<div class="siteplace" data-place="${esc(p)}"><b>${esc(p)}:</b> ${row(p)}</div>`).join('') : row(loc))
     : '<span class="muted">Type a role to search LinkedIn, Indeed, Glassdoor, ZipRecruiter, SimplyHired, Google Jobs, Monster, Dice, Built In, Idealist and USAJOBS yourself.</span>';
   if (hasAI()) el.innerHTML += ' <button class="b ghost sm" id="siteIdeasBtn" onclick="siteIdeas(this)" title="one AI call over your profile (never your salary floor) and saved searches; the AI never sees these sites and Lodestar never opens them">AI: search ideas for these sites</button>';
 }
@@ -2001,7 +2150,8 @@ function renderSiteSearch() {
 let SITE_IDEAS = null;
 function siteIdeas(btn) { const { loc, lv } = siteQuery(); run('site_queries', { level: lv, location: loc }, r => { SITE_IDEAS = r; renderSiteIdeas(); }, btn); }
 function siteLinks(q, loc, lv, only) {
-  return (only || PACE_SITES).map(s => `<a class="b ghost sm" data-site="${esc(s)}" href="${esc(siteSearchUrl(s, q, loc, lv))}" target="_blank" rel="noopener">${esc(s)} ↗</a>`).join(' ');
+  const alts = locAlts(loc), one = p => (only || PACE_SITES).map(s => `<a class="b ghost sm" data-site="${esc(s)}" href="${esc(siteSearchUrl(s, q, p, lv))}" target="_blank" rel="noopener">${esc(s)} ↗</a>`).join(' ');
+  return alts.length > 1 ? alts.map(p => `<span class="siteplace" data-place="${esc(p)}"><b>${esc(p)}:</b> ${one(p)}</span>`).join(' ') : one(loc);
 }
 function renderSiteIdeas() {
   const el = $('#siteIdeas'), r = SITE_IDEAS; if (!el) return;
@@ -3635,7 +3785,10 @@ document.addEventListener('keydown', e => {  // capture phase: before the drawer
   else if (e.key === 'Enter') { e.preventDefault(); palRun(PAL.at); }
   else if (e.key === 'Tab') e.preventDefault();  // the search box is the dialog's only stop
 }, true);
-load(); loadProfile(); loadBank(); loadReviews(); loadMaster(); setInterval(load, 60000);
+load(); loadProfile(); loadBank(); loadReviews(); loadMaster();
+// a minimized or hidden window skips the minute refresh (it ran all day on the taskbar); showing it again refreshes once
+setInterval(() => { if (!document.hidden) load(); }, 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
 
 /* ---- Careers (pass 23, careers.py): suggestions by career class, career tracks, track search with coverage ---- */
 let CAREERS = null;

@@ -12,5 +12,5 @@ Evidence: `grep -cP '[\x00-\x08\x0b\x0c\x0e-\x1f]' docs/*.md android/README.md C
 Correction: rewrote the four lines from a script file in the scratchpad (backspace back to a backslash + b).
 Lesson: the 0001 rule applies to docs too, and a rule is not enough: a test should reject C0 control characters (other
 than tab, LF, CR) in tracked text files (`*.md`, `*.py`, `*.js`, `*.html`, `*.css`, `*.java`, `*.ps1`).
-Promote to: test (proposed: one unit test in tests/test_pass16_audit_b.Hygiene that walks `git ls-files` for those
+Promoted to: test (proposed: one unit test in tests/test_pass16_audit_b.Hygiene that walks `git ls-files` for those
 suffixes and fails naming file:line). Not added: adopting it is the user's call.

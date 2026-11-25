@@ -50,6 +50,7 @@ TASK_LOCK = threading.Lock()
 DOC_NAMES = {"resume.md", "cover_letter.md", "interview_prep.md", "research.md", "offer.md", "mock_interview.md", "form_answers.md"}  # editable per-job files
 TASKS: dict[str, dict] = {}
 RESTART = None  # lodestar desktop sets this (desktop.relaunch): Setup > Updates then offers a Restart button
+QUIT = None  # lodestar desktop sets this (desktop.quit): Setup > Updates then offers Quit Lodestar
 COACH = ("You are a sharp, practical career coach and job-search strategist. Use the candidate's profile and tracker "
          "below to give specific, actionable advice. Be brief and direct.")
 
@@ -561,6 +562,10 @@ def _do(action: str, p: dict):
         case "research":
             out = extras.research(job, prov)
             return {"path": str(out), "text": out.read_text(encoding="utf-8"), "docs": _docs(job)}
+        case "lab":  # {op, ...}: Model lab (pass 59, modellab.do): hardware, catalog, design, learning, training, releases
+            from . import modellab
+
+            return modellab.do(str(p.get("op") or "state"), p)
         case "jobmodel":  # {op: build | eval}: the local job model in Ollama (jobmodel.py)
             from . import jobmodel
 
@@ -921,7 +926,7 @@ def update_view() -> dict:
                 "restart_needed": False, "restart": False, "updating": False}
     c, u = s["last_check"], s["last_update"]
     newer = lambda a, b: a and (not b or a["at"] >= b["at"])  # noqa: E731
-    return s | {"log": updater.entries(20), "restart": RESTART is not None,
+    return s | {"log": updater.entries(20), "restart": RESTART is not None, "quit": QUIT is not None,
                 "available": bool(c and c["result"].startswith("update available") and
                                   not (u and u.get("ok") and newer(u, c))),
                 "failed": u if u and not u.get("ok") and u["result"].startswith(("failed", "refused")) else None}
@@ -1040,7 +1045,7 @@ def state() -> dict:
         "council": ai.council_view(),  # pass 50: the switcher's council models
         "watches": [dict(w) | {"filters": db.watch_filters(w)} for w in db.watches()],
         "companies": [dict(c) for c in db.companies()],
-        "alerts": ALERTS.read_text(encoding="utf-8").splitlines()[-30:] if ALERTS.is_file() else [],
+        "alerts": __import__("lodestar.util", fromlist=["tail_lines"]).tail_lines(ALERTS, 30),  # the tail only
         "vault": [{"name": n, "user": u} for n, u in vault.names() if n not in mailconn.MANAGED and n not in oauth.CLIENT_KEYS
                   and n not in linked and not n.startswith("site:")],  # site passwords: Accounts > Site accounts
         "obsidian_dir": str(extras.vault_root() / "jobs"),  # Export tracker to Obsidian asks before writing there
@@ -1063,7 +1068,12 @@ def state() -> dict:
 
 
 # ----------------------------------------------------------------------------- http
+MAX_BODY = 40_000_000  # a JSON POST body (an upload is base64 in JSON: the 25 MB file limit plus its encoding)
+
+
 class Handler(BaseHTTPRequestHandler):
+    timeout = 30  # seconds a connection may sit idle: a silent socket (on the phone listener's LAN) frees its thread
+
     def log_message(self, fmt, *a):  # terminal stays quiet; the rotating log keeps the access line, minus any token
         log.get("web").info(fmt, *[str(x).split("?t=")[0] for x in a])
 
@@ -1119,6 +1129,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length") or 0)
+        if n > MAX_BODY:  # read nothing: a huge claim would allocate it or block this thread
+            raise ValueError(f"request body too large (over {MAX_BODY // 1_000_000} MB)")
         if n and "application/json" not in (self.headers.get("Content-Type") or ""):
             raise ValueError("POST bodies must be application/json")  # no-preflight text/plain posts carry no weight
         return json.loads(self.rfile.read(n) or b"{}") if n else {}
@@ -1971,6 +1983,15 @@ class Handler(BaseHTTPRequestHandler):
                 if why := busy(include_update=True):  # never mid-update: that would leave untested code installed
                     raise ValueError(f"not now: {why}; try again in a moment")
                 threading.Timer(0.5, RESTART).start()  # after this answer has left
+                self._json({"ok": True})
+            elif path == "/api/desktop/quit":  # desktop app only: the close button minimizes, this really quits
+                from .updater import busy
+
+                if QUIT is None:
+                    raise ValueError("Quit is offered in the desktop app only")
+                if why := busy(include_update=True):  # never mid-update
+                    raise ValueError(f"not now: {why}; try again in a moment")
+                threading.Timer(0.5, QUIT).start()
                 self._json({"ok": True})
             elif path.startswith("/api/pipeline/") and len(parts) == 5:  # skip {stage, on} | questions {lines}
                 jid, op = int(parts[3]), parts[4]

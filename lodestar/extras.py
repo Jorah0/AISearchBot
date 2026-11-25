@@ -721,7 +721,8 @@ def ext_autofill(questions: list[str], eeo: bool = False, salary: bool = False, 
 # ----------------------------------------------------------------------------- backup + restore + export
 SKIP_DIRS = {"backups", "snapshots", "cache", "__pycache__", "procs",
              "mail",  # applications/*/mail/: received attachments, still in the mailbox (up to 25 MB a message)
-             "browser-profile"}  # the apply agent's browser profile: live site sign-ins (cookies), hundreds of MB
+             "browser-profile",  # the apply agent's browser profile: live site sign-ins (cookies), hundreds of MB
+             "train-env", "media"}  # pass 59: the training venv (GBs of CUDA torch) and generated media files
 # .env may hold keys or IMAP_PASS in clear text; extension.json holds the paired browsers' secrets (a restore must never
 # bring back a revoked one); capture.token is the running server's bookmarklet token; update-state.json would make the
 # next start "finish" an update that is not happening: none goes in a zip, and a restore never touches them
@@ -733,7 +734,12 @@ def in_backup(rel: Path) -> bool:
     folded: on Windows 'Extension.json' or 'Backups/x' in a zip IS extension.json or backups/ once written."""
     parts = [s.lower() for s in rel.parts]
     name = parts[-1]
-    return not (set(parts) & SKIP_DIRS or parts[0].startswith(".restore-") or name.startswith("lodestar.log")
+    # each skipped folder where it lives: top level, applications/<job>/mail, __pycache__ anywhere; a company named
+    # "Media" or "Cache" (applications/media/...) is backed up like any other
+    skipped = (parts[0] in SKIP_DIRS - {"mail", "__pycache__"} or "__pycache__" in parts
+               or (len(parts) > 2 and parts[0] == "applications" and parts[2] == "mail"))
+    return not (skipped or parts[0].startswith(".restore-") or name.startswith("lodestar.log")
+                or parts[:2] == ["lab", "jobs"]  # training checkpoints, merged models and GGUFs (tens of GB)
                 or name.endswith((".lock", ".tmp", "-wal", "-shm", "-journal")) or name in SKIP_NAMES)
 
 

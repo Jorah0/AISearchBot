@@ -84,7 +84,7 @@ class Verify(unittest.TestCase):
         fast = [n for n, *_ in v.steps(False)]
         self.assertEqual(fast, ["lint (pyflakes)", "secret scan", "JS syntax", "extension tests", "unit tests"])
         full = [n for n, *_ in v.steps(True)]
-        self.assertEqual(full[-2:], ["browser tests", "android build + tests + lint"])
+        self.assertEqual(full[-3:], ["browser tests", "android build + tests + lint", "android emulator e2e"])
         ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         self.assertIn("run: python scripts/verify.py", ci)  # CI runs verify itself, so the two cannot drift
         self.assertIn("verify.nothing_ran", ci)  # and an all-skipped browser run fails there too
@@ -95,6 +95,10 @@ class Verify(unittest.TestCase):
         self.assertIn("skipped", v.nothing_ran("Ran 264 tests in 3s\n\nOK (skipped=264)"))
         self.assertIn("0 tests", v.nothing_ran("Ran 0 tests in 0.000s\n\nOK"))
         self.assertEqual(v.nothing_ran("Ran 1192 tests in 200s\n\nOK (skipped=3)"), "")
+        # scripts/android_e2e.py exits 0 without an SDK / AVD / emulator: SKIPPED, never PASS
+        self.assertEqual(v.nothing_ran("SKIPPED: no AVD named lodestar_test\n\nandroid e2e: SKIPPED"),
+                         "no AVD named lodestar_test")
+        self.assertEqual(v.nothing_ran("  PASS  pair  paired\nandroid e2e: PASS"), "")
 
     def test_verify_records_the_tree_for_the_stop_gate(self):  # pass 56: the gate reads this marker
         v = load("verify")

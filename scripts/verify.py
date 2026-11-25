@@ -46,6 +46,9 @@ def steps(full: bool) -> list[tuple[str, list[str] | None, dict, str]]:
         out.append(("android build + tests + lint",
                     ["powershell", "-ExecutionPolicy", "Bypass", "-File", "android/build.ps1", "-Test"] if android else None,
                     {}, "no Android toolchain (android/README.md)"))
+        # boots the lodestar_test AVD; the script itself prints "SKIPPED: <why>" (exit 0) without SDK / AVD / emulator
+        out.append(("android emulator e2e", [PY, "scripts/android_e2e.py"] if android else None,
+                    {"PYTHONIOENCODING": "utf-8"}, "no Android toolchain (android/README.md)"))
     return out
 
 
@@ -62,6 +65,8 @@ def nothing_ran(text: str) -> str:
         return f"all {ran[-1]} tests skipped (a tool or browser is missing)"
     if re.search(r"^\W*tests 0\s*$", text, re.M):
         return "ran 0 tests"
+    if m := re.search(r"^SKIPPED: (.+)$", text, re.M):  # scripts/android_e2e.py without an SDK, AVD or emulator
+        return m.group(1).strip()
     return ""
 
 

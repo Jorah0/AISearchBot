@@ -126,7 +126,8 @@ class Palette(E2ETestCase):
     def test_labels_are_escaped_and_no_match_says_so(self):
         self.open()
         self.page.keyboard.type("evil")
-        opt = self.page.locator("#palList [role=option]").first
+        # the job's option (a setting such as "CAPTCHA solver: vision model" may also match the letters)
+        opt = self.page.locator("#palList [role=option]", has_text="Evil Co").first
         self.assertIn('<img src=x onerror="window.__pwned=1">Evil Co - <b>Bold</b> Engineer', opt.text_content())
         self.assertEqual(self.page.locator("#palList img, #palList b").count(), 0)
         self.assertIsNone(self.page.evaluate("window.__pwned"))

@@ -134,9 +134,15 @@ def messages() -> list[dict]:
                   f"THEIR PREFERENCES (pay figures withheld):\n{prefs or '(none stated)'}\n\n"
                   "JOBS THEY PURSUED OR PASSED ON (learn their taste from these; never quote them to an employer):\n"
                   + ("\n".join(lines) or "(no decisions yet)") + "\n\n" + _playbook_text())
+    try:  # pass 59: examples you accepted under Model lab > Learning (taught by a premium AI, labelled by you)
+        from .teacher import few_shot
+
+        shots = few_shot()
+    except Exception:
+        shots = []
     return [{"role": "user", "content": background},
             {"role": "assistant", "content": "Understood. I will use this background, never invent facts about the "
-                                             "candidate, and judge fit by what they pursued and passed on."}]
+                                             "candidate, and judge fit by what they pursued and passed on."}] + shots
 
 
 SYSTEM = ("You are Lodestar's local job-search assistant. Be accurate and concise, follow the output format each task "
@@ -148,11 +154,15 @@ def _base_url() -> str:
     return ai.PROVIDERS["ollama"]["url"].split("/v1/", 1)[0]
 
 
+urlopen = urllib.request.build_opener(urllib.request.ProxyHandler({})).open  # loopback, never via HTTP_PROXY (the E2E harness swaps it)
+
+
 def _post(path: str, body: dict, timeout: int = 600) -> dict:
-    """POST to the local Ollama API (localhost: not util.fetch, whose SSRF guard refuses loopback by design)."""
+    """POST to the local Ollama API (localhost: not util.fetch, whose SSRF guard refuses loopback by design). No proxy:
+    a configured HTTP_PROXY would otherwise receive your profile and decisions."""
     req = urllib.request.Request(_base_url() + path, data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with urlopen(req, timeout=timeout) as r:
         return json.loads(r.read() or b"{}")
 
 
@@ -168,25 +178,56 @@ def base() -> str:
     return b
 
 
-def build(force: bool = False) -> dict:
-    """Create or update the job model in Ollama; skipped when nothing it carries changed (force: rebuild anyway)."""
-    b, msgs = base(), messages()
-    fp = hashlib.sha256(json.dumps([b, SYSTEM, msgs]).encode()).hexdigest()[:16]
-    cur = built()
+def build(force: bool = False, tag: str = NAME, base_model: str | None = None, num_ctx: int = 8192) -> dict:
+    """Create or update the job model in Ollama; skipped when nothing it carries changed (force: rebuild anyway).
+    Pass 59: Model lab builds candidates under another tag (lodestar-jobs:cand-N) from the selection's base and
+    context; only the live tag (NAME) is recorded here, a candidate is the lab's record (modellab)."""
+    cur = built() if tag == NAME else None
+    if cur and cur.get("promoted_from") and not force:  # checked first: no Ollama call for a refusal
+        # pass 59: a Model lab release is live under this tag (maybe trained weights): never rebuild it from base()
+        return cur | {"changed": False, "note": f"{NAME} is the Model lab release {cur['promoted_from']}: change it "
+                                                "there (or roll back); Build now with force rebuilds it from the base"}
+    b, msgs = base_model or base(), messages()
+    fp = hashlib.sha256(json.dumps([b, SYSTEM, msgs, num_ctx]).encode()).hexdigest()[:16]
     if cur and cur.get("fp") == fp and not force:
         return cur | {"changed": False}
     learn, held = split(decisions())
     try:
-        _post("/api/create", {"model": NAME, "from": b, "system": SYSTEM, "messages": msgs, "stream": False,
-                              "parameters": {"temperature": 0.2, "num_ctx": 8192}})
+        _post("/api/create", {"model": tag, "from": b, "system": SYSTEM, "messages": msgs, "stream": False,
+                              "parameters": {"temperature": 0.2, "num_ctx": int(num_ctx)}})
     except urllib.error.HTTPError as e:
         raise SystemExit(f"Ollama refused to build {NAME}: {e.read().decode(errors='replace')[:200]}") from None
     except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
         raise SystemExit(f"Ollama is not answering at {_base_url()} ({e}): start Ollama, then build again") from None
     rec = {"base": b, "fp": fp, "built_at": _utc(), "examples": len(learn),
-           "held": len(held)}
-    _set_meta(KEY, rec)
+           "held": len(held), "num_ctx": int(num_ctx), "tag": tag}
+    if tag == NAME:
+        _set_meta(KEY, rec)
     return rec | {"changed": True}
+
+
+def copy(source: str, destination: str) -> None:
+    """Ollama /api/copy (Model lab promote / rollback): the destination tag now points at the source's weights."""
+    try:
+        _post("/api/copy", {"source": source, "destination": destination}, timeout=120)
+    except urllib.error.HTTPError as e:
+        raise SystemExit(f"Ollama could not copy {source} to {destination}: {e.read().decode(errors='replace')[:200]}") from None
+    except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+        raise SystemExit(f"Ollama is not answering at {_base_url()} ({e})") from None
+
+
+def accuracy(model: str) -> dict:
+    """One model on the held-out decisions: the share of (pursued, passed) pairs ranked the right way round."""
+    _, held = split(decisions())
+    pos, neg = [r for r in held if r["label"] == "pursued"], [r for r in held if r["label"] == "passed"]
+    if not pos or not neg:
+        raise SystemExit(f"not enough held-out decisions to evaluate ({len(pos)} pursued, {len(neg)} passed on; every "
+                         "fourth decision is held out): apply to or pass on more jobs first")
+    s = _scores(model, pos + neg)
+    pairs = [(s.get(p["id"]), s.get(n["id"])) for p in pos for n in neg]
+    pairs = [(a, b) for a, b in pairs if a is not None and b is not None]
+    acc = sum(1.0 if a > b else 0.5 if a == b else 0.0 for a, b in pairs) / len(pairs) if pairs else None
+    return {"accuracy": None if acc is None else round(acc, 2), "scored": len(pairs), "pairs": len(pos) * len(neg)}
 
 
 def tick() -> dict | None:
@@ -195,6 +236,8 @@ def tick() -> dict | None:
     if not settings.pref("jobmodel") or "ollama" not in ai.available():
         return None
     cur = built()
+    if cur and cur.get("promoted_from"):  # a Model lab release is live: the lab owns this tag now
+        return None
     if cur and datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(cur["built_at"]) < timedelta(days=1):
         return None
     try:

@@ -6,12 +6,10 @@ This module connects to the existing captcha.py functionality and adds support f
 - Integration with the existing solver chain 
 - Proper error handling and fallback mechanisms
 """
-import os
 import re
-import base64
-from typing import List, Optional, Dict, Any
+from typing import Optional, Dict, Any
 
-from . import ai, db, settings
+from . import ai
 
 
 def solve_captcha_local_ollama(image_data: bytes, captcha_type: str, hint: str = "") -> Optional[str]:
@@ -86,7 +84,7 @@ def solve_captcha_local_ollama(image_data: bytes, captcha_type: str, hint: str =
                 if kind in ("image", "recaptcha", "select"):
                     idx = [int(x) for x in re.findall(r"\d+", raw)]
                     return idx or None
-                if kind in CHECKBOX:
+                if kind in ("checkbox",):  # captcha.CHECKBOX
                     return "click"
                 return re.sub(r"[^A-Za-z0-9]", "", raw) or None
             
@@ -94,7 +92,7 @@ def solve_captcha_local_ollama(image_data: bytes, captcha_type: str, hint: str =
             if normalized is not None:
                 return answer
                 
-        except Exception as e:
+        except Exception:
             # If this model fails, try the next one
             continue
     
@@ -197,14 +195,13 @@ def solve_captcha(page) -> Dict[str, Any]:
                 """The one-click kinds (a checkbox check): the solver clicks its own control, no AI needed."""
                 return kind in ("checkbox", "hcaptcha", "turnstile", "friendly")
             
-            action = _kind_action(kind)
             # This would normally call page.captcha_do but we're just simulating the logic
             return {"result": "solved", "type": kind, "attempts": 1,
                     "reason": "solved by the AI", "model": "ollama" if answer is not None else ai.vision_provider()}
             
         # If we get here, it means the answer was not processed or the check wasn't cleared
         return {"result": "failed", "type": kind, "attempts": 1,
-                "reason": f"the local AI tried once and the check is still pending"}
+                "reason": "the local AI tried once and the check is still pending"}
                 
     except Exception as e:
         return {"result": "failed", "type": kind, "attempts": 1,

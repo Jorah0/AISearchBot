@@ -44,6 +44,17 @@ class Search(E2ETestCase):
     def listing(self, company):
         return self.page.locator("#sRes .list > div", has_text=company)
 
+    def test_results_are_grouped_by_the_place_they_matched(self):
+        self.go("search")
+        self.search(**{"#sLoc": "Austin, TX or remote"})
+        bar = self.page.locator("#sRes .placebar button")
+        self.assertEqual(bar.evaluate_all("bs => bs.map(b => b.textContent)"), ["all · 3", "remote · 2", "place unknown · 1"])
+        self.page.locator('#sRes .placebar button[data-place="remote"]').click()
+        self.assertEqual(self.page.locator("#sRes .list > div:visible").count(), 2)
+        self.assertFalse(self.listing("Kestrel Maps").is_visible())  # no place stated: under "place unknown"
+        bar.first.click()
+        self.assertEqual(self.page.locator("#sRes .list > div:visible").count(), 3)
+
     def test_search_with_filters_unknown_chips_and_board_errors(self):
         self.go("search")
         self.search()

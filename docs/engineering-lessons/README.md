@@ -50,3 +50,5 @@ Approved by: <name, when adopted>
 | [0007](0007-select-every-column-a-view-reads.md) | A view that reads a new column fails when the query lists columns by name | test (`e2e_novelty`) | proposed |
 | [0008](0008-patch-scripts-must-be-idempotent.md) | A scripted insert after an anchor runs twice unless it checks the addition is absent | rule (engineering-loop skill) | proposed |
 | [0009](0009-deny-lists-need-a-sweep.md) | A hand-kept deny list misses routes: a test sweeps the code for the effect | test (`test_phone`) | proposed |
+| [0010](0010-docs-need-the-escape-check-too.md) | The heredoc escape rule (0001) misses documentation: Markdown is never compiled, so check docs for control characters too | test (proposed, `test_pass16_audit_b.Hygiene`) | proposed |
+| [0011](0011-a-red-verify-must-not-be-committed.md) | A safety guard was stubbed out and committed while verify was red | hook (proposed, `.githooks/pre-commit`) | proposed |

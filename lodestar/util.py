@@ -322,6 +322,11 @@ def notify(msg: str) -> None:
     from .log import get
 
     get("alerts").info("%s", msg)
+    try:  # bounded: past 2 MB the file becomes alerts.log.1 (one old copy kept) and a new one starts
+        if ALERTS.is_file() and ALERTS.stat().st_size > 2_000_000:
+            os.replace(ALERTS, ALERTS.with_name(ALERTS.name + ".1"))
+    except OSError:
+        pass
     with ALERTS.open("a", encoding="utf-8") as f:
         f.write(line + "\n")
     to = setting("LODESTAR_NOTIFY_EMAIL")
@@ -331,6 +336,21 @@ def notify(msg: str) -> None:
         send_email(to, f"[lodestar] {(msg.strip().splitlines() or [''])[0][:60]}", msg)  # a header may not hold a newline
     except Exception as e:  # ponytail: notification failure must never kill the watch loop
         print(f"  (email notify failed: {e})")
+
+
+def tail_lines(path, n: int = 30, chunk: int = 65536) -> list[str]:
+    """The last n lines of a text file, reading only its last `chunk` bytes (the page shows recent alerts on every
+    refresh: never the whole file)."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - chunk))
+            data = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    lines = data.splitlines()
+    return (lines[1:] if size > chunk and lines else lines)[-n:]  # the first line of a chunk may be cut
 
 
 # Windows toast through PowerShell's WinRT bridge, shown under PowerShell's own AppUserModelID (Lodestar registers none).

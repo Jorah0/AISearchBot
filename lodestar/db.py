@@ -19,10 +19,13 @@ CREATE TABLE IF NOT EXISTS jobs(
   created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, job_id INTEGER, ts TEXT DEFAULT (datetime('now')), kind TEXT, detail TEXT);
 CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, text TEXT NOT NULL, due TEXT, done_at TEXT, added TEXT DEFAULT (datetime('now')));
+CREATE INDEX IF NOT EXISTS events_job ON events(job_id, kind, ts);  -- per-job reads and the follow-up clock's MAX(ts)
+CREATE INDEX IF NOT EXISTS tasks_job ON tasks(job_id);
 CREATE TABLE IF NOT EXISTS watches(id INTEGER PRIMARY KEY, url TEXT UNIQUE, keywords TEXT, last_hash TEXT, last_seen TEXT);
 CREATE TABLE IF NOT EXISTS seen(key TEXT PRIMARY KEY, ts TEXT DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS pending(id INTEGER PRIMARY KEY, ts TEXT DEFAULT (datetime('now')), tool TEXT, kind TEXT,
   job_id INTEGER, summary TEXT, payload TEXT, status TEXT DEFAULT 'pending', result TEXT, decided_at TEXT);
+CREATE INDEX IF NOT EXISTS pending_status ON pending(status, job_id);
 CREATE TABLE IF NOT EXISTS ideas(id INTEGER PRIMARY KEY, topic TEXT, title TEXT, body TEXT, score REAL,
   status TEXT DEFAULT 'new', job_id INTEGER, tags TEXT, created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now')));
@@ -131,6 +134,7 @@ CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit BEGIN SELECT
 CREATE TABLE IF NOT EXISTS stage_events(id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, from_stage TEXT, to_stage TEXT NOT NULL,
   actor_type TEXT NOT NULL, actor_id TEXT, evidence TEXT, approval_id INTEGER, at TEXT DEFAULT (datetime('now')),
   schema_version TEXT NOT NULL DEFAULT '1');
+CREATE INDEX IF NOT EXISTS stage_events_job ON stage_events(job_id);
 CREATE TRIGGER IF NOT EXISTS stage_events_no_update BEFORE UPDATE ON stage_events BEGIN SELECT RAISE(ABORT, 'stage history is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS stage_events_no_delete BEFORE DELETE ON stage_events WHEN EXISTS (SELECT 1 FROM jobs WHERE id=OLD.job_id)
   BEGIN SELECT RAISE(ABORT, 'stage history is append-only'); END;
@@ -606,7 +610,8 @@ def add_event(job_id: int, kind: str, detail: str = "") -> None:
 
 
 def events(job_id: int):
-    return con().execute("SELECT * FROM events WHERE job_id=? ORDER BY ts", (job_id,)).fetchall()
+    # id breaks ties in the same second: with the events_job index, ts alone would order them by kind
+    return con().execute("SELECT * FROM events WHERE job_id=? ORDER BY ts, id", (job_id,)).fetchall()
 
 
 _GENERIC = {"inc", "corp", "corporation", "llc", "ltd", "the", "group", "company", "co", "labs", "technologies", "software", "team", "careers", "jobs", "recruiting", "talent"}
@@ -1287,7 +1292,7 @@ def funnel() -> dict:
     """Stage conversion, median days to the next stage, where rejections happen, and outcomes by source."""
     first: dict[int, dict[str, str]] = {}
     for e in con().execute("SELECT job_id, ts, detail FROM events WHERE kind='status' AND job_id IN (SELECT id FROM jobs) "
-                           "ORDER BY ts").fetchall():
+                           "ORDER BY ts, id").fetchall():
         st = (e["detail"] or "").split(" ")[0]
         first.setdefault(e["job_id"], {}).setdefault(st, e["ts"])
 

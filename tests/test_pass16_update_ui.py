@@ -160,12 +160,13 @@ class Relaunch(unittest.TestCase):
 
     def test_lodestar_desktop_offers_restart(self):
         seen = []
-        a = cli.build().parse_args(["desktop", "--no-loop"])
+        a = cli.build().parse_args(["desktop", "--no-loop", "--minimized"])  # --minimized: what start_on_boot runs
         srv = type("Srv", (), {"shutdown": lambda self: None})()  # no real server: nothing to leave open
-        with patched(desktop, open_window=lambda port: seen.append(web.RESTART)), \
-                patched(connections, start_checks=lambda: None), patched(web, RESTART=None, start_server=lambda port: srv):
+        with patched(desktop, open_window=lambda port, minimized=False: seen.append((web.RESTART, web.QUIT, minimized))), \
+                patched(connections, start_checks=lambda: None), \
+                patched(web, RESTART=None, QUIT=None, start_server=lambda port: srv):
             cli.cmd_desktop(a)
-        self.assertEqual(seen, [desktop.relaunch])
+        self.assertEqual(seen, [(desktop.relaunch, desktop.quit, True)])
 
 
 if __name__ == "__main__":

@@ -45,6 +45,7 @@ supports them.
   - [Where secrets and connection data live](#where-secrets-and-connection-data-live)
   - [AI keys](#ai-keys)
   - [Local models (Ollama)](#local-models-ollama)
+  - [Model lab (design and train your own local model)](#model-lab-design-and-train-your-own-local-model)
   - [Choose models, the default provider and council providers](#choose-models-the-default-provider-and-council-providers)
   - [Other secrets (the vault)](#other-secrets-the-vault)
   - [Market pay (BLS)](#market-pay-bls)
@@ -626,7 +627,7 @@ and the Start Menu folder, `.venv`, and the build output (`build\`, `dist\`, `lo
 
 | How | Command | What runs | Stop it |
 |---|---|---|---|
-| Desktop app (recommended) | `lodestar desktop` (the **Lodestar** shortcut) | The UI in its own window (Edge WebView2), the server and the monitor loop in one process. Port: the first free one from 8765. | Close the window. |
+| Desktop app (recommended) | `lodestar desktop` (the **Lodestar** shortcut) | The UI in its own window (Edge WebView2), the server and the monitor loop in one process. Port: the first free one from 8765. Its close button minimizes it to the taskbar (pref `close_to_taskbar`; pref `start_on_boot` opens it minimized when you sign in to Windows). | Setup > Updates > **Quit Lodestar** (or turn `close_to_taskbar` off and close the window). |
 | App in the browser | `lodestar app` | The monitor loop in the background and the UI in your browser, on port 8765. | Ctrl+C in its console. |
 | UI only | `lodestar ui` | The UI on http://127.0.0.1:8765, no monitor loop. | Ctrl+C. |
 | Loop only | `lodestar run` (the **Lodestar monitor** shortcut) | The monitor loop in a console, every 30 minutes by default. No UI. | Ctrl+C or close the console. |
@@ -636,7 +637,7 @@ and the Start Menu folder, `.venv`, and the build output (`build\`, `dist\`, `lo
 Options (all from `--help`):
 
 ```text
-lodestar desktop [--every 30] [--days 2] [--followup N] [--no-email] [--no-update] [--port N] [--no-loop]
+lodestar desktop [--every 30] [--days 2] [--followup N] [--no-email] [--no-update] [--port N] [--no-loop] [--minimized]
 lodestar app     [--every 30] [--days 2] [--followup N] [--no-email] [--no-update] [--port 8765] [--no-open] [--no-loop]
 lodestar ui      [--port 8765] [--no-open]
 lodestar run     [--every 30] [--days 2] [--followup N] [--no-email] [--no-update] [--once]
@@ -1272,6 +1273,38 @@ providers**. In the terminal (`--%` makes Windows PowerShell pass the empty valu
 lodestar --% tools set provider ""
 lodestar --% tools set council_providers ""
 ```
+
+### Model lab (design and train your own local model)
+
+The **Model lab** tab (Settings group) is where you choose or design the local model Lodestar runs, check that it
+fits this computer, teach it, train it and decide what goes live. Every step waits for your click; Full AI cannot run
+any of them, and your phone cannot open them.
+
+- **This computer**: *Check this computer* reads your GPU (via `nvidia-smi`), RAM and disk. A *reserve profile* holds
+  memory back for other programs (*OBS live* reserves 3 GiB); the budget for a model is free GPU memory minus the
+  reserve. Opening the tab does not run this check; it only lists what your local Ollama has installed.
+- **Models**: installed Ollama models, a curated list, and Hugging Face models when you click *Look up on Hugging Face*
+  (names and descriptions only; nothing is downloaded). Each card shows the estimated memory (weights + KV cache +
+  workspace), the share of your GPU and *fits*, *borderline*, *won't fit* or *unknown*. Figures are estimates until
+  a run here measures them; the curated list is marked as checked from memory, not online.
+- **Design your model**: use an existing model as is (with your examples), fine-tune it (LoRA / QLoRA; name the
+  Hugging Face checkpoint the Ollama model came from), or create one from scratch (layers, width, heads, context; the
+  exact parameter count is shown). Each save is a new revision; *Preflight* lists every gate with its fix.
+- **Learning**: *Teach from my decisions* asks your primary premium AI (never Ollama) to explain the jobs you pursued
+  or passed on. Your decision stays the answer; an explanation that disagrees is flagged and must be edited or
+  rejected. Accepted examples teach the local model. Decisions held out for evaluation are never used for teaching.
+  Your salary floor, private answers and EEO answers never reach the teacher or the training set.
+- **Candidates**: a build goes live only when it beats the current model on held-out decisions; the old model is kept
+  so *Roll back* restores it. While a lab release is live, the daily job-model rebuild leaves it alone.
+- **Training**: *Set up the training environment* installs CUDA PyTorch, Transformers, PEFT and TRL (several GB)
+  into `~/.lodestar/train-env` (never inside Lodestar, never in backups). Jobs run one at a time on the GPU with no
+  keys or passwords in their environment; pause or cancel them from the tab. To turn a trained model into an Ollama
+  model, set `LLAMA_CPP_DIR` (in `.env`) to a llama.cpp folder containing `convert_hf_to_gguf.py` and
+  `llama-quantize`; without it, training stops at a merged model and the tab says so.
+- **Evidence**: *Publish my tracked jobs as evidence* turns your tracked jobs and profile facts into versioned records,
+  each with what it may be used for; *Retract* removes one from answers and the next training set.
+- **Media generation**: finds ComfyUI and LocalAI running on this computer (loopback only) and runs image or speech
+  jobs there on your click; outputs go to `~/.lodestar/media/` (not backed up).
 
 ### Choose models, the default provider and council providers
 

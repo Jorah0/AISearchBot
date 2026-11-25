@@ -39,6 +39,18 @@ class Sites(E2ETestCase):
         self.page.fill("#sLoc", "remote")
         self.assertEqual(parse_qs(urlsplit(self.page.locator("#siteSearch a[data-site=LinkedIn]").get_attribute("href")).query)["f_WT"], ["2"])
 
+    def test_several_places_get_their_own_row_of_site_links(self):
+        self.go("search")
+        self.page.fill("#sQ", "data engineer")
+        self.page.fill("#sLoc", "Austin, TX or Denver, CO or remote")
+        rows = self.page.locator("#siteSearch .siteplace")
+        self.assertEqual(rows.evaluate_all("rs => rs.map(r => r.dataset.place)"), ["Austin, TX", "Denver, CO", "remote"])
+        loc = lambda p, s: parse_qs(urlsplit(self.page.locator(f'#siteSearch .siteplace[data-place="{p}"] a[data-site="{s}"]').get_attribute("href")).query)  # noqa: E731
+        self.assertEqual(loc("Denver, CO", "LinkedIn")["location"], ["Denver, CO"])  # never the whole 'A or B' string
+        self.assertEqual(loc("Denver, CO", "Dice")["location"], ["Denver, CO"])  # the More sites too
+        self.assertEqual(loc("remote", "LinkedIn")["f_WT"], ["2"])
+        self.assertEqual(self.page.locator("#siteSearch .siteplace a[data-site=Indeed]").count(), 3)
+
     def test_more_sites_lodestar_cannot_search_itself(self):  # each URL format checked live on 2026-11-18
         self.go("search")
         self.page.fill("#sQ", "data analyst")

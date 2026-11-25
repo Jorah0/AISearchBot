@@ -80,6 +80,8 @@ PREFS = {
     "models": {},
     "signature": "",
     "desktop_notifications": False,  # OS toasts from the monitor loop: daily agenda, interview in 2 h, deadline tomorrow
+    "close_to_taskbar": True,  # the desktop window's close button minimizes it (desktop._on_closing); Quit closes it
+    "start_on_boot": False,  # start Lodestar (minimized) when you sign in to Windows (desktop.set_autostart: Run key)
     "resume_style": "classic",  # .docx / PDF look (resume.STYLES); a template.docx beside profile.md overrides it
     "resume_look": {},  # the studio's default look (render.clean_style keys); "Make this my default look" writes it
     "resume_request": "",  # what the pipeline's Tailor step asks the studio for (empty: a strong resume for the job)
@@ -165,6 +167,11 @@ PREF_HELP = {  # Tools > Preferences: a plain label and one line of help per key
     "models": ("Pinned models", "provider=model to pin a model id (Setup > List models)"),
     "signature": ("Email signature", "how drafted emails sign off; empty: your name"),
     "desktop_notifications": ("Desktop notifications", "daily agenda, interview in 2 hours, deadline tomorrow"),
+    "close_to_taskbar": ("Close button keeps Lodestar running", "the desktop window's close button minimizes it to "
+                         "the taskbar, so searches, mail and alerts keep running; off: closing it stops Lodestar. "
+                         "Quit Lodestar (Setup > Updates) always stops it"),
+    "start_on_boot": ("Start Lodestar when Windows starts", "opens the desktop app minimized on the taskbar when you "
+                      "sign in (a per-user startup entry; turning this off removes it)"),
     "resume_style": ("Resume style", "the look of .docx and PDF resumes"),
     "resume_look": ("Studio look", "key=value, e.g. font=Georgia, accent=navy, paper=a4 (Studio > Make this my default look)"),
     "resume_request": ("Tailor request", "what the pipeline's Tailor step asks the resume studio for, e.g. one page, lead with leadership"),
@@ -383,6 +390,13 @@ def set_pref(key: str, value) -> None:
             lo, hi = RANGES.get(key, (value, value))
             if not lo <= value <= hi:
                 raise SystemExit(f"{key} must be between {lo} and {hi}")
+        # the Windows entry first (a refusal raises and the pref keeps its old value): turning it on always rewrites it
+        # (a moved install, a restored backup), turning it off only on a change
+        if key == "start_on_boot" and (value or value != data["prefs"].get(key, PREFS[key])):
+            from . import desktop
+
+            full_ai_check("changes settings (automation, privacy, providers)")  # before the registry, not after
+            desktop.set_autostart(value)
         data["prefs"][key] = value
         save(data)
 

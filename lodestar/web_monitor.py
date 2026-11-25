@@ -1076,12 +1076,20 @@ def search(query: str, keywords: str = "", only_new: bool = False, sources=None,
     'nothing new' from 'nothing checked'. scheduled: the monitor loop (see _ask): a board that is not due is skipped,
     never an error. ran: gets the name of every board actually asked."""
     mark = only_new if mark is None else mark
-    raw, queries, where = [], alternatives(query) or [""], _where(filters.get("location"))
+    raw, queries = [], alternatives(query) or [""]
+    # ponytail: the LOCAL boards ask near at most 3 places, like 3 roles (Adzuna's daily quota); a 4th place is still
+    # matched on the listings' text by refine
+    wheres = [x for x in _loc_alts(filters.get("location")) if not _remote(x)][:3] or [""]
     for name in (sources or sources_ready()):
         asked = False
-        for q in queries:  # each role on its own; dedupe merges what several find
+        # each role on its own, and on a LOCAL board near each place; dedupe merges what several find
+        for q, w in [(q, w) for q in queries for w in (wheres if name in LOCAL else wheres[:1])]:
             try:
-                raw += _ask(name, q, scheduled, where, filters.get("radius"))
+                got = _ask(name, q, scheduled, w, filters.get("radius"))
+                if w and name in LOCAL:
+                    for j in got:
+                        j["near"] = w  # the place this board searched around (refine's place match)
+                raw += got
                 asked = True
             except Throttled as e:
                 print(f"  skipped {e}")
@@ -1337,7 +1345,7 @@ def refine(listings: list[dict], keywords: str = "", today: date | None = None, 
     alts = _loc_alts(f.get("location", ""))
     places = [a for a in alts if not _remote(a)]
     regions = None if "remote" in alts else [a[7:] for a in alts if a.startswith("remote:")]  # None: remote anywhere
-    near = _where(f.get("location", ""))  # the place the LOCAL boards searched around
+    near = _where(f.get("location", ""))  # an untagged LOCAL listing (no "near" from search) counts as near the first place
     out = []
     for j in listings:
         title = norm_title(j["title"])
@@ -1351,8 +1359,10 @@ def refine(listings: list[dict], keywords: str = "", today: date | None = None, 
                 kind = "remote" if j["source"] in db.REMOTE_BOARDS else db.remote_kind(f"{j['location']}\n{j['desc'][:1500]}")
                 if kind == "remote" and regions and not any(remote_region_ok(r, text) for r in regions):
                     kind = "elsewhere"  # remote, but only for another region
-            if kind == "remote" or any(_place_match(p, j, text, near) for p in places):
-                pass
+            if kind == "remote":
+                j["place"] = "remote"
+            elif p := next((p for p in places if _place_match(p, j, text, j.get("near", near))), None):
+                j["place"] = p  # which of your places it matched (the page groups results by it)
             elif not text and kind is None:
                 j["location_unknown"] = True
             else:

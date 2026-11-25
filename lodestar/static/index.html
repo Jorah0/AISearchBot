@@ -74,6 +74,7 @@
   <span class="sep"></span>
   <div class="nav-group" role="group" aria-labelledby="nh-set"><div class="nav-h" id="nh-set">Settings</div>
     <button data-tab="accounts"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg>Accounts<span class="badge zero" id="lostN" aria-label="connections that stopped working">0</span></button>
+    <button data-tab="lab"><svg class="ico" aria-hidden="true"><use href="#i-ideas"/></svg>Model lab</button>
     <button data-tab="tools"><svg class="ico" aria-hidden="true"><use href="#i-tools"/></svg>Tools</button>
     <button data-tab="setup"><svg class="ico" aria-hidden="true"><use href="#i-setup"/></svg>Setup</button></div>
   <div class="foot">localhost only · Esc closes a job · Ctrl+K commands</div>
@@ -460,6 +461,66 @@
   </div>
   <div class="panel" id="sResult" style="display:none"></div>
   <div class="panel"><h3>Versions</h3><div class="row"><button class="b ghost sm" id="sFolder" hidden onclick="api('/api/open_folder',{which:'studio'}).then(r=>r.error&&toast('error: '+r.error,'err'))">Show folder</button></div><div id="sHist" class="list"></div></div>
+</section>
+
+<section id="lab">
+  <h2>Model lab</h2>
+  <p class="sub">Choose or design the local AI model Lodestar runs, see whether it fits this computer, teach it from your own decisions with your premium AI as the teacher, train it, and make a candidate live only when it measurably beats the current one.</p>
+  <details class="help"><summary>How this works</summary><p>Every memory figure is an estimate until a run on this computer measures it; "unknown" means Lodestar cannot defend a number. Nothing downloads a model, installs the training environment, calls a paid AI or changes the live model without your click. Training runs in its own environment (Training below), never inside Lodestar. Your salary floor, private answers and EEO answers never reach a teacher, a dataset or a model.</p></details>
+  <div class="panel" id="labHwCard"><h3>This computer</h3>
+    <div class="row"><button class="b" id="labProbe" onclick="labDo('probe', {}, this)">Check this computer</button>
+      <label>Reserve profile <select id="labProfile" onchange="labDo('profile_use', {name: this.value})"></select></label>
+      <label>New profile <input id="labProfName" placeholder="e.g. Gaming" style="width:110px"></label>
+      <label>reserve GiB <input id="labProfGib" type="number" min="0" max="256" step="0.5" style="width:70px"></label>
+      <button class="b ghost sm" onclick="labDo('profile_set', {name: $('#labProfName').value, reserve_gib: $('#labProfGib').value}, this)">Save profile</button></div>
+    <div id="labHw" class="muted">not checked yet</div></div>
+  <div class="panel" id="labCatCard"><h3>Models</h3>
+    <div class="row"><input id="labQ" placeholder="search: name, task, &quot;q4 coding&quot;, &quot;describes images&quot;" style="flex:1" onkeydown="if(event.key==='Enter')labSearch()">
+      <label>Show <select id="labView" onchange="labSearch()"><option value="all">All models</option><option value="fits">Fits my hardware</option><option value="installed">Installed</option></select></label>
+      <button class="b" onclick="labSearch(this)">Search</button>
+      <button class="b ghost sm" onclick="labDo('hf_sync', {q: $('#labQ').value}, this)" title="reads public model metadata from Hugging Face (no weights downloaded)">Look up on Hugging Face</button></div>
+    <div id="labCat"></div><div id="labCompare"></div></div>
+  <div class="panel" id="labDesignCard"><h3>Design your model</h3>
+    <div class="row" role="radiogroup" aria-label="How to start">
+      <label><input type="radio" name="labMode" value="existing" checked onchange="labMode()"> Use an existing model</label>
+      <label><input type="radio" name="labMode" value="scratch" onchange="labMode()"> Create a model from scratch</label>
+      <button class="b ghost sm" onclick="labDo('help', {}, this)">Help me choose</button></div>
+    <div id="labExisting" class="row">
+      <label>Model <select id="labVar"></select></label>
+      <label>Use <select id="labRoute"><option value="inference">as is (with your examples)</option><option value="adapter">fine-tune an adapter (LoRA)</option><option value="full">full fine-tune</option></select></label>
+      <label>Context <input id="labCtx" type="number" min="512" max="262144" step="512" value="8192" style="width:90px"></label>
+      <label>Requests at once <input id="labConc" type="number" min="1" max="8" value="1" style="width:55px"></label>
+      <label>KV cache <select id="labKv"><option value="f16">f16</option><option value="q8_0">q8_0</option><option value="q4_0">q4_0</option></select></label>
+      <label>Trainable checkpoint <input id="labHf" placeholder="Hugging Face repo, for fine-tuning" style="width:220px"></label></div>
+    <div id="labScratch" class="row" hidden>
+      <label>Vocabulary <input id="lsVocab" type="number" value="8192" style="width:80px"></label>
+      <label>Layers <input id="lsLayers" type="number" value="8" style="width:55px"></label>
+      <label>Width <input id="lsHidden" type="number" value="512" style="width:70px"></label>
+      <label>MLP width <input id="lsMlp" type="number" value="1376" style="width:70px"></label>
+      <label>Heads <input id="lsHeads" type="number" value="8" style="width:50px"></label>
+      <label>KV heads <input id="lsKv" type="number" value="2" style="width:50px"></label>
+      <label>Head size <input id="lsHd" type="number" value="64" style="width:55px"></label>
+      <label>Context <input id="lsCtx" type="number" value="1024" style="width:70px"></label>
+      <label><input id="lsTied" type="checkbox" checked> tied embeddings</label>
+      <label>Seed <input id="lsSeed" type="number" value="42" style="width:60px"></label>
+      <label>Training tokens <input id="lsTok" type="number" value="50000000" style="width:110px"></label></div>
+    <div class="row"><button class="b ghost" onclick="labEstimate(this)">Estimate</button>
+      <button class="b" onclick="labSave(this)">Save as a new selection</button>
+      <span class="muted" id="labSelNote"></span></div>
+    <div id="labEst"></div><div id="labGates"></div><div id="labSels"></div></div>
+  <div class="panel" id="labLearnCard"><h3>Learning</h3>
+    <p class="muted">Your premium AI explains the jobs you pursued or passed on; your decision stays the answer. Accept the examples you agree with: they teach the local model.</p>
+    <div class="row"><button class="b" onclick="labDo('teach', {n: 8}, this)">Teach from my decisions</button>
+      <button class="b ghost sm" onclick="labDo('dataset', {}, this)">Build the training set</button><span class="muted" id="labLearnStat"></span></div>
+    <div id="labExamples"></div></div>
+  <div class="panel" id="labRelCard"><h3>Candidates and the live model</h3><div id="labRel" class="muted">no candidates yet</div></div>
+  <div class="panel" id="labTrainCard"><h3>Training</h3><div id="labEnv" class="muted"></div><div id="labJobs"></div></div>
+  <div class="panel" id="labEvCard"><h3>Evidence</h3>
+    <p class="muted">Versioned facts the model may use, each with what it may be used for (shown, retrieved, trained on). A retracted fact disappears from answers and the next training set.</p>
+    <div class="row"><button class="b ghost sm" onclick="labDo('ev_publish', {}, this)">Publish my tracked jobs as evidence</button></div><div id="labEv"></div></div>
+  <div class="panel" id="labMediaCard"><h3>Media generation</h3>
+    <p class="muted">Local image, speech and music tools (ComfyUI, LocalAI). Lodestar only talks to them on this computer and only when you click.</p>
+    <div class="row"><button class="b ghost sm" onclick="labDo('media_probe', {}, this)">Look for local runtimes</button></div><div id="labMedia"></div></div>
 </section>
 
 <section id="tools">
