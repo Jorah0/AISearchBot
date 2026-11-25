@@ -146,6 +146,51 @@ def cmd_usage(a):
         print(f"{k:<40} {v['calls']:>6} {v['input']:>10} {v['output']:>10}")
 
 
+def cmd_primary(a):
+    """`lodestar primary [PROVIDER [MODEL]]`: show or swap the primary AI (pass 49)."""
+    r = ai.set_primary(a.provider, a.model) if a.provider else ai.primary()
+    print(f"primary AI: {r['provider']} / {r['model']}" if r else ai.NO_PROVIDER)
+
+
+def cmd_jobmodel(a):
+    """The local job model in Ollama (jobmodel.py): status, build, eval."""
+    from . import jobmodel
+
+    if a.op == "build":
+        r = jobmodel.build(force=a.force)
+        print(f"{jobmodel.NAME}: {'built' if r['changed'] else 'unchanged (nothing new to learn; --force rebuilds)'} on "
+              f"{r['base']}, learned from {r['examples']} decision(s), {r['held']} held out for eval")
+        return
+    if a.op == "eval":
+        r = jobmodel.evaluate()
+        print(f"held-out pairs: {r['pairs']} (pursued vs passed on); share ranked the right way round (0.5 = chance):")
+        for m, v in r["models"].items():
+            print(f"  {m:<40} {v['accuracy'] if v['accuracy'] is not None else 'no scores'} ({v['scored']} scored)")
+        return
+    s = jobmodel.status()
+    b, d = s["built"], s["decisions"]
+    print(f"{s['name']}: {'on' if s['on'] else 'off'}; " + (f"built {b['built_at']} UTC on {b['base']}" if b else "not built yet"))
+    print(f"decisions: {d['pursued']} pursued, {d['passed']} passed on; learns from {d['learned']}, {d['held']} held out")
+    if s["eval"]:
+        print("last eval: " + ", ".join(f"{m} {v['accuracy']}" for m, v in s["eval"]["models"].items()))
+
+
+def cmd_dev(a):
+    """Developer kit (devkit.py): start a board / stage / helper test first, or run the fast guards."""
+    from . import devkit
+
+    if a.op == "check":
+        raise SystemExit(devkit.check())
+    if not (a.kind and a.name):
+        raise SystemExit("usage: lodestar dev new board|stage|helper NAME")
+    r = devkit.new(a.kind, a.name)
+    print(f"wrote {r['test']} (it fails until the feature exists: run it, then make it pass)\n")
+    print(f"add the code here: {r['where']}\n\n{r['snippet']}\n\nkeep these rules:")
+    for c in r["checklist"]:
+        print(f"  - {c}")
+    print("\nthen: a docs/TESTS.md row naming the test, the CLAUDE.md test count, `lodestar dev check`, the full suites")
+
+
 def cmd_ask(a):
     print(ai.ask(a.prompt, provider=a.provider))
 
@@ -236,6 +281,10 @@ def cmd_jobs(a):
     elif op == "status":
         db.set_status(a.id, a.status, a.note or "")
         print(f"#{a.id} -> {a.status}")
+    elif op == "stage":
+        db.set_stage(a.id, a.stage, a.note or "")
+        j = db.get_job(a.id)
+        print(f"#{a.id} -> {j['stage']} (board: {j['status']})")
     elif op == "note":
         j = db.get_job(a.id)
         db.update_job(a.id, notes=((j["notes"] or "") + "\n" + a.text).strip())
@@ -383,6 +432,129 @@ def cmd_companies(a):
     elif a.op == "rm":
         db.remove_company(a.id)
         print(f"removed #{a.id}")
+
+
+def _tiers(v: str) -> list[int]:
+    try:
+        return [int(x) for x in str(v).replace(" ", "").split(",") if x != ""]
+    except ValueError:
+        raise SystemExit("tiers are numbers 0-6, comma-separated (e.g. 0,1)") from None
+
+
+def _print_suggestion(sg: dict) -> None:
+    print(f"  {sg['code']}  {sg['title']}  [{sg['tier_label']}]  ({sg['source']})")
+    for head, key in (("Why it fits", "why"), ("What is missing", "missing"), ("What does not transfer", "not_transfer"),
+                      ("To close the gap", "close_gap")):
+        if sg[key]:
+            print(f"      {head}: " + "; ".join(sg[key]))
+
+
+def cmd_careers(a):
+    """lodestar careers ...: career discovery (careers.py): suggestions from your profile, career tracks, track search."""
+    from . import careers, occupations
+
+    if a.op == "suggest":
+        out = careers.suggest(tiers=tuple(_tiers(a.tiers)), limit=a.limit, show_excluded=a.show_excluded)
+        if out["note"]:
+            print(out["note"])
+        for key, label in careers.CLASSES.items():
+            group = [sg for sg in out["suggestions"] if sg["cls"] == key]
+            if group:
+                print(f"\n{label}")
+                for sg in group:
+                    _print_suggestion(sg)
+        print("\n" + occupations.meta().get("credit", ""))
+    elif a.op == "explore":
+        out = careers.explore(a.interests, a.provider)
+        print("Explore further (one AI call; each role is matched to O*NET, or labelled when it is not)")
+        for sg in out["suggestions"]:
+            print(f"  [{sg['cls_label']}]")
+            _print_suggestion(sg)
+        if not out["suggestions"]:
+            print("  nothing usable came back")
+    elif a.op == "occupation":
+        o = occupations.get(a.code)
+        if not o:
+            raise SystemExit(f"unknown O*NET occupation: {a.code}")
+        print(f"{o['code']}  {o['title']}  (Job Zone {o.get('zone') or '?'}: {occupations.ZONE_PREP.get(o.get('zone'), 'unknown')})")
+        print(o.get("desc") or "")
+        for head, key in (("Also called", "titles"), ("Core tasks", "tasks"), ("Technology", "tech")):
+            if o.get(key):
+                print(f"{head}: " + "; ".join(o[key][:8]))
+        rel = [f"{c} {(occupations.get(c) or {}).get('title', '')}" for c in o.get("related") or []][:8]
+        if rel:
+            print("Related: " + "; ".join(rel))
+        if note := careers.regulated(a.code):
+            print(f"Licensing: {note}")
+        print(occupations.meta().get("credit", ""))
+    elif a.op == "tracks":
+        ts = careers.tracks()
+        for t in ts:
+            tiers = ", ".join(careers.TIERS[x] for x in t["tiers"])
+            print(f"#{t['id']:<3} {t['label'][:28]:<28} {t['intent']:<13} {'on ' if t['enabled'] else 'off'} tiers: {tiers}")
+            print(f"     titles: {', '.join(t['titles']) or '-'}  occupations: {', '.join(t['codes']) or '-'}"
+                  + (f"  location: {t['location']}" if t["location"] else ""))
+        if not ts:
+            print("no career tracks yet: lodestar careers track-add NAME --intent desired_field --titles \"a, b\"")
+    elif a.op == "track-add":
+        tid = careers.add_track(a.label, a.intent, titles=a.titles or "", codes=a.codes or "",
+                                tiers=_tiers(a.tiers) if a.tiers else None, exclusions=a.exclude or "",
+                                location=a.location or "", training=a.training, priority=a.priority)
+        t = careers.get_track(tid)
+        print(f"track #{tid} {t['label']}: searches {', '.join(careers.search_titles(t))}")
+    elif a.op == "track-set":
+        fields = _kv(a.pairs, ("label", "intent", "titles", "codes", "tiers", "exclusions", "location", "training",
+                               "priority", "enabled"))
+        if "tiers" in fields:
+            fields["tiers"] = _tiers(fields["tiers"])
+        t = careers.update_track(a.id, **fields)
+        print(f"track #{t['id']} {t['label']}: searches {', '.join(careers.search_titles(t))}")
+    elif a.op == "track-rm":
+        careers.remove_track(a.id)
+        print(f"removed track #{a.id}")
+    elif a.op == "search":
+        out = careers.search_track(a.id, location=a.location)
+        print(f"searched: {', '.join(out['titles'])}")
+        for r in out["results"]:
+            print(f"  {r.get('title', '')[:50]:<50} {r.get('company', '')[:24]:<24} {r.get('url', '')}")
+        cov = out["coverage"]
+        if not cov["checked"]:
+            print("nothing was checked: no job board answered")
+        print(f"boards asked: {', '.join(cov['asked']) or 'none'} ({len(cov['asked'])} of {cov['total']})")
+        if cov["failed"]:
+            print("failed: " + "; ".join(cov["failed"]))
+        if cov["not_ready"]:
+            print("not set up (need a key): " + ", ".join(cov["not_ready"]))
+        print(cov["note"])
+
+
+def cmd_gaps(a):
+    """lodestar gaps: what your open jobs keep asking for that your profile does not show (gaps.py)."""
+    from . import gaps
+
+    out = gaps.report()
+    for r in out["rows"][:a.limit]:
+        kind = "legal requirement" if r["legal"] else "required"
+        print(f"{r['count']:>3} job{'s' if r['count'] != 1 else ' '}  {r['requirement']:<36} {kind:<17} -> {', '.join(r['actions'])}")
+    if not out["rows"]:
+        print("no gaps found in your open jobs' fits (or no open job is scored yet)")
+    print(out["note"])
+
+
+def cmd_audit(a):
+    """lodestar audit: the append-only trail of policy decisions and executor runs (policy.py)."""
+    import json as _json
+
+    from . import policy
+
+    rows = policy.log(a.limit)
+    for r in rows:
+        why = ", ".join(_json.loads(r["reasons"] or "[]"))
+        print(f"{r['at']}  {r['action']:<26} {r['result']:<17} {r['tool'] or '-':<18} {r['target'] or '-':<9}"
+              + (f" inbox #{r['approval_id']}" if r["approval_id"] else "") + (f"  ({why})" if why else ""))
+    if not rows:
+        print("nothing recorded yet: decisions appear here when a tool proposes an action")
+    print(f"policy version {policy.VERSION}")
 
 
 def _kv(pairs: list[str], fields) -> dict:
@@ -560,7 +732,11 @@ def cmd_profile(a):
         print(f"removed {profile.remove(a.kind, a.name)['removed']} {a.kind}")
     elif a.op == "rebuild":
         print(f"rebuilt {profile.rebuild_master()} from the bank (previous version in profile-history/)")
-    if a.op in ("add", "remove", "rebuild", "link"):
+    elif a.op == "dispute":
+        profile.set_disputed(a.kind, a.values, not a.undo)
+        print(f"{a.kind} {' / '.join(a.values)}: " + ("no longer disputed" if a.undo else
+              "disputed (left out of resumes, letters and career suggestions until you clear it with --undo)"))
+    if a.op in ("add", "remove", "rebuild", "link", "dispute"):
         _sync_master()
 
 
@@ -764,6 +940,7 @@ def cmd_apply_agent(a):
     from . import apply_agent
 
     if a.op == "run":
+        apply_agent.install_playwright()
         for r in apply_agent.run_foreground(a.ids, a.mode, True if a.eeo else None, a.headless):
             print(f"#{r['job_id']}: " + (f"refused: {r['error']}" if "error" in r else
                                          f"run #{r['run_id']} {r['mode']} -> {r['state']}"
@@ -797,9 +974,31 @@ def cmd_apply_agent(a):
 
 def cmd_accounts(a):
     """`lodestar accounts list|add|password|remove`: your site accounts (docs/APPLY_AGENT.md > Site accounts). Re-login and
-    Create run in the agent's window from Setup > Site accounts."""
+    Create run in the agent's window from Accounts > Site accounts."""
     from . import accounts
 
+    if a.op == "import":  # pass 48: a password manager's CSV export; passwords only to the OS keyring
+        from . import pwimport
+
+        path = Path(a.file)
+        r = pwimport.stage(path.read_text(encoding="utf-8-sig", errors="replace"))
+        print(f"{r['rows']} login(s) in the file; {len(r['sites'])} job-application site(s):")
+        for s in r["sites"]:
+            print(f"  {s['site']:<45} {s['username']}" + (f"  ({s['ats']})" if s["ats"] else ""))
+        for why, n in r["skipped"].items():
+            print(f"  skipped {n}: {why}")
+        if not a.yes:
+            pwimport.discard(r["id"])
+            print("nothing saved: run again with --yes to import these (add --delete to remove the export file after)")
+            return
+        out = pwimport.apply(r["id"])
+        print(f"imported {len(out['saved'])} into the OS keyring" + "".join(f"\n  not imported {s}: {w}" for s, w in out["failed"].items()))
+        if a.delete:
+            path.unlink(missing_ok=True)
+            print(f"deleted {path}")
+        else:
+            print(f"now delete {path}: it holds your passwords in plain text")
+        return
     if a.op in (None, "list"):
         rows = accounts.listing(getattr(a, "q", "") or "")
         for r in rows:
@@ -1150,6 +1349,10 @@ def cmd_run(a):
 
     studio.AUTO = True  # the master resume follows profile edits (never set by web.start_server)
     updater.startup()  # an interrupted update is rolled back first; then later updates know this process runs
+    if not getattr(a, "once", False):  # the long-running loop re-checks its links; a scheduled --once run does not
+        from . import connections
+
+        connections.start_checks()
     loop.run(a)
 
 
@@ -1215,6 +1418,7 @@ def cmd_ui(a):
 
     updater.startup()
     connections.start_checks()  # background, once: the server below comes up first
+    _phone_start()  # pass 53: only when its pref is on
     serve(a.port, open_browser=not a.no_open)
 
 
@@ -1235,13 +1439,40 @@ def cmd_app(a):
         threading.Thread(target=cmd_run, args=(a,), daemon=True).start()
         print(f"monitor loop running every {a.every} min")
     connections.start_checks()  # background, once: keys and mailbox re-verified after the server is up
+    _phone_start()  # pass 53: only when its pref is on
     serve(a.port, open_browser=not a.no_open)
+
+
+def cmd_selfcheck(a):
+    """pass 55: selfcheck.run, then the report."""
+    from . import selfcheck
+
+    provs = [x.strip() for x in a.providers.split(",") if x.strip()] or None
+    path = selfcheck.run(not a.no_page, a.ai, a.live, provs)
+    print(path.read_text(encoding="utf-8"))
+    print(f"report: {path}")
 
 
 def cmd_doctor(a):
     from .doctor import report
 
     raise SystemExit(0 if report(a.live) < 2 else 1)
+
+
+def cmd_deps(a):
+    """`lodestar deps [check|install] [--extra NAME]`: deps.py (only specs pyproject.toml declares)."""
+    from . import deps
+
+    if a.op == "install":
+        r = deps.ensure(None if a.extra in (None, "core") else a.extra)
+        for s in r["installed"]:
+            print(f"installed {s}")
+        if r["error"]:
+            raise SystemExit(r["error"])
+        return print("nothing was missing" if not r["installed"] else f"log: {r['log']}")
+    for name in [a.extra] if a.extra else deps.REQUIREMENTS:
+        m = deps.missing(None if name == "core" else name)
+        print(f"{name:<8} {'missing: ' + ', '.join(m) if m else 'ok'}")
 
 
 def _print_update(p: dict) -> None:
@@ -1289,12 +1520,32 @@ def cmd_update(a):
             print(f"{what:<14} {detail}")
 
 
+def _phone_start() -> None:
+    """Phone access (pass 53) when its pref is on: never blocks or stops startup."""
+    from . import phone
+
+    if settings.pref("phone_access"):
+        try:
+            print(f"phone access: {phone.start()['url']}")
+        except (Exception, SystemExit) as e:
+            print(f"phone access not started: {e}")
+
+
 def cmd_desktop(a):
     """The desktop app: server + monitor loop in this process, the UI in a native window. What the shortcut runs."""
     import threading
     from . import pipeline, studio
 
     pipeline.AUTO = studio.AUTO = True  # question answers resume steps; profile edits rebuild the master resume
+
+    from . import deps
+
+    try:  # pywebview before the window: installed into the venv once; on failure the browser fallback stays
+        if deps.missing("desktop"):
+            r = deps.ensure("desktop")
+            print(f"installed {', '.join(r['installed'])}" if r["installed"] else f"desktop window: {r['error']}")
+    except (Exception, SystemExit) as e:
+        print(f"desktop window: {e}")
 
     from . import desktop, web
     from .web import start_server
@@ -1303,17 +1554,22 @@ def cmd_desktop(a):
 
     updater.startup()
     web.RESTART = desktop.relaunch  # Setup > Updates offers Restart after an update
+    web.QUIT = desktop.quit  # Setup > Updates > Quit Lodestar (the close button only minimizes: close_to_taskbar)
     port = a.port or desktop.free_port()
     srv = start_server(port)
     connections.start_checks()  # background, once; never blocks or crashes the window
+    _phone_start()  # pass 53: only when its pref is on
     if not a.no_loop:
         a.once = False
         threading.Thread(target=cmd_run, args=(a,), daemon=True, name="lodestar-loop").start()
     print(f"Lodestar desktop on http://127.0.0.1:{port}  (close the window to stop)")
     try:
-        desktop.open_window(port)
+        desktop.open_window(port, minimized=getattr(a, "minimized", False))
     finally:
         srv.shutdown()
+        from . import labtrain
+
+        labtrain.pause_all()  # Model lab training checkpoints and stops with the app (resume it from the lab)
 
 
 def cmd_outreach(a):
@@ -1945,6 +2201,19 @@ def build() -> argparse.ArgumentParser:
     s = sub.add_parser("usage", help="token usage per provider/model from ~/.lodestar/usage.jsonl")
     s.add_argument("--days", type=int, default=30)
     s.set_defaults(f=cmd_usage)
+    s = sub.add_parser("primary", help="show or swap the primary AI: lodestar primary [PROVIDER [MODEL]]")
+    s.add_argument("provider", nargs="?")
+    s.add_argument("model", nargs="?")
+    s.set_defaults(f=cmd_primary)
+    s = sub.add_parser("jobmodel", help="the local job model in Ollama: status, build (learn from your decisions), eval")
+    s.add_argument("op", nargs="?", default="status", choices=["status", "build", "eval"])
+    s.add_argument("--force", action="store_true", help="build even when nothing it learns changed")
+    s.set_defaults(f=cmd_jobmodel)
+    s = sub.add_parser("dev", help="developer kit: new board|stage|helper NAME (test first + code and checklist), check")
+    s.add_argument("op", choices=["new", "check"])
+    s.add_argument("kind", nargs="?", choices=["board", "stage", "helper"])
+    s.add_argument("name", nargs="?")
+    s.set_defaults(f=cmd_dev)
     s = sub.add_parser("ask", help="one-off question to an AI provider")
     s.add_argument("prompt")
     s.set_defaults(f=cmd_ask)
@@ -1987,6 +2256,8 @@ def build() -> argparse.ArgumentParser:
     x.add_argument("id", type=int); x.add_argument("pairs", nargs="+", metavar="key=value")
     x = v.add_parser("show", help="every field plus the event timeline"); x.add_argument("id", type=int)
     x = v.add_parser("status", help="move a job: applied stamps applied_at; accepted offers to withdraw the others"); x.add_argument("id", type=int); x.add_argument("status", choices=db.STATUSES); x.add_argument("--note")
+    x = v.add_parser("stage", help="the fine-grained stage (acknowledged, recruiter_screen, assessment, technical/panel/final_interview, references, negotiation, on_hold, no_response, position_closed, declined_offer ...); the board column follows")
+    x.add_argument("id", type=int); x.add_argument("stage", choices=list(db.STAGES)); x.add_argument("--note")
     x = v.add_parser("note", help="append a note (also logged on the timeline)"); x.add_argument("id", type=int); x.add_argument("text")
     x = v.add_parser("jd", help="replace the job description"); x.add_argument("id", type=int); x.add_argument("source", help="url, file, or text")
     x = v.add_parser("rm", help="delete a job and its timeline"); x.add_argument("id", type=int)
@@ -2005,7 +2276,7 @@ def build() -> argparse.ArgumentParser:
     x.add_argument("--offset", type=int, default=0)
     x = v.add_parser("track-listing", help="add an All jobs listing (id L<n> from jobs all) to the tracker")
     x.add_argument("id", type=int)
-    x = v.add_parser("search", help="job APIs: Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, The Muse, "
+    x = v.add_parser("search", help="job APIs: Remotive, Arbeitnow, RemoteOK, HN Who is hiring, Jobicy, "
                                     "Himalayas, We Work Remotely; Adzuna and USAJOBS once their keys are set")
     x.add_argument("query"); x.add_argument("--keywords", help="comma list, must appear in title/desc")
     x.add_argument("--rank", action="store_true", help="AI fit score vs your profile"); x.add_argument("--limit", type=int, default=25)
@@ -2028,7 +2299,7 @@ def build() -> argparse.ArgumentParser:
             x.add_argument("--tone", default="confident, warm, specific")
             x.add_argument("--words", type=int, default=300)
             x.add_argument("--docx", action="store_true")
-    x = v.add_parser("import", help="bring in an existing resume (.docx/.pdf/.md/.txt); --merge folds it into the profile")
+    x = v.add_parser("import", help="bring in an existing resume (.docx/.pdf/.odt/.rtf/.html/.md/.txt); --merge folds it into the profile")
     x.add_argument("file"); x.add_argument("--merge", action="store_true"); x.add_argument("--save", action="store_true")
     x = v.add_parser("adjust", help="AI-revise the master profile or a job document with an instruction")
     x.add_argument("instruction"); x.add_argument("--job", type=int); x.add_argument("--doc", help="resume.md (default) or cover_letter.md"); x.add_argument("--save", action="store_true")
@@ -2100,6 +2371,10 @@ def build() -> argparse.ArgumentParser:
     x = v.add_parser("password", help="change the stored password (--generate prints a new one for the site's form)")
     x.add_argument("id", type=int); x.add_argument("--password"); x.add_argument("--generate", action="store_true")
     x = v.add_parser("remove", help="forget the account (its password leaves the OS keyring)"); x.add_argument("id", type=int)
+    x = v.add_parser("import", help="import job-site logins from a password manager's CSV export (review first; "
+                                    "--yes saves them to the OS keyring)")
+    x.add_argument("file"); x.add_argument("--yes", action="store_true"); x.add_argument("--delete", action="store_true",
+                                                                                     help="delete the export file after")
     s.set_defaults(f=cmd_accounts)
 
     s = sub.add_parser("intel", help="job intelligence: company facts and news, hiring signals, role and pay context, "
@@ -2118,7 +2393,7 @@ def build() -> argparse.ArgumentParser:
     s = sub.add_parser("profile", help="profile bank: saved resumes, skills, languages, LinkedIn import")
     v = s.add_subparsers(dest="op", required=True)
     v.add_parser("show", help="what the bank holds: contact, skills, languages, roles, saved resumes")
-    for name, what in (("import", "a resume (.docx/.pdf/.md/.txt): saves the original, reads its facts into a review"),
+    for name, what in (("import", "a resume (.docx/.pdf/.odt/.rtf/.html/.md/.txt): saves the original, reads its facts into a review"),
                        ("linkedin", "LinkedIn 'Download your data' .zip, or the profile 'Save to PDF' file")):
         x = v.add_parser(name, help=what); x.add_argument("file")
         x.add_argument("--no-ai", action="store_true", help="offline extraction only (never sent to an AI provider)")
@@ -2134,6 +2409,9 @@ def build() -> argparse.ArgumentParser:
         if name == "add":
             x.add_argument("--detail", help="category (skills), proficiency (languages) or issuer (certifications)")
     v.add_parser("rebuild", help="regenerate profile.md from the bank (snapshots the old one)")
+    x = v.add_parser("dispute", help="mark a fact wrong: kept, but left out of every document and career suggestion (--undo clears it)")
+    x.add_argument("kind", help="experience, education, skills, certifications ..."); x.add_argument("values", nargs="+", help="its identifying values in order (experience: company title)")
+    x.add_argument("--undo", action="store_true")
     s.set_defaults(f=cmd_profile)
 
     s = sub.add_parser("email", help="connect your mailbox; IMAP monitor: classify replies, update tracker")
@@ -2194,6 +2472,31 @@ def build() -> argparse.ArgumentParser:
     v.add_parser("list")
     x = v.add_parser("rm"); x.add_argument("id", type=int)
     s.set_defaults(f=cmd_companies)
+    s = sub.add_parser("gaps", help="skill-gap planner: requirements your open jobs repeat that your profile does not show, with possible actions")
+    s.add_argument("--limit", type=int, default=20); s.set_defaults(f=cmd_gaps)
+    s = sub.add_parser("audit", help="the append-only audit trail: every policy decision (allow / needs you / block, with reasons) and every action run")
+    s.add_argument("--limit", type=int, default=50); s.set_defaults(f=cmd_audit)
+    s = sub.add_parser("careers", help="career discovery: occupations your profile fits (O*NET), career tracks you choose, track search with board coverage")
+    v = s.add_subparsers(dest="op", required=True)
+    x = v.add_parser("suggest", help="occupations by career class: why it fits, what is missing, what does not transfer, how to close the gap")
+    x.add_argument("--tiers", default="0,1,2,3,4,5", help="expansion tiers to show (0 your targets, 1 your occupations ... 5 longer-term)")
+    x.add_argument("--limit", type=int, default=12); x.add_argument("--show-excluded", dest="show_excluded", action="store_true", help="show excluded ones as Currently ineligible")
+    x = v.add_parser("occupation", help="one O*NET occupation: titles, tasks, technology, related, licensing"); x.add_argument("code")
+    x = v.add_parser("explore", help="tier 6, Explore further: one AI call suggests occupations from what interests you, matched to O*NET")
+    x.add_argument("interests", help='e.g. "working with people, puzzles, outdoors"'); x.add_argument("--provider")
+    v.add_parser("tracks", help="your career tracks")
+    x = v.add_parser("track-add", help="save a career track (a field to search; any field, even one your resume does not show)")
+    x.add_argument("label"); x.add_argument("--intent", required=True, choices=["resume_led", "desired_field", "combined", "exploration", "pivot"])
+    x.add_argument("--titles", help="comma list of job titles"); x.add_argument("--codes", help="comma list of O*NET codes")
+    x.add_argument("--tiers", help="comma list 0-6 (default: desired_field 0, resume_led 1, others 0,1)")
+    x.add_argument("--exclude", help="comma list of words to leave out"); x.add_argument("--location")
+    x.add_argument("--training", default="none", choices=["none", "short_course", "certification", "apprenticeship", "degree", "open"])
+    x.add_argument("--priority", default="medium", choices=["high", "medium", "exploratory"])
+    x = v.add_parser("track-set", help="track fields: label, intent, titles, codes, tiers, exclusions, location, training, priority, enabled (key=value)")
+    x.add_argument("id", type=int); x.add_argument("pairs", nargs="+", metavar="key=value")
+    x = v.add_parser("track-rm", help="remove a track"); x.add_argument("id", type=int)
+    x = v.add_parser("search", help="search the job boards for a track's titles; shows which boards were asked"); x.add_argument("id", type=int); x.add_argument("--location")
+    s.set_defaults(f=cmd_careers)
     s = sub.add_parser("contacts", help="contacts CRM: people, the jobs they are linked to, last / next touch, LinkedIn import")
     v = s.add_subparsers(dest="op", required=True)
     x = v.add_parser("add", help="add a person by hand"); x.add_argument("name")
@@ -2285,6 +2588,19 @@ def build() -> argparse.ArgumentParser:
     s = sub.add_parser("doctor", help="check the install: Python, modules, WebView2, keyring, data folder, profile, providers, mail")
     s.add_argument("--live", action="store_true", help="also make one real call per configured provider")
     s.set_defaults(f=cmd_doctor)
+    s = sub.add_parser("deps", help="missing packages: check, or install what pyproject.toml declares (venv only; never the exe)")
+    s.add_argument("op", nargs="?", choices=("check", "install"), default="check")
+    s.add_argument("--extra", help="core (default for install), desktop, pdf, apply, e2e, all")
+    s.set_defaults(f=cmd_deps)
+
+    s = sub.add_parser("selfcheck", help="check and test the app: every tab in a headless browser (throwaway data), "
+                                         "optional AI review of each page, optional live test of each AI tool")
+    s.add_argument("--ai", action="store_true", help="also ask the AI to review each page (fictional demo data only)")
+    s.add_argument("--live", action="store_true", help="also run each AI tool once for real (page fill, to-dos, look, "
+                                                         "revise, council on/off, cross-check)")
+    s.add_argument("--no-page", action="store_true", help="skip the headless page check")
+    s.add_argument("--providers", default="", help="comma-separated, e.g. ollama,anthropic (default: your primary AI)")
+    s.set_defaults(f=cmd_selfcheck)
 
     s = sub.add_parser("update", help="updates of this install: check, apply (backup, fast-forward, tests, rollback), status, log")
     v = s.add_subparsers(dest="op")
@@ -2299,6 +2615,7 @@ def build() -> argparse.ArgumentParser:
     loop_args(s)
     s.add_argument("--port", type=int, default=None, help="default: first free port from 8765")
     s.add_argument("--no-loop", action="store_true", help="window only")
+    s.add_argument("--minimized", action="store_true", help="start on the taskbar (what start_on_boot runs)")
     s.set_defaults(f=cmd_desktop)
 
     s = sub.add_parser("app", help="the workbot: monitor loop + web UI in one process")
@@ -2491,6 +2808,19 @@ def _review_args(x) -> None:
     x.add_argument("--accept", help="new (new + changed, unflagged), all, none, or item ids like i1,i3: apply now")
     x.add_argument("--take", help="for conflicts: i4=incoming,i7=both (default mine)")
     x.add_argument("--no-master", action="store_true", help="bank only: leave profile.md as it is")
+
+
+def main_hidden(argv=None):
+    """The windowless launcher (lodestarw.exe, pythonw, a restart without a console): output that has no console to
+    go to is appended to HOME/logs/console.log instead of being lost or raising. With a console it is plain main()."""
+    if sys.stdout is None or sys.stderr is None:
+        from .config import HOME
+
+        (HOME / "logs").mkdir(parents=True, exist_ok=True)
+        log_file = open(HOME / "logs" / "console.log", "a", encoding="utf-8", errors="replace", buffering=1)
+        sys.stdout = sys.stdout or log_file
+        sys.stderr = sys.stderr or log_file
+    return main(argv)
 
 
 def main(argv=None):

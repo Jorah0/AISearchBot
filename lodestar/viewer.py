@@ -233,7 +233,8 @@ def choices() -> dict:
     from .resume import STYLES
 
     return {"template": list(STYLES), "font": list(render.FONTS), "accent": render.ACCENTS,
-            **{k: list(v) for k, v in render.CHOICES.items()}, "pages": [0, 1, 2], "ranges": render.RANGES}
+            **{k: list(v) for k, v in render.CHOICES.items()}, "pages": [0, 1, 2], "ranges": render.RANGES,
+            "looks": render.LOOKS}
 
 
 def differences(a: str, b: str, resume: bool) -> list[str]:

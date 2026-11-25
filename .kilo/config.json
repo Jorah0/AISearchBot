@@ -1,0 +1,23 @@
+{
+  "ignore": [
+    "__pycache__",
+    ".pytest_cache", 
+    ".mypy_cache",
+    ".ruff_cache",
+    ".venv",
+    "dist",
+    "build",
+    "*.egg-info",
+    ".git",
+    "node_modules",
+    "coverage.xml",
+    "*.log",
+    "reports",
+    "test_*",
+    "tmp",
+    "temp",
+    "scripts/__pycache__",
+    "tests/__pycache__",
+    "extension/test"
+  ]
+}

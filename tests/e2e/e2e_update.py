@@ -7,6 +7,7 @@ new code) is faked: tests/test_pass16_update.py runs the real one."""
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -53,6 +54,9 @@ class Updates(E2ETestCase):
         self.addCleanup(setattr, web, "RESTART", web.RESTART)
         self.restarts = []
         web.RESTART = lambda: self.restarts.append(True)  # what lodestar desktop sets (desktop.relaunch)
+        self.addCleanup(setattr, web, "QUIT", web.QUIT)
+        self.quits, self.quit_called = [], threading.Event()
+        web.QUIT = lambda: (self.quits.append(True), self.quit_called.set())  # what lodestar desktop sets (desktop.quit)
         type(self).gates.clear()
         type(self).gate_error = None
         updater.LOG.unlink(missing_ok=True)  # this class's home: an earlier test's update would ask for a restart
@@ -86,6 +90,20 @@ class Updates(E2ETestCase):
 
     def head(self) -> str:
         return git(self.install, "rev-parse", "HEAD")
+
+    def test_quit_lodestar_asks_first_then_closes_the_desktop_app(self):
+        pg = self.page
+        self.assertIn("close button only minimizes", pg.text_content("#uQuitRow"))
+        pg.click("#uQuit")  # dismissed: nothing happens
+        self.idle()
+        self.assertEqual(self.quits, [])
+        self.answer(True)
+        self.run_click("#uQuit")
+        self.assertTrue(self.quit_called.wait(5))  # the server quits 0.5 s after answering (the answer reaches the page first)
+        self.assertIn("Quit Lodestar?", self.dialogs[-1])
+        keys = pg.evaluate("Object.keys(S.prefs)")
+        self.assertIn("close_to_taskbar", keys)  # both options are in Tools > Preferences
+        self.assertIn("start_on_boot", keys)
 
     def test_check_shows_the_range_and_changelog_then_update_and_restart(self):
         pg = self.page
@@ -148,7 +166,7 @@ class Updates(E2ETestCase):
         self.assertEqual(self.head(), self.v1)  # the exact previous commit
         self.assertFalse(self.page.is_visible("#uRestart"))
         self.assertEqual(self.page.text_content("#updPill"), "Update available")  # still offered
-        self.go("board")
+        self.go("home")  # pass 32: Getting started lives on Today
         note = self.page.text_content("#onboard")
         self.assertIn("Last update failed", note)
         self.assertIn("rolled back", note)

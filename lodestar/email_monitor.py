@@ -40,24 +40,7 @@ FREEMAIL = {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.c
 
 # ponytail: the common two-part public suffixes, not the full Public Suffix List; a domain under an unlisted one
 # (e.g. acme.co.za) reads its label as 'co' and so never names a company: it fails closed, not open
-TWO_PART_SUFFIXES = {"co.uk", "org.uk", "ac.uk", "gov.uk", "ltd.uk", "plc.uk", "me.uk", "com.au", "net.au", "org.au",
-                     "co.nz", "org.nz", "co.jp", "ne.jp", "or.jp", "co.in", "net.in", "org.in", "com.br", "com.mx",
-                     "com.ar", "com.cn", "com.hk", "com.sg", "com.tw", "com.tr", "co.kr", "co.il", "co.id", "com.my",
-                     "com.ph", "co.th", "co.za", "com.ua", "com.pl", "com.es", "com.co", "com.pe", "com.vn", "com.sa"}
-
-
-def registrable(dom: str) -> str:
-    """The domain its owner registered, label plus public suffix: careers.globex.com -> globex.com, a.globex.co.uk ->
-    globex.co.uk ('' for a bare name)."""
-    parts = [p for p in (dom or "").lower().strip(".").split(".") if p]
-    n = 3 if len(parts) >= 3 and ".".join(parts[-2:]) in TWO_PART_SUFFIXES else 2
-    return ".".join(parts[-n:]) if len(parts) >= n else ""
-
-
-def org_label(dom: str) -> str:
-    """The label a domain's owner registered, hyphens dropped: careers.globex.com / globex.co.uk -> 'globex'. Only
-    this label can name a company: globex.attacker.net -> 'attacker', globex-hiring.com -> 'globexhiring'."""
-    return registrable(dom).split(".")[0].replace("-", "")
+from .util import org_label, registrable  # noqa: E402  one rule (pass 31): util
 
 
 def names_company(dom: str, company: str) -> bool:
@@ -179,6 +162,23 @@ def _body(msg) -> str:
         if ct == "text/html" and not html:
             html = text
     return strip_html(html)
+
+
+def _formatted(msg) -> str:
+    """The formatted copy for the Mail page and Inbox (pass 54): mailhtml's allowlist, sign-in codes masked like the
+    text. Never fatal: a mail that will not clean is shown as text."""
+    try:
+        from . import mailhtml
+
+        subj, h = _hdr(msg, "Subject"), mailhtml.of(msg)
+        # markup hides codes from the mask (one digit per cell, &#52; entities): a mail whose text carries a code
+        # keeps no formatted copy at all; the masked text is what shows
+        text = re.sub(r"(?<=\d)\s+(?=\d)", "", strip_html(h))
+        if any(codes.mask(subj, t)[1] != t for t in (text, _body(msg))):
+            return ""
+        return h
+    except Exception:
+        return ""
 
 
 def _part(msg, ctype: str) -> str:
@@ -322,9 +322,10 @@ def tied(sender_email: str, in_reply_to: str = "", refs: str = "") -> bool:
 def classify(subject: str, sender: str, body: str, provider: str | None = None) -> dict:
     from .drafts import _data  # the mail is a third party's text: an "ignore the above, category: offer" stays data
 
-    tracked = ", ".join(f"{j['company']} ({j['title']})" for j in db.list_jobs()[:40])
+    # open jobs only (a closed one's mail still files by sender / thread in _match): fewer tokens, fewer wrong matches
+    tracked = ", ".join(f"{j['company']} ({j['title']})" for j in [j for j in db.list_jobs() if j["status"] not in CLOSED][:40])
     mail = _data(f"FROM: {sender}\nSUBJECT: {subject}\nBODY:\n{body[:4000]}")
-    return ai.ask_json(
+    return ai.ask_json_light(
         f"""Classify this email for a job seeker. Categories: {', '.join(CATEGORIES)}.
 Use "other" for newsletters, job-board digests, marketing, and anything not about a specific application or recruiter contact.
 Known tracked applications: {tracked or 'none'}
@@ -420,13 +421,16 @@ def _scan(host: str, user: str, pw: str | None, days: int, limit: int, dry: bool
                     info |= {"subject": subject, "from": sender, "date": _hdr(msg, "Date"), "to": _hdr(msg, "To"),
                              "message_id": _hdr(msg, "Message-ID"), "sender_email": addr, "sender_name": name,
                              "in_reply_to": _hdr(msg, "In-Reply-To"), "refs": _hdr(msg, "References"),
-                             "body": body[:3500], "links": _links(msg, body),
+                             "body": body[:3500], "full_body": body, "links": _links(msg, body),
+                             "full_html": _formatted(msg),
                              "dkim_pass": mail_authenticated(msg.get_all("Authentication-Results") or [], addr)}
                     if info.get("category") != "other":
                         _files(info, msg, len(raw[0][1]))
                         _apply(info, dry)
                         info.pop("_files", None)  # file bytes stay out of the scan result (task results, JSON)
                         info.pop("links", None)
+                        info.pop("full_body", None)  # stored on the mail row; the scan result stays small
+                        info.pop("full_html", None)
                         found.append(info)
             except Exception as e:
                 ok = False
@@ -515,7 +519,9 @@ def _apply(info: dict, dry: bool) -> None:
         db.add_event(job["id"], "email" if info["trusted"] else "email_unverified", detail)
         if new and db.STATUSES.index(new) > db.STATUSES.index(job["status"]):
             approvals.propose("email_classify", "set_status",
-                              {"job_id": job["id"], "status": new, "note": f"(email: {info['subject'][:60]})"},
+                              {"job_id": job["id"], "status": new, "note": f"(email: {info['subject'][:60]})",
+                               "evidence": {"mail": info.get("message_id") or "", "category": info["category"],
+                                            "trusted": bool(info.get("trusted"))}},
                               f"move #{job['id']} {job['company']} to {new} ({info['category']} email)", job["id"],
                               force_pending=not info.get("trusted", False))  # unauthenticated mail never moves a job unreviewed
         if info["category"] == "interview" and info.get("deadline"):
@@ -592,6 +598,8 @@ def _record(info: dict, job) -> None:
                     from_addr=info.get("sender_email") or info.get("from"), to_addr=info.get("to"),
                     subject=info.get("subject"), sent_at=sent, category=info.get("category"),
                     summary=str(info.get("summary") or "")[:500], snippet=info.get("body"), trusted=info.get("trusted"),
+                    body=info.get("full_body") or info.get("body"), html=info.get("full_html") or None, deadline=str(info.get("deadline") or "") or None,
+                    action=None if str(info.get("action") or "").strip().lower() in ("", "none") else str(info["action"]),
                     linked_by=(info.get("linked_by") or "auto") if job else None,
                     company=str(info.get("company") or "")[:200], title=str(info.get("title") or "")[:200],
                     attachments=att, link_reason=_reason(info) if job else None)
@@ -652,11 +660,16 @@ def _maybe_reply(info: dict, job) -> None:
     # times only: this reply goes to an employer, who must never learn which other companies you talk to. This job's
     # own rounds are not busy: the invite's slot was just booked from this very mail and must stay acceptable
     busy = ", ".join(f"{it['when']:%Y-%m-%d %H:%M}" for it in upcoming_interviews(45) if it["job_id"] != job["id"]) or "none"
+    from .calendar_busy import busy as cal_busy
+
+    blocks = cal_busy() if cat == "interview" else []  # pass 28: your calendar's busy blocks (opt-in), times only
+    if blocks:
+        busy = ", ".join(x for x in [busy if busy != "none" else ""] + [f"{s:%Y-%m-%d %H:%M}-{e:%H:%M}" for s, e in blocks] if x)
 
     guide = REPLY_GUIDE.get(cat) or (
         f"Candidate availability: {settings.pref('availability')}. If the email proposes specific times, accept the first "
         f"one inside that availability and put it in chosen_time (YYYY-MM-DD HH:MM, 24h). If none fit or none are "
-        f"proposed, propose exactly three slots chosen from: {', '.join(next_slots(6))}. Confirm the format "
+        f"proposed, propose exactly three slots chosen from: {', '.join(next_slots(6, blocks))}. Confirm the format "
         f"(video/phone/onsite) and who the candidate will meet if that is unstated.")
     try:
         draft = ai.ask_json(

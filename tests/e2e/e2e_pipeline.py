@@ -373,6 +373,24 @@ class Pipeline(E2ETestCase):
         self.go("tools")
         self.assertIn("Autopilot may use this step", self.page.text_content("#tools .sub"))
 
+    def test_a_copy_of_an_applied_role_is_blocked_and_the_ai_check_lifts_it(self):  # pass 40
+        self.new_job("Larch Freight", "applied")
+        copy = db.add_job("Larch Freight", "Data Engineer", "https://boards.example.net/larch-de", JD, "e2e")
+        db.release()
+        self.reload_state()
+        self.addCleanup(setattr, type(self), "ai_json", type(self).ai_json)
+        type(self).ai_json = AI | {"verdict": "different", "why": "the copy is the Rotterdam team <b>x</b>"}
+        self.open_job(copy)
+        self.assertTrue(self.state_of("Fit check").startswith("blocked"))
+        self.assertIn("not checked by AI yet", self.state_of("Fit check"))
+        self.stage("Fit check").click()
+        self.run_click(self.line_button("Check with AI"))
+        self.expect_toast("different (the copy is the Rotterdam team", "ok")
+        self.page.wait_for_function("() => { const b = [...document.querySelectorAll('#pGroup .stage')].find(x => "
+                                    "/Fit check/.test(x.textContent)); return b && !/: blocked/.test(b.getAttribute('aria-label')); }")
+        self.assertFalse(self.state_of("Fit check").startswith("blocked"))
+        self.assertEqual(self.page.locator("#pGroup b").filter(has_text="x").count(), 0)  # the AI's text is never markup
+
     def test_narrow_window_strip_line_and_questions_do_not_scroll_sideways(self):
         jid = self.new_job("Narrow Co")
         pipeline.ask(db.get_job(jid), "answers", "A rather long open-ended question about the most complex data platform "

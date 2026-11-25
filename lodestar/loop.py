@@ -31,6 +31,9 @@ def agenda(now: datetime | None = None) -> dict:
 
     actions = [item(j, when=j["next_action_at"], what=j["next_action"] or "next action", overdue=j["next_action_at"] < today)
                for j in live if j["next_action_at"] and j["next_action_at"] <= today]
+    actions += [{"id": t["job_id"], "company": t["company"], "title": t["title"], "when": t["due"], "what": t["text"],
+                 "overdue": t["due"] < today, "task": t["id"]} for t in db.tasks(due_by=today)
+                if t["job_id"] in {j["id"] for j in live}]  # pass 53: your to-dos (closed jobs: not today)
     deadlines = [item(j, when=j["deadline"], days=(date.fromisoformat(j["deadline"]) - now.date()).days)
                  for j in live if j["deadline"] and today <= j["deadline"] <= soon]
     return {
@@ -231,6 +234,30 @@ def _backup() -> None:
         db.mark_seen(day)
 
 
+RECHECK_EVERY = 6 * 3600
+
+
+def _recheck() -> None:
+    """Every linked key and the mailbox re-verified every 6 hours (no tokens), so a link that stopped working shows on
+    the Accounts tab (and as a notice) without waiting for the next app start."""
+    from . import connections
+    from .web_monitor import _due, _ran
+
+    if not connections._STARTED:  # only the long-running commands (app, ui, desktop, run): never tests or --once
+        return
+    if _due("conn:check", RECHECK_EVERY):
+        _ran("conn:check")
+
+        def _run():  # a slow provider or a 60 s IMAP timeout never delays the watches, email and fit steps
+            try:
+                connections.check_all()
+            except (Exception, SystemExit):
+                pass
+            finally:
+                db.release()
+        threading.Thread(target=_run, daemon=True, name="lodestar-recheck").start()
+
+
 def cycle(a) -> None:
     STATUS["last_cycle"], STATUS["cycles"] = time.strftime("%H:%M"), STATUS["cycles"] + 1
     print(f"\n--- lodestar cycle {STATUS['last_cycle']} ---")
@@ -245,6 +272,7 @@ def cycle(a) -> None:
         _step("email", lambda: email_monitor.check(a.days, provider=a.provider))
     from . import fit, web_monitor
 
+    _step("connection check", _recheck)
     _step("watches", web_monitor.check_watches)
     _step("listing check", web_monitor.check_listings)  # daily: tracked jobs' postings removed / changed
     _step("fit", fit.refresh)  # stale fit scores (profile, preferences, weights changed), no AI
@@ -260,6 +288,12 @@ def cycle(a) -> None:
     _step("readiness", readiness.snapshot_due)  # one snapshot per round, from 2 h before to 24 h after it
     from . import pipeline
 
+    from . import jobmodel
+
+    from . import novelty
+
+    _step("new listings", novelty.tick)  # pass 55: new opening, another copy, or a repost (light AI, capped)
+    _step("job model", jobmodel.tick)  # rebuilds the local Ollama job model when what it learns changed (at most daily)
     _step("pipeline", lambda: pipeline.advance(a.provider))  # step states always; Autopilot runs only when switched on
     _step("desktop notifications", _desktop)
     if settings.auto("obsidian_sync"):

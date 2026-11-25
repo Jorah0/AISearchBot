@@ -10,7 +10,7 @@ import urllib.parse
 from datetime import date, datetime, timezone
 from functools import lru_cache
 
-from . import ai, db, settings
+from . import ai, connections, db, settings
 from .config import SNAPSHOTS
 from .util import fetch, fetch_json, notify, robots_ok, strip_html
 
@@ -186,7 +186,8 @@ def add_company(src: str, name: str = "", keywords: str = "") -> dict:
     vendor, slug = found
     # re-adding a board keeps its name and keywords unless new ones are given (as saved-search filters do)
     # ponytail: so keywords are cleared by remove + add, not by re-adding with none
-    old = next((c for c in db.companies() if (c["vendor"], c["slug"]) == (vendor, slug)), None)
+    old = next((c for c in db.companies() if (c["vendor"], c["slug"].casefold()) == (vendor, slug.casefold())), None)
+    slug = old["slug"] if old else slug  # board slugs ignore case: 'Acme' and 'acme' are one board, kept as first added
     keywords = keywords or (old["keywords"] or "" if old else "")
     name = name or (old["name"] if old else "") or slug.replace("-", " ").replace("_", " ").title()
     return {"id": db.add_company(vendor, slug, name, keywords), "vendor": vendor, "slug": slug, "name": name}
@@ -382,7 +383,11 @@ def no_fetch(url) -> bool:
     from .alerts import SITES
     from .email_monitor import org_label
 
+    from .pacing import MORE
+
     host = (urllib.parse.urlparse(str(url or "")).hostname or "").lower()
+    if any(host == d or host.endswith("." + d) for d in MORE):  # the paced More sites: you visit, Lodestar never does
+        return True
     return org_label(host) in NO_FETCH or db.seen(f"alerthost:{host}") or \
         any(host == d or host.endswith("." + d) for s in SITES.values() for d in s["domains"])
 
@@ -493,6 +498,8 @@ def _gone(job, why: str, proposed: list) -> None:
 
 
 def _open(job, how: str) -> None:
+    """The posting answered (its feed lists it, or its page is up): stamp the day (blueprint 6.4, last verified)."""
+    db.update_job(job["id"], touch=False, posting_checked_at=datetime.now().strftime("%Y-%m-%d"))
     if removed_event(job["id"]):
         db.add_event(job["id"], "posting_reopened", f"the posting is up again ({how})")
 
@@ -599,8 +606,23 @@ def check_listings(now: datetime | None = None) -> list[int]:
 
 # --- free job APIs ----------------------------------------------------------
 def _listing(title, company, url, location="", salary="", date="", desc="", source=""):
-    return dict(title=title or "", company=company or "", url=url or "", location=location or "", salary=salary or "",
-                date=(date or "")[:10], desc=strip_html(desc or "")[:3000], source=source)
+    return dict(title=_fix_text(title), company=_fix_text(company), url=url or "", location=_fix_text(location),
+                salary=salary or "", date=(date or "")[:10], desc=_fix_text(strip_html(desc or ""))[:3000], source=source)
+
+
+_MOJIBAKE = re.compile(r"[\u00c2-\u00f4][\u0080-\u00bf]")
+
+
+def _fix_text(s) -> str:
+    """UTF-8 a board decoded as Latin-1 ('â' for an em dash: RemoteOK's own JSON) back to text; anything
+    that does not round-trip is kept as it came."""
+    s = str(s or "")
+    if _MOJIBAKE.search(s):
+        try:
+            return s.encode("latin-1").decode("utf-8")
+        except UnicodeError:
+            pass
+    return s
 
 
 def jd_with_salary(j: dict) -> str:
@@ -633,8 +655,14 @@ def _words_in(q) -> list[str]:
 
 
 def _has_all(words, blob) -> bool:
+    """Every query word as a whole word (a plural counts): 'intern' never matches 'Internal', 'nurse' never
+    'Nursery' (blueprint: never broaden a search silently)."""
     b = str(blob or "").lower()
-    return all(w in b for w in words)
+    def rx(w):  # the guard only where the word itself starts / ends with a word character ('.net' in 'ASP.NET')
+        left = r"(?<![\w+#])" if w[:1].isalnum() else ""
+        right = r"(?:e?s)?(?![\w+#])" if w[-1:].isalnum() else ""
+        return left + re.escape(w) + right
+    return all(re.search(rx(w), b) for w in words)
 
 
 def _remotive(q):
@@ -650,8 +678,10 @@ def _remotive(q):
 
 def _arbeitnow(q):
     d = fetch_json(f"https://www.arbeitnow.com/api/job-board-api?search={urllib.parse.quote(q)}")
+    words = _words_in(q)  # the API ignores `search` (live, 2026-11): every query got the same 300 listings
     return [_listing(j["title"], j["company_name"], j["url"], j.get("location"), "", "", j.get("description"), "arbeitnow")
-            for j in d.get("data", [])]
+            for j in d.get("data", [])
+            if _has_all(words, f"{j.get('title', '')} {' '.join(j.get('tags') or [])} {strip_html(j.get('description') or '')[:4000]}")]
 
 
 def _remoteok(q):
@@ -660,11 +690,26 @@ def _remoteok(q):
     out = []
     for j in (d or [])[1:]:  # element 0 is a legal notice
         blob = f"{j.get('position', '')} {' '.join(j.get('tags', []))} {j.get('company', '')}".lower()
-        if all(w in blob for w in words):
+        if _has_all(words, blob):
             sal = f"{j.get('salary_min', '')}-{j.get('salary_max', '')}".strip("-")
             out.append(_listing(j.get("position"), j.get("company"), j.get("url"), j.get("location"), sal, j.get("date"),
                                 j.get("description"), "remoteok"))
     return out
+
+
+_SEEKER_FIELDS = re.compile(r"(?im)^\s*(?:location|remote|willing to relocate|technologies|r[ée�]sum[ée�]"
+                            r"(?:/cv)?|cv|email)\s*:")
+
+
+def _hn_seeker(text: str) -> bool:
+    """A job seeker's own post left in the hiring thread: the 'Who wants to be hired?' template (three or more of its
+    Location / Remote / Willing to relocate / Technologies / Résumé / Email lines), or an 'I'm <name> ... looking for'
+    introduction that says nothing of hiring. A posting that opens with one 'Location:' line still counts as a job."""
+    if len(_SEEKER_FIELDS.findall(text)) >= 3:
+        return True
+    head = text.strip()[:600]
+    return bool(re.match(r"(?i)(?:hi[,!.]?\s+)?(?:i'?m|i am)\s", head)) and not re.search(
+        r"(?i)\bhiring\b|\bwe(?:'re| are)\b|\bour team\b|\bjoin us\b", head)
 
 
 def _hn(q):
@@ -684,11 +729,11 @@ def _hn(q):
             if str(h.get("parent_id")) != sid:
                 continue  # a reply, not a posting
             text = strip_html(h.get("comment_text") or "")
-            if not all(w in text.lower() for w in words):
+            if not _has_all(words, text) or _hn_seeker(text):
                 continue
             lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
             header = next((ln for ln in lines[:4] if "|" in ln), lines[0] if lines else "")[:200]
-            parts = [p.strip() for p in header.split("|")]
+            parts = [p for p in (x.strip() for x in header.split("|")) if p and not re.match(r"(?i)(https?://|www\.)", p)]
             if len(parts) >= 2:
                 company, title = parts[0] or h.get("author", ""), parts[1]
                 location = parts[2] if len(parts) > 2 else ""
@@ -708,34 +753,10 @@ def _jobicy(q):
     out = []
     for j in d.get("jobs", []):
         blob = f"{j.get('jobTitle', '')} {j.get('jobExcerpt', '')} {j.get('jobIndustry', '')}".lower()
-        if all(w in blob for w in words):
+        if _has_all(words, blob):
             sal = f"{j.get('annualSalaryMin', '')}-{j.get('annualSalaryMax', '')}".strip("-")
             out.append(_listing(j.get("jobTitle"), j.get("companyName"), j.get("url"), j.get("jobGeo"), sal,
                                 j.get("pubDate"), j.get("jobDescription"), "jobicy"))
-    return out
-
-
-MUSE_CATEGORIES = {"engineer": "Software Engineering", "developer": "Software Engineering", "software": "Software Engineering",
-                   "data": "Data and Analytics", "design": "Design and UX", "product": "Product Management",
-                   "marketing": "Marketing", "sales": "Sales", "finance": "Accounting and Finance", "hr": "HR",
-                   "support": "Customer Service", "project": "Project Management", "security": "IT"}
-
-
-def _muse(q):
-    words = q.lower().split()
-    cat = next((c for w in words for k, c in MUSE_CATEGORIES.items() if w.startswith(k)), None)  # 'three' is not 'hr'
-    out, seen_urls = [], set()
-    for page in (1, 2):
-        d = fetch_json(f"https://www.themuse.com/api/public/jobs?page={page}" + (f"&category={urllib.parse.quote(cat)}" if cat else ""))
-        for r in d.get("results", []):
-            desc = strip_html(r.get("contents") or "")
-            blob = f"{r.get('name', '')} {' '.join(c.get('name', '') for c in r.get('categories', []))} {desc[:4000]}".lower()
-            url = (r.get("refs") or {}).get("landing_page") or ""
-            if all(w in blob for w in words) and url not in seen_urls:  # the API can repeat a job across pages
-                seen_urls.add(url)
-                out.append(_listing(r.get("name"), (r.get("company") or {}).get("name"), url,
-                                    ", ".join(loc.get("name", "") for loc in r.get("locations", [])[:2]), "",
-                                    r.get("publication_date"), r.get("contents"), "themuse"))
     return out
 
 
@@ -766,7 +787,8 @@ def _adzuna(q):
         d = fetch_json(f"https://api.adzuna.com/v1/api/jobs/{country}/search/1?app_id="
                        f"{urllib.parse.quote(setting('ADZUNA_APP_ID') or '')}&app_key="
                        f"{urllib.parse.quote(setting('ADZUNA_APP_KEY') or '')}&what={urllib.parse.quote(q)}"
-                       + (f"&where={urllib.parse.quote(w)}&distance=40" if (w := getattr(_RUN, "where", "")) else "")
+                       + (f"&where={urllib.parse.quote(w)}&distance={round((getattr(_RUN, 'radius', None) or 25) * 1.609)}"
+                          if (w := getattr(_RUN, "where", "")) else "")  # Adzuna's distance is km; 25 miles by default
                        + "&results_per_page=50&content-type=application/json")
     except urllib.error.HTTPError:  # Adzuna answered: the call counts
         raise
@@ -790,7 +812,8 @@ def _usajobs(q):
 
     w = getattr(_RUN, "where", "")
     d = fetch_json(f"https://data.usajobs.gov/api/search?Keyword={urllib.parse.quote(q)}&ResultsPerPage=100"
-                   + (f"&LocationName={urllib.parse.quote(w)}" if w else ""),
+                   + (f"&LocationName={urllib.parse.quote(w)}" if w else "")
+                   + (f"&Radius={r}" if w and (r := getattr(_RUN, "radius", None)) else ""),  # miles
                    headers={"Host": "data.usajobs.gov", "User-Agent": setting("USAJOBS_EMAIL") or "",
                             "Authorization-Key": setting("USAJOBS_API_KEY") or ""})
     out = []
@@ -814,8 +837,11 @@ def _himalayas(q):
     key = setting("HIMALAYAS_API_KEY")
     d = fetch_json(f"https://himalayas.app/jobs/api/search?q={urllib.parse.quote(q)}&sort=recent&page=1",
                    headers={"Authorization": f"Bearer {key}"} if key else None)
-    out = []
-    for j in d.get("jobs") or []:
+    out, words = [], _words_in(q)
+    for j in d.get("jobs") or []:  # its search matches loosely ('store manager' -> 'Marketing Manager'): filtered here
+        if not _has_all(words, f"{j.get('title', '')} {' '.join(map(str, j.get('categories') or []))} "
+                               f"{strip_html(j.get('description') or j.get('excerpt') or '')[:4000]}"):
+            continue
         locs = j.get("locationRestrictions") or []
         loc = ", ".join(x if isinstance(x, str) else str((x or {}).get("name") or "") for x in locs) or "Remote"
         cur = j.get("currency") or j.get("salaryCurrency") or ""
@@ -845,10 +871,10 @@ def _wwr(q):
 
 
 SOURCES = {"remotive": _remotive, "arbeitnow": _arbeitnow, "remoteok": _remoteok, "hn": _hn, "jobicy": _jobicy,
-           "themuse": _muse, "himalayas": _himalayas, "wwr": _wwr, "adzuna": _adzuna, "usajobs": _usajobs}
+           "himalayas": _himalayas, "wwr": _wwr, "adzuna": _adzuna, "usajobs": _usajobs}
 # how often a scheduled run (saved searches) may ask each board, in seconds. GLOBAL boards limit calls per user, not per
 # query: one unfiltered fetch per window serves every query (filtered here), and a manual search reuses it while fresh
-EVERY = {"remotive": 6 * 3600, "jobicy": 3600, "remoteok": 3600, "wwr": 3600, "himalayas": 3600, "themuse": 3600,
+EVERY = {"remotive": 6 * 3600, "jobicy": 3600, "remoteok": 3600, "wwr": 3600, "himalayas": 3600,
          "adzuna": 3 * 3600, "usajobs": 3600, "arbeitnow": 3600, "hn": 6 * 3600}
 GLOBAL = {"remotive", "jobicy", "remoteok", "wwr"}
 KEYED = {"adzuna": ("ADZUNA_APP_ID", "ADZUNA_APP_KEY"), "usajobs": ("USAJOBS_API_KEY", "USAJOBS_EMAIL")}
@@ -858,7 +884,18 @@ ATTRIBUTION = {"adzuna": ("Adzuna", "https://www.adzuna.com/"), "himalayas": ("H
                "wwr": ("We Work Remotely", "https://weworkremotely.com/"), "remotive": ("Remotive", "https://remotive.com/"),
                "remoteok": ("Remote OK", "https://remoteok.com/"), "usajobs": ("USAJOBS", "https://www.usajobs.gov/"),
                "jobicy": ("Jobicy", "https://jobicy.com/"), "arbeitnow": ("Arbeitnow", "https://www.arbeitnow.com/"),
-               "themuse": ("The Muse", "https://www.themuse.com/"), "hn": ("HN Who is hiring", "https://news.ycombinator.com/")}
+               "hn": ("HN Who is hiring", "https://news.ycombinator.com/")}
+# blueprint 6.3: what each board can do. Discovery only: no board is an apply API (apply: "handoff" = you or the apply
+# agent apply on the posting's own page). terms_reviewed: the date its terms were last reviewed, None = not recorded.
+_CAP = {"search": "supported", "full_description": "supported", "apply": "handoff", "auth": "none", "terms_reviewed": None}
+CAPABILITIES = {
+    "remotive": _CAP | {"regions": "remote, worldwide"}, "arbeitnow": _CAP | {"regions": "Europe, remote"},
+    "remoteok": _CAP | {"regions": "remote, worldwide"}, "hn": _CAP | {"regions": "worldwide (monthly thread)"},
+    "jobicy": _CAP | {"regions": "remote, worldwide"},
+    "himalayas": _CAP | {"regions": "remote, worldwide"}, "wwr": _CAP | {"regions": "remote, worldwide"},
+    "adzuna": _CAP | {"full_description": "partial (a snippet)", "auth": "key", "regions": "the adzuna_country preference"},
+    "usajobs": _CAP | {"full_description": "partial (a summary)", "auth": "key", "regions": "US federal"},
+}
 WATCH_CACHE_DEFAULT = 2 * 3600  # a board not in EVERY (tests' fakes): saved searches reuse its answer this long
 _ANSWERS: dict = {}  # (source function, query) -> (monotonic time, listings); ponytail: in memory, a restart refetches
 _CACHE: dict = {}  # GLOBAL (url, parser) -> (epoch time, parsed answer); also saved per board on disk (_board_file)
@@ -939,12 +976,13 @@ def _cached(name: str, url: str, parse=None):
 LOCAL = {"adzuna", "usajobs"}  # boards that search near a place (_RUN.where); the others are filtered here (refine)
 
 
-def _ask(name: str, query: str, scheduled: bool, where: str = "") -> list[dict]:
-    """One board's listings for a query (near `where`, on the LOCAL boards). scheduled (saved searches in the monitor
-    loop): reuse a recent answer, and a board asked within its EVERY window is skipped (Throttled), so every cycle times
-    every saved search stays within each board's published limits. A manual search asks afresh (GLOBAL boards still
-    reuse their fresh copy)."""
-    w = where.casefold() if name in LOCAL else ""
+def _ask(name: str, query: str, scheduled: bool, where: str = "", radius: int | None = None) -> list[dict]:
+    """One board's listings for a query (near `where`, within `radius` miles, on the LOCAL boards). scheduled (saved
+    searches in the monitor loop): reuse a recent answer, and a board asked within its EVERY window is skipped
+    (Throttled), so every cycle times every saved search stays within each board's published limits. A manual search
+    asks afresh (GLOBAL boards still reuse their fresh copy)."""
+    radius = radius if name in LOCAL and where else None
+    w = where.casefold() + (f"~{radius}" if radius else "") if name in LOCAL else ""
     fn, now, q = SOURCES[name], time.monotonic(), query.casefold()
     every = EVERY.get(name, WATCH_CACHE_DEFAULT)
     hit = _ANSWERS.get((fn, q, w))
@@ -954,11 +992,11 @@ def _ask(name: str, query: str, scheduled: bool, where: str = "") -> list[dict]:
     key = f"src:{name}:{q}" + (f"@{w}" if w else "")
     if scheduled and per_query and not _due(key, every):
         raise Throttled(f"{name}: asked less than {max(1, every // 3600)} h ago")
-    _RUN.scheduled, _RUN.where = scheduled, where if w else ""  # the place as typed; the cache key casefolded
+    _RUN.scheduled, _RUN.where, _RUN.radius = scheduled, where if w else "", radius  # as typed; the cache key casefolded
     try:
         hit = _ANSWERS[(fn, q, w)] = (now, fn(query))  # a failure raises and caches nothing
     finally:
-        _RUN.scheduled, _RUN.where = False, ""
+        _RUN.scheduled, _RUN.where, _RUN.radius = False, "", None
     if per_query:
         _ran(key)
     return [dict(j) for j in hit[1]]
@@ -971,17 +1009,60 @@ def alternatives(s, n: int = 3) -> list[str]:
     return list(dict.fromkeys(x for x in out if x))[:n]
 
 
+_REMOTE_IN = re.compile(r"(?i)^(?:remote|anywhere)\s*(?:[-–(,:/]|\bin\b)\s*(?:the\s+)?(?P<a>[^()]+?)\s*\)?$"
+                        r"|^(?P<b>[^()]+?)\s*[-–,/]?\s*\(?\s*remote\s*\)?$")
+
+
 def _loc_alts(s) -> list[str]:
     """A location filter's alternatives: 'Austin, TX or remote' -> ['Austin, TX', 'remote'] (a comma stays inside one
-    place). 'anywhere' is remote."""
+    place). 'anywhere' is remote. Remote in a region ('Remote (US)', 'Remote - USA', 'US Remote', 'Remote in the US')
+    is 'remote:<region>': remote jobs open to that region (remote_region_ok), never a city called 'Remote (US)'."""
     # a lowercase ' or ' only: 'Portland, OR' is a place
-    out = [" ".join(x.split()) for x in re.split(r"\s*[;|]\s*|\s+or\s+", str(s or ""))]
-    return list(dict.fromkeys("remote" if x.casefold() in ("remote", "anywhere", "remote only") else x for x in out if x))
+    out = []
+    for x in (" ".join(x.split()) for x in re.split(r"\s*[;|]\s*|\s+or\s+", str(s or ""))):
+        if x.casefold() in ("remote", "anywhere", "remote only"):
+            x = "remote"
+        elif (m := _REMOTE_IN.match(x)) and (region := (m["a"] or m["b"] or "").strip(" -,/")):
+            x = f"remote:{region}"
+        if x:
+            out.append(x)
+    return list(dict.fromkeys(out))
+
+
+def _remote(alt: str) -> bool:
+    return alt == "remote" or alt.startswith("remote:")
 
 
 def _where(location) -> str:
     """The place a LOCAL board searches near: the filter's first place (none for remote)."""
-    return next((x for x in _loc_alts(location) if x != "remote"), "")
+    return next((x for x in _loc_alts(location) if not _remote(x)), "")
+
+
+_POSTAL = re.compile(r"(?i)^(?:\d{4,6}(?:-\d{4})?|[a-z]\d[a-z] ?\d[a-z]\d)$")  # ZIP, ZIP+4, most postcodes, Canada's
+
+
+def _place_match(place: str, j: dict, text: str, near: str) -> bool:
+    """A place filter matches a listing: a LOCAL board that searched near this place found it (its radius did the work:
+    Round Rock for Austin, anything for a postal code), else the listing's location names the place (place_ok) or, for
+    a postal code, states that code."""
+    if place == near and j.get("source") in LOCAL:
+        return True
+    if _POSTAL.fullmatch(place):
+        return bool(re.search(rf"(?i)\b{re.escape(place)}\b", text or ""))
+    return bool(text) and place_ok(place, text)
+
+
+_WIDE = {"united states": ("north america", "americas"), "canada": ("north america", "americas")}
+
+
+def remote_region_ok(region: str, text) -> bool:
+    """A remote listing is open to the region a 'Remote (US)' filter names: it states no region, a worldwide one, or
+    that region ('USA Only', 'Europe, USA, Canada'; 'North America' for the US or Canada). 'Latin America Only',
+    'Pakistan' or 'Europe' are not. ponytail: whole-word matching on the stated region; a geocoder if it misreads."""
+    t = re.sub(r"(?i)\b(?:only|time ?zones?|based|remote|hours?|friendly|preferred)\b", " ", str(text or ""))
+    if re.search(r"(?i)\b(?:worldwide|anywhere|global|international)\b", t) or not re.sub(r"[\W_]+", "", t):
+        return True
+    return place_ok(region, t) or any(re.search(rf"(?i)\b{w}\b", t) for w in _WIDE.get(_canon(region), ()))
 
 
 def search(query: str, keywords: str = "", only_new: bool = False, sources=None, mark: bool | None = None,
@@ -995,12 +1076,20 @@ def search(query: str, keywords: str = "", only_new: bool = False, sources=None,
     'nothing new' from 'nothing checked'. scheduled: the monitor loop (see _ask): a board that is not due is skipped,
     never an error. ran: gets the name of every board actually asked."""
     mark = only_new if mark is None else mark
-    raw, queries, where = [], alternatives(query) or [""], _where(filters.get("location"))
+    raw, queries = [], alternatives(query) or [""]
+    # ponytail: the LOCAL boards ask near at most 3 places, like 3 roles (Adzuna's daily quota); a 4th place is still
+    # matched on the listings' text by refine
+    wheres = [x for x in _loc_alts(filters.get("location")) if not _remote(x)][:3] or [""]
     for name in (sources or sources_ready()):
         asked = False
-        for q in queries:  # each role on its own; dedupe merges what several find
+        # each role on its own, and on a LOCAL board near each place; dedupe merges what several find
+        for q, w in [(q, w) for q in queries for w in (wheres if name in LOCAL else wheres[:1])]:
             try:
-                raw += _ask(name, q, scheduled, where)
+                got = _ask(name, q, scheduled, w, filters.get("radius"))
+                if w and name in LOCAL:
+                    for j in got:
+                        j["near"] = w  # the place this board searched around (refine's place match)
+                raw += got
                 asked = True
             except Throttled as e:
                 print(f"  skipped {e}")
@@ -1010,7 +1099,11 @@ def search(query: str, keywords: str = "", only_new: bool = False, sources=None,
                 if errors is not None:
                     errors.append(f"{name}: {msg[:160]}")
                 asked = True
+                connections.track("boards", name, "failed", msg)
                 break  # the board is down: one line, not one per role
+        else:
+            if asked:
+                connections.track("boards", name, "ok")
         if ran is not None and asked:
             ran.append(name)
     out = [j for j in refine(dedupe([j for j in raw if j["url"]]), keywords=keywords, **filters) if not (only_new and _seen(j))]
@@ -1085,26 +1178,49 @@ def dedupe(listings: list[dict]) -> list[dict]:
 
 
 SENIORITY = ("intern", "junior", "mid", "senior", "staff", "lead", "manager")
-_LEVEL_RX = [("intern", r"\bintern(ship)?s?\b|\bco-?op\b|\btrainee\b|\bapprentice"),
-             ("manager", r"\b(head of|director|vp|vice president|chief)\b|(?<!product )(?<!program )(?<!project )(?<!account )"
-                         r"(?<!marketing )(?<!community )\bmanager\b"),
+_LEVEL_RX = [("intern", r"\bintern(ship)?s?\b|\bco-?op\b|\btrainee\b|\bapprentice|\bworking student\b|\bwerkstudent"
+                        r"|\bpraktik"),
+             ("manager", r"\b(head of|director|vp|vice president|chief|ceo|coo|cto|cfo|cmo|cio|ciso|cpo)\b|(?<!product )"
+                         r"(?<!program )(?<!project )(?<!account )(?<!marketing )(?<!community )\bmanager\b"),
              ("staff", r"\b(staff|principal|distinguished)\b"),
-             ("lead", r"\blead\b"),
+             ("lead", r"\b(lead|supervisor)\b"),
              ("senior", r"\b(senior|sr)\b"),
-             ("junior", r"\b(junior|jr|entry[ -]level|graduate|new grad)\b"),
+             ("junior", r"\b(junior|jr|entry[ -]level|graduate|new grad|early[ -]career)\b"),
+             # 'Associate Software Engineer' starts a career; 'Associate General Counsel' / '... Director' do not
+             ("junior", r"^associate (software|data|product|project|program|qa|test|web|frontend|backend|full[ -]?stack|"
+                        r"machine learning|ml|ai|cloud|devops|it|systems?|analyst|engineer|developer|designer|scientist|"
+                        r"consultant|accountant|marketing|research)"),
              ("mid", r"\b(mid[ -]?level|intermediate)\b")]
+# 'Engineer II', 'Analyst 3': a level number after the role (never a support 'Tier III', never 'I'm', never '2+ days')
+# a Roman level may come before '(', '-', '/' ('Engineer III (Backend)', 'I/II'); a digit only at the end or before a comma
+# ('Cashier 2 - Night' is a shift name, '(1-2 yrs)' a range); never after 'Tier' / 'Shift', '$', '(' or another number
+_LEVEL_NUM = re.compile(r"(?<!tier )(?<!shift )(?<![$\d.,/(])\b(?:(iv|iii|ii|i)(?=\s*(?:$|[()/|:–—-]|,(?!\d)))"
+                        r"|([1-4])(?=\s*(?:$|,(?!\d))))")
+_NUM_LEVEL = {"i": "junior", "1": "junior", "ii": "mid", "2": "mid", "iii": "senior", "3": "senior", "iv": "staff", "4": "staff"}
 
 
 def seniority_of(title) -> str:
     """Level read off the title, first match wins (a 'Senior Engineering Manager' is a manager); no marker is 'mid'.
     ponytail: title regex only; 'Product Manager' and friends stay individual contributors."""
     t = " ".join(str(title or "").casefold().replace(".", " ").split())
-    return next((lvl for lvl, rx in _LEVEL_RX if re.search(rx, t)), "mid")
+    if found := next((lvl for lvl, rx in _LEVEL_RX if re.search(rx, t)), None):
+        return found
+    m = _LEVEL_NUM.search(t)
+    return _NUM_LEVEL[m[1] or m[2]] if m else "mid"
 
 
-def clean_filters(location="", min_salary=None, posted_within=None, seniority="") -> dict:
-    """Search filters, validated (web, CLI and saved searches all pass through here). Empty values drop out."""
+def clean_filters(location="", min_salary=None, posted_within=None, seniority="", radius=None) -> dict:
+    """Search filters, validated (web, CLI and saved searches all pass through here). Empty values drop out. radius:
+    miles around the place, for the boards that search near one (LOCAL)."""
     out, loc, lvl = {}, " ".join(str(location or "").split()), str(seniority or "").strip().lower()
+    if radius not in (None, ""):
+        try:
+            r = int(str(radius).strip())
+        except ValueError:
+            raise SystemExit(f"radius must be a whole number of miles: {str(radius)[:40]}") from None
+        if not 1 <= r <= 200:
+            raise SystemExit("radius must be between 1 and 200 miles")
+        out["radius"] = r
     if loc:
         if len(loc) > 80:
             raise SystemExit("location filter: at most 80 characters")
@@ -1157,6 +1273,24 @@ def place_ok(place: str, where: str) -> bool:
     return not (len(parts) > 1 and parts[1] in _REGIONS and named and parts[1] not in named)
 
 
+_QUALIFIER = re.compile(r"\([^)]*\)|\[[^\]]*\]|\s[-–—|:]\s.*$|,.*$")
+_LEVEL_WORDS = re.compile(r"(?i)\b(?:working student|student|internship|intern|trainee|apprentice|junior|jr|senior|sr|"
+                          r"entry[- ]level)\b\.?")
+
+
+def search_titles(titles) -> list[str]:
+    """Resume job titles as board searches: the bracketed or dashed specialty goes ('Software Engineer (Frontend /
+    Full-Stack)' -> 'Software Engineer': boards match keywords, and that exact wording is in almost no posting), level
+    words go (the seniority filter carries the level), each title once. Lead / staff / manager stay: they change the role.
+    ponytail: the specialty is dropped, not searched; Target roles (Jobs > Search profile) say exactly what to search."""
+    out: dict[str, str] = {}
+    for t in titles:
+        t = " ".join(_LEVEL_WORDS.sub(" ", _QUALIFIER.sub(" ", str(t or ""))).split()).strip(" -/&,")
+        if t:
+            out.setdefault(t.casefold(), t)
+    return list(out.values())
+
+
 def defaults() -> dict:
     """What the Jobs tab starts from, from your profile: the roles (Preferences > Target roles, else your latest job
     titles) and the place (Preferences > Locations / remote, else your profile's location). {} parts when unset."""
@@ -1167,14 +1301,31 @@ def defaults() -> dict:
     roles, src = _split(profile.pref_field("Target roles", pt)), "Preferences"
     doc = profile.structured(employer=False) if not roles or not profile.pref_field("Locations / remote", pt) else None
     if not roles:
-        roles = list(dict.fromkeys(t for e in doc["experience"][:4] if (t := " ".join(str(e.get("title") or "").split()))))
+        roles = search_titles(e.get("title") for e in doc["experience"][:4])
         src = "your resume" if roles else ""
     loc = profile.pref_field("Locations / remote", pt) or profile.pref_field("Locations", pt)
     mine = str((doc or {}).get("contact", {}).get("location") or "")
     loc_src = "Preferences" if loc else "your profile" if mine else ""
     loc = re.sub(r"(?i)\s*[,;/]\s*(remote|anywhere)\b", r" or \1", loc or mine)
+    level, level_src = settings.pref("target_seniority") or "", "Preferences"
+    if not level and (yrs := _years()) is not None:
+        from .fit import _level_of_years
+
+        level, level_src = _level_of_years(yrs), f"your experience ({yrs:g} years)"
     return {"roles": roles[:5], "query": ", ".join(roles[:3]), "roles_from": src, "location": loc.strip()[:80],
-            "location_from": loc_src}
+            "location_from": loc_src, "seniority": level, "seniority_from": level_src if level else ""}
+
+
+def _years() -> float | None:
+    """Years of experience the way the fit score reads them: Preferences years_experience, else your dated roles."""
+    from . import profile
+    from .fit import years_from
+
+    try:
+        y = float(settings.pref("years_experience") or 0) or years_from(profile.structured(employer=False)["experience"])
+    except (Exception, SystemExit):
+        return None
+    return None if y is None else round(y, 1)
 
 
 def _prefs_list(key) -> list[str]:
@@ -1192,20 +1343,26 @@ def refine(listings: list[dict], keywords: str = "", today: date | None = None, 
     bad_co = {norm_company(c) for c in _prefs_list("excluded_companies")}
     bad_words = [norm_title(w) for w in _prefs_list("excluded_title_words")]
     alts = _loc_alts(f.get("location", ""))
-    places = [a for a in alts if a != "remote"]
+    places = [a for a in alts if not _remote(a)]
+    regions = None if "remote" in alts else [a[7:] for a in alts if a.startswith("remote:")]  # None: remote anywhere
+    near = _where(f.get("location", ""))  # an untagged LOCAL listing (no "near" from search) counts as near the first place
     out = []
     for j in listings:
         title = norm_title(j["title"])
-        if kws and not any(k in f"{j['title']} {j['desc']}".lower() for k in kws):
+        if kws and not any(_has_all(k.split(), f"{j['title']} {j['desc']}") for k in kws):  # whole words: 'git' never 'digital'
             continue
         if norm_company(j["company"]) in bad_co or any(re.search(rf"(?<!\S){re.escape(w)}(?!\S)", title) for w in bad_words if w):
             continue
         if alts:
             text, kind = j["location"].strip(), None
-            if "remote" in alts:
+            if any(_remote(a) for a in alts):
                 kind = "remote" if j["source"] in db.REMOTE_BOARDS else db.remote_kind(f"{j['location']}\n{j['desc'][:1500]}")
-            if kind == "remote" or (text and any(place_ok(p, text) for p in places)):
-                pass
+                if kind == "remote" and regions and not any(remote_region_ok(r, text) for r in regions):
+                    kind = "elsewhere"  # remote, but only for another region
+            if kind == "remote":
+                j["place"] = "remote"
+            elif p := next((p for p in places if _place_match(p, j, text, j.get("near", near))), None):
+                j["place"] = p  # which of your places it matched (the page groups results by it)
             elif not text and kind is None:
                 j["location_unknown"] = True
             else:

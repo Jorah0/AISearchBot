@@ -39,3 +39,21 @@ tests/e2e/_artifacts/
 .coverage
 .coverage.*
 htmlcov/
+
+# Android build (pass 55)
+android/.gradle/
+android/local.properties
+android/app/build/
+android/lodestar.apk
+android/lodestar.version.json
+
+# golden-task eval run results (pass 56)
+evals/reports/
+.verify/
+
+# --- editor / tool caches (added 2026-11-24; never test_*: it hides new test files) ---
+node_modules/
+npm-debug.log
+*.tmp
+*.temp
+*~

@@ -48,8 +48,7 @@ def _co(job) -> str:
     return norm_company(job["company"])
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+_now = db._now  # one home (pass 31): UTC, like the database's datetime('now')
 
 
 def _age(ts) -> float:

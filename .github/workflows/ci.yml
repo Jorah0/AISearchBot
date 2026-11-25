@@ -11,10 +11,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "${{ matrix.python }}" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
       - run: pip install -e . pyflakes
-      - run: python -m pyflakes lodestar tests
-      - run: python -W ignore::ResourceWarning -m unittest discover -s tests -v
-      - run: node --check lodestar/static/app.js
+      - run: python scripts/verify.py  # the one verify command: lint, secret scan, JS syntax, extension + unit tests
   e2e:
     runs-on: ubuntu-latest
     steps:
@@ -23,7 +23,10 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install -e .[e2e]
       - run: python -m playwright install --with-deps chromium
-      - run: python -m unittest discover -s tests/e2e -p "e2e_*.py" -v
+      - run: |  # a run where every test skipped itself (no browser) is a failure, not a green build
+          python -m unittest discover -s tests/e2e -p "e2e_*.py" -v 2>&1 | tee e2e.log
+          python -c "import sys; sys.path.insert(0, 'scripts'); import verify; w = verify.nothing_ran(open('e2e.log', encoding='utf-8').read()); print(w or 'browser tests ran'); sys.exit(1 if w else 0)"
+        shell: bash
         env: { LODESTAR_E2E_BROWSER: chromium }
       - if: failure()
         uses: actions/upload-artifact@v4

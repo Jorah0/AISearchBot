@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -87,7 +88,7 @@ class Base(unittest.TestCase):
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(text, encoding="utf-8", newline="\n")
         git(self.dev, "add", "-A")
-        git(self.dev, "commit", "-q", "-m", msg)
+        git(self.dev, "commit", "-q", "-m", msg, "-m", f"Release-Id: {uuid.uuid4().hex}")  # unique within a second
         if push:
             git(self.dev, "push", "-q", "origin", "main")
         return git(self.dev, "rev-parse", "HEAD")

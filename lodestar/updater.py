@@ -23,6 +23,7 @@ from pathlib import Path
 
 from . import __version__, db, settings
 from .config import HOME
+from .util import NO_WINDOW
 
 ROOT = Path(__file__).resolve().parent.parent  # the install: a git checkout for install.ps1 / editable installs
 LOG = HOME / "update-log.jsonl"
@@ -130,7 +131,7 @@ def _git(repo: Path, *args, timeout: int = 120) -> str:
     env = os.environ | {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
     try:
         r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=timeout, env=env,
-                           encoding="utf-8", errors="replace")
+                           encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     except FileNotFoundError:
         raise SystemExit("git is not installed or not on PATH") from None
     except subprocess.TimeoutExpired:
@@ -298,7 +299,7 @@ def check(repo: Path = ROOT, record: bool = True) -> dict:
 def _kill_tree(p: subprocess.Popen) -> None:
     try:
         if os.name == "nt":
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True, timeout=60)
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True, timeout=60, creationflags=NO_WINDOW)
         else:
             os.killpg(p.pid, signal.SIGKILL)
     except (OSError, subprocess.SubprocessError):
@@ -313,7 +314,8 @@ def _kill_tree(p: subprocess.Popen) -> None:
 def _proc(cmd: list, cwd: Path, timeout: int, env: dict | None = None) -> tuple[int, str, str]:
     """(exit code, stdout, stderr). Output goes to temp files, not pipes, so a helper process a test leaves running
     cannot hold the wait open; on a timeout the whole process tree is killed."""
-    group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+    group = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | NO_WINDOW} if os.name == "nt"
+             else {"start_new_session": True})  # no console window behind the desktop app (git, the gate, headless Edge)
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         p = subprocess.Popen(cmd, cwd=str(cwd), stdin=subprocess.DEVNULL, stdout=out, stderr=err, env=env, **group)
         try:
@@ -344,12 +346,16 @@ def _pip(repo: Path) -> None:
 def _gate(repo: Path) -> None:
     """The new code must pass its own offline unit suite (on a throwaway data folder, never yours) and `lodestar
     doctor` must run to its verdict. Raises SystemExit with the failure."""
-    env = os.environ | {"PYTHONDONTWRITEBYTECODE": "1"}  # no __pycache__ left behind to make the tree look dirty
-    if (repo / "tests").is_dir():
-        with tempfile.TemporaryDirectory(prefix="lodestar-update-gate-", ignore_cleanup_errors=True) as home:
-            _run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], repo, GATE_TIMEOUT,
-                 env | {"LODESTAR_HOME": home, "LODESTAR_VAULT_SERVICE": ""})  # "": the temp home's own keyring namespace
-    _, out, err = _proc([sys.executable, "-m", "lodestar", "doctor"], repo, 300, env)
+    import re
+
+    # code not yet trusted: no secret-named variables from this process, and (below) never your data folder or keyring
+    env = {k: v for k, v in os.environ.items() if not re.search(r"KEY|TOKEN|SECRET|PASS|PWD|CREDENTIAL|AUTH|COOKIE", k, re.I)}
+    env |= {"PYTHONDONTWRITEBYTECODE": "1"}  # no __pycache__ left behind to make the tree look dirty
+    with tempfile.TemporaryDirectory(prefix="lodestar-update-gate-", ignore_cleanup_errors=True) as home:
+        env |= {"LODESTAR_HOME": home, "LODESTAR_VAULT_SERVICE": ""}  # "": the temp home's own keyring namespace
+        if (repo / "tests").is_dir():
+            _run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], repo, GATE_TIMEOUT, env)
+        _, out, err = _proc([sys.executable, "-m", "lodestar", "doctor"], repo, 300, env)
     last = (out.strip().splitlines() or [""])[-1]
     if last not in ("all good", "usable; see WARN lines", "something is broken; see FAIL lines"):  # it crashed
         raise SystemExit(f"lodestar doctor did not finish: {(err.strip().splitlines() or [last])[-1][:300]}")

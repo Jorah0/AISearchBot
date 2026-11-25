@@ -272,7 +272,7 @@ class AccountFlows(E2ETestCase):
 
 
 class AccountsPanel(E2ETestCase):
-    """Setup > Site accounts: list, search, copy, reveal, change password, inbox switch, reset, re-login, remove, save a
+    """Accounts > Site accounts: list, search, copy, reveal, change password, inbox switch, reset, re-login, remove, save a
     login, create; waiting steps with Fill code and Continue; every page string escaped."""
 
     @classmethod
@@ -295,7 +295,7 @@ class AccountsPanel(E2ETestCase):
         old = apply_agent.login_window
         apply_agent.login_window = lambda url=None: self.calls.append(("window", url)) or {"opened": True, "url": url}
         self.addCleanup(setattr, apply_agent, "login_window", old)
-        self.go("setup")
+        self.go("accounts")
         self.page.wait_for_selector("#acctList .acct")
 
     def row(self, site):
@@ -362,7 +362,7 @@ class AccountsPanel(E2ETestCase):
         self.assertTrue(settings.pref("accounts_auto_create"))
         self.assertIn("finishes sign-ups", self.page.text_content("#acctGenState"))
         self.answer(True)
-        self.run_click("#acctGen >> text=Clear")
+        self.run_click(self.page.locator("#acctGen").get_by_role("button", name="Clear"))  # the help text says "auto-cleared"
         self.assertIsNone(vault.get(accounts.GENERAL))
         self.assertEqual(self.page.text_content("#acctGenState"), "(not set)")
 

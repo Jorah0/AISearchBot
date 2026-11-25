@@ -7,7 +7,7 @@ Candidate-only: never in employer text, never in a pipeline stage output, never 
 import json
 from datetime import datetime, timedelta, timezone
 
-from . import db, interview
+from . import db, interview, util
 from .interview import COMPETENCIES
 
 RV = 1  # the formula's version: a change restarts the record (old scores meant something else)
@@ -30,7 +30,7 @@ def quality(r: dict) -> int:
 def _local(ts: str) -> str:
     """A UTC session time (datetime('now')) as local ISO text, comparable with a card's own local `ts`."""
     try:
-        return datetime.fromisoformat(ts).replace(tzinfo=timezone.utc).astimezone().replace(tzinfo=None).isoformat(timespec="seconds")
+        return util.utc_to_local(ts).isoformat(timespec="seconds")
     except (TypeError, ValueError):
         return ""
 

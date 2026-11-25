@@ -1,0 +1,8 @@
+#!/bin/sh
+# Rebuild dist/lodestar.exe in the background after a commit (and, through post-merge, a pull), only where an exe was
+# built (install.ps1 -Exe). scripts/build_exe.ps1 skips it when nothing the exe bundles changed. Log: build/exe-build.log
+[ -f dist/lodestar.exe ] || exit 0
+command -v powershell.exe >/dev/null 2>&1 || exit 0
+mkdir -p build
+(powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File scripts/build_exe.ps1 </dev/null >>build/exe-build.log 2>&1 &)
+exit 0

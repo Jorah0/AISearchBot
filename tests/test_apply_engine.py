@@ -86,6 +86,18 @@ class FakeTab:
     def blocker(self):
         return "code" if self.code else self.page().get("blocker")
 
+    def solved(self):
+        return self.page().get("blocker") != "captcha"
+
+    def captcha(self):
+        return None  # the test fakes have no real widget: the solver is unavailable → the old handoff
+
+    def captcha_do(self, kind, answer):
+        pass
+
+    def captcha_solved(self):
+        return self.page().get("blocker") != "captcha"
+
     def errors(self):
         if self.page().get("errors_once") and self.n not in self.errored:
             self.errored.add(self.n)
@@ -613,6 +625,29 @@ class Runs(Base):
 
 
 class Surfaces(Base):
+    def test_visible_captcha_widgets_are_handed_to_you(self):
+        """The browser detects challenge widgets; the agent only performs the existing human handoff."""
+        self.assertIn('recaptcha/api2/anchor', apply_ats.CHALLENGE)
+        self.assertIn('hcaptcha.com', apply_ats.CHALLENGE)
+        self.assertIn('challenges.cloudflare.com', apply_ats.CHALLENGE)
+        self.assertIn('arkoselabs.com', apply_ats.CHALLENGE)
+
+        class Challenge:
+            def is_visible(self):
+                return True
+
+            def bounding_box(self):
+                return {"width": 320, "height": 80}
+
+        class Locator:
+            def all(self):
+                return [Challenge()]
+
+        tab = apply_ats.Tab.__new__(apply_ats.Tab)
+        tab.page = type("P", (), {"locator": lambda s, selector: Locator()})()
+        tab._allowed_frames = lambda: []
+        self.assertEqual(tab.blocker(), "captcha")
+
     def test_no_evasion_and_no_password_path(self):
         for f in ("apply_agent.py", "apply_ats.py"):
             src = (Path(apply_agent.__file__).parent / f).read_text(encoding="utf-8")

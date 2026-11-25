@@ -66,6 +66,31 @@ def app_dir(job) -> Path:
     return d
 
 
+SUBMITTED = ("resume.md", "resume.docx", "resume.pdf", "cover_letter.md", "cover_letter.docx", "cover_letter.pdf",
+             "form_answers.md")
+
+
+def snapshot_submitted(job) -> Path | None:
+    """Copy the employer-facing documents of an application into its submitted/ folder with a sha256 manifest, once:
+    what was sent stays as it was when you edit the working copies later (blueprint 8.6). None when already taken."""
+    import hashlib
+    from datetime import datetime
+
+    d = app_dir(job)
+    sub = d / "submitted"
+    if (sub / "manifest.json").is_file():
+        return None
+    sub.mkdir(exist_ok=True)
+    files = {}
+    for name in SUBMITTED:
+        if (d / name).is_file():
+            shutil.copy2(d / name, sub / name)
+            files[name] = hashlib.sha256((sub / name).read_bytes()).hexdigest()
+    (sub / "manifest.json").write_text(json.dumps({"job_id": job["id"], "at": datetime.now().isoformat(timespec="seconds"),
+                                                   "files": files}, indent=1), encoding="utf-8")
+    return sub
+
+
 def write_doc(path: Path, text: str) -> Path:
     """Write a generated per-job document. A previous version that differs (possibly hand-edited) moves to history/."""
     from datetime import datetime
@@ -147,6 +172,8 @@ def coverage(job, text: str | None = None, save: bool = True) -> dict:
     from . import ats
 
     cov = ats.match(_current_resume(job) if text is None else text, _jd(job), job["title"], db.ats_skip(job), job["company"])
+    jd_ = dict(job)
+    cov |= {"target": ats.TARGET, "ats": ats.ats_info(jd_.get("apply_url") or jd_.get("url"))}  # pass 53: the match report
     if save:
         d = app_dir(job)
         (d / "coverage.json").write_text(json.dumps(cov, indent=2), encoding="utf-8")
@@ -544,7 +571,9 @@ def cover_letter(job, use_council: bool = False, provider: str | None = None, to
     from .drafts import leaks, screen
 
     d = app_dir(job)
-    research = (d / "research.md").read_text(encoding="utf-8-sig")[:2500] if (d / "research.md").is_file() else ""
+    from .extras import research_for_prompts
+
+    research = research_for_prompts(job)  # never a line the research marked (unverified)
     gapj = json.loads((d / "gap.json").read_text(encoding="utf-8")) if (d / "gap.json").is_file() else {}
     # the gap check is a private judgement (it weighs pay against the floor): only its items that name no floor go in
     gapj = {k: [x for x in v if not leaks(str(x))] if isinstance(v := gapj.get(k), list) else (None if leaks(str(v or "")) else v)

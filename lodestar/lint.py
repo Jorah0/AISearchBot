@@ -231,7 +231,9 @@ def audit(data: bytes, filename: str) -> dict:
         if (imgs := len(re.findall(rb"/Subtype\s*/Image", data))):
             add("low", "images", f"{imgs} image(s)", "Images carry no readable text: keep anything important as text.")
         try:
-            text = import_document(data, filename)
+            from .extras import pdf_text
+
+            text = pdf_text(data)  # the raw layer: a scan is this check's finding, not an import refusal
         except SystemExit as e:  # pypdf is optional: the size, name and image checks still run without it
             note += f" Text checks skipped: {e}"
         except Exception as e:  # a PDF pypdf cannot open will trip parsers too

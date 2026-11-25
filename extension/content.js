@@ -98,7 +98,6 @@
   // opts.agent: the apply agent (lodestar/apply_ats.py, its own window, never the extension): checkboxes and every file
   // input too, each element tagged data-lodestar-i so Lodestar finds it again, plus required / value / help
   globalThis.LodestarScan = (opts) => {
-    if (M.linkedin(location.hostname)) return { error: M.LINKEDIN, fields: [], questions: [], atsFrames: [] };
     const agent = Boolean(opts && opts.agent);
     if (agent) for (const el of walk(document)) el.removeAttribute("data-lodestar-i");  // a new step: fresh numbers only
     const heads = [...document.querySelectorAll('h1, h2, h3, h4, h5, h6, legend, [role="heading"]')];
@@ -165,14 +164,63 @@
     };
   }
 
+  function applyLinks() {  // the posting's own 'apply' links; a board's redirect gives its url= target (read, never opened)
+    const out = [];
+    for (const a of document.querySelectorAll("a[href]")) {
+      if (!/apply/i.test(`${a.innerText || ""} ${a.getAttribute("aria-label") || ""}`)) continue;
+      let href = a.href;
+      try {
+        const u = new URL(href);
+        for (const k of ["url", "dest", "destination", "target", "redirect", "u"]) {
+          const v = u.searchParams.get(k);
+          if (v && /^https?:\/\//i.test(v)) { href = v; break; }
+        }
+      } catch (e) { continue; }
+      if (/^https?:\/\//i.test(href) && !out.includes(href)) out.push(href.slice(0, 2048));
+      if (out.length >= 20) break;
+    }
+    return out;
+  }
+
   globalThis.LodestarReadPosting = () => {
-    if (M.linkedin(location.hostname)) return { error: M.LINKEDIN };
     const sel = String(getSelection() || "");
     const main = document.querySelector("main") || document.querySelector("article") || document.body;
     return {
       title: document.title, url: location.href.split("#")[0],
-      desc: (sel.length > 200 ? sel : main ? main.innerText : "").slice(0, 12000), posting: jsonLd(),
+      desc: (sel.length > 200 ? sel : main ? main.innerText : "").slice(0, 12000), posting: jsonLd(), apply_links: applyLinks(),
     };
+  };
+
+  // ---- keyword marks (pass 53): on your click only; visual, never a click or an input change
+  globalThis.LodestarMark = (missing, matched) => {
+    document.querySelectorAll("mark[data-lodestar]").forEach((m) => m.replaceWith(document.createTextNode(m.textContent)));
+    const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const terms = [...(missing || []).map((t) => [t, true]), ...(matched || []).map((t) => [t, false])].filter(([t]) => t && t.length > 1);
+    if (!terms.length) return 0;
+    const kind = new Map(terms.map(([t, m]) => [t.toLowerCase(), m]));
+    const src = `(?<![\\w+#])(${terms.map(([t]) => esc(t)).sort((a, b) => b.length - a.length).join("|")})(?![\\w+#])`;
+    const rx = new RegExp(src, "gi"), has = new RegExp(src, "i");  // has: no /g state between nodes
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, { acceptNode: (n) =>
+      n.parentElement && !n.parentElement.closest("script, style, textarea, input, select, mark, [contenteditable]") && has.test(n.data)
+        ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT });
+    const nodes = []; let n, count = 0;
+    while ((n = walk.nextNode()) && nodes.length < 400) nodes.push(n);
+    for (const node of nodes) {
+      const frag = document.createDocumentFragment(); let last = 0; rx.lastIndex = 0;
+      for (const m of node.data.matchAll(rx)) {
+        frag.append(node.data.slice(last, m.index));
+        const mk = document.createElement("mark");
+        mk.dataset.lodestar = "1";
+        mk.textContent = m[0];
+        const miss = kind.get(m[0].toLowerCase());
+        mk.style.cssText = miss === false ? "background:#bbf7d0;color:#111" : "background:#fde68a;color:#111";
+        mk.title = miss === false ? "in your resume" : "missing from your resume";
+        frag.append(mk); last = m.index + m[0].length; count++;
+      }
+      frag.append(node.data.slice(last));
+      node.replaceWith(frag);
+    }
+    return count;
   };
 
   // ---- fill
@@ -199,8 +247,11 @@
     else if (k === "salary") { v = data.salary; kind = "answer"; }
     else if (k === "question") {
       const a = (data.answers || {})[f.d.label];
-      if (!a) return null;
-      return { value: String(a.answer || ""), kind: "answer", note: a.match === "suggested" ? `answer "${a.question}" (check)` : "" };
+      const gap = (data.missing || {})[f.d.label];
+      if (!a) return gap ? { needs: `the AI needs a fact first: ${gap}` } : null;
+      const note = a.match === "suggested" ? `answer "${a.question}" (check)` : a.match === "ai"
+        ? `AI draft${a.check === "agreed" ? ", cross-checked: all AIs agree" : a.check === "disagreed" ? ", AIs disagree" : ""}: check this` : "";
+      return { value: String(a.answer || ""), kind: "answer", note, ai: a.match === "ai" };
     } else if (k.startsWith("exp.") || k.startsWith("edu.")) {
       const [kindKey, field] = k.split(".");
       const row = (data[kindKey === "exp" ? "experience" : "education"] || [])[+(f.d.group || ":0").split(":")[1]];
@@ -227,13 +278,14 @@
 
   globalThis.LodestarFill = (data) => {
     const rows = [], needs = [];
-    let filled = 0, suggested = 0;
+    let filled = 0, suggested = 0, drafted = 0;
     const need = (f, hint) => { needs.push({ label: f.d.label || f.d.name || f.d.id, hint }); rows.push({ text: `${f.d.label || f.d.name}: ${hint} (needs you)` }); };
     for (const f of st.fields) {
       if (!f.el.isConnected) continue;
       if (f.key === "resume") { need(f, `upload ${data.job && data.job.resume ? data.job.resume : "your resume"}`); continue; }
       const w = wanted(f, data || {});
       if (!w) continue;
+      if (w.needs) { need(f, w.needs); continue; }
       let value = w.value;
       if (/\.(start|end)$/.test(f.key)) {
         const t = dateText(f, value);
@@ -255,11 +307,11 @@
       setValue(f.el, value);
       f.el.style.outline = w.kind === "answer" ? AMBER : BLUE;
       st.done.set(f.el, { prev, value: f.el.value, outline });
-      if (w.kind === "answer") suggested++; else filled++;
+      if (w.ai) drafted++; else if (w.kind === "answer") suggested++; else filled++;
       rows.push({ el: f.el, label: f.d.label || f.d.name, text: `${f.d.label || f.d.name} <- ${w.note || value.slice(0, 60)}` });
     }
     panel(rows);
-    return { filled, suggested, needsYou: needs };
+    return { filled, suggested, drafted, needsYou: needs };
   };
 
   function undo(el) {  // only while the field still holds what we typed: an edit of yours is never undone

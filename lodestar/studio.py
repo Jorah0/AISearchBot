@@ -542,6 +542,60 @@ def _bullets(rid: str, kind: str, e: dict, raw: list, refs: dict, facts: str, jd
     return list(dict.fromkeys(out))
 
 
+def _claims(x):
+    """Every dict in a plan that cites facts (a bullet, the summary): walked, whatever the nesting."""
+    if isinstance(x, dict):
+        if x.get("refs"):
+            yield x
+        for v in x.values():
+            yield from _claims(v)
+    elif isinstance(x, list):
+        for v in x:
+            yield from _claims(v)
+
+
+def _cited(x) -> list[str]:
+    out: list[str] = []
+    if isinstance(x, dict):
+        out += _refs(x.get("refs")) + _refs([x["ref"]] if isinstance(x.get("ref"), str) else [])
+        for v in x.values():
+            out += _cited(v)
+    elif isinstance(x, list):
+        for v in x:
+            out += _cited(v)
+    return out
+
+
+def cited_sources(plan: dict, doc: dict) -> dict:
+    """{fact id: its text} for every fact the plan cites, as it was when the version was built (blueprint 8.5)."""
+    texts = ref_texts(doc)
+    return {r: texts[r] for r in dict.fromkeys(_cited(plan)) if r in texts}
+
+
+def claim_diff(meta: dict) -> list[dict]:
+    """A version's claims beside the facts they cite (blueprint 8.5): {ref, before, after, change, why}; change is
+    verbatim, rewritten (passed check_rewrite) or reverted (the guard put the fact back, with its reason)."""
+    src = meta.get("sources") or {}
+    reverted = {}
+    for e in meta.get("events") or []:
+        if m := re.match(r"([\w.]+): reverted \((.*)\)$", str(e)):
+            reverted[m[1]] = m[2]
+    out = []
+    for c in _claims(meta.get("plan") or {}):
+        refs = _refs(c.get("refs"))
+        if not refs:
+            continue
+        before, text = " / ".join(src.get(r, "") for r in refs).strip(" /"), _text(c.get("text"), 400)
+        if refs[0] in reverted:
+            out.append({"ref": refs[0], "before": before, "after": before, "change": "reverted", "why": reverted[refs[0]]})
+        elif not text or text == before:
+            out.append({"ref": refs[0], "before": before, "after": before, "change": "verbatim", "why": ""})
+        else:
+            out.append({"ref": refs[0], "before": before, "after": text, "change": "rewritten",
+                        "why": "checked against the cited facts (no new numbers, names or scope)"})
+    return out
+
+
 def default_plan(doc: dict, req: dict | None = None) -> dict:
     """The offline plan (no AI): the requested sections in order with every master entry (on-file ones only when
     asked), bullets as written. resolve applies drop / since / bullets_per_role; the page limit applies trim."""
@@ -704,7 +758,8 @@ def build(request: str = "", req: dict | None = None, job_id=None, jd: str | Non
                  "notes": notes + look_notes + ([_text(plan.get("notes"), 600)] if want_ai and plan.get("notes") else []),
                  "warnings": out["warnings"], "lint": lint.lint(out["md"])["issues"][:20], "audit": out["audit"],
                  "pages": out["pages"], "engine": out["engine"], "coverage": cover, "files": out["files"],
-                 "doc": out["doc"]}  # the resolved document: the viewer re-renders it in another look
+                 "doc": out["doc"],  # the resolved document: the viewer re-renders it in another look
+                 "sources": cited_sources(plan, doc)}  # pass 27: each cited fact as it was, for the claim diff
         (vdir / "plan.json").write_text(json.dumps(meta_, indent=2, ensure_ascii=False), encoding="utf-8")
     except BaseException:
         shutil.rmtree(vdir, ignore_errors=True)  # a refused or failed build leaves no version behind

@@ -19,6 +19,17 @@ one write path).
 | review | Screenshots and every field go to the Inbox (`submit_application`). After you approve, the agent re-reads the form (a change you made in the window is proposed again), ticks the consent boxes your approval covered, clicks Submit once, and on the confirmation page the job moves to applied with the evidence |
 | auto | Off by default. Needs the `apply_agent` tool on auto, the ATS on your list (`apply_agent_auto_ats`, empty by default), fit >= `apply_agent_min_fit`, under `apply_agent_daily_cap` today, and 2 applications you approved that went through on that ATS. Any flag, consent box, AI-written value, host you added or form error at the last page sends it to review |
 
+**Limited daily applying.** Every run the agent starts counts against its site for the day: the application system
+(Greenhouse, Lever, Workday...) or the company's own site (`apply_agent_site_daily_cap`, default 3). A role is applied
+for once: before queueing and again right before Submit, the agent refuses a job that is a copy of one already applied
+for or in a run (the same link, tracking parameters ignored, or the same company and title at the same place). A copy matched by
+company and title goes to the AI (Autopilot within its AI budget, or Check with AI on the blocked step): a different
+role lifts the block; the same opening or a similar one keeps it, with the AI's reason. A shared link is one posting
+and never needs the AI.
+With `autopilot_apply` on (off by default) Autopilot starts the agent for jobs whose resume, letter and answers are
+ready, best fit first, skipping fit-gated jobs and jobs without an application link, at most `autopilot_apply_daily`
+runs a day. The mode above still decides who presses Submit.
+
 A link that is not on a known application system (Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Workday, iCIMS,
 Taleo) runs in stop mode only. Bulk and the pipeline's Apply step use your default mode.
 
@@ -44,10 +55,11 @@ dates of birth, bank details and passwords are never filled. The resume is uploa
 
 ## Handoffs
 
-A visible CAPTCHA or a code request stops the agent and brings the window to the front: do it there, then press
-Continue (`lodestar apply-agent continue RUN`). A sign-in page goes to your site account (below), else to you. The form
-filler never types into a password field and never touches a CAPTCHA. Nothing hides that the window is automated, so
-some sites may ask for an emailed code or file the application as spam.
+A visible CAPTCHA (including reCAPTCHA, hCaptcha, Turnstile and Arkose) or a code request stops the agent and brings
+the window to the front: do it there, then press Continue (`lodestar apply-agent continue RUN`). A sign-in page goes to
+your site account (below), else to you. The form filler never types into a password field, never touches a CAPTCHA and
+never masks automation. A job source that returns a CAPTCHA instead of its public API response is reported as unavailable;
+open it in your own browser and try again later. Some sites may ask for an emailed code or file the application as spam.
 
 ## Site accounts
 
@@ -133,3 +145,7 @@ encrypted by the OS for your account; on macOS / Linux they are protected only b
 ## Commands and routes
 
 See COMMANDS.md > Apply agent.
+
+## Importing logins from a password manager
+
+Accounts > Site accounts > Import logins from a password manager (or `lodestar accounts import FILE --yes [--delete]`) reads the CSV export of Chrome, Edge, Firefox, Bitwarden, 1Password, LastPass, Dashlane or KeePass. Only job-application sites are kept: application systems (Greenhouse, Lever, Ashby, Workday...) and the sites of jobs you track; never LinkedIn, Indeed, Glassdoor, ZipRecruiter or SimplyHired, never over an account already saved. You review the sites and usernames first; passwords are never shown. On Import each password goes only into the OS keyring (Windows Credential Manager, encrypted with your Windows sign-in); the database keeps the site and username. The apply agent types a password only into that site's own password field; no AI ever sees one. The export file is plain text: delete it afterwards.

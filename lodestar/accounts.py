@@ -6,13 +6,15 @@ keyring (vault name site:<host>) and comes back only on Reveal or to be typed in
 The rules:
 - Never for LinkedIn, Indeed, Glassdoor, ZipRecruiter or SimplyHired (apply_agent.forbidden).
 - Creating: the agent fills the sign-up form with your email and a password (saved first): your general login when you
-  set one (Setup > Site accounts), else a new strong one. Then it stops: you tick any terms box and press Create. Only
+  set one (Accounts > Site accounts), else a new strong one. Then it stops: you tick any terms box and press Create. Only
   when you turned on accounts_auto_create does it tick the terms / privacy box itself (never a marketing one), press
   Create and use your inbox's code or link for that site. A site that already knows your email: one sign-in try with
   your general password, else you sign in yourself.
 - Signing in: the username and password are typed only on the account's own host, the password only into a password
   field (Page.type). A password that failed or a locked account is never tried again by itself (no lockouts).
-- A CAPTCHA is always yours. Codes and verification links come from your connected inbox (codes.py): used when you click
+- A CAPTCHA on the way is cleared by the auto-solver (captcha.py) on its own with the local vision AI (Ollama first);
+  only when it can't (off, capped, or no local model) does it wait for you to solve it in the window. Codes and
+  verification links come from your connected inbox (codes.py): used when you click
   Fill code / Open link, or by themselves only on a site where you ticked that; a link opens only on the account's host.
 - Page text is untrusted: what to do is decided here from fixed patterns; nothing hides that the window is automated.
 """
@@ -55,20 +57,20 @@ EXISTS_RE = re.compile(r"already (?:have an account|registered|in use|exists)|ac
                        r"already|e-?mail (?:address )?(?:is )?already (?:registered|in use|taken)", re.I)
 HINT = {
     "captcha": "solve the check in the agent window, then press Continue",
-    "create": "Lodestar filled the sign-up form with your email and a new password (saved under Setup > Site accounts). "
+    "create": "Lodestar filled the sign-up form with your email and a new password (saved under Accounts > Site accounts). "
               "Tick the terms box if you agree, fill anything else it asks and press the Create button in the window. "
               "Already have an account on this site? Press 'I have an account' instead",
     "code": "type the code the site sent you (email, text or your authenticator app) in the agent window, or press Fill code "
-            "under Setup > Site accounts, then Continue",
-    "link": "open the verification link the site emailed you (Setup > Site accounts > Open link uses the agent's window), "
+            "under Accounts > Site accounts, then Continue",
+    "link": "open the verification link the site emailed you (Accounts > Site accounts > Open link uses the agent's window), "
             "then press Continue",
     "signin": "press Sign in in the agent window, then Continue",
     "exists": "this site already has an account for your email: sign in with it in the window, then press Continue "
-              "(Setup > Site accounts > Save login keeps that password for next time)",
-    "own": "sign in with your own account in the window, then press Continue (Setup > Site accounts > Save login keeps it)",
-    "failed": "the saved password did not work: reset it on the site (Setup > Site accounts > Reset password), store the "
+              "(Accounts > Site accounts > Save login keeps that password for next time)",
+    "own": "sign in with your own account in the window, then press Continue (Accounts > Site accounts > Save login keeps it)",
+    "failed": "the saved password did not work: reset it on the site (Accounts > Site accounts > Reset password), store the "
               "new one with Change password, then sign in in the window and press Continue",
-    "locked": "the site locked this account: unlock or reset it on the site (Setup > Site accounts > Reset password), "
+    "locked": "the site locked this account: unlock or reset it on the site (Accounts > Site accounts > Reset password), "
               "then sign in in the window and press Continue",
     "yours": "sign in (or create the account) in the agent window, then press Continue",
 }
@@ -222,8 +224,10 @@ def remove(aid) -> dict:
     vault.delete(_name(a["site"]))
     db.con().execute("DELETE FROM site_accounts WHERE id=?", (a["id"],))
     db.con().commit()
-    return {"removed": a["id"], "site": a["site"]}
+    from . import connections
 
+    connections.forget("sites", a["site"])  # the Accounts tab: no 'lost' line for an account you removed
+    return {"removed": a["id"], "site": a["site"]}
 
 def link_job(site: str, job_id: int) -> None:
     a = for_site(site)
@@ -240,12 +244,17 @@ def _mark(site: str, status: str, error=_KEEP, login: bool = False, reset=None) 
         {"last_login": db._now()} if login else {}) | ({"reset_url": reset} if reset else {})
     db.con().execute(f"UPDATE site_accounts SET {', '.join(k + '=?' for k in sets)} WHERE site=?", (*sets.values(), site))
     db.con().commit()
+    if login or status in ("failed", "locked"):  # the Accounts tab's history: signed in, or stopped working
+        from . import connections
+
+        connections.track("sites", site, "ok" if login and status == "active" else status,
+                          "" if error is _KEEP else str(error or ""))
 
 
 def _secret(a: dict) -> str:
     pw = vault.get(_name(a["site"]))
     if not pw:
-        raise SystemExit(f"the OS keyring has no password for {a['site']}: Setup > Site accounts > Change password")
+        raise SystemExit(f"the OS keyring has no password for {a['site']}: Accounts > Site accounts > Change password")
     return pw
 
 
@@ -359,6 +368,24 @@ class Page:
     def blocker(self):
         return self.tab.blocker()
 
+    def solved(self) -> bool:
+        return bool(getattr(self.tab, "solved", None) and self.tab.solved())
+
+    def captcha(self) -> dict | None:
+        """The challenge for the auto-solver (captcha.solve), or None (a fake tab without one)."""
+        if callable(getattr(self.tab, "captcha", None)):
+            try:
+                return self.tab.captcha()
+            except Exception:
+                return None
+        return None
+
+    def captcha_do(self, kind: str, answer) -> None:
+        self.tab.captcha_do(kind, answer)
+
+    def captcha_solved(self) -> bool:
+        return bool(self.tab.captcha_solved()) if hasattr(self.tab, "captcha_solved") else self.solved()
+
     def text(self) -> str:
         return self.tab.text()
 
@@ -434,6 +461,27 @@ def _serve(pg, key: str, acct: dict | None, last: list) -> str | None:
     return None
 
 
+def _captcha_first(pg) -> tuple[bool, str]:
+    """A CAPTCHA on the way: try the auto-solver (captcha.solve, the no-spam caps included) before handing it to you.
+    (True, '') when it cleared the check; (False, hint) when it is off, capped or failed (the hint ends in the
+    'solve the check in the agent window' line, so the handoff reads the same way)."""
+    from . import captcha
+
+    if not callable(getattr(pg, "captcha", None)):  # a page without the solver protocol (a test fake): the old handoff
+        return False, "solve the check in the agent window, then press Continue"
+    try:
+        r = captcha.solve(pg)
+    except Exception as e:
+        return False, f"the auto-solver could not run ({str(e)[:120]}): solve the check in the agent window, then Continue"
+    if r["result"] == "solved":
+        return True, ""
+    why = {"capped": "today's solve cap is reached so this one is yours",
+           "failed": f"the AI tried {max(1, r.get('attempts') or 1)} time(s) and the check is still pending",
+           "unavailable": "Lodestar does not drive this kind of check (or the solver is off)"}.get(r["result"],
+                                                                          "the auto-solver did not clear it")
+    return False, f"{why}; solve the check in the agent window, then press Continue"
+
+
 def _until(pg, key: str, acct: dict | None, done=None, out: dict | None = None):
     """The wait's test (called in the thread that owns the page, so it may act): your Continue, a request you made (Fill
     code, Open link, I have an account), an automatic one, or done()."""
@@ -469,8 +517,10 @@ def _after(pg, wait, key: str, acct: dict) -> tuple[str, str]:
         acct = for_site(pg.site) or acct
         t, b, ins = pg.text(), pg.blocker(), pg.inputs()
         if b == "captcha":
-            wait(_need("captcha", pg.site), _until(pg, key, acct))
-            continue
+            solved, why = _captcha_first(pg)  # the auto-solver cleared it, or hands it to you
+            if solved:
+                continue
+            return "yours", why
         if EXISTS_RE.search(t) and acct["status"] == "pending":
             return "exists", HINT["exists"]
         if LOCKED_RE.search(t):
@@ -570,7 +620,16 @@ def handle(pg, wait, key: str, job_id: int | None = None, create: bool = True) -
                 return "offsite", ""
             if forbidden(pg.site):
                 return "yours", HINT["yours"]
-            if pg.blocker() == "captcha":  # yours, before anything is typed
+            if pg.blocker() == "captcha":  # before anything is typed: the auto-solver first, then yours
+                from . import captcha
+
+                solved, why = _captcha_first(pg)
+                if solved:
+                    continue
+                if captcha.enabled() and callable(getattr(pg, "captcha", None)):
+                    # the solver ran and gave up (or the page is a kind it doesn't drive): yours
+                    return "yours", why
+                # a page without the captcha() protocol (a test fake): wait for you, as before
                 wait(_need("captcha", pg.site), _until(pg, key, for_site(pg.site)))
                 continue
             k, acct = kind(pg.inputs()), for_site(pg.site)

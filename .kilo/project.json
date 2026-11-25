@@ -1,0 +1,4 @@
+{
+  "name": "Lodestar",
+  "description": "Configuration for Lodestar job search automation tool to prevent context overflow issues"
+}

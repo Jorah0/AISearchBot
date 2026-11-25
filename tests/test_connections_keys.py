@@ -26,7 +26,7 @@ if "lodestar.config" not in sys.modules:  # same temp home as test_lodestar.py w
 
 from lodestar import ai, cli, connections, doctor, extras, mailconn, settings, util, vault  # noqa: E402
 
-KEY = "sk-ant-api03-SECRETSECRETSECRET"
+KEY = "sk-ant-api03-SECRETSECRETSECRET"  # secret-scan: fake
 PW = "abcdefghijklmnop"
 ENV = [e["key"] for e in connections.REGISTRY.values() if e["key"]] + [f"{n.upper()}_MODEL" for n in ai.PROVIDERS] + [
     "LODESTAR_PROVIDER", "LODESTAR_NO_STARTUP_CHECK", "EMAIL_PRESET", "IMAP_USER", "IMAP_PASS", *mailconn.KEYS.values()]

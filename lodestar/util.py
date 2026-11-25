@@ -1,6 +1,7 @@
 """Small helpers: HTTP fetch, HTML to text, JSON extraction, notifications."""
 import http.client
 import json
+import os
 import re
 import smtplib
 import urllib.request
@@ -10,11 +11,41 @@ from html.parser import HTMLParser
 
 from .config import ALERTS, full_ai_check, setting
 
+NO_WINDOW = getattr(__import__("subprocess"), "CREATE_NO_WINDOW", 0)  # helper programs never open a console window
+
 UA = "Mozilla/5.0 (compatible; lodestar/0.1; +https://github.com/)"
 MAIL_TIMEOUT = 60  # seconds per IMAP/SMTP socket operation: a server that accepts and goes quiet must not hang the loop
 
 
 _DTD_RE = re.compile(rb"<!(DOCTYPE|ENTITY)", re.I)
+_CAPTCHA_MARKER_RE = re.compile(r"""(?ix)
+    _cf_chl_
+    | (?:g-recaptcha|h-captcha|cf-turnstile)
+    | (?:recaptcha|hcaptcha|turnstile|arkoselabs|funcaptcha|geetest|friendlycaptcha)\.(?:com|net)
+""")
+_CAPTCHA_COPY_RE = re.compile(r"""(?ix)
+    \b(?:captcha|human[ -]verification|verify\s+(?:that\s+)?you(?:'re|\s+are)\s+human
+    |checking\s+(?:your\s+)?browser|unusual\s+traffic|security\s+check)\b
+""")
+CAPTCHA_REQUIRED = ("source requires a CAPTCHA; Lodestar cannot complete a CAPTCHA automatically. "
+                    "Open the source in your browser and try again later.")
+
+
+class CaptchaRequired(RuntimeError):
+    """A fetched public page is an anti-bot challenge, not the requested source response."""
+
+    def __init__(self):
+        super().__init__(CAPTCHA_REQUIRED)
+
+
+def is_captcha_challenge(text: str) -> bool:
+    """Whether a fetched HTML response is a human challenge instead of the requested public content.
+
+    Both a known provider marker and human-verification copy are required so an ordinary article merely mentioning a
+    provider is still readable. This is detection only: callers surface a clear stop and never retry or solve it.
+    """
+    raw = str(text or "")
+    return bool(_CAPTCHA_MARKER_RE.search(raw) and _CAPTCHA_COPY_RE.search(strip_html(raw)))
 
 
 def parse_xml(text):
@@ -162,7 +193,10 @@ def fetch(url: str, timeout: int = 25, headers: dict | None = None, max_bytes: i
                     raise ValueError(f"response from {shown[:80]} is larger than {cap / 1_000_000:g} MB")
                 if time.monotonic() > deadline:
                     raise ValueError(f"response from {shown[:80]} took longer than {timeout * 4} s")
-            return buf.decode(r.headers.get_content_charset() or "utf-8", errors="replace")
+            text = buf.decode(r.headers.get_content_charset() or "utf-8", errors="replace")
+            if is_captcha_challenge(text):
+                raise CaptchaRequired()
+            return text
     except Exception as e:  # urllib / http.client errors can quote the URL: scrub query values, keep the exception type
         if shown != url:
             e.args = tuple(a.replace(url, shown) if isinstance(a, str) else a for a in e.args)
@@ -177,7 +211,10 @@ def fetch(url: str, timeout: int = 25, headers: dict | None = None, max_bytes: i
 
 
 def fetch_json(url: str, **kw):
-    return json.loads(fetch(url, **kw))
+    text = fetch(url, **kw)
+    if is_captcha_challenge(text):  # also covers callers that substitute fetch() in a controlled test or integration
+        raise CaptchaRequired()
+    return json.loads(text)
 
 
 def origin(url: str) -> str:
@@ -285,6 +322,11 @@ def notify(msg: str) -> None:
     from .log import get
 
     get("alerts").info("%s", msg)
+    try:  # bounded: past 2 MB the file becomes alerts.log.1 (one old copy kept) and a new one starts
+        if ALERTS.is_file() and ALERTS.stat().st_size > 2_000_000:
+            os.replace(ALERTS, ALERTS.with_name(ALERTS.name + ".1"))
+    except OSError:
+        pass
     with ALERTS.open("a", encoding="utf-8") as f:
         f.write(line + "\n")
     to = setting("LODESTAR_NOTIFY_EMAIL")
@@ -294,6 +336,21 @@ def notify(msg: str) -> None:
         send_email(to, f"[lodestar] {(msg.strip().splitlines() or [''])[0][:60]}", msg)  # a header may not hold a newline
     except Exception as e:  # ponytail: notification failure must never kill the watch loop
         print(f"  (email notify failed: {e})")
+
+
+def tail_lines(path, n: int = 30, chunk: int = 65536) -> list[str]:
+    """The last n lines of a text file, reading only its last `chunk` bytes (the page shows recent alerts on every
+    refresh: never the whole file)."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - chunk))
+            data = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    lines = data.splitlines()
+    return (lines[1:] if size > chunk and lines else lines)[-n:]  # the first line of a chunk may be cut
 
 
 # Windows toast through PowerShell's WinRT bridge, shown under PowerShell's own AppUserModelID (Lodestar registers none).
@@ -324,7 +381,7 @@ def desktop_notify(title: str, body: str) -> bool:
             cmd = ["osascript", "-e", 'display notification (system attribute "LS_BODY") with title (system attribute "LS_TITLE")']
         else:
             cmd = ["notify-send", "--", env["LS_TITLE"], env["LS_BODY"]]
-        r = subprocess.run(cmd, env=env, capture_output=True, timeout=20, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        r = subprocess.run(cmd, env=env, capture_output=True, timeout=20, creationflags=NO_WINDOW)
         return r.returncode == 0
     except Exception:  # ponytail: a notification is a nicety; nothing upstream may fail because of it
         return False
@@ -479,3 +536,82 @@ def send_email(to: str, subject: str, body: str, in_reply_to: str | None = None,
         smtp_login(s, c["smtp_user"] if pw else c["user"], pw)
         s.send_message(m)
     return m["Message-ID"]
+
+
+# --- one home per small helper (pass 31): the modules' old private names are aliases of these -----------------------
+def short_hash(s, n: int = 12) -> str:
+    """sha1 of str(s), first n hex digits: fingerprints and cache keys, never security."""
+    import hashlib
+
+    return hashlib.sha1(str(s).encode("utf-8")).hexdigest()[:n]
+
+
+def load_json(v, default):
+    """A JSON column value, or default when it is empty or not JSON."""
+    try:
+        return json.loads(v) if v else default
+    except ValueError:
+        return default
+
+
+def word_in(word: str, text: str) -> bool:
+    """word (or a phrase) as a whole word in text, any case: 'sales' is in 'Sales Manager', never in 'Wholesale'."""
+    return bool(re.search(rf"(?<!\w){re.escape(word)}(?!\w)", text or "", re.I))
+
+
+def utc_stamp() -> str:
+    """Now in UTC as the database writes it (datetime('now')): 'YYYY-MM-DD HH:MM:SS'."""
+    from datetime import timezone
+
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def utc_to_local(ts) -> datetime:
+    """A UTC time (a datetime('now') column, ISO text with Z or an offset, or an aware datetime) as a naive local
+    datetime. Naive input is UTC."""
+    from datetime import timezone
+
+    d = ts if isinstance(ts, datetime) else datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).astimezone().replace(tzinfo=None)
+
+
+def write_atomic(path, text: str, private: bool = False, tries: int = 40) -> None:
+    """Write-then-rename: a crash never leaves a torn file. private: owner-only on POSIX (Windows: the profile ACL).
+    Windows refuses the rename while another thread reads the file at that instant, so it is retried briefly."""
+    import time
+    from pathlib import Path
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600 if private else 0o666)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    for i in range(tries):
+        try:
+            return os.replace(tmp, path)
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(0.025)
+
+
+# --- registrable domains: one rule for mail trust and company-page vetting (moved from email_monitor, pass 31) ---
+TWO_PART_SUFFIXES = {"co.uk", "org.uk", "ac.uk", "gov.uk", "ltd.uk", "plc.uk", "me.uk", "com.au", "net.au", "org.au",
+                     "co.nz", "org.nz", "co.jp", "ne.jp", "or.jp", "co.in", "net.in", "org.in", "com.br", "com.mx",
+                     "com.ar", "com.cn", "com.hk", "com.sg", "com.tw", "com.tr", "co.kr", "co.il", "co.id", "com.my",
+                     "com.ph", "co.th", "co.za", "com.ua", "com.pl", "com.es", "com.co", "com.pe", "com.vn", "com.sa"}
+
+
+def registrable(dom: str) -> str:
+    """The domain its owner registered, label plus public suffix: careers.globex.com -> globex.com, a.globex.co.uk ->
+    globex.co.uk ('' for a bare name)."""
+    parts = [p for p in (dom or "").lower().strip(".").split(".") if p]
+    n = 3 if len(parts) >= 3 and ".".join(parts[-2:]) in TWO_PART_SUFFIXES else 2
+    return ".".join(parts[-n:]) if len(parts) >= n else ""
+
+
+def org_label(dom: str) -> str:
+    """The label a domain's owner registered, hyphens dropped: careers.globex.com / globex.co.uk -> 'globex'. Only
+    this label can name a company: globex.attacker.net -> 'attacker', globex-hiring.com -> 'globexhiring'."""
+    return registrable(dom).split(".")[0].replace("-", "")

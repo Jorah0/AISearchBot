@@ -7,15 +7,34 @@
 - **Obsidian mirror**: `C:\Users\jorak\Documents\Obsidian Vault\graphs\AISearchBot` (one note per node + `graph.canvas`). Capture decisions and notes there with `ecc:knowledge-ops`.
 - **ECC workflow**: `/ecc:plan` -> `/ecc:tdd-guide` -> `/ecc:code-review`; `ecc:codebase-onboarding` reads GRAPH_REPORT.md first.
 
+## Project contract (engineering loop; read first)
+- **Verify**: `python scripts/verify.py` (lint, secret scan, JS syntax, extension tests, unit tests); add `--full` for
+  UI / browser-facing work (browser suite + Android build, tests, lint). CI runs the same steps. A SKIPPED step is not a
+  pass: say so. Never report done without the output. A Stop hook enforces it (`~/.claude/hooks/engineering-loop-gate.py`: blocks
+  finishing while the tree differs from the last passing run's `.verify/last.json`); commits run the staged secret scan
+  (`.githooks/pre-commit`, `git config core.hooksPath .githooks`). Where `dist\lodestar.exe` exists, commits and pulls
+  (the updater's merge too) also rebuild it in the background (`post-commit` / `post-merge` -> `scripts\build_exe.ps1`,
+  minutes of CPU; log `build\exe-build.log`).
+- **Definition of done**: acceptance criteria written first for non-trivial work; a failing test before the fix; a unit
+  test (+ a browser test for UI) and a `docs/TESTS.md` row; verify run and read; docs / this file updated when behaviour
+  or a rule changed; then the **`lodestar-reviewer`** agent on the diff (fresh context; fix critical / important).
+- **Lessons**: a mistake found and fixed becomes a proposed record in `docs/engineering-lessons/` (template there),
+  promoted to the narrowest layer that enforces it (test > hook > rule > skill). Claude drafts; only the user adopts.
+- **Evals**: after changing this file, `.claude/` agents / rules, or the model, run `python scripts/eval.py validate`
+  then `run --split dev` (spends Claude Code usage; `--save-baseline` once the user accepts a result). Held-out tasks
+  are never edited to pass. Add a golden task when a real mistake is found.
+- **Editing code**: never pass code with backslash escapes through a shell heredoc or `-c`; write files with the editor
+  tool or a script file, then `py_compile` / `node --check` (lesson 0001).
+
 ## Project notes
 
 - **Product**: Lodestar. Package `lodestar/`; `jobbot` is a legacy script alias in `pyproject.toml`.
-- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (928 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
+- **Tests**: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` (1364 tests). pytest is not installed in the venv. Tests share one temp `LODESTAR_HOME` and module state: a test that monkeypatches a module attribute must restore it in `finally`.
 - **Test matrix** (`docs/TESTS.md`): one row per feature with its unit/integration and E2E tests by exact name
   (`module.Class.test_name`). Every new feature adds a TESTS.md row + a unit test + an E2E test when it has UI;
   `tests/test_feature_matrix.py` fails on a row with no test, an unknown name, a browser test in the unit column, a
   test named in no row, a dropped row or Planned ID (pinned in the guard), or a stale test count above (update it when you add tests). Coverage (informative): see TESTS.md > Coverage.
-- **Browser tests**: `.venv\Scripts\python.exe -m unittest discover -s tests/e2e -p "e2e_*.py"` (227 tests; needs `pip install -e .[e2e]`; skips without Playwright or a browser). `tests/e2e/harness.py` `E2ETestCase`: per class a temp `LODESTAR_HOME` (module-level paths rebound), fictional seed via the app's write paths (`cls.ids`), fakes for AI (`ai_text`/`ai_json`), IMAP/SMTP, OAuth/urlopen, `util.fetch` (`FETCH`), keyring, toasts, `webbrowser`; real server on a free port; per test a fresh page with a console-error guard. Installed Edge by default; `LODESTAR_E2E_BROWSER=chromium` (CI), `LODESTAR_E2E_HEADED=1` to watch. Failures leave a screenshot + HTML in `tests/e2e/_artifacts/`. Never run `playwright install` locally. Wait with `idle()` (fetch-hook count), never sleeps or `networkidle` alone; drag with `Board.drag` (HTML5 events on the exact elements; a mouse drag picks up the wrong card when `<main>` scrolls). `FakeMail.FAIL` makes logins raise (refused/dropped mailbox).
+- **Browser tests**: `.venv\Scripts\python.exe -m unittest discover -s tests/e2e -p "e2e_*.py"` (284 tests; needs `pip install -e .[e2e]`; skips without Playwright or a browser). `tests/e2e/harness.py` `E2ETestCase`: per class a temp `LODESTAR_HOME` (module-level paths rebound), fictional seed via the app's write paths (`cls.ids`), fakes for AI (`ai_text`/`ai_json`), IMAP/SMTP, OAuth/urlopen, `util.fetch` (`FETCH`), keyring, toasts, `webbrowser`; real server on a free port; per test a fresh page with a console-error guard. Installed Edge by default; `LODESTAR_E2E_BROWSER=chromium` (CI), `LODESTAR_E2E_HEADED=1` to watch. Failures leave a screenshot + HTML in `tests/e2e/_artifacts/`. Never run `playwright install` locally. Wait with `idle()` (fetch-hook count), never sleeps or `networkidle` alone; drag with `Board.drag` (HTML5 events on the exact elements; a mouse drag picks up the wrong card when `<main>` scrolls). `FakeMail.FAIL` makes logins raise (refused/dropped mailbox).
 - **Profile**: prompts read `resume.candidate_text(limit)` (master + profile-bank facts, fitted by section), never `profile_text()[:N]`. Free-form helpers (coach, ideas, mock) pass `strict=False`. Anything an employer reads (resume, letters, mail, form answers) passes `private=False` so the salary floor stays out; drafts pass `drafts.screen` (a counter-offer's cited figures go in `cited=`, the only exemption), employer-facing answer reads use `employer=True` (private answers never leave). Writes to profile.md go through `profile.write_master()` (snapshot + atomic).
 - **Mail trust** (`email_monitor._match` / `_thread`): trusted = aligned DKIM/DMARC + a *strong* tie + agreement with the stored contact. Strong = stored contact, a thread our mail vouches for (it answered trusted mail or went to the stored contact; job not rejected/withdrawn), or the registrable domain of the job's posting URL on the company site. A domain that only *names* the company (`names_company`, any suffix) is weak: filed, never trusted. Mail about an untracked company is never trusted. Manual links (`link_mail`, Track as new job) and replies to them never make a sender trusted. Never loosen this.
 - **Drafts**: AI draft options/rewrites go through `drafts.py` (`options`, `rewrite`, `use`): one AI call, `screen()` (salary-floor guard) on every text, untrusted mail fenced, mail kinds proposed with review (`apply.mail_proposal(review=True)`), recipient from the server. A send_email proposal answering unverified mail is flagged `unverified` and loses `new_status` (`approvals.propose`).
@@ -69,8 +88,8 @@
   never in employer text or prompts, a pipeline stage output, or an AI prompt (except "Explain my readiness": the five
   parts, no fit data); the chance is a band, always "not a probability", never a percentage. Question `source` tags are
   code-set after quote checks (`_clean_qset`); the AI cannot assign `logged`/`general`; "reported" is off unless the
-  `reported_questions` pref is on. Company material goes into prompts inside `extras._fence` nonce fences as untrusted
-  data; labels are cleaned when stored (`extras.clean_label`). Never fetch `util.NEVER_FETCH` hosts (checked in
+  `reported_questions` pref is on. Company material goes into prompts inside `ai._fence` nonce fences (re-exported from extras) as untrusted
+  data; labels are cleaned when stored (`ai.clean_label`). Never fetch `util.NEVER_FETCH` hosts (checked in
   `_check_url`, so every redirect hop) or pasted URLs; company pages only via `extras.company_pages` (robots.txt, 12
   requests, 30-day cache, never board / ATS hosts). Tests set `extras.PAGE_PAUSE = 0` and put it back.
 - **AI advisor** (`advisor.py`, pass 19): Recommend / Apply suggestions / Full AI / Undo for the user's own content.
@@ -106,7 +125,8 @@ PORT`, PORT = the server's own
   `server_address[1]` (never Host) and the port popup.js dialled: change the server, popup.js and test_extension's
   `sign()` together, or a relay on another scanned port works again. Autofill answers come from
   `pipeline.known(employer=True)` / `suggestions` and pass the floor guard unchanged or are withheld; EEO and desired
-  salary only when ticked; no LinkedIn (refused server-side). content.js never clicks, submits or ticks.
+  salary only when ticked; LinkedIn and the other four big boards work on your click only (pass 36), and
+  `/api/ext/autofill` answers 429 while `pacing.check` says the site is at its cap. content.js never clicks, submits or ticks.
   The client (`extension/`, MV3, load unpacked): content.js and matcher.js run only on a click and never touch the
   network or chrome.storage (test_extension_client guards it); radios stay "needs you"; the popup fetches only
   `/api/ext/*`. Matcher tests: `node --test "extension/test/*.test.mjs"`. After a scan change, re-run `e2e_extension`
@@ -176,9 +196,22 @@ PORT`, PORT = the server's own
   allowed hosts, never a password field), clicks only `Tab.button` by text. Missing values are pipeline questions
   (`pipeline.ask(stage='apply')`), never guesses. Submissions: `approvals.propose('apply_agent', 'submit_application')`;
   `approvals.record_submission` is the only status change; a run that clicked Submit and lost track is `unknown`, never
-  retried. No stealth, no CAPTCHA solving (`test_apply_engine.Surfaces`). Tests drive `_loop(new_driver)` with a fake
+  retried. No stealth, no CAPTCHA solving (`test_apply_engine.Surfaces`). A CAPTCHA the auto-solver (pass 57, captcha.py)
+  can clear is handled by the vision AI (Ollama first) within the no-spam caps; the rest parks its run (`_park`, pass 56)
+  so the worker fills the next one; `_watch` resumes it once the widget's own response field holds your token
+  (`Tab.solved`, read only, never written) or on Continue. Needs-you alerts go through `_alert`. Tests drive `_loop(new_driver)` with a fake
   browser; E2E (`e2e_apply_agent`) uses a temp profile, fixtures in tests/fixtures/apply and `MAP * 127.0.0.1`, never
   `HOME/browser-profile`; the worker's idle hook is the only thread that may touch the page.
+- **Daily applying** (pass 40, `apply_agent.site_key` / `same_role` / `autopilot_apply`): every run started counts against
+  its site for the day (application system, else the company host; `apply_agent_site_daily_cap`). `same_role` runs inside
+  `already_submitted` (queue time and before the Submit click): a job sharing a link (tracking params dropped, job ids
+  kept) or company + title + `listings.same_place` with a job past saved or in a live / submitted run is refused.
+  `_dup_blocked` shows it live on the Fit check and Apply steps (a newer saved copy waits for the older one).
+  A company + title copy (never a shared link) goes to the AI (`check_dups`, `autopilot_dups` inside Autopilot's budget,
+  logged as a score run): `different` lifts the block, same / similar keep it; verdicts live in meta `dupcheck:<lo>:<hi>`
+  with a fingerprint of both postings (a changed posting asks again).
+  Autopilot starts the agent only with `autopilot_apply` (off by default), never for a link-less job. Tests: every job
+  needs its own company or link, or the second is a duplicate.
 - **Site accounts** (`accounts.py`, pass 22 addendum A; docs/APPLY_AGENT.md > Site accounts): one account per exact host
   (`site_accounts` row: link, username, status, dates, jobs); the password only in the keyring (`vault` name `site:<host>`,
   filtered out of the Setup vault list), back only from Reveal, `_secret` or `_general_pw` (static test: three
@@ -193,6 +226,10 @@ PORT`, PORT = the server's own
   (`accounts.act`, worker-thread `_serve`) or automatically only with the account's `auto_verify`; a link opens only on the
   account's host. The account window (`accounts.start`: Re-login / Create) and the agent's worker and the sign-in window
   exclude each other on the profile. Tests: `test_apply_accounts` (FakePage), `e2e_accounts` (fixtures account.html/.js).
+- **Password import** (`pwimport.py`, pass 48): a password manager's CSV export -> `stage` (job-application sites only:
+  an ATS or a tracked job's host; `accounts.site_of` refuses the big five; a review of sites + usernames, rows in memory
+  only, `TTL`) -> `apply` through `accounts.add` (keyring first, row holds no password). No AI call, no file, no log;
+  Full AI cannot import (full_ai_check). Never return or print a password from it.
 - **Finding the posting** (`apply_find.py`, pass 22 addendum B): `enqueue` calls `apply_find.find` only when
   `resolve_url` refuses (so `resolve_url` itself never touches the network); a found link is saved as `apply_url` and its
   run is never `auto`. A match is an exact normalised title (then city), never a guess; the AI answers an index into the
@@ -200,14 +237,120 @@ PORT`, PORT = the server's own
   `util.robots_ok`, `extras._site_for`.
 - **Search input** (`web_monitor.alternatives` / `_loc_alts` / `place_ok` / `defaults`): a query's commas and 'or' are
   separate searches; a location's alternatives split on ';', '|' and a lowercase ' or ' only ('Portland, OR' is a place);
-  only `LOCAL` boards get the place (`_RUN.where`, in the cache key). The Jobs tab fills the location filter only from
+  only `LOCAL` boards get the place (`_RUN.where`, in the cache key), each of the filter's first 3 places in turn (results tagged `near`; `refine` sets `place`, which the page groups by). 'Remote (US)' and similar are `remote:<region>` (`remote_region_ok`), never a city;
+  filter `radius` (miles) reaches LOCAL boards via `_RUN.radius` (in the cache key); a LOCAL board's listing passes the
+  place it searched near (`_place_match`), a postal code matches other boards only by stating it. The Jobs tab fills the location filter only from
   Preferences (a resume-only city is a placeholder), so no hidden filter; `profile.set_pref_fields` writes Preferences.
+- **Career discovery** (`occupations.py`, `careers.py`, pass 23; plan docs/superpowers/plans/2026-11-13-blueprint-v1.1-alignment.md):
+  the bundled O*NET 31.0 ontology (`data/onet.json.gz`, CC BY 4.0: show `occupations.meta()['credit']` wherever its
+  data shows) is rebuilt only by `scripts/build_onet.py` from the O*NET text zip. Suggestions are deterministic (no AI):
+  tiers 0-5 (`careers.TIERS`, the blueprint's labels verbatim), classes (`careers.CLASSES`; code says career class,
+  because `readiness.py` is interview readiness), never broadened beyond the tiers asked for, every one naming its
+  source and version. A title O*NET files under several occupations counts at the lowest Job Zone (never the most
+  flattering reading); a licensed occupation (`data/regulated.json`) is never Qualified without a matching credential.
+  Candidate-only: never in employer text or prompts, never the salary floor. Track search reports coverage
+  (`careers.coverage`: asked / failed / not ready / checked) and never claims every board. Tests patch
+  `occupations.DATA` to `tests/careers_fixture.py` and put it back. Tier 6 (`careers.explore`, pass 24) is the only AI
+  path: `candidate_text(private=False)` minus Preferences, titles through `ai.clean_label`, an unmapped role is
+  labelled `careers.UNMAPPED`.
+- **Eligibility gates** (`fit.gates`, pass 24): hard requirements are met / not_met / unknown, never a score cut
+  (no `blocked_cap`, no clearance / deal-breaker modifiers); `blocked` = a gate not met; unknown is never met:
+  auto_track proposals with `gates_unknown` are `force_pending`, the pipeline fit gate says skip. `fit.job_class`
+  maps a fit to `careers.CLASSES`. A new hard requirement is a gate, not a modifier.
+- **Policy + audit** (`policy.py`, pass 25): `approvals.propose` asks `policy.authorize(tool, kind, payload, job_id,
+  force_pending)` (ALLOW / REQUIRE_APPROVAL / BLOCK + reason codes in `policy.REASONS`) and only ALLOW runs at once.
+  Mandatory waits: withdrawal/acceptance `new_status`, `chosen_time`, unverified replies, attachments, jobs at
+  offer/accepted. Every decision, your approvals and every executor run append to `audit` (triggers refuse UPDATE /
+  DELETE: never write a migration or cleanup that touches it). A new always-review rule is a reason code here; the
+  older guards stay (defence in depth). Apply-agent auto: licensed occupations (`apply_agent._licensed`) go to review.
+- **Lifecycle** (pass 26): `db.set_status` / `db.set_stage` append to `stage_events` (actor user | agent | integration |
+  system, evidence JSON, approval_id; triggers refuse UPDATE and DELETE while the job exists: `delete_job` removes its
+  rows after the job). Executors get `_pid` / `_tool` in their payload copy for the record. `db.STAGES` maps a stage
+  to its board column (on_hold: none). Applied snapshots `resume.SUBMITTED` into `submitted/` once (manifest). A new
+  board needs a `web_monitor.CAPABILITIES` entry (guard test). Jobs searches return `careers.coverage`.
+- **Disputed facts / claim check** (pass 27): `bank['disputed']` keys (`profile._dispute_key`) are dropped by
+  `profile.structured()` (master, studio, letters) and `careers.evidence`; never read a bank row for an employer
+  document around `structured()`. Studio versions store `sources` (`studio.cited_sources`) and `studio.claim_diff`
+  reads plan + sources + events. Imports: .odt / .rtf / .html in `ingest.import_document` (re-exported as extras.import_document); a PDF under 40 chars of
+  text is refused (no OCR).
+- **Calendar busy** (`calendar_busy.py`, pass 28): Google FreeBusy only, only with pref `calendar_freebusy` (then
+  `oauth.auth_url` adds `calendar.freebusy`; never add a scope unconditionally). `busy()` never raises: [] + `LAST`
+  error. Interview replies list blocks as times only; `apply.next_slots(n, busy)` skips them. Research wording comes
+  from `careers.work_focus(title)` (software / engineering wording only for SOC 15- / 17-).
+- **Token use** (pass 41): short structured judgements call `ai.ask_json_light` (mail `classify`, the duplicate
+  check, `apply_find`'s link pick, the pay SOC pick, `pacing.site_queries`): the provider's `ai.LIGHT` model via the
+  thread-local `ai.light()` (pref `ai_light`, on); a rejected light model falls back to the main one for that call and
+  is never saved. Pref `ai_light_local` (pass 56, off) asks a linked Ollama first when the caller names no provider, then the usual light model. Writing, fit ranking and anything employer-facing stay on `model_for`. Mail sorting lists open jobs only.
+- **Board bridge, AI Fill, cross-check** (pass 43): a capture keeps the posting page's 'apply on the company site' link
+  (`web.page_apply_link`: an ATS first, never a `forbidden` board host) as `apply_url` with an `apply_link` event
+  (BOOKKEEPING); `apply_agent.link_from_page` makes runs on it review, never auto. Fill's `ai` flag drafts open questions
+  on a saved job through `apply.answer(need_facts=True, propose=False)`, at most `extras.AI_FILL_MAX`, never
+  never_ai / salary / EEO / private kinds, each through the floor guard. `ai.crosscheck` (pref `ai_crosscheck`, off;
+  reviewers = council_providers minus the writer) runs inside `apply.answer`: bounded rounds, status agreed /
+  disagreed / unchecked. Lodestar still never signs in to, solves CAPTCHAs on, or applies on the five boards itself.
+- **Local job model** (`jobmodel.py`, pass 46; docs/DEVELOPING.md): `lodestar-jobs` in Ollama, built from a general base
+  with the employer-safe profile, Preferences via `redact_floor`, and `decisions()` as its MESSAGE history (Ollama replaces
+  a model's SYSTEM when a request sends one; the history stays). Every fourth decision is held out for `evaluate()`.
+  `ai.model_for('ollama')` returns it while built and pref `jobmodel` is on (env OLLAMA_MODEL still wins); a rejected
+  `lodestar-jobs` is forgotten and the call retries on the base. `ai.using(model)` pins a model (never saved). Ollama
+  calls go through `jobmodel._post` (urllib: util.fetch refuses loopback by design). Dev kit: `devkit.py`,
+  `lodestar dev new board|stage|helper NAME` / `dev check`.
+  Its strategies come from `data/playbook.json` (pass 47): every entry graded (strong / moderate / weak / myth) and
+  sourced; only strong + moderate reach the model as advice, myths as claims to correct, weak never. The plan for what
+  it learns next is docs/LEARNING_TREE.md (retrieval memory, bandit, time-split eval before anything heavier).
+- **Primary AI** (pass 49): `ai.set_primary(provider, model)` is the one way to swap it (top-bar AI pill, action
+  `ai_primary`, `lodestar primary`): linked provider only (it need not be in the council: `council_providers` bounds the council, its reviewers and ideas;
+  the primary only defaults from it when none is chosen), model id shape-checked, Full AI refused;
+  for Ollama the pick sets pref `jobmodel` (the job model on, any other model off). `state()['primary']` feeds the pill.
+  The council's models (pass 50): pref `council_members` ('provider=model', set via `ai.set_council` / action
+  `council_set`); `ai.council_members()` filters to `council_providers` (the boundary) and refuses when none is left;
+  `council()` and `crosscheck` ask each member under `using(model)`; the cross-check never reviews with the writer's model.
+- **In-app browser** (`browser.py`, pass 52): desktop only (`browser.ON`, set by `desktop.open_window`, never
+  `web.start_server`). app.js sends external `target=_blank` links to `/api/browser` (Ctrl/Shift-click or `data-system`
+  keeps the system browser; OAuth sign-in stays in the system browser). Lodestar touches that window only on a bar
+  click: navigation via `history.*`, Save via content.js `LodestarReadPosting` -> `web.capture`. Never script it otherwise.
+- **Pass 53 (parity with Simplify / Teal / Huntr / Jobscan; plan docs/superpowers/plans/2026-11-18-competitive-parity.md)**:
+  match report = `resume.coverage` + `target` + `ats.ats_info` (never call it an ATS verdict); "I applied" = `web.mark_applied`
+  (your click only); page keywords = `web.page_keywords` + content.js `LodestarMark` (visual only); to-dos = `db.tasks`
+  (never events; `delete_job` drops them); looks = `render.LOOKS` (each passes `clean_style`); map = `geo.py` (offline
+  Census places, `scripts/build_places.py`). AI helpers there (`task_ideas`, `look_pick`) send title / company / stage
+  only, through `ai.ask_json_light`, and never write: you click to apply. Long help paragraphs in index.html sit in
+  `<details class="help">`; a tab's AI toolbar and AI help menu share one row.
+- **Phone access** (`phone.py`, pass 53): off by default; `phone.start` binds the private LAN address only, never 0.0.0.0;
+  `web.PhoneHandler` checks Host, the hashed session cookie and still the page token; `phone.DENY` / `DENY_RUN` keep
+  secrets and machine-level actions off phones (a new secret-bearing route goes there; so does any route that writes
+  settings, opens a file or a browser on this PC, or starts a process: `/api/prefs` + `update_origin` once let a phone
+  run code through the updater; `test_phone` sweeps web.py for routes that open a file, a browser or a process).
+  `phone.json` is never backed up.
+  E2E tests: the harness fakes `urlopen`, so talk to the listener with `http.client`.
+- **Pass 54 (AI you steer)**: council switch = pref `council_on` (`ai.council` -> the primary alone, `crosscheck`
+  paused when off). Advisor cards start unticked; `advisor.revise(id, note | text)` updates a card in place and re-runs
+  `problems()` (a revision never skips the guards). AI: fill this page = `pagefill.py` + app.js `pf*`: the page sends
+  its own visible fields (never password / key / token / code / vault / floor fields: `pagefill.SECRET` and the page's
+  `PF_SECRET`, keep them alike), filling only types into fields and never saves; a new secret-bearing input needs a
+  name those patterns catch. Inbox items carry `mail_id` (`web._with_mail`) for Read the full email.
+- **Pass 55 (verify + Android)**: `lodestar selfcheck` = `selfcheck.py` (+ `selfcheck_page.py`, which refuses to run
+  outside the throwaway home `selfcheck.page()` makes: never your data folder; `e2e_selfcheck` keeps every tab clean, so a
+  new unnamed control or an overflow fails the suite). `ai.ask_json` retries once on broken JSON (local models).
+  New-listing judge = `novelty.py`: rules first, one light AI call only for a resembling listing, `veto()` evidence
+  (requisition numbers, >50 miles) beats the AI, never hide on a guess (unchecked = new). Android companion = `android/` (emulator end to end: `scripts/android_e2e.py`, a `verify --full` step: the `lodestar_test` AVD headless, a real Lodestar in a temp home, its own adb server port `LODESTAR_ADB_PORT` (5039: another tool's adb holds 5037), emulator and adb always shut down)
+  (Java, no third-party deps; `android/build.ps1 -Test`; only private hosts load: keep `isPrivate` and the phone
+  listener's own guards in step). The app installs and updates from the computer it is paired with (pass 58): `/phone/app.json` + `/phone/app.apk` are the only paths the phone listener serves before pairing (`phone.app_info` reads android/lodestar.version.json, which build.ps1 writes; no readable version = no offer); the app (`Updater`) installs only a strictly newer build, and Android refuses one signed by another key. Phone access binds every private address (`phone.lan_ips`), plus the address `phone.tailscale_ips` reads from Tailscale itself: a bare 100.64/10 is an ISP's shared NAT too, never served; Android `isPrivate` accepts 100.64/10 to connect but `scannable` never scans it; tests patch `lan_ips`.
+- **Dependencies** (`deps.py`): missing packages are installed only from pyproject.toml's specs, only into a venv
+  (`updater._proc`, hidden, `logs/deps.log`), only on `lodestar desktop` / `lodestar deps install` / the apply agent's Start
+  (never `playwright install`); never by the frozen exe (rebuild it), never under Full AI; tests fake `updater._proc`.
 - **Gotcha, SystemExit**: `ai.*` and `profile_text()` report user-facing problems (no key, model rejected, template profile) as `SystemExit`, which `except Exception` does not catch. Background paths catch `(Exception, SystemExit)`.
 - **Run**: `lodestar doctor` (add `--live` for one real AI call per provider), `lodestar desktop` (WebView2 window; falls back to the browser).
 - **Answer bank sources**: every `db.save_answer` from a path where you typed the answer passes `source` (Answers tab "typed under Answers", CLI, `pipeline.answer`); an AI `save_answer` proposal carries `source: "AI draft for job #N"`. Eligibility / EEO answers (`pipeline.never_ai`, which also knows the CANON legal keys) are reused only when `pipeline.yours(source)`, and AI prompts read bank rows only via `db.employer_answers()` (`pipeline.for_prompts`: never such a row, tagged or not). A new event kind a document builder writes goes in `db.BOOKKEEPING` (the follow-up clock).
 - **Gotcha, settings.json**: on Windows `os.replace` fails while another thread has the file open for reading (every `settings.pref` call does); `settings.save` retries the rename briefly. Write other shared files the same way.
+- **Model lab** (pass 59, tab `lab`; plan docs/superpowers/plans/2026-11-24-model-lab.md): `hwprofile` (nvidia-smi through `updater._proc`, RAM, disk, Ollama /api/ps; reserve profiles; `budget()` gives `effective_gib` = free - reserve: judge fit against it, never the card total), `modelcat` (installed Ollama + curated `data/model_catalog.json` + Hugging Face metadata on click; `estimate` is a labelled range, `unknown` when it cannot be defended; `fit`; `search`; the appropriateness `score`), `modellab` (versioned `lab_selections` with a revision guard; `preflight` gates; candidates as `lodestar-jobs:cand-N`; `promote` only on a better held-out `jobmodel.accuracy`, old live weights kept as `prev-N` for `rollback`; `do(op)` is the tab's one action, phone-denied via `DENY_RUN`), `teacher` (your primary non-Ollama AI explains your decisions; your decision is the label; a contradiction is never accepted unedited; `dataset` drops rows `drafts.leaks` trips), `labtrain` / `labtrain_worker` (`HOME/train-env` venv on your click; the app never imports torch; worker env stripped of KEY/TOKEN/SECRET/... names; one GPU lease), `broker` (EvidenceEvent v1, revisions with the outbox in one transaction, retract wins over late upserts, purpose flags gate `resolve` / `export`), `media` (loopback runtimes only). Opening the tab never runs nvidia-smi (only the loopback Ollama inventory); a live lab release (`jobmodel` meta `promoted_from`) is never rebuilt by `jobmodel.tick` / `build`; teaching never uses `teacher.held_out()` decisions; `train-env`, `media` and `lab/jobs` stay out of backups; installs, training, teaching, promotion and media jobs call `config.full_ai_check`.
+- **Audit 2026-11-25** (security + resources): POST bodies over `web.MAX_BODY` are refused unread; `Handler.timeout` frees idle sockets; local Ollama calls go through `jobmodel.urlopen` (no proxy; the E2E harness fakes it), never `urllib.request.urlopen`; `extras.in_backup` skips folders where they live (top level, `applications/<job>/mail`); the page tail-reads alerts.log (`util.tail_lines`; rotated at 2 MB) and skips its minute refresh while hidden; `updater._gate` runs new code in a temp home without secret-named env vars; `cmd_desktop` pauses lab training on exit (`labtrain.pause_all`).
+- **Desktop window** (`desktop.py`): the close button minimizes to the taskbar (pref `close_to_taskbar`, on); only Quit (`web.QUIT` -> `desktop.quit`, `/api/desktop` is phone-denied) and Restart set `desktop.QUIT` and really close. Pref `start_on_boot` writes the per-user Run key through `desktop.set_autostart` only for the default data folder (`_own_home`) and only on a change: tests never touch the real registry (fake `winreg`).
 - **Gotcha, icon**: write `.ico` frames as classic BMP. Pillow's PNG-compressed frames render in Explorer but garble in .NET `System.Drawing.Icon` (used by pywebview).
 - **Gotcha, installer**: changes to `install.ps1` only apply after it is re-run (regenerates the launcher and desktop shortcut).
+- **No console windows**: the desktop shortcut, start.ps1 and scheduled tasks use the gui-script `lodestarw` (`cli.main_hidden`:
+  no console -> output appended to `HOME/logs/console.log`). Every `subprocess.run/Popen` passes `creationflags=util.NO_WINDOW`
+  (`updater._proc` ORs it in); only GUI programs (a browser) are exempt (test_hidden_console checks statically).
 - **Updater** (`updater.py`): the loop runs `updater.tick` only when the args carry `update=True` (the run/app/desktop parsers; test `A` classes do not), so no test fetches this checkout's origin. Updater tests build throwaway repos (bare origin + clone); `apply` is the only `git reset --hard` and runs only on a tree it saw clean. Callers pass `updater.ROOT` explicitly (`check(updater.ROOT)`): the `repo=ROOT` defaults bind at import, so a test that patches `updater.ROOT` reaches only explicit callers. `apply` journals to `HOME/update-state.json` and every rollback goes through `_restore` (retries; removes files the target added); `recover()` rolls back an interrupted update. Long-running entry points (`run`, `app`, `ui`, `desktop`) call `updater.startup()` (recover + register in `HOME/procs`); a Restart checks `busy(include_update=True)`. Subprocesses with a timeout go through `updater._proc` (temp files, tree kill), never `subprocess.run(capture_output=True, timeout=...)`, which a grandchild can hang.
 - **Gotcha, static files**: `web.ASSETS` reads `lodestar/static/` once at import (an update must not change the front end under a running server). After editing `index.html` / `app.js` / `app.css`, restart the server.
 - **Gotcha, real calls**: no real AI, SMTP or OAuth sign-in has been verified yet; the tests use a faked HTTP layer.
@@ -216,6 +359,26 @@ PORT`, PORT = the server's own
   in files, logs, exports or API answers. IMAP/SMTP log in through `util.imap_login` / `smtp_login` (XOAUTH2); every
   IMAP connection opens through `util.imap_open` (IMAP_MODE ssl or starttls, never plain). Never weaken the sign-in
   listener's state, Host or loopback checks, and the sign-in page always opens in the system browser.
+- **Mail page** (pass 33, `db.all_mail`, `GET /api/mail?all=1` / `/api/mail/<id>`): list rows never carry the
+  text (`db.MAIL_LIST`, never `html` either); one mail returns `body` (whole scanned text, codes masked; older rows fall back to
+  `snippet`), `action`, `deadline`, `html`. Mail text is always escaped; the only markup shown is `mail.html`
+  (pass 54: `mailhtml.clean` allowlist, codes masked) inside the sandboxed `iframe.mailhtml` (`sandbox="allow-popups
+  allow-popups-to-escape-sandbox"`, never allow-scripts / allow-same-origin; CSP `img-src data:` until Show images). Replies only through `draft_use` (Inbox
+  review, server-side recipient); the scan result drops `full_body` after `_record`.
+- **Job-site pacing** (`pacing.py`, pass 36): LinkedIn / Indeed / Glassdoor / ZipRecruiter / SimplyHired and the
+  More sites (`pacing.MORE`: Dice, Monster / CareerBuilder, Built In, Idealist, USAJOBS; `web_monitor.no_fetch` skips
+  them, so the posting check never visits them)
+  (`apply_agent.forbidden` names the site) get daily + weekly caps (meta `pacing:caps`; `set_cap` validates). Usage
+  = jobs moved to applied (stage_events) whose `apply_url` or `url` is on the site, today (local) and last 7 days.
+  The apply agent and every fetch still never touch these sites; the page only links to their own search (and, under More, to `MORE_SITES` in app.js: Google Jobs, Monster, Dice, Built In, Idealist, USAJOBS, each URL format checked live; links only, never fetched)
+  (`siteSearchUrl`), and the extension saves / fills on your click. `pacing.site_queries` (pass 37) is the AI help:
+  one `ask_json` over `_h_search` (candidate_text private=False + saved searches), output cleaned (clean_label, no
+  links / markup, deduped, at most 6, boolean charset); never a site's page or the floor in the prompt.
+- **Connections history** (pass 34, the Accounts tab): `connections.record` (keys, mail) and `connections.track`
+  (boards from every `web_monitor.search`, sites from `accounts._mark` on a sign-in or a failure) keep the latest
+  state and a capped `history`; `lost()` = worked (OK) then BAD with no recovery since. Notices only for keys / mail /
+  sites (`connections.notify`), never boards. `loop._recheck` (every 6 h) runs only when `connections._STARTED`
+  (app / ui / desktop / run without --once): tests and one-off commands never make the network check.
 - **Mail check results**: `mailconn.test()` records its own result (`connections.mail_result`), so every path that
   tests (Connect & test, the sign-in task, Re-check all, startup) updates Getting started and doctor.
 - **Attachments** (`mailfiles.py`): outgoing files only from the job's folder, through `mailfiles.resolve` (resume /

@@ -56,6 +56,7 @@ class ApplyAgent(E2ETestCase):
         self.tabs, self.held = [], []
         st = settings.load()
         self.addCleanup(settings.save, st)
+        settings.set_pref("apply_agent_site_daily_cap", 25)  # every fixture form is on one host
         apply_agent.STOP.unlink(missing_ok=True)
         apply_agent._EVENT.clear()
 
@@ -64,10 +65,14 @@ class ApplyAgent(E2ETestCase):
             self.held.pop()()
         db.release(close=False)
 
+    N = [0]
+
     def job(self, query: str = "", host: str = "apply.example-ats.test", page: str = "form.html") -> int:
-        jid = db.add_job("Example Robotics", "Data Engineer", f"https://jobs.example.com/robotics/{self.id()}/{page}?{query}",
+        self.N[0] += 1  # one company per job: the same company + title is one role, applied for once (same_role)
+        jid = db.add_job(f"Example Robotics {self.N[0]}", "Data Engineer", f"https://jobs.example.com/robotics/{self.id()}/{page}?{query}",
                          "Python SQL")
-        db.set_fields(jid, apply_url=f"http://{host}:{self.port}/{page}{'?' + query if query else ''}")
+        q = "&".join(x for x in (query, f"job={self.N[0]}") if x)  # its own link too: one link is one role
+        db.set_fields(jid, apply_url=f"http://{host}:{self.port}/{page}?{q}")
         (resume.app_dir(db.get_job(jid)) / "resume.pdf").write_bytes(b"%PDF-1.4 fictional resume")
         return jid
 
@@ -197,6 +202,23 @@ class ApplyAgent(E2ETestCase):
         self.assertEqual(did, ["captcha", "login", "code"])
         self.assertEqual((run["state"], run["submit_clicks"]), ("confirmed", 1))
         self.assertTrue(any(k == "notify" and "solve the check" in m for k, m in self.opened))
+
+    def test_arkose_challenge_is_handed_to_you_before_the_form_is_filled(self):
+        did = []
+
+        def you(tab, run):
+            if run["state"] == "needs_you" and not did:
+                self.assertEqual(run["needs"][0]["reason"], "captcha")
+                self.assertEqual(self.dom(tab, "() => first_name.value"), "")
+                did.append("captcha")
+                tab.page.evaluate("() => document.getElementById('captcha').remove()")
+                apply_agent.continue_run(run["id"])
+            elif run["state"] == "ready":
+                tab.page.check("#consent")
+                tab.page.click("#submit")
+
+        run = self.work(self.job("arkose=1"), "stop", you)
+        self.assertEqual((did, run["state"], run["submit_clicks"]), (["captcha"], "by_user", 0))
 
     # --- strict CSP: the scan still runs (CDP evaluation); service workers never run; 'already applied' is refused
     def test_strict_csp_page_is_filled_and_an_already_applied_page_is_refused(self):

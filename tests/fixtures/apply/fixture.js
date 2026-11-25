@@ -11,9 +11,10 @@
     $("#login").hidden = false; $("#app").hidden = true;
     $("#signin").addEventListener("click", () => { $("#login").hidden = true; $("#app").hidden = false; });
   }
-  if (q.get("captcha")) {
+  if (q.get("captcha") || q.get("arkose")) {
     const f = document.createElement("iframe");
-    f.src = "/recaptcha/api2/bframe-fake.html"; f.id = "captcha"; f.style.cssText = "width:320px;height:200px;display:block";
+    f.src = q.get("arkose") ? "/arkoselabs.com/fake.html" : "/recaptcha/api2/bframe-fake.html";
+    f.id = "captcha"; f.style.cssText = "width:320px;height:200px;display:block";
     document.body.prepend(f);
   }
   show(step);

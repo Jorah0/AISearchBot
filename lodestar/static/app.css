@@ -4,22 +4,43 @@
   --s-saved: #8a93a6; --s-applied: #5b9cff; --s-screening: #9cc4ff; --s-interview: #f2b84b; --s-offer: #3ccf7a; --s-accepted: #1fa35c; --s-rejected: #ff6b6b; --s-withdrawn: #555b68;
   --r: 10px; --shadow: 0 8px 30px rgba(0,0,0,.35);
 }
+/* pass 32: the light theme. It follows the system unless you pick one (Theme button: html[data-theme]). Status
+   colours stay AA on white and every status is also written as text, never colour alone. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f5f6f8; --panel: #ffffff; --panel-2: #eef0f4; --line: #dde1e8; --fg: #1b1f27; --dim: #586174;
+    --acc: #2c6bd9; --acc-2: #1d55b4; --ok: #1d7f46; --warn: #8a5f00; --bad: #c23434;
+    --s-saved: #586174; --s-applied: #2c6bd9; --s-screening: #1d55b4; --s-interview: #8a5f00; --s-offer: #1d7f46; --s-accepted: #146b3a; --s-rejected: #c23434; --s-withdrawn: #7b8394;
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f5f6f8; --panel: #ffffff; --panel-2: #eef0f4; --line: #dde1e8; --fg: #1b1f27; --dim: #586174;
+  --acc: #2c6bd9; --acc-2: #1d55b4; --ok: #1d7f46; --warn: #8a5f00; --bad: #c23434;
+  --s-saved: #586174; --s-applied: #2c6bd9; --s-screening: #1d55b4; --s-interview: #8a5f00; --s-offer: #1d7f46; --s-accepted: #146b3a; --s-rejected: #c23434; --s-withdrawn: #7b8394;
+  color-scheme: light;
+}
+:root[data-theme="dark"] { color-scheme: dark; }
+:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
-body { margin: 0; font: 14px/1.5 system-ui, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); display: grid; grid-template-columns: 220px 1fr; grid-template-rows: 56px 1fr; grid-template-areas: "brand top" "nav main"; }
+body { margin: 0; font: 14px/1.5 system-ui, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); display: grid; grid-template-columns: 220px minmax(0, 1fr); grid-template-rows: 56px 1fr; grid-template-areas: "brand top" "nav main"; }
 
 /* ---- chrome ---- */
 .brand { grid-area: brand; display: flex; align-items: center; gap: 10px; padding: 0 16px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--panel); font-weight: 700; letter-spacing: .02em; }
 .brand small { color: var(--dim); font-weight: 400; font-size: 11px; display: block; letter-spacing: 0; }
 .top { grid-area: top; display: flex; align-items: center; gap: 10px; padding: 0 18px; border-bottom: 1px solid var(--line); background: var(--panel); }
-.top .stats { display: flex; gap: 14px; color: var(--dim); font-size: 12px; }
+.top .stats { display: flex; gap: 10px; color: var(--dim); font-size: 12px; }
 .top .stats b { color: var(--fg); font-size: 13px; }
 .top .spacer { flex: 1; }
 nav { grid-area: nav; background: var(--panel); border-right: 1px solid var(--line); padding: 10px; display: flex; flex-direction: column; gap: 2px; }
 nav button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: 0; color: var(--dim); padding: 9px 12px; border-radius: 8px; cursor: pointer; font: inherit; }
 nav button:hover { color: var(--fg); background: var(--panel-2); }
 nav button.on { color: var(--fg); background: var(--line); }
-nav button .ico { width: 18px; text-align: center; opacity: .9; }
+nav button .ico { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; opacity: .9; }
+nav .nav-group { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+nav .nav-h { color: var(--dim); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 6px 12px 2px; }
 nav .badge { margin-left: auto; background: var(--acc); color: #fff; border-radius: 10px; padding: 0 7px; font-size: 11px; min-width: 20px; text-align: center; }
 nav .badge.zero { display: none; }
 nav .sep { flex: 1; }
@@ -27,7 +48,7 @@ nav .foot { color: var(--dim); font-size: 11px; padding: 8px 12px; }
 main { grid-area: main; padding: 18px 20px 60px; overflow: auto; }
 section { display: none; } section.on { display: block; }
 h2 { font-size: 16px; margin: 0 0 12px; }
-h3 { font-size: 13px; margin: 0 0 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; }
+h3 { font-size: 14px; font-weight: 600; margin: 0 0 10px; color: var(--fg); }  /* pass 32: sentence case, readable */
 .sub { color: var(--dim); font-size: 12px; margin: -6px 0 14px; }
 
 /* ---- primitives ---- */
@@ -47,8 +68,8 @@ textarea { width: 100%; min-height: 200px; font-family: ui-monospace, Consolas, 
 pre { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; max-height: 55vh; overflow: auto; font-size: 12px; margin: 8px 0; }
 .muted { color: var(--dim); font-size: 12px; }
 .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; background: var(--line); margin-right: 4px; vertical-align: middle; }
-.pill.ok { background: #1f4d33; color: var(--ok); }
-.pill.warn { background: #4d3b1f; color: var(--warn); }
+.pill.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.pill.warn { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
 .empty { color: var(--dim); font-size: 13px; padding: 24px; text-align: center; border: 1px dashed var(--line); border-radius: var(--r); }
 .list > div { border-bottom: 1px solid var(--line); padding: 10px 0; }
 .list > div:last-child { border-bottom: 0; }
@@ -95,7 +116,11 @@ label.fld { display: flex; flex-direction: column; gap: 2px; color: var(--dim); 
 /* ---- job drawer ---- */
 #drawer { position: fixed; top: 56px; right: 0; bottom: 0; width: min(640px, 100vw); background: var(--panel); border-left: 1px solid var(--line); box-shadow: var(--shadow); transform: translateX(100%); transition: transform .18s ease, visibility 0s linear .18s; visibility: hidden; overflow: auto; padding: 16px 18px 40px; z-index: 20; }
 #drawer.open { transform: none; visibility: visible; transition: transform .18s ease; }
-#drawer .head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+#drawer .head { display: flex; align-items: center; gap: 10px; margin: -16px -18px 6px; padding: 12px 18px 8px; position: sticky; top: -16px; z-index: 3; background: var(--panel); border-bottom: 1px solid var(--line); }  /* pass 32: stays while you scroll */
+#drawer .jIndex { display: flex; flex-direction: row; flex-wrap: wrap; gap: 4px 14px; margin: 4px 0 8px; padding: 0; border: 0; background: none; overflow: visible; font-size: 13px; }
+#drawer .group { scroll-margin-top: 56px; }
+#drawer .jIndex a { color: var(--acc); text-decoration: none; }
+#drawer .jIndex a:hover { text-decoration: underline; }
 #drawer .head b { font-size: 16px; }
 #drawer .close { margin-left: auto; }
 #drawer .group { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 10px 0; background: var(--bg); }
@@ -138,7 +163,8 @@ label.fld { display: flex; flex-direction: column; gap: 2px; color: var(--dim); 
   input, select { max-width: 100%; }
   #drawer { top: 0; }
   nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }
-  nav button { width: auto; } nav .sep, nav .foot { display: none; }
+  nav button { width: auto; } nav .sep, nav .foot, nav .nav-h { display: none; }
+  nav .nav-group { flex-direction: row; flex-wrap: wrap; margin: 0; }
   .grid2 { grid-template-columns: 1fr; }
 }
 
@@ -148,6 +174,7 @@ label.fld { display: flex; flex-direction: column; gap: 2px; color: var(--dim); 
   .top .stats { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; max-width: 100%; }
   nav { flex-wrap: nowrap; overflow-x: auto; padding: 4px 6px; gap: 2px; }
   nav button { flex: none; padding: 6px 9px; gap: 6px; }
+  nav .nav-group { flex-wrap: nowrap; }
   #drawer { width: 100vw; }
 }
 
@@ -262,7 +289,7 @@ details.aimenu .row { margin: 4px 0; } .aimenu .aitopic { max-width: 100%; } .ai
 .palk { display: inline-block; min-width: 74px; color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .palhint { font-size: 11px; padding: 0 4px; }
 #rsPick { width: min(100%, 360px); }  /* long backup names must not widen the Setup grid at 420px */
-/* All jobs (Jobs tab) and Setup > Job sources */
+/* All jobs (Jobs tab) and Accounts > Job sources */
 .ajrow { border-bottom: 1px solid var(--line); padding: 8px 0; overflow-wrap: anywhere; }
 .ajrow.new { border-left: 3px solid var(--ok); padding-left: 8px; }
 .ajrow.hi { background: rgba(127, 127, 255, .06); }
@@ -283,3 +310,102 @@ a.chip.attr-adzuna { display: inline-block; min-width: 116px; min-height: 23px; 
 .intel-row { padding: 2px 0; overflow-wrap: anywhere; }
 #drawer .group h5 { margin: 8px 0 2px; font-size: 11px; color: var(--dim); }
 .intel-sum pre { white-space: pre-wrap; margin: 4px 0 8px; }
+/* Careers tab (pass 23) */
+#careers .err { color: var(--bad); font-size: 13px; }
+#careers .career-card { border-top: 1px solid var(--line); padding: 8px 0; }
+#careers .career-card:first-of-type { border-top: 0; }
+#careers .tiers { border: 0; padding: 0; margin: 4px 0; }
+#careers .career-results { list-style: none; padding: 0; margin: 0; }
+#careers .coverage { margin-top: 8px; }
+.keys-help { position: fixed; z-index: 60; top: 72px; left: 50%; transform: translateX(-50%); width: min(420px, 92vw); box-shadow: var(--shadow); }
+.keys-help ul { margin: 0; padding-left: 18px; } kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, monospace; }
+
+/* Mail page (pass 33): list + reading pane, one column when narrow */
+.mailview { display: grid; grid-template-columns: minmax(260px, 360px) minmax(0, 1fr); gap: 14px; align-items: start; margin-top: 10px; }
+.mvlist { display: flex; flex-direction: column; gap: 6px; max-height: 75vh; overflow-y: auto; }
+.mvrow { display: flex; flex-direction: column; gap: 3px; text-align: left; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: var(--r); padding: 8px 10px; cursor: pointer; font: inherit; }
+.mvrow:hover { border-color: var(--acc); }
+.mvrow.on { border-left-color: var(--acc); background: color-mix(in srgb, var(--acc) 10%, var(--panel)); }
+.mvrow .hd { display: flex; justify-content: space-between; gap: 8px; }
+.mvrow b, .mvrow .muted { overflow-wrap: anywhere; }
+.mvrow[data-type="offer"], .mvrow[data-type="interview"] { border-left-color: var(--ok, #3fb37f); }
+.mvrow[data-type="rejection"] { border-left-color: var(--bad, #d05a5a); }
+.mvread { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; min-width: 0; }
+.mvread h3 { margin: 0 0 6px; overflow-wrap: anywhere; }
+.mvfacts { border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; margin: 10px 0; display: grid; gap: 4px; }
+.mvbody { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.5; max-height: 60vh; overflow-y: auto; border-top: 1px solid var(--line); padding-top: 10px; }
+#mvReply textarea { width: 100%; min-height: 140px; }
+#mvReply input#mvSub { width: 100%; margin-bottom: 6px; }
+@media (max-width: 860px) { .mailview { grid-template-columns: 1fr; } .mvlist { max-height: 40vh; } }
+
+/* Accounts > Connections (pass 34) */
+#connList h4 { margin: 12px 0 4px; }
+.connrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.connrow .muted { overflow-wrap: anywhere; }
+#homeLost:empty, #connLost:empty { display: none; }
+
+/* pass 36: the five job sites you browse yourself */
+#siteSearch a.full { border-color: var(--bad); }
+#siteSearch .siteplace { margin-top: 4px; }
+.placebar .b.on { border-color: var(--acc); color: var(--acc); }
+/* Model lab (pass 59) */
+#lab .meter { display: inline-block; width: 120px; height: 8px; border: 1px solid var(--line); border-radius: 4px; vertical-align: middle; overflow: hidden; }
+#lab .meter > span { display: block; height: 100%; background: var(--acc); }
+#lab .chip.fit-fits { border-color: var(--ok); color: var(--ok); }
+#lab .chip.fit-borderline { border-color: var(--warn); color: var(--warn); }
+#lab .chip.fit-incompatible { border-color: var(--bad); color: var(--bad); }
+#lab .gate { margin: 2px 0; }
+#lab table.cmp { border-collapse: collapse; margin-top: 6px; }
+#lab table.cmp th, #lab table.cmp td { border: 1px solid var(--line); padding: 2px 6px; text-align: left; }
+#homePace:empty, #siteIdeas:empty { display: none; }
+#siteIdeas code { overflow-wrap: anywhere; }
+#siteList input { padding: 2px 6px; }
+
+/* in-app browser bar (pass 52): drives the desktop app's browser window */
+#browserBar { position: fixed; left: 236px; right: 16px; bottom: 12px; z-index: 40; display: flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+#browserBar[hidden] { display: none; }
+#browserBar input { flex: 1; font-size: 12px; padding: 4px 8px; }
+#browserBar .brTag { font-size: 11px; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; padding: 0 4px; }
+body.br-on main { padding-bottom: 64px; }
+
+/* app shell (pass 52): the top bar and the sidebar stay put while a tab scrolls; stats stay on one line */
+.top { min-width: 0; } .top .stats { min-width: 0; overflow: hidden; } .top .stats span { white-space: nowrap; }
+main { min-width: 0; }
+#loopStat { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; font-size: 12px; flex: none; }
+@media (min-width: 901px) {
+  .brand, .top { position: sticky; top: 0; z-index: 15; }
+  body > nav { position: sticky; top: 56px; align-self: start; height: calc(100vh - 56px); overflow-y: auto; }
+}
+details.help { margin: 4px 0 10px; font-size: 12px; }
+details.help > summary { cursor: pointer; color: var(--dim); }
+details.help > div { color: var(--dim); margin-top: 4px; }
+.cov-score.good { color: var(--ok); } .cov-score.low { color: var(--warn, #d97706); }
+.atsbox { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; margin: 6px 0; font-size: 12px; }
+.atsbox ul { margin: 4px 0 0 18px; padding: 0; }
+/* pass 53: a tab's AI toolbar and its AI help menu share one row */
+section > .aihead { display: inline-flex; vertical-align: middle; margin-right: 14px; }
+section > .aihead:empty { display: none; }
+details.help > div > p { margin: 4px 0; }
+.todo.done label { text-decoration: line-through; color: var(--dim); }
+.looks { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; margin-bottom: 8px; }
+.look { display: flex; align-items: center; gap: 6px; background: var(--panel-2); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; cursor: pointer; font-size: 13px; }
+.look:hover { border-color: var(--acc); } .look .sw { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.bmap { width: 100%; max-height: 380px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+.mdot { fill: var(--acc); stroke: var(--panel); stroke-width: 2; cursor: pointer; } .mdot.offer, .mdot.accepted { fill: var(--ok); }
+.mhome circle { fill: none; stroke: var(--fg); stroke-width: 2; } .mhome text { fill: var(--fg); font-size: 12px; }
+.mlist { margin-top: 8px; font-size: 13px; }
+/* pass 54: the council switch */
+#aiCouncilBox.dim { opacity: .5; pointer-events: none; }
+.council-off .council-opt { display: none; }
+/* pass 54: Today */
+.boost .pill.eff { min-width: 92px; text-align: center; flex: none; }
+#upcoming:empty { display: none; }
+.col > h3 { text-transform: capitalize; }  /* pass 54: column names read as words */
+.kv { font-size: 13px; margin: 4px 0; } .kv th { color: var(--dim); font-weight: 500; width: 140px; padding: 2px 8px 2px 0; } .kv td { padding: 2px 0; }
+.ai-filled { outline: 2px solid var(--acc); outline-offset: 1px; }  /* pass 54: a field the AI filled, until you save */
+.pfbar { margin-bottom: 4px; }
+/* pass 54: the full email, formatted, in a sandboxed frame you can make taller */
+.mailframe { resize: vertical; overflow: hidden; height: 460px; min-height: 160px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.mailframe iframe { width: 100%; height: 100%; border: 0; display: block; }
+.mailfold { margin: 6px 0; } .mailfold > summary { cursor: pointer; color: var(--acc); font-size: 13px; }
+.mvtools { margin: 4px 0; }

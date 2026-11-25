@@ -20,6 +20,9 @@ e2e = ["playwright>=1.48", "coverage>=7"]  # browser tests: tests/e2e (uses inst
 lodestar = "lodestar.cli:main"
 jobbot = "lodestar.cli:main"  # legacy alias
 
+[project.gui-scripts]
+lodestarw = "lodestar.cli:main_hidden"  # no console window: the desktop shortcut and the scheduled task
+
 [tool.setuptools.packages.find]
 include = ["lodestar*"]
 

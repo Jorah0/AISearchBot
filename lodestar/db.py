@@ -5,6 +5,7 @@ import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 
+from . import util
 from .config import DB_PATH, full_ai_check
 
 # order matters: callers move a job only forward by index (accepted sits before the two closed states)
@@ -17,10 +18,14 @@ CREATE TABLE IF NOT EXISTS jobs(
   jd TEXT, notes TEXT, applied_at TEXT,
   created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, job_id INTEGER, ts TEXT DEFAULT (datetime('now')), kind TEXT, detail TEXT);
+CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, text TEXT NOT NULL, due TEXT, done_at TEXT, added TEXT DEFAULT (datetime('now')));
+CREATE INDEX IF NOT EXISTS events_job ON events(job_id, kind, ts);  -- per-job reads and the follow-up clock's MAX(ts)
+CREATE INDEX IF NOT EXISTS tasks_job ON tasks(job_id);
 CREATE TABLE IF NOT EXISTS watches(id INTEGER PRIMARY KEY, url TEXT UNIQUE, keywords TEXT, last_hash TEXT, last_seen TEXT);
 CREATE TABLE IF NOT EXISTS seen(key TEXT PRIMARY KEY, ts TEXT DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS pending(id INTEGER PRIMARY KEY, ts TEXT DEFAULT (datetime('now')), tool TEXT, kind TEXT,
   job_id INTEGER, summary TEXT, payload TEXT, status TEXT DEFAULT 'pending', result TEXT, decided_at TEXT);
+CREATE INDEX IF NOT EXISTS pending_status ON pending(status, job_id);
 CREATE TABLE IF NOT EXISTS ideas(id INTEGER PRIMARY KEY, topic TEXT, title TEXT, body TEXT, score REAL,
   status TEXT DEFAULT 'new', job_id INTEGER, tags TEXT, created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now')));
@@ -114,6 +119,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS apply_runs_live ON apply_runs(job_id)
 CREATE TABLE IF NOT EXISTS site_accounts(id INTEGER PRIMARY KEY, site TEXT NOT NULL UNIQUE, login_url TEXT NOT NULL,
   username TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_by TEXT, created_at TEXT DEFAULT (datetime('now')),
   last_login TEXT, last_error TEXT, reset_url TEXT, auto_verify INTEGER NOT NULL DEFAULT 0, jobs TEXT);
+-- career tracks (careers.py, pass 23): a field you chose to search; list columns are JSON
+CREATE TABLE IF NOT EXISTS career_tracks(id INTEGER PRIMARY KEY, label TEXT NOT NULL, intent TEXT NOT NULL,
+  titles TEXT NOT NULL DEFAULT '[]', codes TEXT NOT NULL DEFAULT '[]', tiers TEXT NOT NULL DEFAULT '[0]',
+  exclusions TEXT NOT NULL DEFAULT '[]', location TEXT DEFAULT '', training TEXT DEFAULT 'none',
+  priority TEXT DEFAULT 'medium', enabled INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')));
+-- the audit trail (policy.py, pass 25): every policy decision and executor run; append-only (the triggers refuse changes)
+CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, at TEXT DEFAULT (datetime('now')), action TEXT NOT NULL, tool TEXT,
+  target TEXT, result TEXT NOT NULL, reasons TEXT, policy_version TEXT, approval_id INTEGER);
+CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit BEGIN SELECT RAISE(ABORT, 'the audit trail is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit BEGIN SELECT RAISE(ABORT, 'the audit trail is append-only'); END;
+-- application stage history (pass 26, blueprint 11.3 / appendix A.4): who moved it, why, on what evidence; append-only.
+-- delete_job removes a deleted job's rows through stage_events_job_gone (the only delete allowed)
+CREATE TABLE IF NOT EXISTS stage_events(id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, from_stage TEXT, to_stage TEXT NOT NULL,
+  actor_type TEXT NOT NULL, actor_id TEXT, evidence TEXT, approval_id INTEGER, at TEXT DEFAULT (datetime('now')),
+  schema_version TEXT NOT NULL DEFAULT '1');
+CREATE INDEX IF NOT EXISTS stage_events_job ON stage_events(job_id);
+CREATE TRIGGER IF NOT EXISTS stage_events_no_update BEFORE UPDATE ON stage_events BEGIN SELECT RAISE(ABORT, 'stage history is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS stage_events_no_delete BEFORE DELETE ON stage_events WHEN EXISTS (SELECT 1 FROM jobs WHERE id=OLD.job_id)
+  BEGIN SELECT RAISE(ABORT, 'stage history is append-only'); END;
 """
 MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "TEXT",  # ponytail: additive only
               # tracker fields (pass 15); every user write goes through set_fields
@@ -127,7 +151,9 @@ MIGRATIONS = {"resume_hash": "TEXT", "contact_email": "TEXT", "contact_name": "T
               # fit score (fit.py, code-set, never a user field): score 0-100, the breakdown JSON, the fit.rev() it was
               # scored at (stale when it differs), the score when the job left 'saved', the AI part {score, why, at}
               "fit_score": "INTEGER", "fit": "TEXT", "fit_rev": "TEXT", "fit_applied": "INTEGER", "ai_fit": "TEXT",
-              "apply_url": "TEXT"}  # the employer's application link the apply agent opens (set_fields, http(s) only)
+              "apply_url": "TEXT",  # the employer's application link the apply agent opens (set_fields, http(s) only)
+              # pass 26: the fine-grained stage (STAGES; the board column is status) and when the posting page last answered
+              "stage": "TEXT", "posting_checked_at": "TEXT"}
 WATCH_MIGRATIONS = {"filters": "TEXT",  # JSON search filters of a saved search (web_monitor.clean_filters)
                     "last_error": "TEXT"}  # what the last run could not read (shown on the watch); NULL after a clean run
 ANSWER_MIGRATIONS = {"star": "TEXT",  # JSON STAR fields when the row is a story (interview.save_story); NULL = a form answer
@@ -139,12 +165,18 @@ POSTING_MIGRATIONS = {"title": "TEXT", "company": "TEXT", "location": "TEXT", "s
                       "jd": "TEXT", "urls": "TEXT", "sources": "TEXT", "ats_id": "TEXT", "ats_feed": "TEXT",
                       "last_seen": "TEXT", "seen_count": "INTEGER", "fit_score": "INTEGER", "fit": "TEXT", "fit_rev": "TEXT",
                       "ai_fit": "TEXT", "job_id": "INTEGER", "dismissed": "INTEGER", "closed_at": "TEXT",
-                      "reposted_at": "TEXT"}
+                      "reposted_at": "TEXT",
+                      # pass 55 (novelty.py): new | same | repost, the older posting's key, why, rules | ai | unchecked
+                      "novelty": "TEXT", "novelty_of": "TEXT", "novelty_why": "TEXT", "novelty_by": "TEXT",
+                      "track_id": "INTEGER"}  # the career track whose search found it (careers.search_track)
 POSTING_INDEXES = ("CREATE INDEX IF NOT EXISTS postings_last_seen ON postings(last_seen)",
                    "CREATE INDEX IF NOT EXISTS postings_job ON postings(job_id)",
                    "CREATE INDEX IF NOT EXISTS postings_fit ON postings(fit_score)")
 MAIL_MIGRATIONS = {"attachments": "TEXT",  # JSON [{name, size, type, path?} | {name, skipped}] (mailfiles.py)
-                   "link_reason": "TEXT"}  # why ATS mail was filed under its job (email_monitor._ats_match); never trust
+                   "link_reason": "TEXT",  # why ATS mail was filed under its job (email_monitor._ats_match); never trust
+                   # pass 33 (Mail page): the whole text as scanned (codes masked), what the classifier read from it
+                   "body": "TEXT", "action": "TEXT", "deadline": "TEXT",
+                   "html": "TEXT"}  # pass 54: the formatted copy (mailhtml.clean: allowlisted, inline images embedded)  # why ATS mail was filed under its job (email_monitor._ats_match); never trust
 BACKFILL_KEY = "backfill:fields-v1"
 CONTACTS_KEY = "backfill:contacts-v1"
 ATS_FEED_RE = re.compile(r"(greenhouse|lever|ashby|smartrecruiters|recruitee|personio):[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
@@ -377,8 +409,7 @@ def release(close: bool = True) -> None:
             c.close()
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+_now = util.utc_stamp
 
 
 def add_job(company, title, url=None, jd=None, notes=None, ats_feed=None, **fields) -> int:
@@ -475,11 +506,45 @@ def update_job(job_id: int, touch: bool = True, **fields) -> None:
     con().commit()
 
 
-def set_status(job_id: int, status: str, detail: str = "") -> None:
+# blueprint 11.2: the fine-grained application stage -> its board column (None: the column stays where it is)
+STAGES = {"saved": "saved", "applied": "applied", "acknowledged": "applied", "screening": "screening",
+          "recruiter_screen": "screening", "assessment": "screening", "interview": "interview",
+          "technical_interview": "interview", "panel_interview": "interview", "final_interview": "interview",
+          "references": "interview", "offer": "offer", "negotiation": "offer", "accepted": "accepted",
+          "rejected": "rejected", "no_response": "rejected", "position_closed": "rejected", "withdrawn": "withdrawn",
+          "declined_offer": "withdrawn", "on_hold": None}
+
+
+def _stage_event(job_id: int, to_stage: str, actor: str, actor_id: str | None, evidence, approval_id) -> None:
+    job = get_job(job_id)
+    con().execute("INSERT INTO stage_events(job_id, from_stage, to_stage, actor_type, actor_id, evidence, approval_id) "
+                  "VALUES (?, ?, ?, ?, ?, ?, ?)", (job_id, job["stage"] or job["status"], to_stage, actor, actor_id,
+                                                   json.dumps(evidence) if evidence else None, approval_id))
+    update_job(job_id, touch=False, stage=to_stage)
+
+
+def set_stage(job_id: int, stage: str, detail: str = "", actor: str = "user", actor_id: str | None = None,
+              evidence=None, approval_id: int | None = None) -> None:
+    """Move a job to a fine-grained stage (STAGES); its board column follows, except on_hold (the column stays)."""
+    if stage not in STAGES:
+        raise SystemExit(f"stage must be one of {', '.join(STAGES)}")
+    status = STAGES[stage]
+    if status and status != get_job(job_id)["status"]:
+        return set_status(job_id, status, detail, stage, actor, actor_id, evidence, approval_id)
+    full_ai_check("changes a job's stage")
+    _stage_event(job_id, stage, actor, actor_id, evidence, approval_id)
+    add_event(job_id, "stage", f"{stage} {detail}".strip())
+
+
+def set_status(job_id: int, status: str, detail: str = "", stage: str | None = None, actor: str = "user",
+               actor_id: str | None = None, evidence=None, approval_id: int | None = None) -> None:
+    """Move a job's board column. Every move appends a stage event (blueprint 11.3): actor_type user | agent |
+    integration | system, the evidence it rests on (a mail id, an apply run) and the Inbox item that approved it."""
     full_ai_check("changes a job's status")
     if status not in STATUSES:
         raise SystemExit(f"status must be one of {STATUSES}")
     get_job(job_id)  # 'no job #N': a typo never writes an orphan timeline event the funnel would count
+    _stage_event(job_id, stage or status, actor, actor_id, evidence, approval_id)
     # applied_at is the day you applied where you are: an evening application must not be dated tomorrow (UTC)
     extra = {"applied_at": datetime.now().strftime("%Y-%m-%d")} if status == "applied" else {}
     # status proposals waiting in the Inbox were made against the old status: close them (the one running now is not
@@ -496,6 +561,13 @@ def set_status(job_id: int, status: str, detail: str = "") -> None:
         con().execute("UPDATE jobs SET fit_applied=fit_score WHERE id=? AND fit_applied IS NULL", (job_id,))
         con().commit()
     add_event(job_id, "status", f"{status} {detail}".strip())
+    if status == "applied":  # blueprint 8.6: the documents as they were sent, never overwritten afterwards
+        from .resume import snapshot_submitted
+
+        try:
+            snapshot_submitted(get_job(job_id))
+        except OSError as e:  # a locked file never blocks recording the application
+            add_event(job_id, "snapshot_failed", str(e)[:200])
     if status == "accepted":  # a hire: offer to close the other live applications, always through the Inbox
         from . import approvals
 
@@ -515,7 +587,7 @@ def delete_job(job_id: int) -> None:
     con().execute("DELETE FROM mock_sessions WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM offers WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM mail WHERE job_id=?", (job_id,))  # a reply to its sent mail then reads as unmatched
-    for t in ("pipeline", "pipeline_runs", "question_waiters", "qsets", "readiness_log", "apply_runs"):  # company_sources stay
+    for t in ("pipeline", "pipeline_runs", "question_waiters", "qsets", "readiness_log", "apply_runs", "tasks"):  # company_sources stay
         con().execute(f"DELETE FROM {t} WHERE job_id=?", (job_id,))
     con().execute("DELETE FROM recommendations WHERE scope IN ('job', 'docs') AND target=? AND status IN ('pending', "
                   "'approved')", (job_id,))  # the AI change log stays (an undo then reports the job gone)
@@ -525,6 +597,7 @@ def delete_job(job_id: int) -> None:
     con().execute("DELETE FROM meta WHERE key=?", (f"pagemiss:{job_id}",))
     con().execute("DELETE FROM intel WHERE key IN (?, ?)", (f"ai:{job_id}", f"boost:{job_id}"))  # co: facts stay
     con().execute("DELETE FROM jobs WHERE id=?", (job_id,))
+    con().execute("DELETE FROM stage_events WHERE job_id=?", (job_id,))  # allowed now: its job is gone (the trigger)
     con().commit()
     from .config import SNAPSHOTS
 
@@ -537,7 +610,8 @@ def add_event(job_id: int, kind: str, detail: str = "") -> None:
 
 
 def events(job_id: int):
-    return con().execute("SELECT * FROM events WHERE job_id=? ORDER BY ts", (job_id,)).fetchall()
+    # id breaks ties in the same second: with the events_job index, ts alone would order them by kind
+    return con().execute("SELECT * FROM events WHERE job_id=? ORDER BY ts, id", (job_id,)).fetchall()
 
 
 _GENERIC = {"inc", "corp", "corporation", "llc", "ltd", "the", "group", "company", "co", "labs", "technologies", "software", "team", "careers", "jobs", "recruiting", "talent"}
@@ -611,12 +685,12 @@ def variant_stats() -> list[dict]:
 # Timeline entries that are Lodestar's own bookkeeping, not contact with the employer: an Inbox proposal, its rejection,
 # a send that failed, a draft nobody sent yet, a reply draft that failed, unverified mail, an approval's result line
 # (the real change logs its own 'status' / 'created' / sent-mail event). None of them restarts the follow-up clock.
-BOOKKEEPING = ("proposed", "rejected_proposal", "send_failed", "set_status", "add_job", "save_answer", "reply",
+BOOKKEEPING = ("apply_link", "proposed", "rejected_proposal", "send_failed", "set_status", "add_job", "save_answer", "reply",
                "interview_date", "email_unverified", "followup_draft", "thanks_draft", "withdraw_draft", "counter_draft",
                "reply_draft", "referral_draft", "outreach_draft", "checkin_draft", "referral", "attachments",
                "run_to",  # run_to: an approved pipeline batch (approvals writes the executor's kind as the event)
                # the listing monitor and job-alert mail watch the posting, not the employer talking to you
-               "posting_removed", "posting_changed", "posting_reopened", "posting_reposted", "listing_seen",
+               "posting_removed", "posting_changed", "posting_reopened", "posting_reposted", "listing_seen", "posting_seen_again",
                # documents built for the job (a drawer click or a pipeline step): your prep, not contact with the employer
                "gap", "research", "bullets", "resume", "coverage", "cover_letter", "interview_prep",
                # the apply agent's Inbox decision and evidence note (the 'applied' status change is the activity)
@@ -645,7 +719,10 @@ def add_watch(url: str, keywords: str | None = "", filters: dict | None = None) 
     (re-adding a saved search without filter fields never silently drops them), {} clears them. keywords None keeps
     its keywords too. True when a watch with this url already existed (updated, not added)."""
     full_ai_check("adds or changes a watch (automation)")
-    old = con().execute("SELECT keywords, filters FROM watches WHERE url=?", (url,)).fetchone()
+    url, key = str(url or "").strip(), watch_key(url)
+    old = next((w for w in watches() if watch_key(w["url"]) == key), None)  # ponytail: a scan, watches are few
+    if old:
+        url = old["url"]  # the same search or page spelled another way updates the watch already there
     if filters is None:
         filters = watch_filters(old) if old else {}
     if keywords is None:
@@ -656,6 +733,26 @@ def add_watch(url: str, keywords: str | None = "", filters: dict | None = None) 
                   (url, keywords, json.dumps(filters) if filters else None))
     con().commit()
     return old is not None
+
+
+def watch_key(url: str) -> str:
+    """What makes two watches the same: a saved search ignores case and spacing (around commas too); a page ignores
+    the scheme, www., the host's case, a default port, a trailing slash and the #fragment (path and query count)."""
+    from urllib.parse import urlsplit
+
+    u = str(url or "").strip()
+    if u[:7].lower() == "search:":
+        return "search:" + ",".join(p for p in (" ".join(x.split()) for x in u[7:].casefold().split(",")) if p)
+    try:
+        s = urlsplit(u if "://" in u else "https://" + u)
+        host = (s.hostname or "").removeprefix("www.")
+        port = s.port
+    except ValueError:  # a malformed host or port: compared as typed, never an error for every later add
+        return u.casefold()
+    port = "" if port in (None, 80, 443) else f":{port}"
+    query = "&".join(sorted(s.query.split("&"))) if s.query else ""
+    route = s.fragment if s.fragment[:1] in ("/", "!") else ""  # '#/jobs/1' is a page; '#open' is a spot on one
+    return f"{host}{port}{s.path.rstrip('/')}" + (f"?{query}" if query else "") + (f"#{route}" if route else "")
 
 
 def watch_filters(w) -> dict:
@@ -1041,7 +1138,9 @@ def delete_idea(iid: int) -> None:
 
 # --- mail (email_monitor records relevant mail it scans, approvals._send what it sends) -----------------------
 MAIL_COLS = ("message_id", "in_reply_to", "refs", "job_id", "direction", "from_addr", "to_addr", "subject", "sent_at",
-             "category", "summary", "snippet", "trusted", "linked_by", "company", "title", "attachments", "link_reason")
+             "category", "summary", "snippet", "trusted", "linked_by", "company", "title", "attachments", "link_reason",
+             "body", "action", "deadline", "html")
+MAIL_LIST = ", ".join(c for c in ("id", "created_at", *MAIL_COLS) if c not in ("body", "snippet", "refs", "html"))
 
 
 def add_mail(**fields) -> None:
@@ -1049,6 +1148,10 @@ def add_mail(**fields) -> None:
     att = fields.get("attachments")
     f = {k: fields.get(k) for k in MAIL_COLS} | {"trusted": int(bool(fields.get("trusted"))),
                                                  "snippet": (fields.get("snippet") or "")[:1500],
+                                                 "body": (fields.get("body") or "")[:100_000] or None,
+                                                 "html": (fields.get("html") or "")[:6_000_000] or None,
+                                                 "action": (fields.get("action") or "")[:300] or None,
+                                                 "deadline": (fields.get("deadline") or "")[:40] or None,
                                                  "attachments": json.dumps(att) if isinstance(att, list) and att else None}
     con().execute(f"INSERT OR IGNORE INTO mail({','.join(f)}) VALUES({','.join('?' * len(f))})", tuple(f.values()))
     con().commit()
@@ -1068,6 +1171,19 @@ def list_mail(job_id: int | None = None, unmatched: bool = False, limit: int = 2
         q, args = q + " WHERE job_id=?", (job_id,)
     elif unmatched:
         q += " WHERE job_id IS NULL AND direction='in'"
+    return con().execute(q + " ORDER BY COALESCE(sent_at, created_at) DESC, id DESC LIMIT ?", (*args, limit)).fetchall()
+
+
+def all_mail(category: str | None = None, limit: int = 500):
+    """Every recorded mail both ways for the Mail page, newest first, without its text (GET /api/mail/<id> has it).
+    category 'sent' = what Lodestar sent, 'unmatched' = received mail no job claims, else the classifier's category."""
+    q, args = f"SELECT {MAIL_LIST} FROM mail", tuple()
+    if category == "sent":
+        q += " WHERE direction='out'"
+    elif category == "unmatched":
+        q += " WHERE job_id IS NULL AND direction='in'"
+    elif category:
+        q, args = q + " WHERE category=? AND direction='in'", (category,)
     return con().execute(q + " ORDER BY COALESCE(sent_at, created_at) DESC, id DESC LIMIT ?", (*args, limit)).fetchall()
 
 
@@ -1176,7 +1292,7 @@ def funnel() -> dict:
     """Stage conversion, median days to the next stage, where rejections happen, and outcomes by source."""
     first: dict[int, dict[str, str]] = {}
     for e in con().execute("SELECT job_id, ts, detail FROM events WHERE kind='status' AND job_id IN (SELECT id FROM jobs) "
-                           "ORDER BY ts").fetchall():
+                           "ORDER BY ts, id").fetchall():
         st = (e["detail"] or "").split(" ")[0]
         first.setdefault(e["job_id"], {}).setdefault(st, e["ts"])
 
@@ -1205,3 +1321,39 @@ def funnel() -> dict:
         d["tracked"] += 1
         d["positive"] += j["status"] in POSITIVE
     return {"stages": stages, "rejected_from": rejected_from, "by_source": by_source}
+
+
+# ----------------------------------------------------------------------------- your to-dos per job (pass 53)
+def add_task(job_id: int, text: str, due: str | None = None) -> int:
+    """One of your own to-dos for a job (not an event: it never moves the follow-up clock)."""
+    get_job(job_id)
+    text = " ".join(str(text or "").split())[:300]
+    if not text:
+        raise ValueError("type the to-do first")
+    due = str(due or "").strip() or None
+    if due and not re.fullmatch(r"\d{4}-\d\d-\d\d", due):
+        raise ValueError("due date must be YYYY-MM-DD")
+    cur = con().execute("INSERT INTO tasks(job_id, text, due) VALUES (?,?,?)", (job_id, text, due))
+    con().commit()
+    return cur.lastrowid
+
+
+def set_task(job_id: int, task_id: int, done: bool) -> None:
+    con().execute("UPDATE tasks SET done_at=CASE WHEN ? THEN datetime('now') ELSE NULL END WHERE id=? AND job_id=?",
+                  (bool(done), task_id, job_id))
+    con().commit()
+
+
+def delete_task(job_id: int, task_id: int) -> None:
+    con().execute("DELETE FROM tasks WHERE id=? AND job_id=?", (task_id, job_id))
+    con().commit()
+
+
+def tasks(job_id: int | None = None, due_by: str | None = None) -> list[dict]:
+    """A job's to-dos (open first), or with due_by every open to-do due on or before that date (Today)."""
+    if job_id is not None:
+        q, a = "SELECT * FROM tasks WHERE job_id=? ORDER BY done_at IS NOT NULL, due IS NULL, due, id", (job_id,)
+    else:
+        q, a = ("SELECT t.*, j.company, j.title FROM tasks t JOIN jobs j ON j.id=t.job_id WHERE t.done_at IS NULL AND "
+                "t.due IS NOT NULL AND t.due<=? ORDER BY t.due, t.id"), (due_by,)
+    return [dict(r) for r in con().execute(q, a)]

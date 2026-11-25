@@ -399,7 +399,7 @@ class SetupEmail(E2ETestCase):
         self.assertNotIn("e2e-custom-password", self.page.content() + json.dumps(self.api("/api/email/status")))
 
     def test_a_refused_or_dropped_sign_in_says_what_to_do(self):
-        def connect(fail, password="e2e-app-password"):
+        def connect(fail, password="e2e-app-password"):  # secret-scan: fake
             self.page.fill("#ePass", password)
             FakeMail.FAIL = fail
             try:

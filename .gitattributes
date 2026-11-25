@@ -1,1 +1,2 @@
 tests/fixtures/alerts/*.eml -text
+.githooks/* text eol=lf

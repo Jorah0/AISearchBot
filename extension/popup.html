@@ -32,9 +32,12 @@
 <section id="paired" hidden>
   <p id="host" class="muted"></p>
   <button id="capture" disabled>Capture this posting</button>
+  <button id="keywords" disabled title="Marks the posting's keywords on this page: yellow = missing from your resume, green = in it">Show missing keywords</button>
+  <button id="applied" disabled title="You sent this application yourself: Lodestar moves the job to applied">I applied</button>
   <button id="fill" disabled>Fill this form</button>
   <label><input type="checkbox" id="eeo"> include EEO answers</label>
   <label><input type="checkbox" id="salary"> include desired salary</label>
+  <label><input type="checkbox" id="aidraft" checked> AI drafts for open questions (a job you saved; at most 5)</label>
   <p class="muted">Fill types into empty fields only. It never clicks, submits or ticks anything.</p>
   <div id="frames"></div>
   <ul id="needs" aria-label="Needs you"></ul>

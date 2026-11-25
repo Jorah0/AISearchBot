@@ -162,17 +162,16 @@ class Providers(Base):
             self.assertIn("llama3.1:8b", ai.local_preset())
         self.assertEqual((settings.pref("provider"), settings.pref("council_providers")), ("ollama", "ollama"))
 
-    def test_allowlist_binds_the_default_provider(self):  # row 04
+    def test_the_primary_need_not_be_in_the_council(self):  # row 04; pass 51: the allowlist bounds the council only
         with env(OPENAI_API_KEY="k", LODESTAR_PROVIDER=None), patched(ai, **AI_REAL):
             settings.set_pref("council_providers", "anthropic")
             settings.set_pref("provider", "openai")
-            with self.assertRaises(SystemExit) as e:
-                ai.default_provider()
-            self.assertIn("council_providers", str(e.exception))
+            self.assertEqual(ai.default_provider(), "openai")  # your explicit pick, outside the council
+            self.assertEqual(ai.council_providers(), ["anthropic"])  # the council still never asks openai
             settings.set_pref("provider", "")
-            with env(LODESTAR_PROVIDER="openai"), self.assertRaises(SystemExit):
-                ai.default_provider()
-            self.assertEqual(ai.default_provider(), "anthropic")
+            with env(LODESTAR_PROVIDER="openai"):
+                self.assertEqual(ai.default_provider(), "openai")
+            self.assertEqual(ai.default_provider(), "anthropic")  # nothing chosen: the allowlist's first (the safe default)
             settings.set_pref("provider", "anthropic")
             self.assertEqual(ai.default_provider(), "anthropic")
 
@@ -345,7 +344,7 @@ class Docs(unittest.TestCase):
     def test_docs_describe_the_allowlist_and_private_answers(self):
         auto = (ROOT / "docs" / "AUTOMATION.md").read_text(encoding="utf-8")
         self.assertNotIn("limits which providers ever receive your profile", auto)
-        self.assertIn("`LODESTAR_PROVIDER` outside the list stops with an error", auto)
+        self.assertIn("the primary AI you choose need not be in it", auto)  # pass 51: the list bounds the council
         self.assertIn("[--private]", (ROOT / "docs" / "COMMANDS.md").read_text(encoding="utf-8"))
         self.assertTrue(APPS_DIR)
 
